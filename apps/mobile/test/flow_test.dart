@@ -1,0 +1,162 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:drift/native.dart';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:futbeat/core/models.dart';
+import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/main.dart';
+
+class TestRepository implements FootballRepository {
+  TestRepository({this.fail = false});
+  bool fail;
+  @override
+  Future<Snapshot> load() async {
+    if (fail) throw const SocketException('Offline');
+    return Snapshot(
+      jsonDecode(File('assets/demo.snapshot.json').readAsStringSync()) as Json,
+    );
+  }
+}
+
+Future<void> openApp(
+  WidgetTester tester, {
+  String route = '/matches',
+  TestRepository? repository,
+}) async {
+  tester.view.physicalSize = const Size(390, 844);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  final router = createRouter(initialLocation: route);
+  addTearDown(router.dispose);
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        repositoryProvider.overrideWithValue(repository ?? TestRepository()),
+        followsProvider.overrideWith((ref) => Stream.value(<String>{})),
+      ],
+      child: FutBeatApp(router: router),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  testWidgets('FB-US-036: follow from profile appears in favorites', (
+    tester,
+  ) async {
+    final setup = await tester.runAsync(() async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final container = ProviderContainer(
+        overrides: [
+          repositoryProvider.overrideWithValue(TestRepository()),
+          databaseProvider.overrideWithValue(db),
+        ],
+      );
+      final subscription = container.listen(
+        followsProvider,
+        (previous, next) {},
+      );
+      await container.read(snapshotProvider.future);
+      await container
+          .read(followsProvider.future)
+          .timeout(const Duration(seconds: 10));
+      return (db, container, subscription);
+    });
+    final (db, container, subscription) = setup!;
+    final router = createRouter(initialLocation: '/team/fb_team_sap');
+    addTearDown(() async {
+      router.dispose();
+      subscription.close();
+      container.dispose();
+      await db.close();
+    });
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: FutBeatApp(router: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byTooltip('Seguir'),
+        ),
+      );
+      await db
+          .watchFollows()
+          .firstWhere((items) => items.contains('team:fb_team_sap'))
+          .timeout(const Duration(seconds: 10));
+    });
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Favoritos'));
+    await tester.pumpAndSettle();
+    expect(find.text('Saprissa'), findsOneWidget);
+    expect(find.text('Siguiendo'), findsOneWidget);
+  });
+  testWidgets('FB-US-001/005/004: match -> team -> competition and back', (
+    tester,
+  ) async {
+    await openApp(tester);
+    expect(find.text('Modo demo · resultados ficticios'), findsOneWidget);
+    await tester.tap(find.text('2 - 1').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Match Center'), findsOneWidget);
+    await tester.tap(find.text('Saprissa').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Partidos destacados'), findsOneWidget);
+    await tester.tap(find.text('Liga Promerica').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Apertura 2026 · Demo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('FB-US-002: empty date and recovery', (tester) async {
+    await openApp(tester);
+    await tester.tap(find.byTooltip('Día siguiente'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Día siguiente'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sin partidos para esta selección'), findsOneWidget);
+    await tester.tap(find.text('Hoy'));
+    await tester.pumpAndSettle();
+    expect(find.text('2 - 1'), findsOneWidget);
+  });
+  testWidgets('FB-US-041/042: alias search -> team page', (tester) async {
+    await openApp(tester, route: '/explore');
+    await tester.enterText(find.byType(TextField), 'LDA');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alajuelense'));
+    await tester.pumpAndSettle();
+    expect(find.text('Partidos destacados'), findsOneWidget);
+  });
+  testWidgets('load failure can retry; unknown entity is recoverable', (
+    tester,
+  ) async {
+    final repository = TestRepository(fail: true);
+    await openApp(tester, repository: repository);
+    expect(find.text('No pudimos cargar los datos'), findsOneWidget);
+    repository.fail = false;
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+    expect(find.text('2 - 1'), findsOneWidget);
+  });
+  testWidgets('unknown match shows safe empty state', (tester) async {
+    await openApp(tester, route: '/match/invalid');
+    expect(find.text('Partido no encontrado'), findsOneWidget);
+  });
+  testWidgets('360px layout and large text have no overflow', (tester) async {
+    await openApp(tester);
+    tester.view.physicalSize = const Size(360, 800);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.4;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+}

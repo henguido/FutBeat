@@ -1,0 +1,331 @@
+{
+  "schemaVersion": 1,
+  "demo": true,
+  "updatedAt": "2026-09-15T19:12:00Z",
+  "competitions": [
+    {
+      "id": "fb_comp_cr",
+      "name": "Liga Promerica",
+      "country": "Costa Rica",
+      "season": "Apertura 2026 · Demo",
+      "media": null
+    },
+    {
+      "id": "fb_comp_ucl",
+      "name": "UEFA Champions League",
+      "country": "Europa",
+      "season": "2026/27 · Demo",
+      "media": null
+    }
+  ],
+  "teams": [
+    {
+      "id": "fb_team_sap",
+      "name": "Saprissa",
+      "shortName": "SAP",
+      "competitionId": "fb_comp_cr",
+      "country": "Costa Rica",
+      "color": "#713561",
+      "aliases": [
+        "sapri",
+        "deportivo saprissa"
+      ],
+      "media": null
+    },
+    {
+      "id": "fb_team_lda",
+      "name": "Alajuelense",
+      "shortName": "LDA",
+      "competitionId": "fb_comp_cr",
+      "country": "Costa Rica",
+      "color": "#dc4545",
+      "aliases": [
+        "liga",
+        "ld alajuelense"
+      ],
+      "media": null
+    },
+    {
+      "id": "fb_team_her",
+      "name": "Herediano",
+      "shortName": "CSH",
+      "competitionId": "fb_comp_cr",
+      "country": "Costa Rica",
+      "color": "#d9a844",
+      "aliases": [],
+      "media": null
+    },
+    {
+      "id": "fb_team_car",
+      "name": "Cartaginés",
+      "shortName": "CSC",
+      "competitionId": "fb_comp_cr",
+      "country": "Costa Rica",
+      "color": "#438bd1",
+      "aliases": [],
+      "media": null
+    },
+    {
+      "id": "fb_team_rma",
+      "name": "Real Madrid",
+      "shortName": "RMA",
+      "competitionId": "fb_comp_ucl",
+      "country": "España",
+      "color": "#8596b8",
+      "aliases": [],
+      "media": null
+    },
+    {
+      "id": "fb_team_ars",
+      "name": "Arsenal",
+      "shortName": "ARS",
+      "competitionId": "fb_comp_ucl",
+      "country": "Inglaterra",
+      "color": "#e75555",
+      "aliases": [],
+      "media": null
+    }
+  ],
+  "players": [
+    {
+      "id": "fb_player_torres",
+      "name": "Mariano Torres",
+      "teamId": "fb_team_sap",
+      "position": "Mediocampista",
+      "country": "Argentina",
+      "media": null
+    },
+    {
+      "id": "fb_player_campbell",
+      "name": "Joel Campbell",
+      "teamId": "fb_team_lda",
+      "position": "Delantero",
+      "country": "Costa Rica",
+      "media": null
+    },
+    {
+      "id": "fb_player_blanco",
+      "name": "Javon East",
+      "teamId": "fb_team_sap",
+      "position": "Delantero",
+      "country": "Jamaica",
+      "media": null
+    },
+    {
+      "id": "fb_player_borges",
+      "name": "Celso Borges",
+      "teamId": "fb_team_lda",
+      "position": "Mediocampista",
+      "country": "Costa Rica",
+      "media": null
+    }
+  ],
+  "matches": [
+    {
+      "id": "fb_match_clasico",
+      "competitionId": "fb_comp_cr",
+      "season": "2026 · Demo",
+      "homeTeamId": "fb_team_sap",
+      "awayTeamId": "fb_team_lda",
+      "startTime": "2026-09-15T18:00:00Z",
+      "status": "LIVE",
+      "score": {
+        "home": 2,
+        "away": 1
+      },
+      "minute": 72,
+      "venue": "Estadio de demostración",
+      "provenance": {
+        "source": "FutBeat Demo — datos ficticios",
+        "receivedAt": "2026-09-15T19:12:00Z",
+        "verificationStatus": "PROVISIONAL"
+      },
+      "events": [
+        {
+          "id": "e1",
+          "minute": 18,
+          "type": "GOAL",
+          "playerId": "fb_player_torres",
+          "teamId": "fb_team_sap"
+        },
+        {
+          "id": "e2",
+          "minute": 37,
+          "type": "GOAL",
+          "playerId": "fb_player_blanco",
+          "teamId": "fb_team_sap"
+        },
+        {
+          "id": "e3",
+          "minute": 45,
+          "type": "YELLOW_CARD",
+          "playerId": "fb_player_borges",
+          "teamId": "fb_team_lda"
+        },
+        {
+          "id": "e4",
+          "minute": 64,
+          "type": "GOAL",
+          "playerId": "fb_player_campbell",
+          "teamId": "fb_team_lda"
+        }
+      ],
+      "statistics": [
+        {
+          "label": "Posesión",
+          "home": 58,
+          "away": 42,
+          "unit": "%"
+        },
+        {
+          "label": "Tiros",
+          "home": 12,
+          "away": 8,
+          "unit": ""
+        },
+        {
+          "label": "Tiros a puerta",
+          "home": 6,
+          "away": 3,
+          "unit": ""
+        },
+        {
+          "label": "Saques de esquina",
+          "home": 4,
+          "away": 2,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "id": "fb_match_hercar",
+      "competitionId": "fb_comp_cr",
+      "season": "2026 · Demo",
+      "homeTeamId": "fb_team_her",
+      "awayTeamId": "fb_team_car",
+      "startTime": "2026-09-15T23:00:00Z",
+      "status": "SCHEDULED",
+      "score": null,
+      "minute": null,
+      "venue": "Estadio de demostración",
+      "provenance": {
+        "source": "FutBeat Demo — datos ficticios",
+        "receivedAt": "2026-09-15T19:12:00Z",
+        "verificationStatus": "PROVISIONAL"
+      },
+      "events": [],
+      "statistics": []
+    },
+    {
+      "id": "fb_match_rmaars",
+      "competitionId": "fb_comp_ucl",
+      "season": "2026 · Demo",
+      "homeTeamId": "fb_team_rma",
+      "awayTeamId": "fb_team_ars",
+      "startTime": "2026-09-15T21:00:00Z",
+      "status": "SCHEDULED",
+      "score": null,
+      "minute": null,
+      "venue": "Estadio de demostración",
+      "provenance": {
+        "source": "FutBeat Demo — datos ficticios",
+        "receivedAt": "2026-09-15T19:12:00Z",
+        "verificationStatus": "PROVISIONAL"
+      },
+      "events": [],
+      "statistics": []
+    },
+    {
+      "id": "fb_match_past",
+      "competitionId": "fb_comp_cr",
+      "season": "2026 · Demo",
+      "homeTeamId": "fb_team_car",
+      "awayTeamId": "fb_team_sap",
+      "startTime": "2026-09-14T18:00:00Z",
+      "status": "VERIFIED",
+      "score": {
+        "home": 0,
+        "away": 1
+      },
+      "minute": null,
+      "venue": "Estadio de demostración",
+      "provenance": {
+        "source": "FutBeat Demo — datos ficticios",
+        "receivedAt": "2026-09-15T19:12:00Z",
+        "verificationStatus": "PROVISIONAL"
+      },
+      "events": [],
+      "statistics": []
+    },
+    {
+      "id": "fb_match_tomorrow",
+      "competitionId": "fb_comp_cr",
+      "season": "2026 · Demo",
+      "homeTeamId": "fb_team_lda",
+      "awayTeamId": "fb_team_her",
+      "startTime": "2026-09-16T23:00:00Z",
+      "status": "SCHEDULED",
+      "score": null,
+      "minute": null,
+      "venue": "Estadio de demostración",
+      "provenance": {
+        "source": "FutBeat Demo — datos ficticios",
+        "receivedAt": "2026-09-15T19:12:00Z",
+        "verificationStatus": "PROVISIONAL"
+      },
+      "events": [],
+      "statistics": []
+    }
+  ],
+  "standings": [
+    {
+      "competitionId": "fb_comp_cr",
+      "season": "2026 · Demo",
+      "provisional": false,
+      "rows": [
+        {
+          "teamId": "fb_team_her",
+          "played": 8,
+          "won": 5,
+          "drawn": 2,
+          "lost": 1,
+          "gf": 16,
+          "ga": 8,
+          "points": 17
+        },
+        {
+          "teamId": "fb_team_lda",
+          "played": 8,
+          "won": 4,
+          "drawn": 3,
+          "lost": 1,
+          "gf": 14,
+          "ga": 7,
+          "points": 15
+        },
+        {
+          "teamId": "fb_team_sap",
+          "played": 8,
+          "won": 4,
+          "drawn": 2,
+          "lost": 2,
+          "gf": 13,
+          "ga": 8,
+          "points": 14
+        },
+        {
+          "teamId": "fb_team_car",
+          "played": 8,
+          "won": 2,
+          "drawn": 3,
+          "lost": 3,
+          "gf": 9,
+          "ga": 12,
+          "points": 9
+        }
+      ]
+    }
+  ],
+  "news": [],
+  "transfers": []
+}

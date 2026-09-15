@@ -1,0 +1,12 @@
+{
+  "name": "futbeat",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test backend/test/*.test.mjs",
+    "api": "node backend/api/server.mjs",
+    "check": "node --check backend/api/server.mjs && node --check backend/providers/core/snapshot.mjs && node --check backend/automation/sync.mjs"
+  }
+}
