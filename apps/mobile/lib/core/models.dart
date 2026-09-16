@@ -35,6 +35,7 @@ class LiveMatchUpdate {
     required this.revision,
     required this.eventCount,
     required this.changedAt,
+    this.events = const [],
   });
 
   factory LiveMatchUpdate.fromJson(Json json) => LiveMatchUpdate(
@@ -48,15 +49,47 @@ class LiveMatchUpdate {
     revision: (json['revision'] as num).toInt(),
     eventCount: (json['event_count'] as num?)?.toInt() ?? 0,
     changedAt: DateTime.parse(json['changed_at'] as String),
+    events: (json['latest_events'] as List? ?? [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList(),
   );
 
   final String matchId, provider, externalMatchId, status;
   final int? minute, homeScore, awayScore;
   final int revision, eventCount;
   final DateTime changedAt;
+  final List<Json> events;
 
   Json applyTo(Json match) {
+    if (match['id'] != matchId) return match;
+    final previousAt = DateTime.tryParse(
+      match['liveChangedAt'] as String? ?? '',
+    );
+    if (previousAt != null && changedAt.isBefore(previousAt)) return match;
+    if (match['liveProvider'] == provider &&
+        (match['liveRevision'] as int? ?? 0) > revision) {
+      return match;
+    }
+    final merged = <String, Json>{};
+    for (final event in [
+      ...(match['events'] as List? ?? []).cast<Json>(),
+      ...events,
+    ]) {
+      final id = event['id'];
+      if (id is! String) continue;
+      if (event['matchId'] != null && event['matchId'] != matchId) continue;
+      if (event['teamId'] != null &&
+          ![
+            match['homeTeamId'],
+            match['awayTeamId'],
+          ].contains(event['teamId'])) {
+        continue;
+      }
+      merged[id] = event;
+    }
     final result = Json.of(match)
+      ..['events'] = merged.values.toList()
       ..['status'] = status
       ..['minute'] = minute
       ..['liveRevision'] = revision
@@ -101,9 +134,10 @@ class FootballMatch {
     'CANCELLED' => 'Cancelado',
     _ => 'Próximo',
   };
-  List<Json> get events =>
-      (json['events'] as List).cast<Json>().toList()
-        ..sort((a, b) => (a['minute'] as int).compareTo(b['minute'] as int));
+  List<Json> get events => (json['events'] as List).cast<Json>().toList()
+    ..sort(
+      (a, b) => (a['minute'] as int? ?? 0).compareTo(b['minute'] as int? ?? 0),
+    );
   List<Json> get statistics => (json['statistics'] as List).cast<Json>();
 }
 

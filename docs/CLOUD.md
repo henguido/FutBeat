@@ -54,5 +54,9 @@ sincronización automática remota todavía**. `npm run data:sync` actualiza sol
 la base local, no Supabase. La app avisa cuando el lote supera seis horas; refrescar
 vuelve a consultar el lote existente. Falta crear el proceso remoto de ingesta con
 cuotas, bloqueos, reintentos y registro de fallos antes de activar un calendario.
-No hay datos LIVE, login de usuarios, Realtime, tabla calculada o notificaciones.
+Los eventos LIVE y el marcador se publican por Realtime con snapshot HTTP de
+respaldo. La autenticación se usa únicamente al activar push y asociar un
+dispositivo con sus seguimientos. La entrega real de notificaciones permanece
+en modo seguro hasta aprovisionar Firebase/APNs; consulta
+[LIVE y push](LIVE-PUSH.md). La tabla calculada continúa pendiente.
 El APK es de desarrollo y no se publica en tiendas.

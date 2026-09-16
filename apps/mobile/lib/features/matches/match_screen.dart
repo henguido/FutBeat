@@ -115,7 +115,7 @@ class MatchScreen extends StatelessWidget {
                         for (final event in match.events)
                           ListTile(
                             leading: Text(
-                              "${event['minute']}′",
+                              "${event['minute'] ?? '—'}′",
                               style: const TextStyle(color: lime),
                             ),
                             title: Text(
@@ -124,14 +124,17 @@ class MatchScreen extends StatelessWidget {
                                         event['playerId'] as String? ?? '',
                                       )
                                       ?.name ??
-                                  'Jugador sin identificar',
+                                  eventLabel(event['type'] as String? ?? ''),
                             ),
                             subtitle: Text(
-                              '${event['type'] == 'GOAL'
-                                  ? 'Gol'
-                                  : event['type'] == 'YELLOW_CARD'
-                                  ? 'Tarjeta amarilla'
-                                  : 'Sustitución'} · ${data.team(event['teamId'] as String)!.name}',
+                              [
+                                eventLabel(event['type'] as String? ?? ''),
+                                if (data.team(
+                                      event['teamId'] as String? ?? '',
+                                    ) !=
+                                    null)
+                                  data.team(event['teamId'] as String)!.name,
+                              ].join(' · '),
                             ),
                             trailing: Icon(
                               event['type'] == 'GOAL'
@@ -140,9 +143,15 @@ class MatchScreen extends StatelessWidget {
                               size: 20,
                               color: event['type'] == 'GOAL'
                                   ? Colors.white
+                                  : event['type'] == 'RED_CARD'
+                                  ? Colors.red
                                   : Colors.amber,
                             ),
-                            onTap: event['playerId'] == null
+                            onTap:
+                                data.player(
+                                      event['playerId'] as String? ?? '',
+                                    ) ==
+                                    null
                                 ? null
                                 : () => context.push(
                                     '/player/${event['playerId']}',
@@ -155,11 +164,11 @@ class MatchScreen extends StatelessWidget {
                   Statistics(match),
                   const SizedBox(height: 20),
                   Text(
-                    'Fuente: ${match.json['provenance']['source']}',
+                    'Fuente: ${match.json['liveProvider'] ?? match.json['provenance']['source']}',
                     style: const TextStyle(fontSize: 11, color: muted),
                   ),
                   Text(
-                    'Actualización: ${DateTime.parse(match.json['provenance']['receivedAt'] as String).toLocal()}',
+                    'Actualización: ${DateTime.parse((match.json['liveChangedAt'] ?? match.json['provenance']['receivedAt']) as String).toLocal()}',
                     style: const TextStyle(fontSize: 11, color: muted),
                   ),
                 ],
@@ -238,3 +247,16 @@ class Statistics extends StatelessWidget {
           ),
         );
 }
+
+String eventLabel(String type) => switch (type) {
+  'GOAL' => 'Gol',
+  'YELLOW_CARD' => 'Tarjeta amarilla',
+  'RED_CARD' => 'Tarjeta roja',
+  'SUBSTITUTION' => 'Sustitución',
+  'VAR' => 'VAR',
+  'MISSED_PENALTY' => 'Penal fallado',
+  'KICKOFF' => 'Inicio',
+  'HALFTIME' => 'Medio tiempo',
+  'FULL_TIME' => 'Final',
+  _ => 'Evento',
+};

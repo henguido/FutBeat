@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/theme.dart';
+import 'core/push.dart';
+import 'features/profile/profile_screen.dart';
 import 'features/matches/matches_screen.dart';
 import 'features/matches/match_screen.dart';
 import 'features/entities/entity_screen.dart';
@@ -46,17 +48,7 @@ GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
           path: '/favorites',
           builder: (_, state) => const FavoritesScreen(),
         ),
-        GoRoute(
-          path: '/profile',
-          builder: (_, state) => const SectionScreen(
-            title: 'Perfil',
-            child: EmptyState(
-              'Tu fútbol, a tu manera',
-              'Estás usando FutBeat como invitado. Tus favoritos se guardan en este dispositivo. El acceso con cuenta y las notificaciones llegarán después.',
-              icon: Icons.person_outline,
-            ),
-          ),
-        ),
+        GoRoute(path: '/profile', builder: (_, state) => const ProfileScreen()),
         GoRoute(
           path: '/match/:id',
           builder: (_, state) => MatchScreen(id: state.pathParameters['id']!),
@@ -99,7 +91,7 @@ class _FutBeatAppState extends State<FutBeatApp> {
   );
 }
 
-class AppShell extends StatelessWidget {
+class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.location, required this.child});
   final String location;
   final Widget child;
@@ -111,32 +103,35 @@ class AppShell extends StatelessWidget {
     '/profile',
   ];
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: child,
-    bottomNavigationBar: NavigationBar(
-      selectedIndex: paths.contains(location) ? paths.indexOf(location) : 0,
-      onDestinationSelected: (index) => context.go(paths[index]),
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.sports_soccer),
-          label: 'Partidos',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.article_outlined),
-          label: 'Noticias',
-        ),
-        NavigationDestination(icon: Icon(Icons.search), label: 'Explorar'),
-        NavigationDestination(
-          icon: Icon(Icons.star_border),
-          label: 'Favoritos',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.person_outline),
-          label: 'Perfil',
-        ),
-      ],
-    ),
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (PushService.configured) ref.watch(pushServiceProvider);
+    return Scaffold(
+      body: child,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: paths.contains(location) ? paths.indexOf(location) : 0,
+        onDestinationSelected: (index) => context.go(paths[index]),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.sports_soccer),
+            label: 'Partidos',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.article_outlined),
+            label: 'Noticias',
+          ),
+          NavigationDestination(icon: Icon(Icons.search), label: 'Explorar'),
+          NavigationDestination(
+            icon: Icon(Icons.star_border),
+            label: 'Favoritos',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            label: 'Perfil',
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class SectionScreen extends StatelessWidget {

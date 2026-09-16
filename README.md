@@ -81,4 +81,4 @@ docs/                    Arquitectura, trazabilidad, verificaciones
 - [Resultados y límites de verificación](docs/VERIFICATION.md)
 - [Contrato de datos](packages/contracts/README.md)
 
-El bloque 0.2 añade el proveedor TheSportsDB y persistencia local. El bloque 0.3 conecta la lectura remota en Supabase y un APK mediante HTTPS. Consulta [datos locales](docs/DATA-BLOCK.md) y [conexión en la nube](docs/CLOUD.md). La demo continúa siendo el modo predeterminado al compilar sin configuración; ingesta automática y tabla LIVE siguen pendientes.
+El bloque 0.2 añade el proveedor TheSportsDB y persistencia local. El bloque 0.3 conecta la lectura remota en Supabase y un APK mediante HTTPS. El bloque LIVE añade eventos canónicos por Realtime, recuperación HTTP y una outbox push privada e idempotente. Consulta [datos locales](docs/DATA-BLOCK.md), [conexión en la nube](docs/CLOUD.md) y [LIVE/push](docs/LIVE-PUSH.md). La demo continúa siendo el modo predeterminado al compilar sin configuración.

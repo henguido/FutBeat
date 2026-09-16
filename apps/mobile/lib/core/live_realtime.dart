@@ -64,49 +64,88 @@ class LiveRealtimeConfig {
 }
 
 class LiveRealtimeClient {
-  LiveRealtimeClient(this.config, this.dio);
-
+  LiveRealtimeClient(
+    this.config,
+    this.dio, {
+    this.retryDelay = const Duration(seconds: 2),
+    this.refreshInterval = const Duration(seconds: 60),
+  });
   final LiveRealtimeConfig config;
   final Dio dio;
+  final Duration retryDelay, refreshInterval;
 
-  Stream<Map<String, LiveMatchUpdate>> watch() async* {
-    if (!config.isConfigured) {
-      yield const <String, LiveMatchUpdate>{};
-      return;
+  Stream<Map<String, LiveMatchUpdate>> watch() {
+    final state = <String, LiveMatchUpdate>{};
+    late StreamController<Map<String, LiveMatchUpdate>> controller;
+    WebSocket? socket;
+    Timer? retry, heartbeat, refresh, joinTimeout;
+    var disposed = false;
+    var connecting = false;
+    var sequence = 0;
+
+    void emit() {
+      if (!disposed) {
+        controller.add(
+          Map.unmodifiable(Map<String, LiveMatchUpdate>.of(state)),
+        );
+      }
     }
 
-    final state = <String, LiveMatchUpdate>{};
-    try {
-      final response = await dio.getUri<dynamic>(
-        config.restUri,
-        options: Options(headers: {'apikey': config.publicKey}),
-      );
-      final rows = response.data;
-      if (rows is List) {
-        for (final row in rows) {
-          if (row is Map) {
-            final update = LiveMatchUpdate.fromJson(
-              Map<String, dynamic>.from(row),
-            );
-            state[update.matchId] = update;
+    void accept(Json row) {
+      final update = LiveMatchUpdate.fromJson(row);
+      if (!update.matchId.startsWith('fb_')) return;
+      final previous = state[update.matchId];
+      if (previous != null &&
+          (update.changedAt.isBefore(previous.changedAt) ||
+              (update.provider == previous.provider &&
+                  update.revision < previous.revision))) {
+        return;
+      }
+      state[update.matchId] = update;
+    }
+
+    Future<void> bootstrap() async {
+      try {
+        final response = await dio.getUri<dynamic>(
+          config.restUri,
+          options: Options(headers: {'apikey': config.publicKey}),
+        );
+        if (disposed) return;
+        if (response.data is List) {
+          for (final row in response.data as List) {
+            if (row is Map) accept(Map<String, dynamic>.from(row));
           }
         }
+        emit();
+      } catch (_) {
+        /* Keep HTTP snapshot and the last valid overlay. */
       }
-    } catch (_) {
-      // Realtime is an enhancement over the snapshot. A REST bootstrap failure
-      // must never prevent the normal app data from rendering.
     }
-    yield Map.unmodifiable(state);
 
-    var retrySeconds = 1;
-    var sequence = 1;
-    while (true) {
-      WebSocket? socket;
-      Timer? heartbeat;
+    late Future<void> Function() connect;
+    void reconnect() {
+      heartbeat?.cancel();
+      joinTimeout?.cancel();
+      if (!disposed && !(retry?.isActive ?? false)) {
+        retry = Timer(retryDelay, () {
+          unawaited(connect());
+        });
+      }
+    }
+
+    connect = () async {
+      if (disposed || connecting) return;
+      connecting = true;
       try {
-        socket = await WebSocket.connect(config.websocketUri.toString());
-        final joinRef = '${sequence++}';
-        socket.add(
+        final current = await WebSocket.connect(config.websocketUri.toString())
+            .timeout(const Duration(seconds: 10));
+        if (disposed) {
+          await current.close();
+          return;
+        }
+        socket = current;
+        final joinRef = '${++sequence}';
+        current.add(
           jsonEncode({
             'topic': 'realtime:futbeat:live_match_updates',
             'event': 'phx_join',
@@ -128,66 +167,90 @@ class LiveRealtimeClient {
             'join_ref': joinRef,
           }),
         );
+        joinTimeout = Timer(const Duration(seconds: 10), () {
+          unawaited(current.close());
+        });
         heartbeat = Timer.periodic(const Duration(seconds: 20), (_) {
           try {
-            socket?.add(
+            current.add(
               jsonEncode({
                 'topic': 'phoenix',
                 'event': 'heartbeat',
-                'payload': const {},
-                'ref': '${sequence++}',
+                'payload': {},
+                'ref': '${++sequence}',
               }),
             );
           } catch (_) {
-            // The receive loop owns reconnects.
+            unawaited(current.close());
           }
         });
-
-        await for (final raw in socket) {
-          if (raw is! String) continue;
-          final decoded = jsonDecode(raw);
-          if (decoded is! Map) continue;
-          final message = Map<String, dynamic>.from(decoded);
-          if (message['event'] == 'phx_reply') {
-            final payload = message['payload'];
-            if (payload is Map && payload['status'] == 'ok') retrySeconds = 1;
-            continue;
-          }
-          if (message['event'] != 'postgres_changes') continue;
-
-          final payload = message['payload'];
-          if (payload is! Map) continue;
-          final dataValue = payload['data'];
-          if (dataValue is! Map) continue;
-          final data = Map<String, dynamic>.from(dataValue);
-          final type = data['type'] as String?;
-          final rowValue = type == 'DELETE'
-              ? data['old_record']
-              : data['record'];
-          if (rowValue is! Map) continue;
-          final row = Map<String, dynamic>.from(rowValue);
-          final matchId = row['match_id'] as String?;
-          if (matchId == null || matchId.isEmpty) continue;
-
-          if (type == 'DELETE') {
-            state.remove(matchId);
-          } else {
-            state[matchId] = LiveMatchUpdate.fromJson(row);
-          }
-          yield Map.unmodifiable(Map<String, LiveMatchUpdate>.of(state));
-        }
+        current.listen(
+          (raw) {
+            try {
+              if (raw is! String || disposed) return;
+              final message = jsonDecode(raw) as Map;
+              if (message['event'] == 'phx_reply' &&
+                  message['ref'] == joinRef) {
+                joinTimeout?.cancel();
+                if (message['payload']?['status'] == 'ok') {
+                  // Subscribe first, then refetch on EVERY reconnect to close the offline gap.
+                  unawaited(bootstrap());
+                } else {
+                  unawaited(current.close());
+                }
+                return;
+              }
+              if (['phx_error', 'phx_close'].contains(message['event'])) {
+                unawaited(current.close());
+                return;
+              }
+              if (message['event'] != 'postgres_changes') return;
+              final data = message['payload']?['data'];
+              if (data is! Map) return;
+              if (data['type'] == 'DELETE') {
+                state.remove(data['old_record']?['match_id']);
+              } else if (data['record'] is Map) {
+                accept(Map<String, dynamic>.from(data['record'] as Map));
+              }
+              emit();
+            } catch (_) {
+              /* Malformed frames do not erase valid data. */
+            }
+          },
+          onDone: reconnect,
+          onError: (_) {
+            unawaited(current.close());
+            reconnect();
+          },
+        );
       } catch (_) {
-        // Network changes are normal on mobile. Keep the last known overlay and
-        // reconnect without affecting the snapshot repository.
+        reconnect();
       } finally {
-        heartbeat?.cancel();
-        try {
-          await socket?.close();
-        } catch (_) {}
+        connecting = false;
       }
-
-      await Future<void>.delayed(Duration(seconds: retrySeconds));
-      retrySeconds = retrySeconds >= 16 ? 30 : retrySeconds * 2;
-    }
+    };
+    controller = StreamController<Map<String, LiveMatchUpdate>>(
+      onListen: () {
+        if (!config.isConfigured) {
+          emit();
+          unawaited(controller.close());
+          return;
+        }
+        unawaited(bootstrap());
+        unawaited(connect());
+        refresh = Timer.periodic(refreshInterval, (_) {
+          unawaited(bootstrap());
+        });
+      },
+      onCancel: () async {
+        disposed = true;
+        retry?.cancel();
+        heartbeat?.cancel();
+        refresh?.cancel();
+        joinTimeout?.cancel();
+        await socket?.close();
+      },
+    );
+    return controller.stream;
   }
 }
