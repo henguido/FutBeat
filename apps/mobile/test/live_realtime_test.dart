@@ -28,9 +28,8 @@ void main() {
   });
 
   test('FB-US-005/012: canonical LIVE state overlays score and status', () {
-    final raw = jsonDecode(
-      File('assets/demo.snapshot.json').readAsStringSync(),
-    ) as Json;
+    final raw =
+        jsonDecode(File('assets/demo.snapshot.json').readAsStringSync()) as Json;
     final snapshot = Snapshot({...raw, 'demo': false});
     final match = snapshot.matches.first;
     final originalEvents = match.events.length;
@@ -58,25 +57,28 @@ void main() {
     expect(merged.stale, isFalse);
   });
 
-  test('Provider-only fixtures can never alter an unrelated canonical match', () {
-    final raw = jsonDecode(
-      File('assets/demo.snapshot.json').readAsStringSync(),
-    ) as Json;
-    final snapshot = Snapshot({...raw, 'demo': false});
-    final merged = snapshot.withLiveUpdates({
-      'fb_match_not_in_snapshot': LiveMatchUpdate(
-        matchId: 'fb_match_not_in_snapshot',
-        provider: 'api_football',
-        externalMatchId: '999',
-        status: 'LIVE',
-        minute: 10,
-        homeScore: 1,
-        awayScore: 0,
-        revision: 1,
-        eventCount: 1,
-        changedAt: DateTime.utc(2026, 9, 16, 6),
-      ),
-    });
-    expect(identical(merged, snapshot), isTrue);
-  });
+  test(
+    'Provider-only fixtures can never alter an unrelated canonical match',
+    () {
+      final raw =
+          jsonDecode(File('assets/demo.snapshot.json').readAsStringSync())
+              as Json;
+      final snapshot = Snapshot({...raw, 'demo': false});
+      final merged = snapshot.withLiveUpdates({
+        'fb_match_not_in_snapshot': LiveMatchUpdate(
+          matchId: 'fb_match_not_in_snapshot',
+          provider: 'api_football',
+          externalMatchId: '999',
+          status: 'LIVE',
+          minute: 10,
+          homeScore: 1,
+          awayScore: 0,
+          revision: 1,
+          eventCount: 1,
+          changedAt: DateTime.utc(2026, 9, 16, 6),
+        ),
+      });
+      expect(identical(merged, snapshot), isTrue);
+    },
+  );
 }
