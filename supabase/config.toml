@@ -4,4 +4,7 @@ project_id = "FutBeat"
 verify_jwt = true
 
 [functions.futbeat-live-sync]
-verify_jwt = false
+verify_jwt = true
+
+[functions.futbeat-push-dispatch]
+verify_jwt = true

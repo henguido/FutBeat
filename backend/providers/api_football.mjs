@@ -88,7 +88,7 @@ function mapEventType(type, detail) {
   return 'OTHER';
 }
 
-function stableEventId(fixtureId, event, index) {
+function stableEventId(fixtureId, event) {
   const fingerprint = JSON.stringify([
     fixtureId,
     event.time?.elapsed ?? null,
@@ -98,7 +98,6 @@ function stableEventId(fixtureId, event, index) {
     event.assist?.id ?? null,
     event.type ?? null,
     event.detail ?? null,
-    index,
   ]);
   return `api_football_${createHash('sha1').update(fingerprint).digest('hex').slice(0, 20)}`;
 }
@@ -176,7 +175,7 @@ export async function normalizeApiFootballLive(raw, resolve, receivedAt) {
     if (teamIds.home === teamIds.away) throw new Error('Home and away team cannot be the same');
 
     const events = [];
-    for (const [index, event] of (item.events ?? []).entries()) {
+    for (const event of (item.events ?? [])) {
       const externalTeamId = event.team?.id;
       const teamId = String(externalTeamId) === String(item.teams.home.id)
         ? teamIds.home
@@ -199,7 +198,7 @@ export async function normalizeApiFootballLive(raw, resolve, receivedAt) {
       }
 
       const normalizedEvent = {
-        id: stableEventId(fixtureId, event, index),
+        id: stableEventId(fixtureId, event),
         minute: Number.isInteger(event.time?.elapsed) ? event.time.elapsed : 0,
         type: mapEventType(event.type, event.detail),
         teamId,

@@ -1,6 +1,6 @@
+import { normalizeObservation } from '../../../backend/providers/live_observation.mjs';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const CRON_TOKEN_SHA256 = "4272322ea3b2da61f5dbef7546569b6a3f4806c586dff1f515ed64fd8415636b";
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), {
   status,
@@ -19,21 +19,16 @@ function defaultSecret() {
   }
 }
 
-async function sha256Hex(value: string) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function authorizationKind(req: Request) {
-  const legacy = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const auth = req.headers.get("authorization") ?? "";
-  const secret = defaultSecret();
-  const apikey = req.headers.get("apikey") ?? "";
-  if ((legacy && auth === `Bearer ${legacy}`) || (secret && apikey === secret)) return "server";
-
-  const cronToken = req.headers.get("x-futbeat-cron-token") ?? "";
-  if (cronToken && await sha256Hex(cronToken) === CRON_TOKEN_SHA256) return "cron";
-  return null;
+ const legacy=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+ const secret=defaultSecret();
+ if((legacy && req.headers.get("authorization")==="Bearer "+legacy) ||
+    (secret && req.headers.get("apikey")===secret)) return "server";
+ const token=req.headers.get("x-futbeat-scheduler");
+ const url=Deno.env.get("SUPABASE_URL");
+ if(!token || !url || !secret) return null;
+ try { return await rpc(url,secret,"futbeat_authorize_push_scheduler",{p_token:token}) ? "cron" : null; }
+ catch { return null; }
 }
 
 async function rpc(supabaseUrl: string, secret: string, name: string, body: unknown) {
@@ -54,117 +49,6 @@ async function rpc(supabaseUrl: string, secret: string, name: string, body: unkn
 function remainingAsInteger(value: string | null) {
   if (value == null || !/^\d+$/.test(value)) return null;
   return Number(value);
-}
-
-function mapStatus(short: unknown) {
-  return ({
-    TBD: "DISCOVERED",
-    NS: "SCHEDULED",
-    "1H": "LIVE",
-    HT: "HALFTIME",
-    "2H": "LIVE",
-    ET: "EXTRA_TIME",
-    BT: "EXTRA_TIME",
-    P: "PENALTIES",
-    LIVE: "LIVE",
-    INT: "SUSPENDED",
-    SUSP: "SUSPENDED",
-    FT: "FINISHED_PENDING_VERIFICATION",
-    AET: "FINISHED_PENDING_VERIFICATION",
-    PEN: "FINISHED_PENDING_VERIFICATION",
-    PST: "POSTPONED",
-    CANC: "CANCELLED",
-    ABD: "ABANDONED",
-    AWD: "FINISHED_PENDING_VERIFICATION",
-    WO: "FINISHED_PENDING_VERIFICATION",
-  } as Record<string, string>)[String(short ?? "")] ?? "UNKNOWN";
-}
-
-function mapEventType(type: unknown, detail: unknown) {
-  if (type === "Goal") return detail === "Missed Penalty" ? "MISSED_PENALTY" : "GOAL";
-  if (type === "Card") {
-    return detail === "Red Card" || detail === "Second Yellow card" ? "RED_CARD" : "YELLOW_CARD";
-  }
-  if (type === "subst") return "SUBSTITUTION";
-  if (type === "Var") return "VAR";
-  return "OTHER";
-}
-
-function normalizeText(value: unknown) {
-  return String(value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[-_]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function trackedCompetition(item: any) {
-  return normalizeText(item?.league?.country) === "costa rica" ? "fb_comp_cr" : null;
-}
-
-async function normalizeObservation(item: any) {
-  const fixtureId = String(item?.fixture?.id ?? "");
-  if (!fixtureId) throw new Error("Missing fixture id");
-
-  const events = [];
-  for (const event of Array.isArray(item?.events) ? item.events : []) {
-    const fingerprint = JSON.stringify([
-      fixtureId,
-      event?.time?.elapsed ?? null,
-      event?.time?.extra ?? null,
-      event?.team?.id ?? null,
-      event?.player?.id ?? null,
-      event?.assist?.id ?? null,
-      event?.type ?? null,
-      event?.detail ?? null,
-      event?.comments ?? null,
-    ]);
-    const eventHash = await sha256Hex(fingerprint);
-    events.push({
-      eventKey: `api_football_${eventHash.slice(0, 40)}`,
-      type: mapEventType(event?.type, event?.detail),
-      minute: Number.isInteger(event?.time?.elapsed) ? event.time.elapsed : null,
-      teamExternalId: event?.team?.id == null ? null : String(event.team.id),
-      playerExternalId: event?.player?.id == null ? null : String(event.player.id),
-      detail: event?.detail ?? null,
-      payload: event,
-    });
-  }
-
-  const status = mapStatus(item?.fixture?.status?.short);
-  const minute = Number.isInteger(item?.fixture?.status?.elapsed) ? item.fixture.status.elapsed : null;
-  const home = Number.isInteger(item?.goals?.home) ? item.goals.home : null;
-  const away = Number.isInteger(item?.goals?.away) ? item.goals.away : null;
-  const payloadHash = await sha256Hex(JSON.stringify([
-    fixtureId,
-    status,
-    minute,
-    home,
-    away,
-    events.map((event) => event.eventKey),
-  ]));
-
-  return {
-    externalMatchId: fixtureId,
-    payloadHash,
-    status,
-    minute,
-    score: { home, away },
-    startTime: item?.fixture?.date ?? null,
-    competitionId: trackedCompetition(item),
-    homeTeam: {
-      externalId: item?.teams?.home?.id == null ? null : String(item.teams.home.id),
-      name: item?.teams?.home?.name ?? null,
-    },
-    awayTeam: {
-      externalId: item?.teams?.away?.id == null ? null : String(item.teams.away.id),
-      name: item?.teams?.away?.name ?? null,
-    },
-    events,
-    rawPayload: item,
-  };
 }
 
 Deno.serve(async (req: Request) => {

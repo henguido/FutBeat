@@ -1,5 +1,16 @@
 # Trazabilidad de los incrementos
 
+## Bloque LIVE — eventos y push
+
+| Historia | Avance verificable | Archivos | Evidencia |
+|---|---|---|---|
+| FB-US-005/006/008 | Marcador, minuto, estado y seis tipos de evento canónico actualizados por Realtime, con snapshot HTTP de respaldo | `backend/providers/live_observation.mjs`, `lib/core/live_realtime.dart`, `lib/features/matches/match_screen.dart` | Pruebas de evento, merge y reconexión |
+| FB-US-013 | Polling acotado, detección durable, primera observación silenciosa y publicación por revisión | `futbeat-live-sync`, migraciones LIVE | Pruebas de primera observación, duplicado y segundo gol |
+| FB-US-036/037/038/039 | Cuenta opcional, dispositivo propio y sincronización de equipos/partidos seguidos para push | `lib/core/push.dart`, `lib/features/profile/profile_screen.dart` | Prueba de propiedad autenticada y dos dispositivos |
+| FB-US-071 | Eventos públicos sanitizados con IDs `fb_*`; observaciones raw y outbox permanecen privadas | `canonical_events`, `notification_outbox`, RPCs privadas | Asesores Supabase y pruebas de roles |
+
+[Diseño, operación y activación de proveedores](LIVE-PUSH.md).
+
 ## Bloque 0.2 — datos reales y almacenamiento local
 
 ### Ampliación 0.3 — Supabase
@@ -44,7 +55,7 @@ Rutas de `lib/` y `test/` relativas a `apps/mobile/`. La referencia completa y l
 
 ## Próximos bloques
 
-1. Automatizar la ingesta remota con cuotas y control de fallos. La importación manual local y lectura móvil están verificadas en 0.2; migración, permisos y lectura HTTPS en Supabase están verificados en 0.3.
-2. Máquina de estados durable, scheduler, reconciliación de resultados (FB-US-014/018) y reglas por temporada (017); luego tabla LIVE (009/016), con todos los partidos simultáneos.
+1. Activar credenciales Firebase/APNs y validar entrega real en dispositivos Android/iOS; la outbox y el modo seguro ya están desplegados.
+2. Completar reconciliación de resultados (FB-US-014/018) y reglas por temporada (017); luego tabla LIVE (009/016), con todos los partidos simultáneos.
 3. Escudos/fotos con procedencia y derechos (055–061), noticias y sus relaciones (044–047), estados de fichajes (048–050).
-4. Cuenta/sincronización, notificaciones y descubrimiento de highlights, después de verificar el flujo de datos real.
+4. Preferencias detalladas de notificación y descubrimiento de highlights.
