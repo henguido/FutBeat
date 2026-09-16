@@ -2,6 +2,15 @@
 
 ## Bloque 0.2 — datos reales y almacenamiento local
 
+### Ampliación 0.3 — Supabase
+
+FB-US-004/043/071: mismas identidades, equivalencias y lote original trasladados
+a PostgreSQL remoto. `supabase/migrations/`, `supabase/functions/futbeat-api/` y
+`lib/core/providers.dart` habilitan lectura móvil HTTPS. Pruebas:
+`backend/test/cloud.test.mjs`, verificación SQL de permisos y prueba Dio contra
+Supabase. FB-US-001 sigue parcial: lectura real, pero automatización pendiente.
+[Evidencias y límites](CLOUD.md).
+
 | Historia | Avance verificable (parcial) | Archivos | Evidencia |
 |---|---|---|---|
 | FB-US-001/002 | Partidos reales en fechas disponibles, hora local y aviso de cobertura parcial | `backend/providers/thesportsdb.mjs`, `lib/features/matches/matches_screen.dart` | Importación real; prueba de navegación a fecha disponible |
@@ -35,7 +44,7 @@ Rutas de `lib/` y `test/` relativas a `apps/mobile/`. La referencia completa y l
 
 ## Próximos bloques
 
-1. Conectar el proyecto Supabase cuando esté accesible; verificar migración remota y adaptador de servidor. La importación manual, equivalencias, persistencia local y lectura móvil están verificadas en el bloque 0.2; cuotas y automatización siguen pendientes.
+1. Automatizar la ingesta remota con cuotas y control de fallos. La importación manual local y lectura móvil están verificadas en 0.2; migración, permisos y lectura HTTPS en Supabase están verificados en 0.3.
 2. Máquina de estados durable, scheduler, reconciliación de resultados (FB-US-014/018) y reglas por temporada (017); luego tabla LIVE (009/016), con todos los partidos simultáneos.
 3. Escudos/fotos con procedencia y derechos (055–061), noticias y sus relaciones (044–047), estados de fichajes (048–050).
 4. Cuenta/sincronización, notificaciones y descubrimiento de highlights, después de verificar el flujo de datos real.

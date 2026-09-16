@@ -1,0 +1,4 @@
+project_id = "FutBeat"
+
+[functions.futbeat-api]
+verify_jwt = true

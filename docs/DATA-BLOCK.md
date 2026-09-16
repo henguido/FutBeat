@@ -63,20 +63,20 @@ el plan y sus condiciones. No se descargan ni publican escudos del proveedor.
 
 ## Supabase
 
-Proyecto indicado: `izlmruqawgagwdcsjhte`. La conexión disponible devolvió un error
-de permisos al consultarlo. **No se aplicaron migraciones remotas ni se conectó la
-app a ese proyecto.**
+Proyecto: `izlmruqawgagwdcsjhte` (FutBeat). Tras autorizar la cuenta propietaria,
+se aplicaron ambas migraciones, se trasladó el lote local en una transacción y se
+desplegó la función `futbeat-api`. [Estado y ejecución en la nube](CLOUD.md).
 
-La migración en `supabase/migrations/` fue creada con la CLI y ejecutada en
-PostgreSQL local mediante PGlite. Se probó el rechazo de lectura por un rol sin
-privilegios. La compatibilidad con la plataforma Supabase completa, sus asesores,
-Auth y Realtime sigue pendiente de acceso y despliegue. El esquema actual guarda
+Las migraciones en `supabase/migrations/` fueron creadas con la CLI y ejecutadas en
+PostgreSQL local mediante PGlite y en Supabase. Sus versiones se alinearon con el
+historial remoto; el registro local se actualiza sin recrear tablas. Se probó el
+rechazo de lectura por un rol sin privilegios. Auth de usuarios y Realtime siguen
+pendientes. El esquema actual guarda
 entidades y sus payloads JSONB; todavía no representa todo el modelo relacional
 de temporadas, reglas y eventos definido en la arquitectura.
 
 ## Próximo incremento
 
-Una vez disponible el acceso: revisar el esquema remoto, preparar el adaptador
-PostgreSQL de servidor y verificar migración y permisos en Supabase. Después:
+La lectura remota está desplegada. Próximo: ingesta remota repetible y
 scheduler con cuotas/bloqueos/reintentos, ciclo de partido y reconciliación;
 reglas por temporada antes de construir la tabla LIVE.

@@ -9,6 +9,11 @@ const known = { 'competition:4815': 'fb_comp_cr', 'team:139705': 'fb_team_car', 
 export async function openDatabase(directory) {
   const db = await PGlite.create(directory);
   await db.exec('create table if not exists public.futbeat_migrations (name text primary key); alter table public.futbeat_migrations enable row level security; revoke all on public.futbeat_migrations from public;');
+  // Reconcile local development timestamps with the versions recorded by Supabase.
+  for (const [previous, deployed] of [
+    ['20260916023038_provider_ingestion.sql', '20260916025345_provider_ingestion.sql'],
+    ['20260916025130_cloud_snapshot_read.sql', '20260916025352_cloud_snapshot_read.sql'],
+  ]) await db.query('update public.futbeat_migrations set name=$2 where name=$1', [previous, deployed]);
   const folder = new URL('../../supabase/migrations/', import.meta.url);
   for (const name of (await readdir(folder)).filter((name) => name.endsWith('.sql')).sort()) {
     await db.transaction(async (tx) => {

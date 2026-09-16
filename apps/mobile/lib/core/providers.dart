@@ -29,10 +29,14 @@ class ApiRepository implements FootballRepository {
 
 final repositoryProvider = Provider<FootballRepository>((ref) {
   const baseUrl = String.fromEnvironment('FUTBEAT_API_URL');
+  const publicToken = String.fromEnvironment('FUTBEAT_API_PUBLIC_TOKEN');
   if (baseUrl.isEmpty) return DemoRepository();
   final dio = Dio(
     BaseOptions(
       baseUrl: baseUrl,
+      headers: publicToken.isEmpty
+          ? null
+          : {'Authorization': 'Bearer $publicToken'},
       connectTimeout: const Duration(seconds: 8),
       receiveTimeout: const Duration(seconds: 8),
     ),

@@ -1,5 +1,18 @@
 # Verificación
 
+## Bloque 0.3 — conexión Supabase
+
+- 10 pruebas backend aprobadas y análisis Flutter sin incidencias.
+- Prueba Flutter/Dio contra HTTPS real aprobada: 2 partidos y 4 equipos.
+- API remota: 200 con JWT público y 401 sin autorización.
+- Migraciones, RLS y permisos SQL verificados en el proyecto FutBeat.
+- Base local reabierta tras alinear versiones de migraciones: conserva 2 partidos.
+- APK conectado compilado: `futbeat-cloud-debug.apk` en el directorio de salida
+  habitual. SHA-256: `BC1E43202A614E4A7A9304CD958B1F53C7B5B983CDC2FF01FEE0EC997D005635`.
+
+[Detalles, asesor de seguridad y límites](CLOUD.md). Este APK todavía requiere
+prueba física del usuario. La sincronización remota automática no está implementada.
+
 ## Bloque 0.2 — 16 septiembre 2026 UTC
 
 - 9 pruebas backend: contrato, persistencia tras reinicio, identidad estable,

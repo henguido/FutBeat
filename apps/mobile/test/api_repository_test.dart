@@ -10,7 +10,13 @@ void main() {
     test(
       'real persisted provider snapshot reaches the mobile repository',
       () async {
-        final dio = Dio(BaseOptions(baseUrl: providerUrl));
+        final token = Platform.environment['FUTBEAT_VERIFY_TOKEN'];
+        final dio = Dio(
+          BaseOptions(
+            baseUrl: providerUrl,
+            headers: token == null ? null : {'Authorization': 'Bearer $token'},
+          ),
+        );
         addTearDown(() => dio.close(force: true));
         final snapshot = await ApiRepository(dio).load();
         expect(snapshot.demo, isFalse);
