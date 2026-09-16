@@ -115,7 +115,7 @@ class LiveRealtimeClient {
             'payload': {
               'config': {
                 'broadcast': {'ack': false, 'self': false},
-                'presence': {'key': ''},
+                'presence': {'enabled': false, 'key': ''},
                 'postgres_changes': [
                   {
                     'event': '*',
@@ -123,6 +123,7 @@ class LiveRealtimeClient {
                     'table': 'live_match_updates',
                   },
                 ],
+                'private': false,
               },
             },
             'ref': joinRef,
