@@ -44,9 +44,10 @@ class LiveRealtimeConfig {
 
   bool get isConfigured => supabaseUrl.isNotEmpty && publicKey.isNotEmpty;
 
-  Uri get restUri => Uri.parse('$supabaseUrl/rest/v1/live_match_updates').replace(
-    queryParameters: const {'select': '*'},
-  );
+  Uri get restUri =>
+      Uri.parse('$supabaseUrl/rest/v1/live_match_updates').replace(
+        queryParameters: const {'select': '*'},
+      );
 
   Uri get websocketUri {
     final base = Uri.parse(supabaseUrl);
