@@ -64,6 +64,20 @@ function mapEventType(type: unknown, detail: unknown) {
   return "OTHER";
 }
 
+function normalizeText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function trackedCompetition(item: any) {
+  return normalizeText(item?.league?.country) === "costa rica" ? "fb_comp_cr" : null;
+}
+
 async function normalizeObservation(item: any) {
   const fixtureId = String(item?.fixture?.id ?? "");
   if (!fixtureId) throw new Error("Missing fixture id");
@@ -112,6 +126,16 @@ async function normalizeObservation(item: any) {
     status,
     minute,
     score: { home, away },
+    startTime: item?.fixture?.date ?? null,
+    competitionId: trackedCompetition(item),
+    homeTeam: {
+      externalId: item?.teams?.home?.id == null ? null : String(item.teams.home.id),
+      name: item?.teams?.home?.name ?? null,
+    },
+    awayTeam: {
+      externalId: item?.teams?.away?.id == null ? null : String(item.teams.away.id),
+      name: item?.teams?.away?.name ?? null,
+    },
     events,
     rawPayload: item,
   };
@@ -168,6 +192,7 @@ Deno.serve(async (req: Request) => {
       provider: "api_football",
       ok: true,
       liveMatches: observations.length,
+      trackedMatches: observations.filter((item) => item.competitionId != null).length,
       remaining,
       checkedAt,
       persistence,
