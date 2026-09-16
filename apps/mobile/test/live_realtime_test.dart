@@ -28,8 +28,9 @@ void main() {
   });
 
   test('FB-US-005/012: canonical LIVE state overlays score and status', () {
-    final raw =
-        jsonDecode(File('assets/demo.snapshot.json').readAsStringSync()) as Json;
+    final raw = jsonDecode(
+      File('assets/demo.snapshot.json').readAsStringSync(),
+    ) as Json;
     final snapshot = Snapshot({...raw, 'demo': false});
     final match = snapshot.matches.first;
     final originalEvents = match.events.length;
@@ -60,9 +61,9 @@ void main() {
   test(
     'Provider-only fixtures can never alter an unrelated canonical match',
     () {
-      final raw =
-          jsonDecode(File('assets/demo.snapshot.json').readAsStringSync())
-              as Json;
+      final raw = jsonDecode(
+        File('assets/demo.snapshot.json').readAsStringSync(),
+      ) as Json;
       final snapshot = Snapshot({...raw, 'demo': false});
       final merged = snapshot.withLiveUpdates({
         'fb_match_not_in_snapshot': LiveMatchUpdate(

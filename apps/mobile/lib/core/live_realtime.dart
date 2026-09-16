@@ -18,9 +18,7 @@ class LiveRealtimeConfig {
     publishableKey: const String.fromEnvironment(
       'FUTBEAT_SUPABASE_PUBLISHABLE_KEY',
     ),
-    legacyPublicToken: const String.fromEnvironment(
-      'FUTBEAT_API_PUBLIC_TOKEN',
-    ),
+    legacyPublicToken: const String.fromEnvironment('FUTBEAT_API_PUBLIC_TOKEN'),
   );
 
   factory LiveRealtimeConfig.fromValues({
@@ -45,9 +43,8 @@ class LiveRealtimeConfig {
   bool get isConfigured => supabaseUrl.isNotEmpty && publicKey.isNotEmpty;
 
   Uri get restUri =>
-      Uri.parse('$supabaseUrl/rest/v1/live_match_updates').replace(
-        queryParameters: const {'select': '*'},
-      );
+      Uri.parse('$supabaseUrl/rest/v1/live_match_updates')
+          .replace(queryParameters: const {'select': '*'});
 
   Uri get websocketUri {
     final base = Uri.parse(supabaseUrl);
