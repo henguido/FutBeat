@@ -28,4 +28,36 @@ void main() {
       }
     },
   );
+  test(
+    'country inference, manual selection and temporary interest stay separate',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      try {
+        await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+        var preference = await db.watchPreference().first;
+        expect(preference.detectedCountry, 'CR');
+        expect(preference.selectedCountry, isNull);
+        expect(preference.effectiveCountry, 'CR');
+        expect(await db.watchFollows().first, isEmpty);
+
+        await db.savePreference(
+          detectedCountry: 'CR',
+          selectedCountry: 'MX',
+          bootstrapDismissed: true,
+        );
+        preference = await db.watchPreference().first;
+        expect(preference.detectedCountry, 'CR');
+        expect(preference.selectedCountry, 'MX');
+        expect(preference.effectiveCountry, 'MX');
+
+        await db.touchInterest('match', 'fb_match_open');
+        expect(await db.watchTemporaryInterests().first, {
+          'match:fb_match_open',
+        });
+        expect(await db.watchFollows().first, isEmpty);
+      } finally {
+        await db.close();
+      }
+    },
+  );
 }

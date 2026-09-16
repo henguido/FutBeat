@@ -1,5 +1,16 @@
 # Trazabilidad de los incrementos
 
+## Country Bootstrap + Favorites-First
+
+| Historia existente | Avance verificable | Evidencia |
+|---|---|---|
+| FB-US-001/002/004/071 | Bootstrap real de Costa Rica, calendario/resultados/equipos/tabla opcional, procedencia e IDs canónicos | Proveedor compartido, worker con ledger y pruebas de snapshot |
+| FB-US-036/037/038/039 | Favoritos de cuatro tipos alimentan prioridad agregada; eliminar favorito reduce el contador | RPC durable y prueba de 5000 seguidores en un solo trabajo |
+| FB-US-041/042 | Onboarding conserva búsqueda y permite explorar fuera del país sugerido | Flujo móvil y estado explícito sin cobertura |
+| FB-US-013 | Partido seguido o abierto prioriza LIVE/detalle sin llamadas por usuario | Interés temporal con TTL y planner agregado |
+
+[Diseño, privacidad y límites](COUNTRY-FAVORITES.md).
+
 ## Bloque LIVE — eventos y push
 
 | Historia | Avance verificable | Archivos | Evidencia |

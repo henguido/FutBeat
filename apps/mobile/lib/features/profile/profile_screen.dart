@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/push.dart';
+import 'country_preferences.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -48,6 +49,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          const CountryPreferencePanel(),
+          const SizedBox(height: 20),
           const Text('Tus favoritos se guardan en este dispositivo.'),
           const SizedBox(height: 20),
           if (!PushService.configured)

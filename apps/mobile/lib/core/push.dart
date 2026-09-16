@@ -170,7 +170,13 @@ class PushService {
       options: authHeaders,
       data: {
         'p_follows': values
-            .where((v) => v.startsWith('team:') || v.startsWith('match:'))
+            .where(
+              (v) =>
+                  v.startsWith('team:') ||
+                  v.startsWith('player:') ||
+                  v.startsWith('competition:') ||
+                  v.startsWith('match:'),
+            )
             .map(
               (v) => {
                 'type': v.split(':').first,
@@ -180,6 +186,28 @@ class PushService {
             .toList(),
       },
     );
+  }
+
+  Future<void> syncCountries(String? detected, String? selected) async {
+    if (!authenticated || disposed) return;
+    await dio.post(
+      '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_preferences',
+      options: authHeaders,
+      data: {'p_detected': detected, 'p_selected': selected},
+    );
+  }
+
+  Future<void> touchInterest(String type, String id) async {
+    if (!authenticated || disposed) return;
+    try {
+      await dio.post(
+        '${config.supabaseUrl}/rest/v1/rpc/futbeat_touch_temporary_interest',
+        options: authHeaders,
+        data: {'p_type': type, 'p_id': id, 'p_ttl_minutes': 30},
+      );
+    } catch (_) {
+      // Local temporary interest remains valid while offline or signed out.
+    }
   }
 
   Future<void> enable() async {

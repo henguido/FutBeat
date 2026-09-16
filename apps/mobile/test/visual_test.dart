@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/main.dart';
 
@@ -28,6 +29,9 @@ void main() {
         matchesGoldenFile('goldens/$name.png'),
       );
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pump();
     });
   }
 }

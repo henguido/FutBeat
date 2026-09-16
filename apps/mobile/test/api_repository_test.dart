@@ -40,9 +40,10 @@ void main() {
           request.response.statusCode = 503;
         } else {
           request.response.headers.contentType = ContentType.json;
-          request.response.write(
-            File('assets/demo.snapshot.json').readAsStringSync(),
-          );
+          final body = File('assets/demo.snapshot.json')
+              .readAsStringSync()
+              .replaceFirst('"demo": true', '"demo": false');
+          request.response.write(body);
         }
         await request.response.close();
       });
@@ -59,4 +60,21 @@ void main() {
       }
     },
   );
+  test('cloud repository never silently accepts demo data', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        File('assets/demo.snapshot.json').readAsStringSync(),
+      );
+      await request.response.close();
+    });
+    final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+    try {
+      await expectLater(ApiRepository(dio).load(), throwsA(isA<StateError>()));
+    } finally {
+      dio.close(force: true);
+      await server.close(force: true);
+    }
+  });
 }

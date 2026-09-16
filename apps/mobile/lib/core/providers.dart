@@ -24,8 +24,13 @@ class ApiRepository implements FootballRepository {
   ApiRepository(this.dio);
   final Dio dio;
   @override
-  Future<Snapshot> load() async =>
-      Snapshot((await dio.get<Json>('/v1/snapshot')).data!);
+  Future<Snapshot> load() async {
+    final snapshot = Snapshot((await dio.get<Json>('/v1/snapshot')).data!);
+    if (snapshot.demo) {
+      throw StateError('Cloud endpoint returned demo data');
+    }
+    return snapshot;
+  }
 }
 
 final repositoryProvider = Provider<FootballRepository>((ref) {

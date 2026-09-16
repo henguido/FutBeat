@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/interests.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
+import '../profile/country_preferences.dart';
 
 class MatchesScreen extends ConsumerStatefulWidget {
   const MatchesScreen({super.key});
@@ -44,7 +46,21 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             ? DateTime(2026, 9, 15)
             : DateUtils.dateOnly(DateTime.now());
         final selected = date ?? anchor;
-        final games = data.onDate(selected, filter);
+        final country = ref
+            .watch(preferenceProvider)
+            .asData
+            ?.value
+            .effectiveCountry;
+        final countryLabel = countryName(country);
+        final games = data
+            .onDate(selected, filter)
+            .where(
+              (match) =>
+                  country == null ||
+                  data.competition(match.competitionId)?.country ==
+                      countryLabel,
+            )
+            .toList();
         return RefreshIndicator(
           onRefresh: () async {
             ref.invalidate(snapshotProvider);
@@ -64,6 +80,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               ),
               const SizedBox(height: 20),
               if (data.demo) const DemoNotice(),
+              if (!data.demo) CountryPreferencePanel(compact: true, data: data),
+              if (!data.demo) const SizedBox(height: 12),
               Row(
                 children: [
                   IconButton(
@@ -185,8 +203,12 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               const SizedBox(height: 16),
               if (games.isEmpty)
                 EmptyState(
-                  'Sin partidos para esta selección',
-                  data.coverage?['partial'] == true
+                  country != null && country != 'CR'
+                      ? 'Cobertura todavía no disponible'
+                      : 'Sin partidos para esta selección',
+                  country != null && country != 'CR'
+                      ? 'Puedes seguir buscando equipos y ligas. No mostraremos datos demo como si fueran reales.'
+                      : data.coverage?['partial'] == true
                       ? 'La fuente puede no incluir todos los partidos. Consulta las fechas disponibles.'
                       : 'Prueba otra fecha o cambia el filtro.',
                 ),

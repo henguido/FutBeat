@@ -12,6 +12,13 @@ const raw = () => ({
   league: { leagues: [{ idLeague: '4815', strSport: 'Soccer', strLeague: 'Liga CR', strCurrentSeason: '2026-2027' }] },
   next: { events: [{ idEvent: 'test-1', idLeague: '4815', strSport: 'Soccer', strHomeTeam: 'Equipo A', strAwayTeam: 'Equipo B', idHomeTeam: '139705', idAwayTeam: '139703', strStatus: 'NS', strSeason: '2026-2027', strTimestamp: '2026-09-19T02:00:00', intHomeScore: null, intAwayScore: null }] },
   past: { events: null },
+  teams: { teams: [
+    { idTeam: '139705', strSport: 'Soccer', strTeam: 'Equipo A', strTeamShort: 'A' },
+    { idTeam: '139703', strSport: 'Soccer', strTeam: 'Equipo B', strTeamShort: 'B' },
+  ] },
+  table: { table: [
+    { idTeam: '139705', intPlayed: '2', intWin: '2', intDraw: '0', intLoss: '0', intGoalsFor: '4', intGoalsAgainst: '1', intPoints: '6' },
+  ] },
 });
 
 test('persistent identity, atomic rollback, partial windows, durable job dedup and freshness', async () => {
@@ -28,6 +35,8 @@ test('persistent identity, atomic rollback, partial windows, durable job dedup a
     assert.equal(before.matches[0].score, null);
     assert.equal(before.freshness.stale, true);
     assert.equal(before.demo, false);
+    assert.equal(before.teams.length, 2);
+    assert.equal(before.standings[0].rows[0].points, 6);
     for (const mutate of [r => r.next.events[0].strStatus = 'UNKNOWN', r => r.next.events[0].intHomeScore = '1', r => r.next.events[0].strTimestamp = 'bad', r => r.next.events[0].idAwayTeam = '139705']) {
       const invalid = raw(); mutate(invalid);
       await assert.rejects(store.import(invalid, 'failed', '2026-09-16T01:00:00Z'));
@@ -58,7 +67,7 @@ test('persistent identity, atomic rollback, partial windows, durable job dedup a
 test('provider HTTP failure stops batch without retries; only official endpoints', async () => {
   const urls = [];
   await assert.rejects(fetchCostaRica({ fetcher: async url => { urls.push(url); return { ok: false, status: 429 }; } }), /429/);
-  assert.equal(urls.length, 1);
+    assert.equal(urls.length, 1);
   assert.match(urls[0], /^https:\/\/www.thesportsdb.com\/api\/v1\/json\/123\//);
 });
 
