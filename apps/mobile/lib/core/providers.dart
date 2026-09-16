@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'database.dart';
+import 'live_realtime.dart';
 import 'models.dart';
 
 abstract interface class FootballRepository {
@@ -44,9 +45,39 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
   ref.onDispose(() => dio.close(force: true));
   return ApiRepository(dio);
 });
+
 final snapshotProvider = FutureProvider<Snapshot>(
   (ref) => ref.watch(repositoryProvider).load(),
 );
+
+final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(
+  (ref) => LiveRealtimeConfig.fromEnvironment(),
+);
+
+final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
+  final dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 8),
+    ),
+  );
+  ref.onDispose(() => dio.close(force: true));
+  return LiveRealtimeClient(ref.watch(liveRealtimeConfigProvider), dio);
+});
+
+final liveMatchUpdatesProvider = StreamProvider<Map<String, LiveMatchUpdate>>(
+  (ref) => ref.watch(liveRealtimeClientProvider).watch(),
+);
+
+final effectiveSnapshotProvider = Provider<AsyncValue<Snapshot>>((ref) {
+  final updates =
+      ref.watch(liveMatchUpdatesProvider).asData?.value ??
+      const <String, LiveMatchUpdate>{};
+  return ref
+      .watch(snapshotProvider)
+      .whenData((snapshot) => snapshot.withLiveUpdates(updates));
+});
+
 final databaseProvider = Provider<AppDatabase>((ref) {
   final db = AppDatabase();
   ref.onDispose(db.close);
