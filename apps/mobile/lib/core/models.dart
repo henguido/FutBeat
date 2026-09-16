@@ -23,6 +23,52 @@ class Entity {
   ].join(' ').toLowerCase().contains(query.trim().toLowerCase());
 }
 
+class LiveMatchUpdate {
+  const LiveMatchUpdate({
+    required this.matchId,
+    required this.provider,
+    required this.externalMatchId,
+    required this.status,
+    required this.minute,
+    required this.homeScore,
+    required this.awayScore,
+    required this.revision,
+    required this.eventCount,
+    required this.changedAt,
+  });
+
+  factory LiveMatchUpdate.fromJson(Json json) => LiveMatchUpdate(
+    matchId: json['match_id'] as String,
+    provider: json['provider'] as String,
+    externalMatchId: json['external_match_id'] as String,
+    status: json['status'] as String,
+    minute: json['minute'] as int?,
+    homeScore: json['home_score'] as int?,
+    awayScore: json['away_score'] as int?,
+    revision: (json['revision'] as num).toInt(),
+    eventCount: (json['event_count'] as num?)?.toInt() ?? 0,
+    changedAt: DateTime.parse(json['changed_at'] as String),
+  );
+
+  final String matchId, provider, externalMatchId, status;
+  final int? minute, homeScore, awayScore;
+  final int revision, eventCount;
+  final DateTime changedAt;
+
+  Json applyTo(Json match) {
+    final result = Json.of(match)
+      ..['status'] = status
+      ..['minute'] = minute
+      ..['liveRevision'] = revision
+      ..['liveProvider'] = provider
+      ..['liveChangedAt'] = changedAt.toIso8601String();
+    if (homeScore != null && awayScore != null) {
+      result['score'] = {'home': homeScore, 'away': awayScore};
+    }
+    return result;
+  }
+}
+
 class FootballMatch {
   FootballMatch(this.json);
   final Json json;
@@ -96,6 +142,31 @@ class Snapshot {
   final List<Entity> teams, players, competitions;
   final List<FootballMatch> matches;
   final List<Json> standings;
+
+  Snapshot withLiveUpdates(Map<String, LiveMatchUpdate> updates) {
+    if (demo || updates.isEmpty) return this;
+    var changed = false;
+    final mergedMatches = matches.map((match) {
+      final update = updates[match.id];
+      if (update == null) return match.json;
+      changed = true;
+      return update.applyTo(match.json);
+    }).toList();
+    if (!changed) return this;
+    return Snapshot({
+      'schemaVersion': 1,
+      'demo': demo,
+      'coverage': coverage,
+      'freshness': {'stale': false},
+      'updatedAt': updatedAt.toIso8601String(),
+      'teams': teams.map((entity) => entity.json).toList(),
+      'players': players.map((entity) => entity.json).toList(),
+      'competitions': competitions.map((entity) => entity.json).toList(),
+      'matches': mergedMatches,
+      'standings': standings,
+    });
+  }
+
   Entity? team(String id) => teams.where((e) => e.id == id).firstOrNull;
   Entity? player(String id) => players.where((e) => e.id == id).firstOrNull;
   Entity? competition(String id) =>
