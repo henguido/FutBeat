@@ -159,7 +159,7 @@ class MatchScreen extends StatelessWidget {
                     style: const TextStyle(fontSize: 11, color: muted),
                   ),
                   Text(
-                    'Actualización: ${data.updatedAt.toLocal()}',
+                    'Actualización: ${DateTime.parse(match.json['provenance']['receivedAt'] as String).toLocal()}',
                     style: const TextStyle(fontSize: 11, color: muted),
                   ),
                 ],

@@ -158,7 +158,25 @@ class DataView extends ConsumerWidget {
             ],
           ),
         ),
-        data: builder,
+        data: (data) => Column(
+          children: [
+            if (!data.demo && data.coverage != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
+                ),
+                color: lime.withValues(alpha: .08),
+                child: Text(
+                  '${data.coverage!['source']} · Cobertura parcial · Sin directo'
+                  '${data.stale ? '\nDatos antiguos: pendientes de actualizar' : ''}',
+                  style: const TextStyle(color: lime, fontSize: 12),
+                ),
+              ),
+            Expanded(child: builder(data)),
+          ],
+        ),
       );
 }
 

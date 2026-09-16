@@ -14,4 +14,6 @@ local.properties
 .DS_Store
 coverage/
 node_modules/
+.local-data/
+supabase/.temp/
 *.log

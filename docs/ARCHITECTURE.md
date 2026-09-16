@@ -24,7 +24,17 @@ GitHub confirmó `henguido/FutBeat` privado, tamaño 0, sin commits. La carpeta 
 | Tabla LIVE/reglas por temporada | Tabla de ejemplo con PJ/G/E/P/GF/GC/DG/PTS, expresamente estática | Cálculo simultáneo, reglas y reconciliación |
 | Media Engine | Componente de imágenes verificadas y fallback de iniciales | Obtención de escudos/fotos con fuente y derechos |
 
-## Recorrido de datos
+## Ampliación del bloque 0.2
+
+TheSportsDB → normalización → transacción PostgreSQL/PGlite → BFF `/v1/snapshot`
+→ repositorio Dio → pantallas existentes. `provider_entities` mantiene identidad
+canónica, `entities` conserva payloads JSONB y `imports` conserva lotes originales
+y snapshots. Es una base parcial del modelo, no la arquitectura relacional completa.
+La validación del grafo precede al commit. El almacenamiento local admite un único
+proceso; aún no hay adaptador remoto, scheduler ni bloqueos distribuidos.
+La migración usa esquema privado y RLS. [Detalles y conexión pendiente a Supabase](DATA-BLOCK.md).
+
+## Recorrido de datos demo (bloque 0.1)
 
 `packages/contracts/demo.snapshot.json` → API de demostración `/v1/snapshot` → `ApiRepository` (Dio) → `Snapshot` → Riverpod → pantallas.
 

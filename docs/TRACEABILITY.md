@@ -1,4 +1,18 @@
-# Trazabilidad del incremento 0.1
+# Trazabilidad de los incrementos
+
+## Bloque 0.2 — datos reales y almacenamiento local
+
+| Historia | Avance verificable (parcial) | Archivos | Evidencia |
+|---|---|---|---|
+| FB-US-001/002 | Partidos reales en fechas disponibles, hora local y aviso de cobertura parcial | `backend/providers/thesportsdb.mjs`, `lib/features/matches/matches_screen.dart` | Importación real; prueba de navegación a fecha disponible |
+| FB-US-004/043 | Equivalencias persistentes y IDs internos estables | `backend/storage/database.mjs`, `supabase/migrations/` | Reinicio, actualización y deduplicación de job |
+| FB-US-012/014/072 | Estados reconocidos, FT pendiente de verificar, rechazo de estados desconocidos | `backend/providers/thesportsdb.mjs` | Normalización y rollback; reconciliación pendiente |
+| FB-US-071 | Respuesta original, fuente y fecha de recepción persistentes; fecha por partido en pantalla | `backend/storage/database.mjs`, `lib/features/matches/match_screen.dart` | PostgreSQL local + respuesta HTTP |
+| FB-US-073 | Rechazo de observaciones contradictorias dentro del lote | `backend/providers/thesportsdb.mjs` | Implementación parcial; comparación entre proveedores pendiente |
+
+Pruebas principales: `backend/test/provider.test.mjs`, `apps/mobile/test/flow_test.dart` y `api_repository_test.dart`. [Operación y límites](DATA-BLOCK.md). Estas mejoras no cierran historias de automatización, cobertura completa ni verificación multi-fuente.
+
+## Bloque 0.1 — base demo
 
 **Implementado en demo** significa que funciona con el fixture; no cierra los criterios de ingestión o actualización automática de la historia. **Base parcial** no equivale a historia aceptada.
 
@@ -21,7 +35,7 @@ Rutas de `lib/` y `test/` relativas a `apps/mobile/`. La referencia completa y l
 
 ## Próximos bloques
 
-1. Proveedor autorizado para Costa Rica, equivalencias `provider_entities`, observaciones y PostgreSQL/RLS; fixture → ingesta → persistencia → BFF → móvil. Pruebas de duplicados, errores y cuotas.
+1. Conectar el proyecto Supabase cuando esté accesible; verificar migración remota y adaptador de servidor. La importación manual, equivalencias, persistencia local y lectura móvil están verificadas en el bloque 0.2; cuotas y automatización siguen pendientes.
 2. Máquina de estados durable, scheduler, reconciliación de resultados (FB-US-014/018) y reglas por temporada (017); luego tabla LIVE (009/016), con todos los partidos simultáneos.
 3. Escudos/fotos con procedencia y derechos (055–061), noticias y sus relaciones (044–047), estados de fichajes (048–050).
 4. Cuenta/sincronización, notificaciones y descubrimiento de highlights, después de verificar el flujo de datos real.

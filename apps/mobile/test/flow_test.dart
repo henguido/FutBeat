@@ -12,14 +12,28 @@ import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/main.dart';
 
 class TestRepository implements FootballRepository {
-  TestRepository({this.fail = false});
+  TestRepository({this.fail = false, this.real = false});
   bool fail;
+  final bool real;
   @override
   Future<Snapshot> load() async {
     if (fail) throw const SocketException('Offline');
-    return Snapshot(
-      jsonDecode(File('assets/demo.snapshot.json').readAsStringSync()) as Json,
-    );
+    final json = jsonDecode(
+      File('assets/demo.snapshot.json').readAsStringSync(),
+    ) as Json;
+    if (real) {
+      json['demo'] = false;
+      json['coverage'] = {
+        'source': 'TheSportsDB',
+        'partial': true,
+        'live': false,
+      };
+      json['freshness'] = {'stale': true};
+      for (final match in json['matches'] as List) {
+        match['startTime'] = '2030-01-20T18:00:00Z';
+      }
+    }
+    return Snapshot(json);
   }
 }
 
@@ -47,6 +61,22 @@ Future<void> openApp(
 }
 
 void main() {
+  testWidgets(
+    'partial provider coverage exposes available dates and stale data',
+    (tester) async {
+      await openApp(tester, repository: TestRepository(real: true));
+      expect(find.textContaining('Cobertura parcial'), findsOneWidget);
+      expect(find.textContaining('Datos antiguos'), findsOneWidget);
+      expect(find.textContaining('La fuente puede no incluir'), findsOneWidget);
+      final available = find.widgetWithText(ActionChip, '20/1/2030');
+      await tester.ensureVisible(available);
+      await tester.tap(available);
+      await tester.pumpAndSettle();
+      expect(find.text('Sin partidos para esta selección'), findsNothing);
+      expect(find.text('Liga Promerica'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets('FB-US-036: follow from profile appears in favorites', (
     tester,
   ) async {

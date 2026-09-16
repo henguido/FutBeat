@@ -3,10 +3,20 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test backend/test/*.test.mjs",
     "api": "node backend/api/server.mjs",
+    "api:real": "node backend/api/real.mjs",
+    "data:sync": "node backend/api/real.mjs --sync",
     "check": "node --check backend/api/server.mjs && node --check backend/providers/core/snapshot.mjs && node --check backend/automation/sync.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8"
+  },
+  "devDependencies": {
+    "supabase": "2.117.0"
   }
 }

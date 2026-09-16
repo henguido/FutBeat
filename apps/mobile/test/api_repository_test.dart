@@ -5,6 +5,25 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/providers.dart';
 
 void main() {
+  final providerUrl = Platform.environment['FUTBEAT_VERIFY_URL'];
+  if (providerUrl != null) {
+    test(
+      'real persisted provider snapshot reaches the mobile repository',
+      () async {
+        final dio = Dio(BaseOptions(baseUrl: providerUrl));
+        addTearDown(() => dio.close(force: true));
+        final snapshot = await ApiRepository(dio).load();
+        expect(snapshot.demo, isFalse);
+        expect(snapshot.coverage?['source'], 'TheSportsDB');
+        expect(snapshot.matches, isNotEmpty);
+        for (final match in snapshot.matches) {
+          expect(snapshot.team(match.homeId), isNotNull);
+          expect(snapshot.team(match.awayId), isNotNull);
+          expect(match.json['provenance']['verificationStatus'], 'PROVISIONAL');
+        }
+      },
+    );
+  }
   test(
     'Dio reads canonical snapshot over HTTP and surfaces server failures',
     () async {

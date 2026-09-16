@@ -64,6 +64,8 @@ class FootballMatch {
 class Snapshot {
   Snapshot(Json json)
     : demo = json['demo'] as bool,
+      coverage = json['coverage'] as Json?,
+      stale = (json['freshness'] as Json?)?['stale'] == true,
       updatedAt = DateTime.parse(json['updatedAt'] as String),
       teams = (json['teams'] as List).map((e) => Entity(e as Json)).toList(),
       players = (json['players'] as List)
@@ -88,6 +90,8 @@ class Snapshot {
     }
   }
   final bool demo;
+  final Json? coverage;
+  final bool stale;
   final DateTime updatedAt;
   final List<Entity> teams, players, competitions;
   final List<FootballMatch> matches;

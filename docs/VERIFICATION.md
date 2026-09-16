@@ -1,4 +1,28 @@
-# Verificación · incremento inicial · 15 septiembre 2026
+# Verificación
+
+## Bloque 0.2 — 16 septiembre 2026 UTC
+
+- 9 pruebas backend: contrato, persistencia tras reinicio, identidad estable,
+  idempotencia, rollback, ventanas parciales, errores HTTP, orden temporal y
+  rechazo de lectura SQL por un rol sin privilegios.
+- 19 pruebas móviles aprobadas, incluidas las 4 comparaciones visuales originales
+  y el nuevo flujo de cobertura parcial/antigüedad/fechas disponibles.
+- Prueba adicional real aprobada: `FUTBEAT_VERIFY_URL=http://127.0.0.1:8787`
+  con `flutter test test/api_repository_test.dart` leyó los datos guardados desde
+  Dio y comprobó equipos, partidos, fuente y estado provisional.
+- Importación oficial real: 2 partidos, 4 equipos; lote recibido
+  `2026-09-16T02:36:22.347Z`. No se infiere exactitud deportiva de esta prueba.
+- Análisis Flutter sin incidencias y APK Android debug compilado.
+- SHA-256 APK de este bloque:
+  `0499C2C04B8AE063A4DD8607766AA6B8042619CC621C14322BE0F9FD82844B5A`.
+
+El APK predeterminado sigue en demo. [Instrucciones para conectarlo a la API local](DATA-BLOCK.md).
+No se probó este APK nuevo en teléfono físico ni se compiló iOS. Supabase remoto
+no está conectado: el proyecto facilitado devolvió un error de permisos. La
+migración se verificó en PGlite, no en la plataforma Supabase completa. No hay
+actualización automática ni datos LIVE en este bloque.
+
+## Registro del incremento inicial · 15 septiembre 2026
 
 ## Entorno
 

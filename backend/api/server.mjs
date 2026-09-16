@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { SnapshotStore } from '../automation/sync.mjs';
 
 export function createApi(store) {
-  return createServer((request, response) => {
+  return createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
     response.setHeader('Cache-Control', 'no-store');
     if (request.method !== 'GET') {
@@ -12,8 +12,11 @@ export function createApi(store) {
       return response.end(JSON.stringify({ error: 'Method not allowed' }));
     }
     const path = new URL(request.url, 'http://localhost').pathname;
-    if (path === '/health') return response.end(JSON.stringify({ status: 'ok', mode: 'demo' }));
-    if (path === '/v1/snapshot') return response.end(JSON.stringify(store.read()));
+    if (path === '/health') return response.end(JSON.stringify({ status: 'ok', mode: store.mode ?? 'demo' }));
+    if (path === '/v1/snapshot') {
+      try { return response.end(JSON.stringify(await store.read())); }
+      catch { response.writeHead(503); return response.end(JSON.stringify({ error: 'Datos temporalmente no disponibles' })); }
+    }
     response.writeHead(404);
     response.end(JSON.stringify({ error: 'Not found' }));
   });

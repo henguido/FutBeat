@@ -36,7 +36,7 @@ GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
             title: 'Noticias',
             child: EmptyState(
               'El fútbol también se cuenta',
-              'Todavía no hay noticias disponibles en esta demostración. Las fuentes se conectarán en el siguiente incremento.',
+              'Todavía no hay noticias disponibles. Las fuentes de noticias se conectarán en un próximo incremento.',
               icon: Icons.article_outlined,
             ),
           ),

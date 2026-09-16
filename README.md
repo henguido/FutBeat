@@ -50,6 +50,7 @@ HTTP local está permitido solo en la variante debug. Una API de producción deb
 ## Verificar
 
 ```sh
+npm ci
 node --test backend/test/*.test.mjs
 cd apps/mobile
 dart format --output=none --set-exit-if-changed lib test
@@ -80,4 +81,4 @@ docs/                    Arquitectura, trazabilidad, verificaciones
 - [Resultados y límites de verificación](docs/VERIFICATION.md)
 - [Contrato de datos](packages/contracts/README.md)
 
-El siguiente incremento conecta el primer proveedor autorizado con almacenamiento, procedencia y API; después se implementarán el ciclo de partido y la tabla LIVE verificable.
+El bloque 0.2 añade el proveedor TheSportsDB para Costa Rica, persistencia PostgreSQL local y lectura desde el móvil. Consulta [cómo ejecutar y verificar los datos reales](docs/DATA-BLOCK.md). La demo continúa siendo el modo predeterminado; Supabase remoto, ciclo automatizado de partido y tabla LIVE siguen pendientes.

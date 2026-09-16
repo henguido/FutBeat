@@ -139,9 +139,11 @@ class EntityScreen extends StatelessWidget {
                     ] else if (tab == 'Tabla')
                       Standings(data, competitionId)
                     else if (tab == 'Plantilla') ...[
-                      const Text(
-                        'Selección de jugadores de demostración',
-                        style: TextStyle(color: muted),
+                      Text(
+                        data.demo
+                            ? 'Selección de jugadores de demostración'
+                            : 'Jugadores disponibles',
+                        style: const TextStyle(color: muted),
                       ),
                       const SizedBox(height: 12),
                       if (!data.players.any((p) => p.json['teamId'] == id))

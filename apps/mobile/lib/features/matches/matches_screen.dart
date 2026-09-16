@@ -184,9 +184,32 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               ),
               const SizedBox(height: 16),
               if (games.isEmpty)
-                const EmptyState(
+                EmptyState(
                   'Sin partidos para esta selección',
-                  'Prueba otra fecha o cambia el filtro.',
+                  data.coverage?['partial'] == true
+                      ? 'La fuente puede no incluir todos los partidos. Consulta las fechas disponibles.'
+                      : 'Prueba otra fecha o cambia el filtro.',
+                ),
+              if (games.isEmpty && !data.demo && data.matches.isNotEmpty)
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    for (final available
+                        in (data.matches
+                            .map((m) => DateUtils.dateOnly(m.startTime))
+                            .toSet()
+                            .toList()
+                          ..sort()))
+                      ActionChip(
+                        label: Text(
+                          '${available.day}/${available.month}/${available.year}',
+                        ),
+                        onPressed: () => setState(() {
+                          date = available;
+                          filter = 'Todos';
+                        }),
+                      ),
+                  ],
                 ),
               for (final competition in data.competitions.where(
                 (c) => games.any((m) => m.competitionId == c.id),
