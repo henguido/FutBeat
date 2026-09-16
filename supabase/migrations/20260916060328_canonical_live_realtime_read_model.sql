@@ -1,5 +1,3 @@
-create extension if not exists unaccent with schema extensions;
-
 create or replace function futbeat_private.normalize_team_name(value text)
 returns text
 language sql
@@ -8,8 +6,8 @@ set search_path = ''
 as $$
   select trim(regexp_replace(
     regexp_replace(
-      lower(extensions.unaccent(coalesce(value, ''))),
-      '(^|\s)(club|deportivo|deportiva|asociacion|asociación|liga|ld|lda|cs|ad|fc|cf)(\s|$)',
+      translate(lower(coalesce(value, '')), 'áéíóúüñ', 'aeiouun'),
+      '(^|\s)(club|deportivo|deportiva|asociacion|liga|ld|lda|cs|ad|fc|cf)(\s|$)',
       ' ', 'g'
     ),
     '[^a-z0-9]+', ' ', 'g'
@@ -34,15 +32,27 @@ create table public.live_match_updates (
 
 alter table public.live_match_updates enable row level security;
 revoke all on public.live_match_updates from public;
-grant select on public.live_match_updates to anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    grant select on public.live_match_updates to anon;
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    grant select on public.live_match_updates to authenticated;
+  end if;
+end $$;
 
 create policy "live match updates are public read only"
 on public.live_match_updates
 for select
-to anon, authenticated
+to public
 using (true);
 
-alter publication supabase_realtime add table public.live_match_updates;
+do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    alter publication supabase_realtime add table public.live_match_updates;
+  end if;
+end $$;
 
 create or replace function futbeat_private.try_link_api_football_match(obs jsonb)
 returns text
@@ -175,5 +185,9 @@ begin
 end;
 $$;
 
-revoke all on function public.futbeat_publish_live_state(text,text) from public, anon, authenticated;
-grant execute on function public.futbeat_publish_live_state(text,text) to service_role;
+revoke all on function public.futbeat_publish_live_state(text,text) from public;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.futbeat_publish_live_state(text,text) to service_role;
+  end if;
+end $$;
