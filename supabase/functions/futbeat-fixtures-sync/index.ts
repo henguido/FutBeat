@@ -1,4 +1,4 @@
-import { createApiFootballProvider, filterApiFootballBetaFixtures, normalizeApiFootballFixtures } from "../../../backend/providers/api_football.mjs";
+import { createApiFootballProvider, normalizeApiFootballFixtures } from "../../../backend/providers/api_football.mjs";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -39,20 +39,23 @@ Deno.serve(async (request) => {
   let stage = "fetch";
   const started = performance.now();
   try {
+    // API-Football already returns the complete date in one aggregated call.
+    // Keep every valid fixture instead of discarding competitions here. Ranking
+    // belongs in the client: favorites and local/important competitions go first,
+    // while the rest of the day's matches remain visible below.
     const raw = await createApiFootballProvider({ apiKey }).fetchFixturesDate({ date });
-    const filtered = filterApiFootballBetaFixtures(raw);
     stage = "normalize";
     const resolve = (kind: string, external: string) => rpc("futbeat_resolve_country_entity", { p_provider: "api_football", p_kind: kind, p_external: external });
-    const snapshot = await normalizeApiFootballFixtures(filtered, resolve, receivedAt);
+    const snapshot = await normalizeApiFootballFixtures(raw, resolve, receivedAt);
     stage = "store";
-    const result = await rpc("futbeat_store_fixture_window", { p_job_id: crypto.randomUUID(), p_received_at: receivedAt, p_from_date: date, p_to_date: date, p_raw: filtered, p_snapshot: snapshot });
+    const result = await rpc("futbeat_store_fixture_window", { p_job_id: crypto.randomUUID(), p_received_at: receivedAt, p_from_date: date, p_to_date: date, p_raw: raw, p_snapshot: snapshot });
     const durationMs = Math.round(performance.now() - started);
-    const competitions = [...new Set(filtered.response.map((item: { league?: { name?: string } }) => item.league?.name).filter(Boolean))];
+    const competitions = [...new Set(raw.response.map((item: { league?: { name?: string } }) => item.league?.name).filter(Boolean))];
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId, p_status: "SUCCEEDED", p_provider_remaining: null, p_http_status: 200, p_error_code: null,
-      p_metadata: { stage: "complete", window, date, durationMs, endpoint: "fixtures_by_date", params: { date, timezone: "America/Costa_Rica" }, errors: [], received: raw.results, accepted: filtered.results, competitions },
+      p_metadata: { stage: "complete", window, date, durationMs, endpoint: "fixtures_by_date", params: { date, timezone: "America/Costa_Rica" }, errors: [], received: raw.results, accepted: raw.results, competitions },
     });
-    return Response.json({ status: "ok", window, date, received: raw.results, accepted: filtered.results, competitions, result });
+    return Response.json({ status: "ok", window, date, received: raw.results, accepted: raw.results, competitions, result });
   } catch (error) {
     const detail = error instanceof Error ? error.message.slice(0, 320) : "unknown";
     const diagnostics = error && typeof error === "object" && "details" in error ? (error as { details: Record<string, unknown> }).details : {};
