@@ -30,6 +30,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // CI debug APKs use ephemeral runner signing keys. A dedicated package id
+            // lets the real-data beta install alongside older debug builds instead
+            // of silently leaving an older signed APK installed on the device.
+            applicationIdSuffix = ".realbeta"
+            versionNameSuffix = "-realbeta"
+        }
         release {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
