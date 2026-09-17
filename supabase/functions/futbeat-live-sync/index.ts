@@ -93,7 +93,7 @@ Deno.serve(async (req: Request) => {
 
     reservationId = Number(reservation.reservationId);
     const checkedAt = new Date().toISOString();
-    const upstream = await fetch("https://v3.football.api-sports.io/fixtures?live=2-39-140-253-262", {
+    const upstream = await fetch("https://v3.football.api-sports.io/fixtures?live=all", {
       method: "GET",
       headers: {
         "x-apisports-key": apiKey,
