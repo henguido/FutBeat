@@ -86,17 +86,17 @@ test('LIVE event normalization supports all event types without unstable order/c
  assert.deepEqual(first.events.map(e=>e.eventKey).sort(),repeat.events.map(e=>e.eventKey).sort());
  assert.equal(first.events[3].assistExternalId,'93');
 });
-test('LIVE tracking accepts beta league IDs and Costa Rica, and rejects other leagues',async()=>{
+test('LIVE tracking accepts every provider competition and keeps Costa Rica canonical',async()=>{
  const fixture=(id,country='Spain')=>({fixture:{id:100,date:'2026-09-17T12:00:00Z',status:{short:'NS'}},
   league:{id,country},teams:{home:{id:1,name:'Home'},away:{id:2,name:'Away'}},goals:{home:null,away:null},events:[]});
- for(const id of [2,39,140,253,262]) {
+ for(const id of [2,39,140,253,262,1028,999]) {
   const item=fixture(id);
   assert.equal(isTrackedLiveFixture(item),true);
   const observation=await normalizeObservation(item);
   assert.equal(observation.competitionExternalId,String(id));
  }
  assert.equal((await normalizeObservation(fixture(162,'Costa Rica'))).competitionId,'fb_comp_cr');
- assert.equal(isTrackedLiveFixture(fixture(999,'Spain')),false);
+ assert.equal(isTrackedLiveFixture(fixture(null,'Spain')),false);
 });
 test('push registration requires authenticated ownership and raw tables stay private',async()=>{
  const db=await openDatabase();
