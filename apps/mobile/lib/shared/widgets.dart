@@ -171,7 +171,8 @@ class DataView extends ConsumerWidget {
                   ),
                   color: lime.withValues(alpha: .08),
                   child: Text(
-                    '${data.coverage!['source']} · Cobertura parcial · '
+                    '${data.coverage!['source']} · '
+                    '${data.coverage!['description'] ?? (data.coverage!['partial'] == true ? 'Cobertura parcial' : 'Cobertura disponible')} · '
                     '${realtime ? 'Directo beta' : 'Sin directo'}'
                     '${data.stale ? '\nDatos antiguos: pendientes de actualizar' : ''}',
                     style: const TextStyle(color: lime, fontSize: 12),
