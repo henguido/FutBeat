@@ -19,6 +19,32 @@ export class ProviderQuotaError extends Error {
   }
 }
 
+export class ProviderResponseError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = 'ProviderResponseError';
+    this.details = details;
+  }
+}
+
+function sanitizeProviderValue(value, redact = []) {
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeProviderValue(item, redact));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).slice(0, 20).map(([key, item]) => [
+      key,
+      /key|token|authorization|secret|password/i.test(key)
+        ? '[REDACTED]'
+        : sanitizeProviderValue(item, redact),
+    ]));
+  }
+  if (typeof value !== 'string') return value;
+  let result = value.slice(0, 500);
+  for (const secret of redact.filter((item) => typeof item === 'string' && item)) {
+    result = result.split(secret).join('[REDACTED]');
+  }
+  return result;
+}
+
 function positiveInteger(value, label) {
   if (!Number.isInteger(value) || value <= 0) throw new Error(`Invalid ${label}`);
   return value;
@@ -118,13 +144,15 @@ export class RequestBudget {
   }
 }
 
-export function assertApiEnvelope(data) {
+export function assertApiEnvelope(data, { redact = [] } = {}) {
   if (!data || typeof data !== 'object') throw new Error('Invalid provider response');
   const errors = data.errors;
   const hasErrors = Array.isArray(errors)
     ? errors.length > 0
     : errors && typeof errors === 'object' && Object.keys(errors).length > 0;
-  if (hasErrors) throw new Error('Provider returned API errors');
+  if (hasErrors) throw new ProviderResponseError('Provider returned API errors', {
+    providerErrors: sanitizeProviderValue(errors, redact),
+  });
   if (!Array.isArray(data.response)) throw new Error('Provider response payload missing');
   return data;
 }
