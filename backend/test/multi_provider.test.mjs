@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ProviderQuotaError,
+  ProviderResponseError,
   RequestBudget,
   createProviderDescriptor,
 } from '../providers/core/provider.mjs';
 import {
   apiFootballDescriptor,
+  apiFootballBetaLeagueIds,
   createApiFootballProvider,
+  filterApiFootballBetaFixtures,
   normalizeApiFootballLive,
 } from '../providers/api_football.mjs';
 import { validateSnapshot } from '../providers/core/snapshot.mjs';
@@ -73,6 +76,39 @@ test('API-Football LIVE request uses one call, server-only key and league filter
   assert.equal(provider.budget.snapshot().dailyUsed, 1);
 });
 
+test('API-Football fixtures by date use one aggregated request in Costa Rica timezone', async () => {
+  const calls = [];
+  const provider = createApiFootballProvider({
+    apiKey: 'server-secret',
+    fetcher: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, json: async () => ({ errors: [], results: 0, response: [] }) };
+    },
+  });
+  await provider.fetchFixturesDate({ date: '2026-09-17' });
+  assert.equal(calls.length, 1);
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, '/fixtures');
+  assert.equal(url.searchParams.get('date'), '2026-09-17');
+  assert.equal(url.searchParams.get('from'), null);
+  assert.equal(url.searchParams.get('timezone'), 'America/Costa_Rica');
+  assert.equal(calls[0].options.headers['x-apisports-key'], 'server-secret');
+});
+
+test('API-Football fixture date validates before spending quota', async () => {
+  let calls = 0;
+  const provider = createApiFootballProvider({
+    apiKey: 'server-secret',
+    fetcher: async () => { calls += 1; },
+  });
+  await assert.rejects(
+    provider.fetchFixturesDate({ date: 'today' }),
+    /ISO date/,
+  );
+  assert.equal(calls, 0);
+  assert.equal(provider.budget.snapshot().dailyUsed, 0);
+});
+
 test('API-Football HTTP/API errors are sanitized and never echo the key', async () => {
   const provider = createApiFootballProvider({
     apiKey: 'do-not-leak',
@@ -86,12 +122,45 @@ test('API-Football HTTP/API errors are sanitized and never echo the key', async 
     apiKey: 'do-not-leak',
     fetcher: async () => ({
       ok: true,
+      status: 200,
       json: async () => ({ errors: { rateLimit: 'slow down' }, response: [] }),
     }),
   });
   await assert.rejects(apiError.fetchLive(), error => (
-    /API errors/.test(error.message) && !/do-not-leak/.test(error.message)
+    error instanceof ProviderResponseError && /API errors/.test(error.message) &&
+    error.details.providerErrors.rateLimit === 'slow down' &&
+    error.details.endpoint === 'live' && error.details.httpStatus === 200 &&
+    !JSON.stringify(error).includes('do-not-leak')
   ));
+});
+
+test('API-Football object and array errors retain safe diagnostics', async () => {
+  for (const errors of [
+    { plan: 'Free plans cannot access this season', apiKey: 'provider-echo' },
+    ['Invalid date', 'Contact support'],
+  ]) {
+    const provider = createApiFootballProvider({
+      apiKey: 'provider-echo',
+      fetcher: async () => ({ ok: true, status: 200, json: async () => ({ errors, response: [] }) }),
+    });
+    await assert.rejects(provider.fetchFixturesDate({ date: '2026-09-17' }), (error) => {
+      const serialized = JSON.stringify(error.details);
+      assert.equal(error.details.endpoint, 'fixtures_by_date');
+      assert.deepEqual(error.details.params, { date: '2026-09-17', timezone: 'America/Costa_Rica' });
+      assert.equal(error.details.httpStatus, 200);
+      assert.equal(Number.isInteger(error.details.durationMs), true);
+      assert.equal(serialized.includes('provider-echo'), false);
+      return true;
+    });
+  }
+});
+
+test('global response keeps only the five beta leagues and allows zero fixtures', () => {
+  const response = [2, 39, 140, 253, 262, 999].map((id) => ({ league: { id } }));
+  const filtered = filterApiFootballBetaFixtures({ errors: [], results: response.length, response });
+  assert.deepEqual(filtered.response.map((item) => String(item.league.id)), apiFootballBetaLeagueIds);
+  assert.equal(filtered.results, 5);
+  assert.deepEqual(filterApiFootballBetaFixtures({ errors: [], results: 0, response: [] }).response, []);
 });
 
 test('LIVE payload normalizes score, goal, player and canonical references', async () => {

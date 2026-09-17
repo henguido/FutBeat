@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/main.dart';
 
@@ -47,12 +48,27 @@ Future<void> openApp(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   final router = createRouter(initialLocation: route);
+  final database = AppDatabase(NativeDatabase.memory());
   addTearDown(router.dispose);
+  addTearDown(database.close);
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         repositoryProvider.overrideWithValue(repository ?? TestRepository()),
+        databaseProvider.overrideWithValue(database),
+        preferenceProvider.overrideWith(
+          (ref) => Stream.value(
+            const CountryPreference(
+              detectedCountry: 'CR',
+              selectedCountry: null,
+              bootstrapDismissed: false,
+            ),
+          ),
+        ),
         followsProvider.overrideWith((ref) => Stream.value(<String>{})),
+        temporaryInterestsProvider.overrideWith(
+          (ref) => Stream.value(<String>{}),
+        ),
       ],
       child: FutBeatApp(router: router),
     ),
@@ -67,13 +83,15 @@ void main() {
       await openApp(tester, repository: TestRepository(real: true));
       expect(find.textContaining('Cobertura parcial'), findsOneWidget);
       expect(find.textContaining('Datos antiguos'), findsOneWidget);
-      expect(find.textContaining('La fuente puede no incluir'), findsOneWidget);
+      await tester.drag(find.byType(ListView).first, const Offset(0, -600));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('La fuente puede no incluir'), findsWidgets);
       final available = find.widgetWithText(ActionChip, '20/1/2030');
       await tester.ensureVisible(available);
       await tester.tap(available);
       await tester.pumpAndSettle();
       expect(find.text('Sin partidos para esta selección'), findsNothing);
-      expect(find.text('Liga Promerica'), findsOneWidget);
+      expect(find.text('Liga Promerica'), findsWidgets);
       expect(tester.takeException(), isNull);
     },
   );

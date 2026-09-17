@@ -1,5 +1,40 @@
 # Trazabilidad de los incrementos
 
+## Country Bootstrap + Favorites-First
+
+| Historia existente | Avance verificable | Evidencia |
+|---|---|---|
+| FB-US-001/002/004/071 | Bootstrap real de Costa Rica, calendario/resultados/equipos/tabla opcional, procedencia e IDs canónicos | Proveedor compartido, worker con ledger y pruebas de snapshot |
+| FB-US-036/037/038/039 | Favoritos de cuatro tipos alimentan prioridad agregada; eliminar favorito reduce el contador | RPC durable y prueba de 5000 seguidores en un solo trabajo |
+| FB-US-041/042 | Onboarding conserva búsqueda y permite explorar fuera del país sugerido | Flujo móvil y estado explícito sin cobertura |
+| FB-US-013 | Partido seguido o abierto prioriza LIVE/detalle sin llamadas por usuario | Interés temporal con TTL y planner agregado |
+
+[Diseño, privacidad y límites](COUNTRY-FAVORITES.md).
+
+### Cierre operativo del PR #4
+
+- Regresión RPC: `imports.job_id` es `text`; el UUID del wrapper se convierte
+  explícitamente antes de comparar e insertar. La prueba de backend reproduce
+  deduplicación con la firma pública real.
+- Producción: el wrapper fue validado como `service_role` y conserva denegado
+  el acceso directo a `anon` y `authenticated`.
+- Evidencia cloud vigente: `demo=false`, 1 competición, 4 equipos, 2 partidos,
+  0 tablas; procedencia TheSportsDB e IDs `fb_*`.
+- La única sincronización posterior a la corrección falló en `fetch`, antes de
+  normalizar o almacenar. No existe todavía un import nuevo posterior al fix.
+- GitHub Actions continúa terminando sin pasos por Billing/Spending. El PR #4
+  debe permanecer abierto hasta obtener sincronización `status=ok`, import
+  nuevo y CI completamente verde.
+- El fetch de país registra duración, HTTP, error y conteo por endpoint. Liga y
+  equipos son críticos; calendario, resultados y tabla permiten cobertura
+  parcial explícita. Las cuatro consultas dependientes de temporada se ejecutan
+  en paralelo y nunca se reintentan automáticamente.
+- La prueba v6 identificó `teams` como respuesta fuera de alcance (liga 4396,
+  England). El ledger la marca `PROVIDER_SCOPE_MISMATCH`; el snapshot público
+  fue compensado con la última importación válida y el raw incorrecto se
+  conserva privado para auditoría. Pruebas adicionales impiden mezclar equipos
+  globales y calculan frescura desde la fecha real del proveedor.
+
 ## Bloque LIVE — eventos y push
 
 | Historia | Avance verificable | Archivos | Evidencia |
@@ -10,6 +45,18 @@
 | FB-US-071 | Eventos públicos sanitizados con IDs `fb_*`; observaciones raw y outbox permanecen privadas | `canonical_events`, `notification_outbox`, RPCs privadas | Asesores Supabase y pruebas de roles |
 
 [Diseño, operación y activación de proveedores](LIVE-PUSH.md).
+
+## Feed principal Favorites-First
+
+| Historia | Avance verificable | Archivos | Evidencia |
+|---|---|---|---|
+| FB-US-001/002 | Inicio muestra todos los partidos reales de la fecha y conserva Ayer/Hoy/Mañana y filtros por estado | `lib/features/matches/matches_screen.dart` | Regresión con Costa Rica detectada y partido de LaLiga visible |
+| FB-US-036/037/038 | Seguimientos de competición, equipo o partido priorizan su competición sin ocultar las demás | `lib/features/matches/matches_screen.dart` | Pruebas de favorito internacional y orden estable |
+| Country Bootstrap | País manual y detectado ordenan la cobertura; ya no actúan como filtro duro | `lib/features/matches/matches_screen.dart` | Pruebas CR + LaLiga, CR sin partidos y selección manual ES |
+
+Orden aplicado: favoritos explícitos, país seleccionado, país detectado, interés
+temporal y resto por nombre/ID. La fuente de partidos continúa siendo el mismo
+snapshot canónico que consumen Explorar y Match Center.
 
 ## Bloque 0.2 — datos reales y almacenamiento local
 

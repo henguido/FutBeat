@@ -1,18 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/interests.dart';
 import '../../core/models.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../entities/standings.dart';
 
-class MatchScreen extends StatelessWidget {
+class MatchScreen extends ConsumerStatefulWidget {
   const MatchScreen({super.key, required this.id});
   final String id;
   @override
+  ConsumerState<MatchScreen> createState() => _MatchScreenState();
+}
+
+class _MatchScreenState extends ConsumerState<MatchScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
+  }
+
+  @override
   Widget build(BuildContext context) => DataView(
     builder: (data) {
-      final match = data.match(id);
+      final match = data.match(widget.id);
       if (match == null) {
         return Scaffold(
           appBar: AppBar(title: const Text('Partido')),
@@ -28,7 +41,7 @@ class MatchScreen extends StatelessWidget {
         child: Scaffold(
           appBar: AppBar(
             title: const Text('Match Center'),
-            actions: [FollowButton('match', id)],
+            actions: [FollowButton('match', widget.id)],
             bottom: const TabBar(
               isScrollable: true,
               tabAlignment: TabAlignment.start,

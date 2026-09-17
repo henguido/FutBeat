@@ -1,11 +1,22 @@
 import { createHash } from 'node:crypto';
 import {
   RequestBudget,
+  ProviderResponseError,
   assertApiEnvelope,
   createProviderDescriptor,
 } from './core/provider.mjs';
 
 const baseUrl = 'https://v3.football.api-sports.io';
+export const apiFootballBetaLeagueIds = Object.freeze(['2', '39', '140', '253', '262']);
+
+export function filterApiFootballBetaFixtures(raw) {
+  const allowed = new Set(apiFootballBetaLeagueIds);
+  return {
+    ...raw,
+    response: raw.response.filter((item) => allowed.has(String(item.league?.id ?? ''))),
+    results: raw.response.filter((item) => allowed.has(String(item.league?.id ?? ''))).length,
+  };
+}
 
 export const apiFootballDescriptor = createProviderDescriptor({
   id: 'api_football',
@@ -115,6 +126,38 @@ export function createApiFootballProvider({
   if (typeof apiKey !== 'string' || !apiKey.trim()) throw new Error('API-Football key is required');
   const defaultLeagueIds = [...new Set(leagueIds.map(String))];
 
+  const requestFixtures = async (endpoint, params) => {
+    budget.reserve();
+    const started = performance.now();
+    const query = new URLSearchParams(params);
+    let response;
+    try {
+      response = await fetcher(`${baseUrl}/fixtures?${query}`, {
+        headers: { 'x-apisports-key': apiKey, accept: 'application/json' },
+        signal: AbortSignal.timeout(15000),
+      });
+      const durationMs = Math.round(performance.now() - started);
+      if (!response.ok) throw new ProviderResponseError(`API-Football HTTP ${response.status}`, {
+        endpoint, params, httpStatus: response.status, durationMs,
+      });
+      try {
+        return assertApiEnvelope(await response.json(), { redact: [apiKey] });
+      } catch (error) {
+        if (error instanceof ProviderResponseError) {
+          error.details = { endpoint, params, httpStatus: response.status, durationMs, ...error.details };
+        }
+        throw error;
+      }
+    } catch (error) {
+      if (error instanceof ProviderResponseError) throw error;
+      throw new ProviderResponseError('API-Football network error', {
+        endpoint, params, httpStatus: response?.status ?? null,
+        durationMs: Math.round(performance.now() - started),
+        providerErrors: error?.name === 'TimeoutError' ? 'timeout' : 'network_error',
+      });
+    }
+  };
+
   return Object.freeze({
     descriptor: apiFootballDescriptor,
     budget,
@@ -122,21 +165,17 @@ export function createApiFootballProvider({
     async fetchLive({ leagueIds: overrideLeagueIds } = {}) {
       const ids = (overrideLeagueIds ?? defaultLeagueIds).map(String);
       const live = ids.length ? ids.join('-') : 'all';
-      budget.reserve();
-      const response = await fetcher(`${baseUrl}/fixtures?live=${encodeURIComponent(live)}`, {
-        headers: {
-          'x-apisports-key': apiKey,
-          accept: 'application/json',
-        },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!response.ok) throw new Error(`API-Football HTTP ${response.status}`);
-      return assertApiEnvelope(await response.json());
+      return requestFixtures('live', { live });
+    },
+
+    async fetchFixturesDate({ date, timezone = 'America/Costa_Rica' }) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Fixture date requires an ISO date');
+      return requestFixtures('fixtures_by_date', { date, timezone });
     },
   });
 }
 
-export async function normalizeApiFootballLive(raw, resolve, receivedAt) {
+export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
   assertApiEnvelope(raw);
   if (typeof resolve !== 'function') throw new Error('Provider resolver is required');
   if (!Number.isFinite(Date.parse(receivedAt))) throw new Error('Invalid receivedAt');
@@ -255,3 +294,5 @@ export async function normalizeApiFootballLive(raw, resolve, receivedAt) {
     transfers: [],
   };
 }
+
+export const normalizeApiFootballLive = normalizeApiFootballFixtures;

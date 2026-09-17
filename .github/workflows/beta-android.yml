@@ -1,24 +1,17 @@
-name: FutBeat checks
+name: FutBeat Android beta
+
 on:
-  pull_request:
-    branches: [main]
-concurrency:
-  group: futbeat-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: futbeat-beta-android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  contracts:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm ci
-      - run: npm test
-      - run: npm run check
-  mobile:
+  apk:
     runs-on: windows-latest
     defaults:
       run:
@@ -41,3 +34,9 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
+      - run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: futbeat-android-debug
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error

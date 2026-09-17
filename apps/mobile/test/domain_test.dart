@@ -5,6 +5,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
 
 void main() {
+  test('calendar dates are evaluated in America/Costa_Rica', () {
+    expect(
+      costaRicaTime(DateTime.parse('2026-09-17T05:30:00Z')),
+      DateTime.utc(2026, 9, 16, 23, 30),
+    );
+    expect(
+      costaRicaTime(DateTime.parse('2026-09-17T06:30:00Z')),
+      DateTime.utc(2026, 9, 17, 0, 30),
+    );
+  });
   final json =
       jsonDecode(File('assets/demo.snapshot.json').readAsStringSync()) as Json;
   final data = Snapshot(json);

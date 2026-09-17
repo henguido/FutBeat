@@ -43,8 +43,12 @@ function normalizeText(value) {
 }
 
 function trackedCompetition(item) {
-  return normalizeText(item?.league?.country) === "costa rica" ? "fb_comp_cr" : null;
+  const leagueId = String(item?.league?.id ?? "");
+  if (leagueId === "162" || normalizeText(item?.league?.country) === "costa rica") return "fb_comp_cr";
+  return ["2", "39", "140", "253", "262"].includes(leagueId) ? "provider_mapping" : null;
 }
+
+export function isTrackedLiveFixture(item) { return trackedCompetition(item) != null; }
 
 export async function normalizeObservation(item) {
   const fixtureId = String(item?.fixture?.id ?? "");
@@ -97,7 +101,8 @@ export async function normalizeObservation(item) {
     minute,
     score: { home, away },
     startTime: item?.fixture?.date ?? null,
-    competitionId: trackedCompetition(item),
+    competitionId: trackedCompetition(item) === "fb_comp_cr" ? "fb_comp_cr" : null,
+    competitionExternalId: item?.league?.id == null ? null : String(item.league.id),
     homeTeam: {
       externalId: item?.teams?.home?.id == null ? null : String(item.teams.home.id),
       name: item?.teams?.home?.name ?? null,
@@ -110,4 +115,3 @@ export async function normalizeObservation(item) {
     rawPayload: item,
   };
 }
-

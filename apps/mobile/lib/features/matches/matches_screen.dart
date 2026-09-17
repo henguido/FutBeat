@@ -3,9 +3,81 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/interests.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
+import '../profile/country_preferences.dart';
+
+List<Entity> orderMatchCompetitions({
+  required Snapshot data,
+  required List<FootballMatch> matches,
+  required Set<String> follows,
+  required Set<String> temporaryInterests,
+  String? selectedCountry,
+  String? detectedCountry,
+}) {
+  final visible = data.competitions
+      .where(
+        (competition) =>
+            matches.any((match) => match.competitionId == competition.id),
+      )
+      .toList();
+
+  int priority(Entity competition) {
+    final competitionMatches = matches
+        .where((match) => match.competitionId == competition.id)
+        .toList();
+    bool hasInterest(Set<String> interests) =>
+        interests.contains('competition:${competition.id}') ||
+        competitionMatches.any(
+          (match) =>
+              interests.contains('match:${match.id}') ||
+              interests.contains('team:${match.homeId}') ||
+              interests.contains('team:${match.awayId}'),
+        );
+
+    if (hasInterest(follows)) return 0;
+    if (_matchesCountry(competition.country, selectedCountry)) return 1;
+    if (_matchesCountry(competition.country, detectedCountry)) return 2;
+    if (hasInterest(temporaryInterests)) return 3;
+    return 4;
+  }
+
+  return visible..sort((left, right) {
+    final byPriority = priority(left).compareTo(priority(right));
+    if (byPriority != 0) return byPriority;
+    final byName = left.name.toLowerCase().compareTo(right.name.toLowerCase());
+    return byName != 0 ? byName : left.id.compareTo(right.id);
+  });
+}
+
+bool _matchesCountry(String country, String? code) {
+  if (code == null) return false;
+  final value = country
+      .trim()
+      .toLowerCase()
+      .replaceAll('é', 'e')
+      .replaceAll('ñ', 'n');
+  final aliases = switch (code.toUpperCase()) {
+    'CR' => const {'costa rica'},
+    'MX' => const {'mexico'},
+    'AR' => const {'argentina'},
+    'BR' => const {'brasil', 'brazil'},
+    'ES' => const {'espana', 'spain'},
+    'US' => const {'estados unidos', 'united states', 'usa'},
+    'GB' => const {
+      'reino unido',
+      'united kingdom',
+      'england',
+      'scotland',
+      'wales',
+      'northern ireland',
+    },
+    _ => {code.toLowerCase()},
+  };
+  return aliases.contains(value);
+}
 
 class MatchesScreen extends ConsumerStatefulWidget {
   const MatchesScreen({super.key});
@@ -42,9 +114,21 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
       builder: (data) {
         final anchor = data.demo
             ? DateTime(2026, 9, 15)
-            : DateUtils.dateOnly(DateTime.now());
+            : DateUtils.dateOnly(costaRicaNow());
         final selected = date ?? anchor;
+        final preference = ref.watch(preferenceProvider).asData?.value;
+        final follows = ref.watch(followsProvider).asData?.value ?? <String>{};
+        final temporaryInterests =
+            ref.watch(temporaryInterestsProvider).asData?.value ?? <String>{};
         final games = data.onDate(selected, filter);
+        final competitions = orderMatchCompetitions(
+          data: data,
+          matches: games,
+          follows: follows,
+          temporaryInterests: temporaryInterests,
+          selectedCountry: preference?.selectedCountry,
+          detectedCountry: preference?.detectedCountry,
+        );
         return RefreshIndicator(
           onRefresh: () async {
             ref.invalidate(snapshotProvider);
@@ -64,6 +148,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               ),
               const SizedBox(height: 20),
               if (data.demo) const DemoNotice(),
+              if (!data.demo) CountryPreferencePanel(compact: true, data: data),
+              if (!data.demo) const SizedBox(height: 12),
               Row(
                 children: [
                   IconButton(
@@ -211,9 +297,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                       ),
                   ],
                 ),
-              for (final competition in data.competitions.where(
-                (c) => games.any((m) => m.competitionId == c.id),
-              )) ...[
+              for (final competition in competitions) ...[
                 Text(
                   competition.country.toUpperCase(),
                   style: const TextStyle(
@@ -309,7 +393,7 @@ class MatchCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          match.isUpcoming ? 'Hora local' : 'Ver partido',
+                          match.isUpcoming ? 'Hora Costa Rica' : 'Ver partido',
                           style: const TextStyle(fontSize: 10, color: muted),
                         ),
                       ],
