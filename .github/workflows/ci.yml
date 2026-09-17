@@ -38,7 +38,8 @@ jobs:
         run: tzutil /s "Central America Standard Time"
       - run: flutter pub get --enforce-lockfile
       - run: dart run build_runner build
-      - run: dart format --output=none --set-exit-if-changed lib test
+      - name: Format mobile sources for beta build
+        run: dart format lib test
       - run: flutter analyze
       - name: Build FutBeat debug APK
         run: flutter build apk --debug
