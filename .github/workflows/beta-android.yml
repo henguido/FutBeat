@@ -10,6 +10,7 @@ on:
       public_token:
         description: Supabase publishable token
         required: true
+        default: sb_publishable_iSH4S3fKou_EEkdG3W_Azg_9E4HXzWE
 
 permissions:
   contents: read
