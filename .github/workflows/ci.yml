@@ -19,7 +19,7 @@ jobs:
       - run: npm test
       - run: npm run check
   mobile:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     defaults:
       run:
         working-directory: apps/mobile
@@ -35,7 +35,7 @@ jobs:
           channel: stable
           cache: true
       - name: Reproducible visual timezone
-        run: sudo timedatectl set-timezone America/Costa_Rica
+        run: tzutil /s "Central America Standard Time"
       - run: flutter pub get --enforce-lockfile
       - run: dart run build_runner build
       - run: dart format --output=none --set-exit-if-changed lib test
