@@ -8,6 +8,13 @@ const known = { 'competition:4815': 'fb_comp_cr', 'team:139705': 'fb_team_car', 
 
 export async function openDatabase(directory) {
   const db = await PGlite.create(directory);
+  // Supabase creates these roles before project migrations. Mirror that
+  // prerequisite so permission migrations are exercised locally as written.
+  await db.exec(`do $$ begin
+    if not exists(select 1 from pg_roles where rolname='anon') then create role anon nologin; end if;
+    if not exists(select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if;
+    if not exists(select 1 from pg_roles where rolname='service_role') then create role service_role nologin; end if;
+  end $$;`);
   await db.exec('create table if not exists public.futbeat_migrations (name text primary key); alter table public.futbeat_migrations enable row level security; revoke all on public.futbeat_migrations from public;');
   // Reconcile local development timestamps with the versions recorded by Supabase.
   for (const [previous, deployed] of [

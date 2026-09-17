@@ -71,6 +71,25 @@ test('provider HTTP failure stops batch without retries; only official endpoints
   assert.match(urls[0], /^https:\/\/www.thesportsdb.com\/api\/v1\/json\/123\//);
 });
 
+test('country snapshot RPC accepts its UUID job id against the text import ledger', async () => {
+  const db = await openDatabase();
+  const jobId = '714320e8-4050-4d1c-be14-160e7070fe44';
+  const snapshot = {
+    schemaVersion: 1, demo: false, competitions: [], teams: [], matches: [], standings: [],
+  };
+  try {
+    await db.query(
+      'insert into futbeat_private.imports(job_id,received_at,raw_payload,snapshot) values($1,$2,$3,$4)',
+      [jobId, '2026-09-16T02:36:22.347Z', JSON.stringify({}), JSON.stringify(snapshot)],
+    );
+    const result = await db.query(
+      'select public.futbeat_store_country_snapshot($1::uuid,$2::timestamptz,$3::jsonb,$4::jsonb) result',
+      [jobId, '2026-09-16T02:36:22.347Z', JSON.stringify({}), JSON.stringify(snapshot)],
+    );
+    assert.deepEqual(result.rows[0].result, { duplicate: true });
+  } finally { await db.close(); }
+});
+
 test('real BFF returns 503 until data exists and serves persisted snapshot', async t => {
   const db = await openDatabase();
   const store = new PersistentStore(db);

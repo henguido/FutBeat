@@ -51,13 +51,24 @@ destacadas. La app muestra “no disponible”; no rellena datos ficticios.
 El snapshot válido anterior se conserva si cualquier lectura o validación
 falla.
 
-En el despliegue inicial, dos intentos controlados fallaron antes de publicar
-un lote y el ledger alcanzó su límite diario; el snapshot real anterior quedó
-intacto. El worker v2 añade cabeceras explícitas y diagnóstico por etapa. El
-siguiente ciclo programado después del reinicio UTC validará la importación
-remota completa sin saltarse la cuota. Los mismos cinco endpoints y la
-normalización completa fueron verificados localmente (1 competición, 28
-equipos observados, 2 partidos y tabla disponible).
+El `404` observado en `store` no provenía de la resolución de PostgREST. La
+función existía, estaba expuesta en `public` y `service_role` tenía `EXECUTE`.
+PostgreSQL producía `42883` al comparar `imports.job_id` (`text`) con el
+parámetro `p_job_id` (`uuid`); la Data API traduce ese código a HTTP 404. La
+migración `fix_country_snapshot_job_id_type` convierte el UUID explícitamente
+a texto tanto al deduplicar como al guardar. Una llamada transaccional como
+`service_role` confirmó que el wrapper devuelve `{"duplicate":true}` y que
+`anon` y `authenticated` siguen sin permiso.
+
+Después de la corrección se autorizó una sola sincronización real. Los intentos
+fallidos del mismo día ya habían ocupado el límite, por lo que se amplió una
+vez de 2 a 3 sin borrar el ledger y luego se restauró a 2. Esa ejecución llegó
+a TheSportsDB pero terminó en `fetch` tras unos 41 segundos; no alcanzó
+`normalize` ni `store` y no creó un import. El último snapshot publicado sigue
+siendo real (`demo=false`), recibido el 2026-09-16 02:36:22 UTC: 1 competición,
+4 equipos, 2 partidos (un resultado pasado y un próximo partido) y 0 tablas.
+TheSportsDB puede omitir la tabla y cualquiera de sus cinco endpoints gratuitos
+puede agotar el timeout. No se hizo un segundo intento automático.
 
 LIVE continúa usando el scheduler API-Football existente. Los favoritos y
 partidos abiertos alimentan `coverage_interests` para que futuros planners

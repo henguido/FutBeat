@@ -11,6 +11,21 @@
 
 [Diseño, privacidad y límites](COUNTRY-FAVORITES.md).
 
+### Cierre operativo del PR #4
+
+- Regresión RPC: `imports.job_id` es `text`; el UUID del wrapper se convierte
+  explícitamente antes de comparar e insertar. La prueba de backend reproduce
+  deduplicación con la firma pública real.
+- Producción: el wrapper fue validado como `service_role` y conserva denegado
+  el acceso directo a `anon` y `authenticated`.
+- Evidencia cloud vigente: `demo=false`, 1 competición, 4 equipos, 2 partidos,
+  0 tablas; procedencia TheSportsDB e IDs `fb_*`.
+- La única sincronización posterior a la corrección falló en `fetch`, antes de
+  normalizar o almacenar. No existe todavía un import nuevo posterior al fix.
+- GitHub Actions continúa terminando sin pasos por Billing/Spending. El PR #4
+  debe permanecer abierto hasta obtener sincronización `status=ok`, import
+  nuevo y CI completamente verde.
+
 ## Bloque LIVE — eventos y push
 
 | Historia | Avance verificable | Archivos | Evidencia |
