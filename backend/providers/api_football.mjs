@@ -8,10 +8,11 @@ import {
 
 const baseUrl = 'https://v3.football.api-sports.io';
 const mediaHost = 'media.api-sports.io';
-export const apiFootballBetaLeagueIds = Object.freeze(['2', '39', '140', '253', '262', '1028']);
+export const apiFootballBetaLeagueIds = Object.freeze(['2', '39', '140', '253', '262']);
+export const apiFootballRegionalCupLeagueIds = Object.freeze(['1028']);
 
 export function filterApiFootballBetaFixtures(raw) {
-  const allowed = new Set(apiFootballBetaLeagueIds);
+  const allowed = new Set([...apiFootballBetaLeagueIds, ...apiFootballRegionalCupLeagueIds]);
   return {
     ...raw,
     response: raw.response.filter((item) => allowed.has(String(item.league?.id ?? ''))),
