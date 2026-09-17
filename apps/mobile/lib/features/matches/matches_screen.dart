@@ -227,7 +227,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                         ),
                       SizedBox(
                         width: 46,
-                        height: 52,
+                        height: 64,
                         child: IconButton.filledTonal(
                           tooltip: 'Elegir otra fecha',
                           onPressed: () => _pickDate(context, selected),
@@ -375,7 +375,7 @@ class _DateOption extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(16),
           child: Container(
-            height: 52,
+            height: 64,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
@@ -386,22 +386,30 @@ class _DateOption extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: selected ? const Color(0xFF0B1114) : muted,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.2,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: selected ? const Color(0xFF0B1114) : muted,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.2,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  _compactDate(date),
-                  style: TextStyle(
-                    color: selected ? const Color(0xFF0B1114) : Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    _compactDate(date),
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: selected ? const Color(0xFF0B1114) : Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
               ],
