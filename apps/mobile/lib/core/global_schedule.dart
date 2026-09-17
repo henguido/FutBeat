@@ -51,15 +51,14 @@ class GlobalScheduleClient {
   }
 }
 
-class GlobalScheduleRepository implements FootballRepository {
-  GlobalScheduleRepository(this.base, this.schedule);
+class GlobalScheduleRepository {
+  GlobalScheduleRepository(this.loadBase, this.schedule);
 
-  final FootballRepository base;
+  final Future<Snapshot> Function() loadBase;
   final GlobalScheduleClient schedule;
 
-  @override
   Future<Snapshot> load() async {
-    final baseSnapshot = await base.load();
+    final baseSnapshot = await loadBase();
     final today = DateUtilsOnly.dateOnly(costaRicaNow());
     final dates = [
       today.subtract(const Duration(days: 1)),
