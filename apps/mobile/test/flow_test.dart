@@ -66,6 +66,9 @@ Future<void> openApp(
           ),
         ),
         followsProvider.overrideWith((ref) => Stream.value(<String>{})),
+        temporaryInterestsProvider.overrideWith(
+          (ref) => Stream.value(<String>{}),
+        ),
       ],
       child: FutBeatApp(router: router),
     ),

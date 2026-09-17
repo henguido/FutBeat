@@ -9,6 +9,76 @@ import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../profile/country_preferences.dart';
 
+List<Entity> orderMatchCompetitions({
+  required Snapshot data,
+  required List<FootballMatch> matches,
+  required Set<String> follows,
+  required Set<String> temporaryInterests,
+  String? selectedCountry,
+  String? detectedCountry,
+}) {
+  final visible = data.competitions
+      .where(
+        (competition) =>
+            matches.any((match) => match.competitionId == competition.id),
+      )
+      .toList();
+
+  int priority(Entity competition) {
+    final competitionMatches = matches
+        .where((match) => match.competitionId == competition.id)
+        .toList();
+    bool hasInterest(Set<String> interests) =>
+        interests.contains('competition:${competition.id}') ||
+        competitionMatches.any(
+          (match) =>
+              interests.contains('match:${match.id}') ||
+              interests.contains('team:${match.homeId}') ||
+              interests.contains('team:${match.awayId}'),
+        );
+
+    if (hasInterest(follows)) return 0;
+    if (_matchesCountry(competition.country, selectedCountry)) return 1;
+    if (_matchesCountry(competition.country, detectedCountry)) return 2;
+    if (hasInterest(temporaryInterests)) return 3;
+    return 4;
+  }
+
+  return visible..sort((left, right) {
+    final byPriority = priority(left).compareTo(priority(right));
+    if (byPriority != 0) return byPriority;
+    final byName = left.name.toLowerCase().compareTo(right.name.toLowerCase());
+    return byName != 0 ? byName : left.id.compareTo(right.id);
+  });
+}
+
+bool _matchesCountry(String country, String? code) {
+  if (code == null) return false;
+  final value = country
+      .trim()
+      .toLowerCase()
+      .replaceAll('é', 'e')
+      .replaceAll('ñ', 'n');
+  final aliases = switch (code.toUpperCase()) {
+    'CR' => const {'costa rica'},
+    'MX' => const {'mexico'},
+    'AR' => const {'argentina'},
+    'BR' => const {'brasil', 'brazil'},
+    'ES' => const {'espana', 'spain'},
+    'US' => const {'estados unidos', 'united states', 'usa'},
+    'GB' => const {
+      'reino unido',
+      'united kingdom',
+      'england',
+      'scotland',
+      'wales',
+      'northern ireland',
+    },
+    _ => {code.toLowerCase()},
+  };
+  return aliases.contains(value);
+}
+
 class MatchesScreen extends ConsumerStatefulWidget {
   const MatchesScreen({super.key});
   @override
@@ -46,21 +116,19 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             ? DateTime(2026, 9, 15)
             : DateUtils.dateOnly(costaRicaNow());
         final selected = date ?? anchor;
-        final country = ref
-            .watch(preferenceProvider)
-            .asData
-            ?.value
-            .effectiveCountry;
-        final countryLabel = countryName(country);
-        final games = data
-            .onDate(selected, filter)
-            .where(
-              (match) =>
-                  country == null ||
-                  data.competition(match.competitionId)?.country ==
-                      countryLabel,
-            )
-            .toList();
+        final preference = ref.watch(preferenceProvider).asData?.value;
+        final follows = ref.watch(followsProvider).asData?.value ?? <String>{};
+        final temporaryInterests =
+            ref.watch(temporaryInterestsProvider).asData?.value ?? <String>{};
+        final games = data.onDate(selected, filter);
+        final competitions = orderMatchCompetitions(
+          data: data,
+          matches: games,
+          follows: follows,
+          temporaryInterests: temporaryInterests,
+          selectedCountry: preference?.selectedCountry,
+          detectedCountry: preference?.detectedCountry,
+        );
         return RefreshIndicator(
           onRefresh: () async {
             ref.invalidate(snapshotProvider);
@@ -203,12 +271,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               const SizedBox(height: 16),
               if (games.isEmpty)
                 EmptyState(
-                  country != null && country != 'CR'
-                      ? 'Cobertura todavía no disponible'
-                      : 'Sin partidos para esta selección',
-                  country != null && country != 'CR'
-                      ? 'Puedes seguir buscando equipos y ligas. No mostraremos datos demo como si fueran reales.'
-                      : data.coverage?['partial'] == true
+                  'Sin partidos para esta selección',
+                  data.coverage?['partial'] == true
                       ? 'La fuente puede no incluir todos los partidos. Consulta las fechas disponibles.'
                       : 'Prueba otra fecha o cambia el filtro.',
                 ),
@@ -233,9 +297,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                       ),
                   ],
                 ),
-              for (final competition in data.competitions.where(
-                (c) => games.any((m) => m.competitionId == c.id),
-              )) ...[
+              for (final competition in competitions) ...[
                 Text(
                   competition.country.toUpperCase(),
                   style: const TextStyle(

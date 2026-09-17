@@ -46,6 +46,18 @@
 
 [Diseño, operación y activación de proveedores](LIVE-PUSH.md).
 
+## Feed principal Favorites-First
+
+| Historia | Avance verificable | Archivos | Evidencia |
+|---|---|---|---|
+| FB-US-001/002 | Inicio muestra todos los partidos reales de la fecha y conserva Ayer/Hoy/Mañana y filtros por estado | `lib/features/matches/matches_screen.dart` | Regresión con Costa Rica detectada y partido de LaLiga visible |
+| FB-US-036/037/038 | Seguimientos de competición, equipo o partido priorizan su competición sin ocultar las demás | `lib/features/matches/matches_screen.dart` | Pruebas de favorito internacional y orden estable |
+| Country Bootstrap | País manual y detectado ordenan la cobertura; ya no actúan como filtro duro | `lib/features/matches/matches_screen.dart` | Pruebas CR + LaLiga, CR sin partidos y selección manual ES |
+
+Orden aplicado: favoritos explícitos, país seleccionado, país detectado, interés
+temporal y resto por nombre/ID. La fuente de partidos continúa siendo el mismo
+snapshot canónico que consumen Explorar y Match Center.
+
 ## Bloque 0.2 — datos reales y almacenamiento local
 
 ### Ampliación 0.3 — Supabase
