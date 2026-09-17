@@ -40,6 +40,14 @@ jobs:
       - run: dart run build_runner build
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
+      - name: Build FutBeat debug APK
+        run: flutter build apk --debug
+      - name: Upload FutBeat debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: futbeat-debug-apk
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
       - run: flutter test
       - name: Upload Flutter golden failures
         if: failure()
