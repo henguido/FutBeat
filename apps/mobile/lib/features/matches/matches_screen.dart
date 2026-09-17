@@ -17,6 +17,7 @@ const _importantCompetitions = <String>{
   'liga mx',
   'major league soccer',
   'mls',
+  'concacaf central american cup',
 };
 
 String _normalizedCompetitionName(String value) => value
@@ -47,6 +48,14 @@ bool _isFeaturedCompetition({
     _matchesCountry(competition.country, selectedCountry) ||
     _matchesCountry(competition.country, detectedCountry) ||
     _isImportantCompetition(competition);
+
+String _compactDate(DateTime value) {
+  const months = [
+    'ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN',
+    'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC',
+  ];
+  return '${value.day} ${months[value.month - 1]}';
+}
 
 List<Entity> orderMatchCompetitions({
   required Snapshot data,
@@ -116,6 +125,17 @@ class MatchesScreen extends ConsumerStatefulWidget {
 class _MatchesScreenState extends ConsumerState<MatchesScreen> {
   DateTime? date;
   String filter = 'Todos';
+
+  Future<void> _pickDate(BuildContext context, DateTime selected) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selected,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null && mounted) setState(() => date = picked);
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
@@ -204,75 +224,23 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               const SizedBox(height: 20),
               if (data.demo) const DemoNotice(),
               if (!data.demo) CountryPreferencePanel(compact: true, data: data),
-              if (!data.demo) const SizedBox(height: 12),
-              Row(
-                children: [
-                  IconButton(
-                    tooltip: 'Día anterior',
-                    onPressed: () => setState(
-                      () => date = DateTime(
-                        selected.year,
-                        selected.month,
-                        selected.day - 1,
-                      ),
-                    ),
-                    icon: const Icon(Icons.chevron_left),
-                  ),
-                  Expanded(
-                    child: TextButton(
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: selected,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2100),
-                        );
-                        if (picked != null) setState(() => date = picked);
-                      },
-                      child: Text(
-                        '${selected.day}/${selected.month}/${selected.year}',
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Día siguiente',
-                    onPressed: () => setState(
-                      () => date = DateTime(
-                        selected.year,
-                        selected.month,
-                        selected.day + 1,
-                      ),
-                    ),
-                    icon: const Icon(Icons.chevron_right),
-                  ),
-                ],
-              ),
+              if (!data.demo) const SizedBox(height: 16),
               Row(
                 children: [
                   for (final (offset, label) in [
-                    (-1, 'Ayer'),
-                    (0, 'Hoy'),
-                    (1, 'Mañana'),
+                    (-1, 'AYER'),
+                    (0, 'HOY'),
+                    (1, 'MAÑANA'),
                   ])
                     Expanded(
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 3),
-                        child: ChoiceChip(
-                          label: Text(
-                            label,
-                            style: TextStyle(
-                              color:
-                                  DateUtils.isSameDay(
-                                    selected,
-                                    DateTime(
-                                      anchor.year,
-                                      anchor.month,
-                                      anchor.day + offset,
-                                    ),
-                                  )
-                                  ? const Color(0xFF0B1114)
-                                  : Colors.white,
-                            ),
+                        padding: const EdgeInsets.only(right: 6),
+                        child: _DateOption(
+                          label: label,
+                          date: DateTime(
+                            anchor.year,
+                            anchor.month,
+                            anchor.day + offset,
                           ),
                           selected: DateUtils.isSameDay(
                             selected,
@@ -282,7 +250,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                               anchor.day + offset,
                             ),
                           ),
-                          onSelected: (_) => setState(
+                          onTap: () => setState(
                             () => date = DateTime(
                               anchor.year,
                               anchor.month,
@@ -292,6 +260,15 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                         ),
                       ),
                     ),
+                  SizedBox(
+                    width: 46,
+                    height: 52,
+                    child: IconButton.filledTonal(
+                      tooltip: 'Elegir otra fecha',
+                      onPressed: () => _pickDate(context, selected),
+                      icon: const Icon(Icons.calendar_month_outlined),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -398,6 +375,61 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           ),
         );
       },
+    ),
+  );
+}
+
+class _DateOption extends StatelessWidget {
+  const _DateOption({
+    required this.label,
+    required this.date,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final DateTime date;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: selected ? lime : const Color(0xFF151D20),
+    borderRadius: BorderRadius.circular(16),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        height: 52,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: selected ? null : Border.all(color: const Color(0xFF394246)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? const Color(0xFF0B1114) : muted,
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              _compactDate(date),
+              style: TextStyle(
+                color: selected ? const Color(0xFF0B1114) : Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
     ),
   );
 }
