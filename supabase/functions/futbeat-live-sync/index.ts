@@ -1,4 +1,4 @@
-import { normalizeObservation } from '../../../backend/providers/live_observation.mjs';
+import { isTrackedLiveFixture, normalizeObservation } from '../../../backend/providers/live_observation.mjs';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 
@@ -76,13 +76,8 @@ Deno.serve(async (req: Request) => {
   let reservationId: number | null = null;
 
   try {
-    const reservation = await rpc(supabaseUrl, secret, "futbeat_reserve_provider_call", {
-      p_provider: "api_football",
-      p_call_kind: "live",
+    const reservation = await rpc(supabaseUrl, secret, "futbeat_reserve_live_call", {
       p_trigger_source: triggerSource,
-      p_daily_limit: isCron ? 95 : 100,
-      p_min_interval_seconds: 120,
-      p_force: !isCron,
     });
 
     if (!reservation?.allowed) {
@@ -98,7 +93,7 @@ Deno.serve(async (req: Request) => {
 
     reservationId = Number(reservation.reservationId);
     const checkedAt = new Date().toISOString();
-    const upstream = await fetch("https://v3.football.api-sports.io/fixtures?live=all", {
+    const upstream = await fetch("https://v3.football.api-sports.io/fixtures?live=2-39-140-253-262", {
       method: "GET",
       headers: {
         "x-apisports-key": apiKey,
@@ -135,8 +130,15 @@ Deno.serve(async (req: Request) => {
       return json(502, { error: "Invalid provider response", remaining });
     }
 
-    const normalized = await Promise.all(payload.response.map(normalizeObservation));
-    const observations = normalized.filter((item) => item.competitionId != null);
+    const betaFixtures = payload.response.filter(isTrackedLiveFixture);
+    const observations = await Promise.all(betaFixtures.map(normalizeObservation));
+    for (const observation of observations) {
+      if (!observation.competitionId) {
+        observation.competitionId = await rpc(supabaseUrl, secret, "futbeat_resolve_live_competition", {
+          p_external_league_id: observation.competitionExternalId,
+        });
+      }
+    }
     const persistence = await rpc(supabaseUrl, secret, "futbeat_record_live_batch", {
       p_provider: "api_football",
       p_received_at: checkedAt,
@@ -150,7 +152,7 @@ Deno.serve(async (req: Request) => {
       p_http_status: upstream.status,
       p_error_code: null,
       p_metadata: {
-        liveMatches: normalized.length,
+        liveMatches: payload.response.length,
         trackedMatches: observations.length,
         insertedObservations: persistence?.insertedObservations ?? 0,
         duplicates: persistence?.duplicates ?? 0,
@@ -160,7 +162,7 @@ Deno.serve(async (req: Request) => {
     return json(200, {
       provider: "api_football",
       ok: true,
-      liveMatches: normalized.length,
+      liveMatches: payload.response.length,
       trackedMatches: observations.length,
       remaining,
       checkedAt,
