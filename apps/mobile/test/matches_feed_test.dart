@@ -16,6 +16,7 @@ class _Repository implements FootballRepository {
 
 Snapshot _snapshot({
   bool costaRicaMatch = true,
+  bool includeCup = false,
   String costaRicaStatus = 'SCHEDULED',
   String laLigaStatus = 'SCHEDULED',
 }) {
@@ -55,12 +56,24 @@ Snapshot _snapshot({
     'competitions': [
       {'id': 'fb_comp_cr', 'name': 'Liga Promerica', 'country': 'Costa Rica'},
       {'id': 'fb_comp_laliga', 'name': 'LaLiga', 'country': 'Spain'},
+      if (includeCup)
+        {
+          'id': 'fb_comp_cac',
+          'name': 'CONCACAF Central American Cup',
+          'country': 'Worldwide',
+        },
     ],
     'teams': [
       {'id': 'fb_team_sap', 'name': 'Saprissa', 'country': 'Costa Rica'},
       {'id': 'fb_team_lda', 'name': 'Alajuelense', 'country': 'Costa Rica'},
       {'id': 'fb_team_betis', 'name': 'Real Betis', 'country': 'Spain'},
       {'id': 'fb_team_getafe', 'name': 'Getafe', 'country': 'Spain'},
+      if (includeCup)
+        {'id': 'fb_team_mar', 'name': 'Marathón', 'country': 'Honduras'},
+      if (includeCup)
+        {'id': 'fb_team_x', 'name': 'Equipo X', 'country': 'Guatemala'},
+      if (includeCup)
+        {'id': 'fb_team_y', 'name': 'Equipo Y', 'country': 'Panama'},
     ],
     'players': <dynamic>[],
     'matches': [
@@ -81,6 +94,24 @@ Snapshot _snapshot({
         laLigaStatus,
         13,
       ),
+      if (includeCup)
+        match(
+          'fb_match_lda_cup',
+          'fb_comp_cac',
+          'fb_team_lda',
+          'fb_team_mar',
+          'SCHEDULED',
+          18,
+        ),
+      if (includeCup)
+        match(
+          'fb_match_other_cup',
+          'fb_comp_cac',
+          'fb_team_x',
+          'fb_team_y',
+          'SCHEDULED',
+          20,
+        ),
     ],
     'standings': <dynamic>[],
   });
@@ -113,20 +144,32 @@ void main() {
     expect(_ids(data), ['fb_comp_laliga']);
   });
 
-  test('an international favorite has the highest priority', () {
+  test('a followed competition has the highest priority', () {
     expect(_ids(_snapshot(), follows: {'competition:fb_comp_laliga'}), [
       'fb_comp_laliga',
       'fb_comp_cr',
     ]);
   });
 
+  test('following a team does not promote its whole competition', () {
+    final data = _snapshot(includeCup: true);
+    expect(
+      _ids(data, follows: {'team:fb_team_lda'}),
+      ['fb_comp_cr', 'fb_comp_laliga', 'fb_comp_cac'],
+    );
+  });
+
   test('selected country changes order without hiding detected country', () {
     expect(_ids(_snapshot(), selected: 'ES'), ['fb_comp_laliga', 'fb_comp_cr']);
   });
 
-  test('temporary interest orders remaining competitions', () {
+  test('temporary competition interest orders remaining competitions', () {
     expect(
-      _ids(_snapshot(), detected: null, temporary: {'team:fb_team_getafe'}),
+      _ids(
+        _snapshot(),
+        detected: null,
+        temporary: {'competition:fb_comp_laliga'},
+      ),
       ['fb_comp_laliga', 'fb_comp_cr'],
     );
   });
@@ -143,11 +186,60 @@ void main() {
     expect(data.onDate(today, 'Próximos'), isEmpty);
   });
 
+  testWidgets('followed team is isolated above competitions and all games remain', (
+    tester,
+  ) async {
+    final data = _snapshot(includeCup: true);
+    tester.view.physicalSize = const Size(390, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(_Repository(data)),
+          liveMatchUpdatesProvider.overrideWith(
+            (ref) => Stream.value(const <String, LiveMatchUpdate>{}),
+          ),
+          preferenceProvider.overrideWith(
+            (ref) => Stream.value(
+              const CountryPreference(
+                detectedCountry: 'CR',
+                selectedCountry: null,
+                bootstrapDismissed: true,
+              ),
+            ),
+          ),
+          followsProvider.overrideWith(
+            (ref) => Stream.value(<String>{'team:fb_team_lda'}),
+          ),
+          temporaryInterestsProvider.overrideWith(
+            (ref) => Stream.value(<String>{}),
+          ),
+        ],
+        child: const MaterialApp(home: MatchesScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('EQUIPOS QUE SIGUES'), findsOneWidget);
+    expect(find.text('COMPETICIONES DESTACADAS'), findsOneWidget);
+    expect(find.text('TODOS LOS PARTIDOS'), findsOneWidget);
+    expect(find.text('Marathón'), findsOneWidget);
+    expect(find.text('Equipo X'), findsOneWidget);
+    expect(find.text('Equipo Y'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Marathón')).dy,
+      lessThan(tester.getTopLeft(find.text('Equipo X')).dy),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Costa Rica detection still renders a real LaLiga match', (
     tester,
   ) async {
     final data = _snapshot();
-    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.physicalSize = const Size(390, 1400);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
