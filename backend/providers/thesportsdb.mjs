@@ -125,12 +125,17 @@ export async function fetchCostaRica({ fetcher = fetch, now = () => performance.
         diagnostics.teams = { ...entry.diagnostic, status: 'unavailable', error: 'empty_response', itemCount: 0 };
         continue;
       }
-      const outOfScope = items.filter((team) => !isCostaRicaTeam(team));
-      if (outOfScope.length > 0) {
+      const validTeams = items.filter(isCostaRicaTeam);
+      const outOfScope = items.length - validTeams.length;
+      if (outOfScope > 0) {
         diagnostics.teams = {
-          ...entry.diagnostic, status: 'unavailable', error: 'provider_scope_mismatch',
-          scopeMismatchCount: outOfScope.length, source: 'search_all_teams',
+          ...entry.diagnostic,
+          status: validTeams.length > 0 ? 'available' : 'unavailable',
+          error: 'provider_scope_mismatch', partial: validTeams.length > 0,
+          itemCount: validTeams.length, rawItemCount: items.length,
+          scopeMismatchCount: outOfScope, source: 'search_all_teams',
         };
+        if (validTeams.length > 0) result.teams = { ...entry.body, teams: validTeams };
         continue;
       }
       diagnostics.teams = { ...entry.diagnostic, source: 'search_all_teams' };
@@ -256,6 +261,7 @@ export async function normalize(raw, resolve, receivedAt) {
     status: 'available', itemCount: teams.size, stale: false, source: teamsSource,
     providerStatus: endpoint.teams?.status ?? (directTeams.length > 0 ? 'available' : 'unavailable'),
     providerError: endpoint.teams?.error ?? null,
+    partial: endpoint.teams?.partial === true,
   };
   const capabilities = {
     teams: teamsCapability,
@@ -265,7 +271,7 @@ export async function normalize(raw, resolve, receivedAt) {
   };
   const dynamicCoverage = {
     ...coverage,
-    partial: teamsSource === 'derived' || Object.entries(capabilities).some(([key, item]) => key !== 'teams' && item.status !== 'available'),
+    partial: teamsSource === 'derived' || teamsCapability.partial || Object.entries(capabilities).some(([key, item]) => key !== 'teams' && item.status !== 'available'),
     capabilities,
   };
   return {
