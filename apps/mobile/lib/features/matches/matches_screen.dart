@@ -9,6 +9,45 @@ import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../profile/country_preferences.dart';
 
+const _importantCompetitions = <String>{
+  'uefa champions league',
+  'premier league',
+  'la liga',
+  'laliga',
+  'liga mx',
+  'major league soccer',
+  'mls',
+};
+
+String _normalizedCompetitionName(String value) => value
+    .trim()
+    .toLowerCase()
+    .replaceAll('á', 'a')
+    .replaceAll('é', 'e')
+    .replaceAll('í', 'i')
+    .replaceAll('ó', 'o')
+    .replaceAll('ú', 'u');
+
+bool _isImportantCompetition(Entity competition) =>
+    _importantCompetitions.contains(_normalizedCompetitionName(competition.name));
+
+bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
+    follows.contains('team:${match.homeId}') ||
+    follows.contains('team:${match.awayId}');
+
+bool _isFeaturedCompetition({
+  required Entity competition,
+  required Set<String> follows,
+  required Set<String> temporaryInterests,
+  String? selectedCountry,
+  String? detectedCountry,
+}) =>
+    follows.contains('competition:${competition.id}') ||
+    temporaryInterests.contains('competition:${competition.id}') ||
+    _matchesCountry(competition.country, selectedCountry) ||
+    _matchesCountry(competition.country, detectedCountry) ||
+    _isImportantCompetition(competition);
+
 List<Entity> orderMatchCompetitions({
   required Snapshot data,
   required List<FootballMatch> matches,
@@ -25,23 +64,12 @@ List<Entity> orderMatchCompetitions({
       .toList();
 
   int priority(Entity competition) {
-    final competitionMatches = matches
-        .where((match) => match.competitionId == competition.id)
-        .toList();
-    bool hasInterest(Set<String> interests) =>
-        interests.contains('competition:${competition.id}') ||
-        competitionMatches.any(
-          (match) =>
-              interests.contains('match:${match.id}') ||
-              interests.contains('team:${match.homeId}') ||
-              interests.contains('team:${match.awayId}'),
-        );
-
-    if (hasInterest(follows)) return 0;
+    if (follows.contains('competition:${competition.id}')) return 0;
     if (_matchesCountry(competition.country, selectedCountry)) return 1;
     if (_matchesCountry(competition.country, detectedCountry)) return 2;
-    if (hasInterest(temporaryInterests)) return 3;
-    return 4;
+    if (_isImportantCompetition(competition)) return 3;
+    if (temporaryInterests.contains('competition:${competition.id}')) return 4;
+    return 5;
   }
 
   return visible..sort((left, right) {
@@ -121,14 +149,41 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
         final temporaryInterests =
             ref.watch(temporaryInterestsProvider).asData?.value ?? <String>{};
         final games = data.onDate(selected, filter);
-        final competitions = orderMatchCompetitions(
+
+        final followedGames = games
+            .where((match) => _isFollowedTeamMatch(match, follows))
+            .toList()
+          ..sort((a, b) => a.startTime.compareTo(b.startTime));
+        final followedIds = followedGames.map((match) => match.id).toSet();
+        final remainingGames = games
+            .where((match) => !followedIds.contains(match.id))
+            .toList();
+        final orderedCompetitions = orderMatchCompetitions(
           data: data,
-          matches: games,
+          matches: remainingGames,
           follows: follows,
           temporaryInterests: temporaryInterests,
           selectedCountry: preference?.selectedCountry,
           detectedCountry: preference?.detectedCountry,
         );
+        final featuredCompetitions = orderedCompetitions
+            .where(
+              (competition) => _isFeaturedCompetition(
+                competition: competition,
+                follows: follows,
+                temporaryInterests: temporaryInterests,
+                selectedCountry: preference?.selectedCountry,
+                detectedCountry: preference?.detectedCountry,
+              ),
+            )
+            .toList();
+        final featuredIds = featuredCompetitions
+            .map((competition) => competition.id)
+            .toSet();
+        final otherCompetitions = orderedCompetitions
+            .where((competition) => !featuredIds.contains(competition.id))
+            .toList();
+
         return RefreshIndicator(
           onRefresh: () async {
             ref.invalidate(snapshotProvider);
@@ -297,30 +352,47 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                       ),
                   ],
                 ),
-              for (final competition in competitions) ...[
-                Text(
-                  competition.country.toUpperCase(),
-                  style: const TextStyle(
-                    color: muted,
-                    letterSpacing: 2,
-                    fontSize: 11,
-                  ),
+              if (followedGames.isNotEmpty) ...[
+                const _FeedHeading(
+                  title: 'EQUIPOS QUE SIGUES',
+                  subtitle: 'Sus partidos aparecen primero, sin mover toda la competición.',
                 ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    competition.name,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                for (final match in followedGames) ...[
+                  _MatchCompetitionLabel(
+                    competition: data.competition(match.competitionId)!,
                   ),
-                  leading: EntityAvatar(competition, size: 34),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => context.push('/competition/${competition.id}'),
-                ),
-                for (final match in games.where(
-                  (m) => m.competitionId == competition.id,
-                ))
                   MatchCard(match, data),
-                const SizedBox(height: 12),
+                  const SizedBox(height: 10),
+                ],
+                const SizedBox(height: 8),
+              ],
+              if (featuredCompetitions.isNotEmpty) ...[
+                const _FeedHeading(
+                  title: 'COMPETICIONES DESTACADAS',
+                  subtitle: 'Tus ligas, tu país y las competiciones principales.',
+                ),
+                for (final competition in featuredCompetitions)
+                  _CompetitionBlock(
+                    competition: competition,
+                    matches: remainingGames
+                        .where((m) => m.competitionId == competition.id)
+                        .toList(),
+                    data: data,
+                  ),
+              ],
+              if (otherCompetitions.isNotEmpty) ...[
+                const _FeedHeading(
+                  title: 'TODOS LOS PARTIDOS',
+                  subtitle: 'El resto de encuentros disponibles para este día.',
+                ),
+                for (final competition in otherCompetitions)
+                  _CompetitionBlock(
+                    competition: competition,
+                    matches: remainingGames
+                        .where((m) => m.competitionId == competition.id)
+                        .toList(),
+                    data: data,
+                  ),
               ],
             ],
           ),
@@ -328,6 +400,101 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
       },
     ),
   );
+}
+
+class _FeedHeading extends StatelessWidget {
+  const _FeedHeading({required this.title, required this.subtitle});
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 6, bottom: 14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            color: lime,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.8,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(subtitle, style: const TextStyle(color: muted, fontSize: 11)),
+      ],
+    ),
+  );
+}
+
+class _MatchCompetitionLabel extends StatelessWidget {
+  const _MatchCompetitionLabel({required this.competition});
+  final Entity competition;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      children: [
+        EntityAvatar(competition, size: 24),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            competition.name,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+        ),
+        Text(
+          competition.country.toUpperCase(),
+          style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2),
+        ),
+      ],
+    ),
+  );
+}
+
+class _CompetitionBlock extends StatelessWidget {
+  const _CompetitionBlock({
+    required this.competition,
+    required this.matches,
+    required this.data,
+  });
+
+  final Entity competition;
+  final List<FootballMatch> matches;
+  final Snapshot data;
+
+  @override
+  Widget build(BuildContext context) {
+    if (matches.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          competition.country.toUpperCase(),
+          style: const TextStyle(
+            color: muted,
+            letterSpacing: 2,
+            fontSize: 11,
+          ),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            competition.name,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          leading: EntityAvatar(competition, size: 34),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/competition/${competition.id}'),
+        ),
+        for (final match in matches) MatchCard(match, data),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
 }
 
 class MatchCard extends StatelessWidget {
