@@ -8,7 +8,7 @@ import {
 
 const baseUrl = 'https://v3.football.api-sports.io';
 const mediaHost = 'media.api-sports.io';
-export const apiFootballBetaLeagueIds = Object.freeze(['2', '39', '140', '253', '262']);
+export const apiFootballBetaLeagueIds = Object.freeze(['2', '39', '140', '253', '262', '1028']);
 
 export function filterApiFootballBetaFixtures(raw) {
   const allowed = new Set(apiFootballBetaLeagueIds);
