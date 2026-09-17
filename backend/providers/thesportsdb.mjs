@@ -21,6 +21,30 @@ const isCostaRicaTeam = (team) => {
   return true;
 };
 
+function providerMedia(value, receivedAt, kind) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') throw new Error(`Invalid ${kind} media URL`);
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid ${kind} media URL`);
+  }
+  if (url.protocol !== 'https:' ||
+      (url.hostname !== 'thesportsdb.com' && !url.hostname.endsWith('.thesportsdb.com'))) {
+    throw new Error(`Untrusted ${kind} media URL`);
+  }
+  return {
+    url: url.toString(),
+    kind,
+    source,
+    receivedAt,
+    verificationStatus: 'VERIFIED',
+    rightsStatus: 'REVIEW_REQUIRED',
+    usageScope: 'DEVELOPMENT_ONLY',
+  };
+}
+
 export class CountryFetchError extends Error {
   constructor(message, diagnostics) {
     super(message);
@@ -166,11 +190,21 @@ export async function normalize(raw, resolve, receivedAt) {
     throw new Error('Missing Costa Rica league');
   }
   const competitionId = await resolve('competition', '4815');
-  const competition = { id: competitionId, name: required(league.strLeague, 'league name'), country: 'Costa Rica', season: league.strCurrentSeason ?? '', media: null };
+  const competition = {
+    id: competitionId,
+    name: required(league.strLeague, 'league name'),
+    country: 'Costa Rica',
+    season: league.strCurrentSeason ?? '',
+    media: providerMedia(league.strBadge, receivedAt, 'COMPETITION_LOGO'),
+  };
   const teams = new Map(), matches = new Map(), teamIdsByExternal = new Map();
   const directTeams = Array.isArray(raw.teams?.teams) ? raw.teams.teams : [];
 
-  const addTeam = async (externalIdValue, nameValue, { shortName = '', preferName = false } = {}) => {
+  const addTeam = async (
+    externalIdValue,
+    nameValue,
+    { shortName = '', preferName = false, media = null } = {},
+  ) => {
     const externalId = required(externalIdValue, 'team ID');
     const name = required(nameValue, 'team name');
     let teamId = teamIdsByExternal.get(externalId);
@@ -192,14 +226,20 @@ export async function normalize(raw, resolve, receivedAt) {
     teams.set(teamId, {
       ...existing, id: teamId, name: selectedName,
       shortName: preferName ? (shortName || existing?.shortName || '') : (existing?.shortName || shortName || ''),
-      country: 'Costa Rica', competitionId, media: null, aliases: [...aliases],
+      country: 'Costa Rica', competitionId,
+      media: media ?? existing?.media ?? null,
+      aliases: [...aliases],
     });
     return teamId;
   };
 
   for (const team of directTeams) {
     if (!isCostaRicaTeam(team)) throw new Error('Unexpected team competition/country');
-    await addTeam(team.idTeam, team.strTeam, { shortName: team.strTeamShort ?? '', preferName: true });
+    await addTeam(team.idTeam, team.strTeam, {
+      shortName: team.strTeamShort ?? '',
+      preferName: true,
+      media: providerMedia(team.strBadge, receivedAt, 'TEAM_LOGO'),
+    });
   }
 
   for (const envelope of [raw.past, raw.next].filter(Boolean)) {
@@ -207,8 +247,12 @@ export async function normalize(raw, resolve, receivedAt) {
     for (const event of envelope.events ?? []) {
       if (event.idLeague !== '4815' || event.strSport !== 'Soccer') throw new Error('Unexpected competition');
       const id = await resolve('match', required(event.idEvent, 'event ID'));
-      const homeTeamId = await addTeam(event.idHomeTeam, event.strHomeTeam);
-      const awayTeamId = await addTeam(event.idAwayTeam, event.strAwayTeam);
+      const homeTeamId = await addTeam(event.idHomeTeam, event.strHomeTeam, {
+        media: providerMedia(event.strHomeTeamBadge, receivedAt, 'TEAM_LOGO'),
+      });
+      const awayTeamId = await addTeam(event.idAwayTeam, event.strAwayTeam, {
+        media: providerMedia(event.strAwayTeamBadge, receivedAt, 'TEAM_LOGO'),
+      });
       const status = { NS: 'SCHEDULED', FT: 'FINISHED_PENDING_VERIFICATION', PST: 'POSTPONED', CANC: 'CANCELLED', SUSP: 'SUSPENDED', ABD: 'ABANDONED' }[event.strStatus];
       if (!status) throw new Error(`Unsupported provider status: ${event.strStatus}`);
       const timestamp = required(event.strTimestamp, 'UTC timestamp');
