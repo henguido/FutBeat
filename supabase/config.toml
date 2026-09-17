@@ -1,7 +1,7 @@
 project_id = "FutBeat"
 
 [functions.futbeat-api]
-verify_jwt = true
+verify_jwt = false
 
 [functions.futbeat-live-sync]
 verify_jwt = true
@@ -10,4 +10,7 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.futbeat-country-sync]
+verify_jwt = true
+
+[functions.futbeat-fixtures-sync]
 verify_jwt = true
