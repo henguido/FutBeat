@@ -41,3 +41,10 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
+      - name: Upload Flutter golden failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-golden-failures
+          path: apps/mobile/test/failures/
+          if-no-files-found: ignore
