@@ -9,7 +9,7 @@ import { createApi } from '../api/server.mjs';
 
 // Synthetic records matching the official API shape; never sports assertions.
 const raw = () => ({
-  league: { leagues: [{ idLeague: '4815', strSport: 'Soccer', strLeague: 'Liga CR', strCurrentSeason: '2026-2027' }] },
+  league: { leagues: [{ idLeague: '4815', strSport: 'Soccer', strLeague: 'Costa-Rica Liga FPD', strCountry: 'Costa Rica', strCurrentSeason: '2026-2027' }] },
   next: { events: [{ idEvent: 'test-1', idLeague: '4815', strSport: 'Soccer', strHomeTeam: 'Equipo A', strAwayTeam: 'Equipo B', idHomeTeam: '139705', idAwayTeam: '139703', strStatus: 'NS', strSeason: '2026-2027', strTimestamp: '2026-09-19T02:00:00', intHomeScore: null, intAwayScore: null }] },
   past: { events: null },
   teams: { teams: [
@@ -17,7 +17,7 @@ const raw = () => ({
     { idTeam: '139703', idLeague: '4815', strCountry: 'Costa Rica', strSport: 'Soccer', strTeam: 'Equipo B', strTeamShort: 'B' },
   ] },
   table: { table: [
-    { idTeam: '139705', intPlayed: '2', intWin: '2', intDraw: '0', intLoss: '0', intGoalsFor: '4', intGoalsAgainst: '1', intPoints: '6' },
+    { idTeam: '139705', strTeam: 'Equipo A', intPlayed: '2', intWin: '2', intDraw: '0', intLoss: '0', intGoalsFor: '4', intGoalsAgainst: '1', intPoints: '6' },
   ] },
 });
 
@@ -66,17 +66,17 @@ test('persistent identity, atomic rollback, partial windows, durable job dedup a
 
 const endpointName = (url) => url.includes('lookupleague') ? 'league'
   : url.includes('eventsnext') ? 'next' : url.includes('eventspast') ? 'past'
-    : url.includes('lookup_all_teams') ? 'teams' : 'table';
+    : url.includes('search_all_teams') ? 'teams' : 'table';
 const providerBodies = () => {
   const value = raw();
   for (const team of value.teams.teams) Object.assign(team, { idLeague: '4815', strCountry: 'Costa Rica' });
   return { league: value.league, next: value.next, past: value.past, teams: value.teams, table: value.table };
 };
 const timeout = () => Object.assign(new Error('provider took too long'), { name: 'TimeoutError' });
-function providerFetcher(overrides = {}, calls = []) {
+function providerFetcher(overrides = {}, calls = [], urls = []) {
   const bodies = providerBodies();
   return async (url) => {
-    const name = endpointName(url); calls.push(name);
+    const name = endpointName(url); calls.push(name); urls.push(url);
     const override = overrides[name];
     if (override instanceof Error) throw override;
     if (typeof override === 'number') return new Response('{}', { status: override });
@@ -105,6 +105,16 @@ test('five provider endpoints succeed; league precedes four parallel requests wi
   }
 });
 
+test('team request uses documented search_all_teams scoped by league, sport and country', async () => {
+  const urls = [];
+  await fetchCostaRica({ fetcher: providerFetcher({}, [], urls) });
+  const teamUrl = urls.find((url) => endpointName(url) === 'teams');
+  assert.ok(teamUrl.includes('search_all_teams.php'));
+  assert.ok(teamUrl.includes('l=Costa-Rica_Liga_FPD'));
+  assert.ok(teamUrl.includes('s=Soccer'));
+  assert.ok(teamUrl.includes('c=Costa%20Rica'));
+});
+
 for (const name of ['table', 'next', 'past']) test(`timeout in ${name} is degraded without retry`, async () => {
   const calls = [];
   const fetched = await fetchCostaRica({ fetcher: providerFetcher({ [name]: timeout() }, calls) });
@@ -125,14 +135,27 @@ test('successful null table is available with zero rows and no invented standing
   assert.deepEqual(snapshot.standings, []);
 });
 
-for (const name of ['teams', 'league']) test(`${name} failure rejects the country fetch`, async () => {
+test('league failure rejects the country fetch', async () => {
   const calls = [];
   await assert.rejects(
-    fetchCostaRica({ fetcher: providerFetcher({ [name]: 503 }, calls) }),
-    (error) => error.diagnostics[name].httpStatus === 503 && error.message.includes(name),
+    fetchCostaRica({ fetcher: providerFetcher({ league: 503 }, calls) }),
+    (error) => error.diagnostics.league.httpStatus === 503 && error.message.includes('league'),
   );
-  assert.equal(calls.filter((entry) => entry === name).length, 1);
-  assert.equal(calls.length, name === 'league' ? 1 : 5);
+  assert.equal(calls.filter((entry) => entry === 'league').length, 1);
+  assert.equal(calls.length, 1);
+});
+
+test('teams endpoint failure degrades to teams derived from valid match observations', async () => {
+  const calls = [];
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ teams: 503 }, calls) });
+  assert.equal(fetched.teams, undefined);
+  assert.equal(fetched._fetch.endpoints.teams.status, 'temporarily_unavailable');
+  assert.equal(calls.filter((entry) => entry === 'teams').length, 1);
+  const snapshot = await normalize(fetched, resolver, '2026-09-17T04:00:00Z');
+  assert.equal(snapshot.teams.length, 2);
+  assert.equal(snapshot.coverage.capabilities.teams.status, 'available');
+  assert.equal(snapshot.coverage.capabilities.teams.source, 'derived');
+  assert.equal(snapshot.coverage.partial, true);
 });
 
 test('next and past degrade independently while valid real data is retained', async () => {
@@ -162,16 +185,59 @@ test('malformed successful optional response is rejected rather than hidden as u
   await assert.rejects(normalize(malformedTable, resolver, '2026-09-17T04:00:00Z'), /Invalid table response/);
 });
 
-test('teams from another league or country reject the snapshot before canonical mapping', async () => {
-  const calls = [];
+test('teams from another league or country are discarded and never published', async () => {
   const fetched = await fetchCostaRica({ fetcher: providerFetcher({ teams: {
     teams: [{ idTeam: '133607', strSport: 'Soccer', strTeam: 'Wrong league', idLeague: '4396', strCountry: 'England' }],
   } }) });
-  await assert.rejects(
-    normalize(fetched, async (...args) => { calls.push(args); return resolver(...args); }, '2026-09-17T04:00:00Z'),
-    /Unexpected team competition\/country/,
-  );
-  assert.deepEqual(calls, [['competition', '4815']]);
+  assert.equal(fetched.teams, undefined);
+  assert.equal(fetched._fetch.endpoints.teams.error, 'provider_scope_mismatch');
+  const snapshot = await normalize(fetched, resolver, '2026-09-17T04:00:00Z');
+  assert.equal(snapshot.coverage.capabilities.teams.source, 'derived');
+  assert.equal(snapshot.teams.some((team) => team.name === 'Wrong league'), false);
+  assert.equal(snapshot.teams.every((team) => team.country === 'Costa Rica'), true);
+});
+
+test('valid team rows without country are accepted when league id and sport are correct', async () => {
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ teams: {
+    teams: [{ idTeam: '139705', idLeague: '4815', strSport: 'Soccer', strTeam: 'Equipo A' }],
+  } }) });
+  const snapshot = await normalize(fetched, resolver, '2026-09-17T04:00:00Z');
+  assert.equal(snapshot.teams.some((team) => team.name === 'Equipo A'), true);
+  assert.equal(snapshot.coverage.capabilities.teams.source, 'provider');
+});
+
+test('duplicate provider team IDs collapse to one canonical team', async () => {
+  const duplicate = { idTeam: '139705', idLeague: '4815', strCountry: 'Costa Rica', strSport: 'Soccer', strTeam: 'Equipo A' };
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ teams: { teams: [duplicate, { ...duplicate }] } }) });
+  fetched.next = { events: null }; fetched.past = { events: null }; fetched.table = { table: null };
+  const snapshot = await normalize(fetched, resolver, '2026-09-17T04:00:00Z');
+  assert.equal(snapshot.teams.length, 1);
+});
+
+test('empty teams response falls back to valid event teams', async () => {
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ teams: { teams: [] } }) });
+  assert.equal(fetched.teams, undefined);
+  assert.equal(fetched._fetch.endpoints.teams.error, 'empty_response');
+  const snapshot = await normalize(fetched, resolver, '2026-09-17T04:00:00Z');
+  assert.equal(snapshot.teams.length, 2);
+  assert.equal(snapshot.coverage.capabilities.teams.source, 'derived');
+});
+
+test('teams can be reconstructed from table when direct teams and events are unavailable', async () => {
+  const table = { table: [
+    { idTeam: '139705', strTeam: 'Equipo A', intPlayed: '2', intWin: '2', intDraw: '0', intLoss: '0', intGoalsFor: '4', intGoalsAgainst: '1', intPoints: '6' },
+    { idTeam: '139703', strTeam: 'Equipo B', intPlayed: '2', intWin: '1', intDraw: '0', intLoss: '1', intGoalsFor: '3', intGoalsAgainst: '2', intPoints: '3' },
+  ] };
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ teams: 503, next: { events: null }, past: { events: null }, table }) });
+  const snapshot = await normalize(fetched, resolver, '2026-09-17T04:00:00Z');
+  assert.equal(snapshot.teams.length, 2);
+  assert.equal(snapshot.standings[0].rows.length, 2);
+  assert.equal(snapshot.coverage.capabilities.teams.source, 'derived');
+});
+
+test('no valid team source rejects normalization', async () => {
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ teams: 503, next: { events: null }, past: { events: null }, table: { table: null } }) });
+  await assert.rejects(normalize(fetched, resolver, '2026-09-17T04:00:00Z'), /No valid Costa Rica teams/);
 });
 
 test('country snapshot RPC accepts its UUID job id against the text import ledger', async () => {
