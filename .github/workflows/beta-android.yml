@@ -2,6 +2,14 @@ name: FutBeat Android beta
 
 on:
   workflow_dispatch:
+    inputs:
+      api_url:
+        description: FutBeat API base URL
+        required: true
+        default: https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-api
+      public_token:
+        description: Supabase publishable token
+        required: true
 
 permissions:
   contents: read
@@ -34,7 +42,19 @@ jobs:
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
-      - run: flutter build apk --debug
+      - name: Create cloud build configuration
+        shell: pwsh
+        env:
+          FUTBEAT_API_URL: ${{ inputs.api_url }}
+          FUTBEAT_API_PUBLIC_TOKEN: ${{ inputs.public_token }}
+        run: |
+          @{
+            FUTBEAT_API_URL = $env:FUTBEAT_API_URL
+            FUTBEAT_API_PUBLIC_TOKEN = $env:FUTBEAT_API_PUBLIC_TOKEN
+          } | ConvertTo-Json -Compress | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\futbeat-cloud-build.json"
+      - name: Build connected debug APK
+        shell: pwsh
+        run: flutter build apk --debug --dart-define-from-file="$env:RUNNER_TEMP\futbeat-cloud-build.json"
       - uses: actions/upload-artifact@v4
         with:
           name: futbeat-android-debug
