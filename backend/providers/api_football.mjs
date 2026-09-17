@@ -133,10 +133,27 @@ export function createApiFootballProvider({
       if (!response.ok) throw new Error(`API-Football HTTP ${response.status}`);
       return assertApiEnvelope(await response.json());
     },
+
+    async fetchFixturesWindow({ from, to, timezone = 'America/Costa_Rica' }) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        throw new Error('Fixture window requires ISO dates');
+      }
+      budget.reserve();
+      const query = new URLSearchParams({ from, to, timezone });
+      const response = await fetcher(`${baseUrl}/fixtures?${query}`, {
+        headers: {
+          'x-apisports-key': apiKey,
+          accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) throw new Error(`API-Football HTTP ${response.status}`);
+      return assertApiEnvelope(await response.json());
+    },
   });
 }
 
-export async function normalizeApiFootballLive(raw, resolve, receivedAt) {
+export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
   assertApiEnvelope(raw);
   if (typeof resolve !== 'function') throw new Error('Provider resolver is required');
   if (!Number.isFinite(Date.parse(receivedAt))) throw new Error('Invalid receivedAt');
@@ -255,3 +272,5 @@ export async function normalizeApiFootballLive(raw, resolve, receivedAt) {
     transfers: [],
   };
 }
+
+export const normalizeApiFootballLive = normalizeApiFootballFixtures;

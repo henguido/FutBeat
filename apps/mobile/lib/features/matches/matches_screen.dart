@@ -44,7 +44,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
       builder: (data) {
         final anchor = data.demo
             ? DateTime(2026, 9, 15)
-            : DateUtils.dateOnly(DateTime.now());
+            : DateUtils.dateOnly(costaRicaNow());
         final selected = date ?? anchor;
         final country = ref
             .watch(preferenceProvider)
@@ -331,7 +331,7 @@ class MatchCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          match.isUpcoming ? 'Hora local' : 'Ver partido',
+                          match.isUpcoming ? 'Hora Costa Rica' : 'Ver partido',
                           style: const TextStyle(fontSize: 10, color: muted),
                         ),
                       ],

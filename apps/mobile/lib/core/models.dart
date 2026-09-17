@@ -1,5 +1,11 @@
 typedef Json = Map<String, dynamic>;
 
+// Costa Rica uses UTC-06:00 year-round and does not observe daylight saving.
+DateTime costaRicaTime(DateTime instant) =>
+    instant.toUtc().subtract(const Duration(hours: 6));
+
+DateTime costaRicaNow() => costaRicaTime(DateTime.now());
+
 class Entity {
   Entity(this.json);
   final Json json;
@@ -110,7 +116,7 @@ class FootballMatch {
   String get homeId => json['homeTeamId'] as String;
   String get awayId => json['awayTeamId'] as String;
   DateTime get startTime =>
-      DateTime.parse(json['startTime'] as String).toLocal();
+      costaRicaTime(DateTime.parse(json['startTime'] as String));
   String get status => json['status'] as String;
   bool get isLive =>
       ['LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'].contains(status);

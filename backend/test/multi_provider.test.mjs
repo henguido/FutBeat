@@ -73,6 +73,39 @@ test('API-Football LIVE request uses one call, server-only key and league filter
   assert.equal(provider.budget.snapshot().dailyUsed, 1);
 });
 
+test('API-Football date window uses one aggregated request in Costa Rica timezone', async () => {
+  const calls = [];
+  const provider = createApiFootballProvider({
+    apiKey: 'server-secret',
+    fetcher: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, json: async () => ({ errors: [], results: 0, response: [] }) };
+    },
+  });
+  await provider.fetchFixturesWindow({ from: '2026-09-16', to: '2026-09-18' });
+  assert.equal(calls.length, 1);
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, '/fixtures');
+  assert.equal(url.searchParams.get('from'), '2026-09-16');
+  assert.equal(url.searchParams.get('to'), '2026-09-18');
+  assert.equal(url.searchParams.get('timezone'), 'America/Costa_Rica');
+  assert.equal(calls[0].options.headers['x-apisports-key'], 'server-secret');
+});
+
+test('API-Football date window validates dates before spending quota', async () => {
+  let calls = 0;
+  const provider = createApiFootballProvider({
+    apiKey: 'server-secret',
+    fetcher: async () => { calls += 1; },
+  });
+  await assert.rejects(
+    provider.fetchFixturesWindow({ from: 'today', to: '2026-09-18' }),
+    /ISO dates/,
+  );
+  assert.equal(calls, 0);
+  assert.equal(provider.budget.snapshot().dailyUsed, 0);
+});
+
 test('API-Football HTTP/API errors are sanitized and never echo the key', async () => {
   const provider = createApiFootballProvider({
     apiKey: 'do-not-leak',
