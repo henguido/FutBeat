@@ -26,12 +26,27 @@ Deno.serve(async (request) => {
   const cron = scheduler && await rpc("futbeat_authorize_push_scheduler", { p_token: scheduler });
   if (!service && !cron) return new Response(null, { status: 403 });
   if (!apiKey) return Response.json({ error: "Provider is not configured" }, { status: 503 });
-  let input: { window?: string } = {};
-  try { input = await request.json(); } catch { /* Empty body means today. */ }
+
+  let input: { window?: string; force?: boolean } = {};
+  try { input = await request.json(); } catch { }
   const window = input.window ?? "today";
   const offsets: Record<string, number> = { yesterday: -1, today: 0, tomorrow: 1 };
   if (!(window in offsets)) return Response.json({ error: "Invalid fixture window" }, { status: 400 });
-  const reservation = await rpc("futbeat_reserve_fixture_call", { p_trigger_source: service ? "manual" : "cron", p_window: window });
+
+  const force = input.force === true && Boolean(service || cron);
+  const reservation = force
+    ? await rpc("futbeat_reserve_provider_call", {
+        p_provider: "api_football",
+        p_call_kind: `fixtures-date-${window}`,
+        p_trigger_source: service ? "manual" : "cron",
+        p_daily_limit: 95,
+        p_min_interval_seconds: 0,
+        p_force: true,
+      })
+    : await rpc("futbeat_reserve_fixture_call", {
+        p_trigger_source: service ? "manual" : "cron",
+        p_window: window,
+      });
   if (!reservation.allowed) return Response.json({ status: "skipped", reason: reservation.reason });
 
   const date = costaRicaDate(offsets[window]);
@@ -53,16 +68,16 @@ Deno.serve(async (request) => {
     const competitions = [...new Set(raw.response.map((item: { league?: { name?: string } }) => item.league?.name).filter(Boolean))];
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId, p_status: "SUCCEEDED", p_provider_remaining: null, p_http_status: 200, p_error_code: null,
-      p_metadata: { stage: "complete", window, date, durationMs, endpoint: "fixtures_by_date", params: { date, timezone: "America/Costa_Rica" }, errors: [], received: raw.results, accepted: raw.results, competitions },
+      p_metadata: { stage: "complete", window, date, force, durationMs, endpoint: "fixtures_by_date", params: { date, timezone: "America/Costa_Rica" }, errors: [], received: raw.results, accepted: raw.results, competitions },
     });
-    return Response.json({ status: "ok", window, date, received: raw.results, accepted: raw.results, competitions, result });
+    return Response.json({ status: "ok", window, date, force, received: raw.results, accepted: raw.results, competitions, result });
   } catch (error) {
     const detail = error instanceof Error ? error.message.slice(0, 320) : "unknown";
     const diagnostics = error && typeof error === "object" && "details" in error ? (error as { details: Record<string, unknown> }).details : {};
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId, p_status: "FAILED", p_provider_remaining: null,
       p_http_status: diagnostics.httpStatus ?? null, p_error_code: "FIXTURE_SYNC_FAILED",
-      p_metadata: { stage, window, date, detail, ...diagnostics, durationMs: diagnostics.durationMs ?? Math.round(performance.now() - started) },
+      p_metadata: { stage, window, force, detail, ...diagnostics, durationMs: diagnostics.durationMs ?? Math.round(performance.now() - started) },
     });
     console.error("fixture sync failed", detail);
     return Response.json({ error: "Fixture sync failed", stage, detail, diagnostics }, { status: 502 });
