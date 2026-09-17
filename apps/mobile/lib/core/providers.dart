@@ -34,9 +34,14 @@ class ApiRepository implements FootballRepository {
 }
 
 final repositoryProvider = Provider<FootballRepository>((ref) {
-  const baseUrl = String.fromEnvironment('FUTBEAT_API_URL');
+  const useDemo = bool.fromEnvironment('FUTBEAT_USE_DEMO');
+  const baseUrl = String.fromEnvironment(
+    'FUTBEAT_API_URL',
+    defaultValue:
+        'https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-api',
+  );
   const publicToken = String.fromEnvironment('FUTBEAT_API_PUBLIC_TOKEN');
-  if (baseUrl.isEmpty) return DemoRepository();
+  if (useDemo) return DemoRepository();
   final dio = Dio(
     BaseOptions(
       baseUrl: baseUrl,
