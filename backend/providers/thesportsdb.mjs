@@ -106,9 +106,12 @@ export async function normalize(raw, resolve, receivedAt) {
   const competitionId = await resolve('competition', '4815');
   const competition = { id: competitionId, name: required(league.strLeague, 'league name'), country: 'Costa Rica', season: league.strCurrentSeason ?? '', media: null };
   const teams = new Map(), matches = new Map();
+  const providerTeamIds = new Set();
   if (!Array.isArray(raw.teams?.teams) || raw.teams.teams.length === 0) throw new Error('Missing valid teams response');
   for (const team of raw.teams.teams) {
     if (team.strSport !== 'Soccer') continue;
+    if (team.idLeague !== '4815' || team.strCountry !== 'Costa Rica') throw new Error('Unexpected team competition/country');
+    providerTeamIds.add(required(team.idTeam, 'team ID'));
     const teamId = await resolve('team', required(team.idTeam, 'team ID'));
     teams.set(teamId, {
       id: teamId, name: required(team.strTeam, 'team name'),
@@ -124,7 +127,9 @@ export async function normalize(raw, resolve, receivedAt) {
       const id = await resolve('match', required(event.idEvent, 'event ID'));
       const teamIds = [];
       for (const side of ['Home', 'Away']) {
-        const teamId = await resolve('team', required(event[`id${side}Team`], 'team ID'));
+        const externalTeamId = required(event[`id${side}Team`], 'team ID');
+        providerTeamIds.add(externalTeamId);
+        const teamId = await resolve('team', externalTeamId);
         teamIds.push(teamId);
         teams.set(teamId, { ...teams.get(teamId), id: teamId, name: required(event[`str${side}Team`], 'team name'), country: 'Costa Rica', competitionId, media: null, aliases: teams.get(teamId)?.aliases ?? [] });
       }
@@ -147,7 +152,9 @@ export async function normalize(raw, resolve, receivedAt) {
   if (table !== null && table !== undefined && !Array.isArray(table)) throw new Error('Invalid table response');
   const rows = [];
   for (const item of table ?? []) {
-    const teamId = await resolve('team', required(item.idTeam, 'table team ID'));
+    const externalTeamId = required(item.idTeam, 'table team ID');
+    if (!providerTeamIds.has(externalTeamId)) continue;
+    const teamId = await resolve('team', externalTeamId);
     if (!teams.has(teamId)) continue;
     const integer = (value, label) => {
       if (!/^\d+$/.test(String(value ?? ''))) throw new Error(`Invalid table ${label}`);

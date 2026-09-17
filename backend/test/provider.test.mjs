@@ -13,8 +13,8 @@ const raw = () => ({
   next: { events: [{ idEvent: 'test-1', idLeague: '4815', strSport: 'Soccer', strHomeTeam: 'Equipo A', strAwayTeam: 'Equipo B', idHomeTeam: '139705', idAwayTeam: '139703', strStatus: 'NS', strSeason: '2026-2027', strTimestamp: '2026-09-19T02:00:00', intHomeScore: null, intAwayScore: null }] },
   past: { events: null },
   teams: { teams: [
-    { idTeam: '139705', strSport: 'Soccer', strTeam: 'Equipo A', strTeamShort: 'A' },
-    { idTeam: '139703', strSport: 'Soccer', strTeam: 'Equipo B', strTeamShort: 'B' },
+    { idTeam: '139705', idLeague: '4815', strCountry: 'Costa Rica', strSport: 'Soccer', strTeam: 'Equipo A', strTeamShort: 'A' },
+    { idTeam: '139703', idLeague: '4815', strCountry: 'Costa Rica', strSport: 'Soccer', strTeam: 'Equipo B', strTeamShort: 'B' },
   ] },
   table: { table: [
     { idTeam: '139705', intPlayed: '2', intWin: '2', intDraw: '0', intLoss: '0', intGoalsFor: '4', intGoalsAgainst: '1', intPoints: '6' },
@@ -69,6 +69,7 @@ const endpointName = (url) => url.includes('lookupleague') ? 'league'
     : url.includes('lookup_all_teams') ? 'teams' : 'table';
 const providerBodies = () => {
   const value = raw();
+  for (const team of value.teams.teams) Object.assign(team, { idLeague: '4815', strCountry: 'Costa Rica' });
   return { league: value.league, next: value.next, past: value.past, teams: value.teams, table: value.table };
 };
 const timeout = () => Object.assign(new Error('provider took too long'), { name: 'TimeoutError' });
@@ -161,6 +162,18 @@ test('malformed successful optional response is rejected rather than hidden as u
   await assert.rejects(normalize(malformedTable, resolver, '2026-09-17T04:00:00Z'), /Invalid table response/);
 });
 
+test('teams from another league or country reject the snapshot before canonical mapping', async () => {
+  const calls = [];
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ teams: {
+    teams: [{ idTeam: '133607', strSport: 'Soccer', strTeam: 'Wrong league', idLeague: '4396', strCountry: 'England' }],
+  } }) });
+  await assert.rejects(
+    normalize(fetched, async (...args) => { calls.push(args); return resolver(...args); }, '2026-09-17T04:00:00Z'),
+    /Unexpected team competition\/country/,
+  );
+  assert.deepEqual(calls, [['competition', '4815']]);
+});
+
 test('country snapshot RPC accepts its UUID job id against the text import ledger', async () => {
   const db = await openDatabase();
   const jobId = '714320e8-4050-4d1c-be14-160e7070fe44';
@@ -177,6 +190,41 @@ test('country snapshot RPC accepts its UUID job id against the text import ledge
       [jobId, '2026-09-16T02:36:22.347Z', JSON.stringify({}), JSON.stringify(snapshot)],
     );
     assert.deepEqual(result.rows[0].result, { duplicate: true });
+  } finally { await db.close(); }
+});
+
+test('country snapshot merge never pulls an unrelated global entity', async () => {
+  const db = await openDatabase();
+  try {
+    const store = new PersistentStore(db, () => new Date('2026-09-17T04:00:00Z'));
+    await store.import(raw(), 'seed-country', '2026-09-17T04:00:00Z');
+    await db.query("insert into futbeat_private.entities values('fb_team_unrelated','team',$1)", [
+      JSON.stringify({ id: 'fb_team_unrelated', name: 'Unrelated' }),
+    ]);
+    const snapshot = await store.read(); delete snapshot.freshness;
+    const result = await db.query(
+      'select public.futbeat_store_country_snapshot($1::uuid,$2::timestamptz,$3::jsonb,$4::jsonb) result',
+      ['9be703d4-5484-4bd9-9c4e-8a80adbe445a', '2026-09-17T05:00:00Z', JSON.stringify({}), JSON.stringify(snapshot)],
+    );
+    assert.equal(result.rows[0].result.teams, 2);
+    const latest = (await db.query('select snapshot from futbeat_private.imports order by received_at desc limit 1')).rows[0].snapshot;
+    assert.equal(latest.teams.some((team) => team.id === 'fb_team_unrelated'), false);
+  } finally { await db.close(); }
+});
+
+test('cloud freshness follows provider updatedAt instead of recovery import time', async () => {
+  const db = await openDatabase();
+  try {
+    const snapshot = {
+      schemaVersion: 1, demo: false, updatedAt: '2020-01-01T00:00:00Z',
+      competitions: [], teams: [], players: [], matches: [], standings: [],
+    };
+    await db.query(
+      'insert into futbeat_private.imports(job_id,received_at,raw_payload,snapshot) values($1,now(),$2,$3)',
+      ['recovery-test', JSON.stringify({ recovery: true }), JSON.stringify(snapshot)],
+    );
+    const result = await db.query('select public.futbeat_read_snapshot() snapshot');
+    assert.equal(result.rows[0].snapshot.freshness.stale, true);
   } finally { await db.close(); }
 });
 

@@ -29,6 +29,11 @@
   equipos son críticos; calendario, resultados y tabla permiten cobertura
   parcial explícita. Las cuatro consultas dependientes de temporada se ejecutan
   en paralelo y nunca se reintentan automáticamente.
+- La prueba v6 identificó `teams` como respuesta fuera de alcance (liga 4396,
+  England). El ledger la marca `PROVIDER_SCOPE_MISMATCH`; el snapshot público
+  fue compensado con la última importación válida y el raw incorrecto se
+  conserva privado para auditoría. Pruebas adicionales impiden mezclar equipos
+  globales y calculan frescura desde la fecha real del proveedor.
 
 ## Bloque LIVE — eventos y push
 

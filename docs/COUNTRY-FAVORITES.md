@@ -88,6 +88,23 @@ este estado para equipos, próximos partidos, resultados anteriores y tabla,
 incluyendo `stale=false` en una importación recién recibida. Nunca se rellena
 una capacidad ausente con datos demo.
 
+La prueba controlada de v6 usó la excepción autorizada `2 → 4 → 2` y realizó
+una sola invocación. Los cinco endpoints respondieron HTTP 200: `league` 68 ms
+(1), `next` 97 ms (1), `past` 98 ms (1), `teams` 99 ms (24) y `table` 94 ms
+(5). El fetch completo tomó 171 ms, normalizar 1656 ms y almacenar 89 ms.
+La revisión cloud posterior descubrió que `teams` había devuelto la liga 4396
+y país England para la solicitud 4815. El intento se reclasificó como
+`FAILED / PROVIDER_SCOPE_MISMATCH`; no se hizo otro request.
+
+El import defectuoso se conserva como evidencia privada. Un import
+compensatorio volvió a publicar el último snapshot válido (`demo=false`, 4
+equipos y 2 partidos) sin borrar auditoría. El RPC ahora mezcla ventanas solo
+con el snapshot público anterior, nunca con todas las entidades globales, y el
+normalizador rechaza equipos cuyo `idLeague` o `strCountry` no corresponda a
+Costa Rica. La fecha de frescura procede de `snapshot.updatedAt`, así que una
+compensación no hace parecer nuevos datos antiguos. El límite desplegado quedó
+restaurado en 2.
+
 LIVE continúa usando el scheduler API-Football existente. Los favoritos y
 partidos abiertos alimentan `coverage_interests` para que futuros planners
 escojan profundidad y frecuencia sin acoplarse a un proveedor concreto.
