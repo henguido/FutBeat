@@ -127,10 +127,9 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                       clipBehavior: Clip.antiAlias,
                       child: Column(
                         children: [
-                          for (var index = 0; index < match.events.length; index++) ...[
+                          for (final event in match.events)
                             Builder(
                               builder: (context) {
-                                final event = match.events[index];
                                 final type = event['type'] as String? ?? '';
                                 final team = data.team(
                                   event['teamId'] as String? ?? '',
@@ -138,7 +137,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                                 final player = data.player(
                                   event['playerId'] as String? ?? '',
                                 );
-                                final detail = event['detail']?.toString().trim();
+                                final detail = event['detail']?.toString();
                                 return ListTile(
                                   contentPadding: const EdgeInsets.symmetric(
                                     horizontal: 14,
@@ -166,8 +165,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                                     [
                                       eventLabel(type),
                                       if (team != null) team.name,
-                                      if (detail != null && detail.isNotEmpty)
-                                        detail,
+                                      if (detail?.isNotEmpty == true) detail!,
                                     ].join(' · '),
                                   ),
                                   trailing: EventBadge(type),
@@ -179,9 +177,6 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                                 );
                               },
                             ),
-                            if (index < match.events.length - 1)
-                              const Divider(height: 1, indent: 70),
-                          ],
                         ],
                       ),
                     ),
