@@ -70,6 +70,24 @@ siendo real (`demo=false`), recibido el 2026-09-16 02:36:22 UTC: 1 competición,
 TheSportsDB puede omitir la tabla y cualquiera de sus cinco endpoints gratuitos
 puede agotar el timeout. No se hizo un segundo intento automático.
 
+### Fetch resiliente y cobertura por capacidad
+
+`league` se consulta primero para obtener la temporada. Luego `next`, `past`,
+`teams` y `table` se consultan en paralelo, una vez por endpoint y sin retries.
+Cada diagnóstico conserva solamente nombre lógico, ruta pública, duración,
+estado HTTP, error seguro y cantidad de elementos; no incluye cabeceras ni
+credenciales.
+
+La condición mínima de publicación es una liga válida de Costa Rica y al menos
+un equipo de fútbol canónico válido. `teams` y `league` son críticos. `next` y
+`past` se degradan de forma independiente y `table` es opcional. Un timeout o
+error HTTP de esas capacidades produce `unavailable` o
+`temporarily_unavailable`; una respuesta exitosa malformada rechaza el lote.
+Un `null` válido conserva `available` con cero elementos. El snapshot publica
+este estado para equipos, próximos partidos, resultados anteriores y tabla,
+incluyendo `stale=false` en una importación recién recibida. Nunca se rellena
+una capacidad ausente con datos demo.
+
 LIVE continúa usando el scheduler API-Football existente. Los favoritos y
 partidos abiertos alimentan `coverage_interests` para que futuros planners
 escojan profundidad y frecuencia sin acoplarse a un proveedor concreto.

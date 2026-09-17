@@ -3,6 +3,16 @@ export const statuses = new Set(['DISCOVERED', 'SCHEDULED', 'PRE_MATCH', 'LIVE',
 // Reject an incomplete batch before exposing any of it to readers.
 export function validateSnapshot(data) {
   if (data.schemaVersion !== 1 || typeof data.demo !== 'boolean') throw new Error('Unsupported snapshot');
+  if (!data.demo && data.coverage?.capabilities) {
+    const allowed = new Set(['available', 'unavailable', 'temporarily_unavailable']);
+    for (const key of ['teams', 'upcomingFixtures', 'pastResults', 'standings']) {
+      const capability = data.coverage.capabilities[key];
+      if (!allowed.has(capability?.status) || typeof capability.stale !== 'boolean' ||
+        (capability.itemCount !== null && (!Number.isInteger(capability.itemCount) || capability.itemCount < 0))) {
+        throw new Error(`Invalid ${key} coverage`);
+      }
+    }
+  }
   const indexes = {};
   for (const type of ['competitions', 'teams', 'players', 'matches']) {
     if (!Array.isArray(data[type])) throw new Error(`Missing ${type}`);

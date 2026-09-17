@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDatabase, PersistentStore } from '../storage/database.mjs';
-import { fetchCostaRica } from '../providers/thesportsdb.mjs';
+import { fetchCostaRica, normalize } from '../providers/thesportsdb.mjs';
 import { createApi } from '../api/server.mjs';
 
 // Synthetic records matching the official API shape; never sports assertions.
@@ -64,11 +64,101 @@ test('persistent identity, atomic rollback, partial windows, durable job dedup a
   } finally { if (db) await db.close(); await rm(folder, { recursive: true, force: true }); }
 });
 
-test('provider HTTP failure stops batch without retries; only official endpoints', async () => {
-  const urls = [];
-  await assert.rejects(fetchCostaRica({ fetcher: async url => { urls.push(url); return { ok: false, status: 429 }; } }), /429/);
-    assert.equal(urls.length, 1);
-  assert.match(urls[0], /^https:\/\/www.thesportsdb.com\/api\/v1\/json\/123\//);
+const endpointName = (url) => url.includes('lookupleague') ? 'league'
+  : url.includes('eventsnext') ? 'next' : url.includes('eventspast') ? 'past'
+    : url.includes('lookup_all_teams') ? 'teams' : 'table';
+const providerBodies = () => {
+  const value = raw();
+  return { league: value.league, next: value.next, past: value.past, teams: value.teams, table: value.table };
+};
+const timeout = () => Object.assign(new Error('provider took too long'), { name: 'TimeoutError' });
+function providerFetcher(overrides = {}, calls = []) {
+  const bodies = providerBodies();
+  return async (url) => {
+    const name = endpointName(url); calls.push(name);
+    const override = overrides[name];
+    if (override instanceof Error) throw override;
+    if (typeof override === 'number') return new Response('{}', { status: override });
+    return Response.json(override ?? bodies[name]);
+  };
+}
+const resolver = async (kind, external) => `fb_${kind}_${external}`;
+
+test('five provider endpoints succeed; league precedes four parallel requests with diagnostics', async () => {
+  const calls = []; let active = 0; let maxActive = 0;
+  const baseFetcher = providerFetcher({}, calls);
+  const fetched = await fetchCostaRica({ fetcher: async (url, options) => {
+    if (endpointName(url) !== 'league') {
+      active++; maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5)); active--;
+    }
+    return baseFetcher(url, options);
+  } });
+  assert.deepEqual(calls.slice(0, 1), ['league']);
+  assert.deepEqual(new Set(calls.slice(1)), new Set(['next', 'past', 'teams', 'table']));
+  assert.equal(calls.length, 5); assert.equal(maxActive, 4);
+  for (const [name, diagnostic] of Object.entries(fetched._fetch.endpoints)) {
+    assert.equal(diagnostic.name, name); assert.equal(diagnostic.status, 'available');
+    assert.equal(diagnostic.httpStatus, 200); assert.ok(diagnostic.durationMs >= 0);
+    assert.match(diagnostic.endpoint, /\.php/); assert.equal(typeof diagnostic.itemCount, 'number');
+  }
+});
+
+for (const name of ['table', 'next', 'past']) test(`timeout in ${name} is degraded without retry`, async () => {
+  const calls = [];
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ [name]: timeout() }, calls) });
+  assert.equal(fetched[name], undefined); assert.equal(fetched._fetch.endpoints[name].error, 'timeout');
+  assert.equal(fetched._fetch.endpoints[name].status, 'temporarily_unavailable');
+  assert.equal(calls.filter((entry) => entry === name).length, 1); assert.equal(calls.length, 5);
+  const snapshot = await normalize(fetched, resolver, '2026-09-17T04:00:00Z');
+  assert.equal(snapshot.demo, false); assert.equal(snapshot.coverage.partial, true);
+  const key = { table: 'standings', next: 'upcomingFixtures', past: 'pastResults' }[name];
+  assert.equal(snapshot.coverage.capabilities[key].status, 'temporarily_unavailable');
+});
+
+test('successful null table is available with zero rows and no invented standings', async () => {
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ table: { table: null } }) });
+  const snapshot = await normalize(fetched, resolver, '2026-09-17T04:00:00Z');
+  assert.equal(fetched._fetch.endpoints.table.status, 'available');
+  assert.equal(fetched._fetch.endpoints.table.itemCount, 0);
+  assert.deepEqual(snapshot.standings, []);
+});
+
+for (const name of ['teams', 'league']) test(`${name} failure rejects the country fetch`, async () => {
+  const calls = [];
+  await assert.rejects(
+    fetchCostaRica({ fetcher: providerFetcher({ [name]: 503 }, calls) }),
+    (error) => error.diagnostics[name].httpStatus === 503 && error.message.includes(name),
+  );
+  assert.equal(calls.filter((entry) => entry === name).length, 1);
+  assert.equal(calls.length, name === 'league' ? 1 : 5);
+});
+
+test('next and past degrade independently while valid real data is retained', async () => {
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ next: timeout() }) });
+  fetched.past = { events: [{ ...raw().next.events[0], strStatus: 'FT', intHomeScore: '2', intAwayScore: '1' }] };
+  const snapshot = await normalize(fetched, resolver, '2026-09-17T04:00:00Z');
+  assert.equal(snapshot.matches.length, 1); assert.equal(snapshot.matches[0].score.home, 2);
+  assert.equal(snapshot.coverage.capabilities.upcomingFixtures.status, 'temporarily_unavailable');
+  assert.equal(snapshot.coverage.capabilities.pastResults.status, 'available');
+});
+
+test('HTTP 4xx and 5xx identify the exact endpoint, status and do not retry', async () => {
+  for (const [httpStatus, expected] of [[404, 'unavailable'], [503, 'temporarily_unavailable']]) {
+    const calls = [];
+    const fetched = await fetchCostaRica({ fetcher: providerFetcher({ table: httpStatus }, calls) });
+    assert.equal(fetched._fetch.endpoints.table.httpStatus, httpStatus);
+    assert.equal(fetched._fetch.endpoints.table.status, expected);
+    assert.equal(fetched._fetch.endpoints.table.error, `http_${httpStatus}`);
+    assert.equal(calls.filter((entry) => entry === 'table').length, 1);
+  }
+});
+
+test('malformed successful optional response is rejected rather than hidden as unavailable', async () => {
+  const fetched = await fetchCostaRica({ fetcher: providerFetcher({ next: { wrong: [] } }) });
+  await assert.rejects(normalize(fetched, resolver, '2026-09-17T04:00:00Z'), /Invalid events response/);
+  const malformedTable = await fetchCostaRica({ fetcher: providerFetcher({ table: { wrong: [] } }) });
+  await assert.rejects(normalize(malformedTable, resolver, '2026-09-17T04:00:00Z'), /Invalid table response/);
 });
 
 test('country snapshot RPC accepts its UUID job id against the text import ledger', async () => {

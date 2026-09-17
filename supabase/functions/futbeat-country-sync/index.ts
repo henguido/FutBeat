@@ -32,31 +32,46 @@ Deno.serve(async (request) => {
   if (!reservation.allowed) return Response.json({ status: "skipped", reason: reservation.reason });
   const receivedAt = new Date().toISOString();
   let stage = "fetch";
+  let stageStarted = performance.now();
+  const stages: Record<string, number> = {};
+  let endpointDiagnostics: unknown;
   try {
     const raw = await fetchCostaRica();
+    stages.fetchMs = Math.round(performance.now() - stageStarted);
+    endpointDiagnostics = raw._fetch?.endpoints;
     stage = "normalize";
+    stageStarted = performance.now();
     const resolve = (kind: string, external: string) => rpc("futbeat_resolve_country_entity", {
       p_provider: "thesportsdb", p_kind: kind, p_external: external,
     });
     const snapshot = await normalize(raw, resolve, receivedAt);
+    stages.normalizeMs = Math.round(performance.now() - stageStarted);
     stage = "store";
+    stageStarted = performance.now();
     const result = await rpc("futbeat_store_country_snapshot", {
       p_job_id: crypto.randomUUID(), p_received_at: receivedAt, p_raw: raw, p_snapshot: snapshot,
     });
+    stages.storeMs = Math.round(performance.now() - stageStarted);
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId, p_status: "SUCCEEDED",
-      p_provider_remaining: null, p_http_status: 200, p_error_code: null, p_metadata: { country: "CR" },
+      p_provider_remaining: null, p_http_status: 200, p_error_code: null,
+      p_metadata: { country: "CR", stage: "complete", stages, endpoints: endpointDiagnostics, capabilities: snapshot.coverage?.capabilities },
     });
-    return Response.json({ status: "ok", result });
+    return Response.json({ status: "ok", result, stages, endpoints: endpointDiagnostics, capabilities: snapshot.coverage?.capabilities });
   } catch (error) {
+    const detail = error instanceof Error ? error.message.slice(0, 320) : "unknown";
+    const endpoints = error && typeof error === "object" && "diagnostics" in error
+      ? (error as { diagnostics: unknown }).diagnostics : endpointDiagnostics;
+    stages[`${stage}Ms`] = Math.round(performance.now() - stageStarted);
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId, p_status: "FAILED",
-      p_provider_remaining: null, p_http_status: null, p_error_code: "COUNTRY_SYNC_FAILED", p_metadata: { country: "CR", stage },
+      p_provider_remaining: null, p_http_status: null, p_error_code: "COUNTRY_SYNC_FAILED",
+      p_metadata: { country: "CR", stage, stages, detail, endpoints },
     });
     console.error("country sync failed", error instanceof Error ? error.message : "unknown");
     return Response.json({
       error: "Country sync failed", stage,
-      detail: error instanceof Error ? error.message.slice(0, 320) : "unknown",
+      detail, stages, endpoints,
     }, { status: 502 });
   }
 });

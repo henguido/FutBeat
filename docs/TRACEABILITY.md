@@ -25,6 +25,10 @@
 - GitHub Actions continúa terminando sin pasos por Billing/Spending. El PR #4
   debe permanecer abierto hasta obtener sincronización `status=ok`, import
   nuevo y CI completamente verde.
+- El fetch de país registra duración, HTTP, error y conteo por endpoint. Liga y
+  equipos son críticos; calendario, resultados y tabla permiten cobertura
+  parcial explícita. Las cuatro consultas dependientes de temporada se ejecutan
+  en paralelo y nunca se reintentan automáticamente.
 
 ## Bloque LIVE — eventos y push
 
