@@ -7,8 +7,14 @@ const rpc = async (name: string, body: unknown) => {
   const response = await fetch(`${url}/rest/v1/rpc/${name}`, {
     method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(15000),
   });
-  if (!response.ok) throw new Error(`RPC ${name} failed: ${response.status}`);
-  return await response.json();
+  const text = await response.text();
+  if (!response.ok) throw new Error(`RPC ${name} failed: ${response.status}${text ? ` ${text.slice(0, 160)}` : ""}`);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`RPC ${name} returned invalid JSON`);
+  }
 };
 
 Deno.serve(async (request) => {
@@ -45,12 +51,12 @@ Deno.serve(async (request) => {
   } catch (error) {
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId, p_status: "FAILED",
-      p_provider_remaining: null, p_http_status: null, p_error_code: "COUNTRY_SYNC_FAILED", p_metadata: { country: "CR" },
+      p_provider_remaining: null, p_http_status: null, p_error_code: "COUNTRY_SYNC_FAILED", p_metadata: { country: "CR", stage },
     });
     console.error("country sync failed", error instanceof Error ? error.message : "unknown");
     return Response.json({
       error: "Country sync failed", stage,
-      detail: error instanceof Error ? error.message.slice(0, 160) : "unknown",
+      detail: error instanceof Error ? error.message.slice(0, 320) : "unknown",
     }, { status: 502 });
   }
 });
