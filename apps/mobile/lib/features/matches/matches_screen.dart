@@ -312,7 +312,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                     competition.name,
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  leading: const Icon(Icons.emoji_events_outlined, color: lime),
+                  leading: EntityAvatar(competition, size: 34),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => context.push('/competition/${competition.id}'),
                 ),
