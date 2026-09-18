@@ -100,28 +100,55 @@ create or replace function futbeat_private.request_match_detail(
 language plpgsql
 security definer
 set search_path=''
-as $$
+as $
+declare
+  v_start timestamptz;
+  v_cached boolean;
+  v_goal_mapped boolean;
 begin
-  if p_match_id is null
-     or not exists(
-       select 1 from futbeat_private.entities
-       where id=p_match_id and kind='match'
-     ) then
+  select nullif(payload->>'startTime','')::timestamptz
+  into v_start
+  from futbeat_private.entities
+  where id=p_match_id and kind='match';
+
+  if p_match_id is null or v_start is null then
     raise exception 'Unknown canonical match';
   end if;
 
-  insert into futbeat_private.match_detail_requests(
-    match_id,requested_at,expires_at,request_count
-  )
-  values(p_match_id,now(),now()+interval '10 minutes',1)
-  on conflict(match_id) do update
-    set requested_at=now(),
-        expires_at=now()+interval '10 minutes',
-        request_count=futbeat_private.match_detail_requests.request_count+1;
+  select exists(
+    select 1
+    from futbeat_private.match_detail_cache
+    where match_id=p_match_id
+  ) into v_cached;
+
+  select exists(
+    select 1
+    from futbeat_private.provider_entities
+    where provider='goal_api'
+      and kind='match'
+      and canonical_id=p_match_id
+  ) into v_goal_mapped;
+
+  -- Anonymous Match Center requests may only enqueue provider work for
+  -- near-term/recent matches that already have a trusted GOAL mapping.
+  -- Cached data remains readable outside this window without spending quota.
+  if not v_cached
+     and v_goal_mapped
+     and v_start between now()-interval '24 hours' and now()+interval '6 hours'
+  then
+    insert into futbeat_private.match_detail_requests(
+      match_id,requested_at,expires_at,request_count
+    )
+    values(p_match_id,now(),now()+interval '10 minutes',1)
+    on conflict(match_id) do update
+      set requested_at=now(),
+          expires_at=now()+interval '10 minutes',
+          request_count=futbeat_private.match_detail_requests.request_count+1;
+  end if;
 
   return futbeat_private.read_match_detail(p_match_id);
 end
-$$;
+$;
 
 create or replace function futbeat_private.reserve_match_detail_call(
   p_trigger_source text default 'github-actions'
