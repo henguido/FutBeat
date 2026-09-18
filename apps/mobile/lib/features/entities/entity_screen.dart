@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/interests.dart';
+import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
@@ -26,8 +27,35 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   @override
   Widget build(BuildContext context) {
     final type = widget.type, id = widget.id;
-    return DataView(
-      builder: (data) {
+    final detail = ref.watch(entitySnapshotProvider((type: type, id: id)));
+
+    return detail.when(
+      loading: () => Scaffold(
+        appBar: AppBar(title: const Text('FutBeat')),
+        body: const Center(child: CircularProgressIndicator()),
+      ),
+      error: (_, stack) => Scaffold(
+        appBar: AppBar(title: const Text('FutBeat')),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const EmptyState(
+                'No pudimos cargar este perfil',
+                'Revisa tu conexión e intenta nuevamente.',
+                icon: Icons.cloud_off,
+              ),
+              FilledButton(
+                onPressed: () => ref.invalidate(
+                  entitySnapshotProvider((type: type, id: id)),
+                ),
+                child: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      data: (data) {
         final entity = switch (type) {
           'team' => data.team(id),
           'player' => data.player(id),
@@ -42,18 +70,27 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ),
           );
         }
-        final teamId = type == 'player' ? entity.json['teamId'] as String : id;
+        final teamId = switch (type) {
+          'player' => entity.json['teamId']?.toString(),
+          'team' => id,
+          _ => null,
+        };
+        final team = teamId == null ? null : data.team(teamId);
         final competitionId = type == 'competition'
             ? id
             : type == 'player'
-            ? data.team(teamId)!.json['competitionId'] as String
-            : entity.json['competitionId'] as String;
+            ? team?.json['competitionId']?.toString()
+            : entity.json['competitionId']?.toString();
+        final competition = competitionId == null
+            ? null
+            : data.competition(competitionId);
         final matches =
             data.matches
                 .where(
                   (m) => type == 'competition'
                       ? m.competitionId == id
-                      : m.homeId == teamId || m.awayId == teamId,
+                      : teamId != null &&
+                            (m.homeId == teamId || m.awayId == teamId),
                 )
                 .toList()
               ..sort((a, b) => a.startTime.compareTo(b.startTime));
@@ -106,16 +143,20 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                         ),
                         const SizedBox(height: 8),
                         if (type == 'player') ...[
-                          Center(
-                            child: Text(entity.json['position'] as String),
-                          ),
+                          if ((entity.json['position']?.toString() ?? '').isNotEmpty)
+                            Center(
+                              child: Text(entity.json['position'].toString()),
+                            ),
                           heading(context, 'Equipo actual'),
-                          EntityTile(data.team(teamId)!, 'team'),
-                        ] else if (type == 'team')
-                          EntityTile(
-                            data.competition(competitionId)!,
-                            'competition',
-                          )
+                          if (team != null)
+                            EntityTile(team, 'team')
+                          else
+                            const EmptyState(
+                              'Equipo no disponible',
+                              'El equipo actual todavía no está publicado.',
+                            ),
+                        ] else if (type == 'team' && competition != null)
+                          EntityTile(competition, 'competition')
                         else
                           Center(
                             child: Text(
@@ -156,7 +197,13 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                           MatchCard(match, data),
                         ],
                       ] else if (tab == 'Tabla')
-                        Standings(data, competitionId)
+                        if (competitionId != null)
+                          Standings(data, competitionId)
+                        else
+                          const EmptyState(
+                            'Tabla no disponible',
+                            'No hay competición asociada a este perfil.',
+                          )
                       else if (tab == 'Plantilla') ...[
                         Text(
                           data.demo
