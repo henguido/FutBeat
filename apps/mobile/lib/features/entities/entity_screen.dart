@@ -155,15 +155,23 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                               'Equipo no disponible',
                               'El equipo actual todavía no está publicado.',
                             ),
-                        ] else if (type == 'team' && competition != null)
-                          EntityTile(competition, 'competition')
-                        else
-                          Center(
-                            child: Text(
-                              entity.json['season'] as String,
-                              style: const TextStyle(color: muted),
+                        ] else if (type == 'team') ...[
+                          if (competition != null)
+                            EntityTile(competition, 'competition')
+                          else
+                            const EmptyState(
+                              'Competición no disponible',
+                              'La competición de este equipo todavía no está publicada.',
                             ),
-                          ),
+                        ] else ...[
+                          if ((entity.json['season']?.toString() ?? '').isNotEmpty)
+                            Center(
+                              child: Text(
+                                entity.json['season'].toString(),
+                                style: const TextStyle(color: muted),
+                              ),
+                            ),
+                        ],
                         heading(context, 'Partidos destacados'),
                         if (matches.isEmpty)
                           const EmptyState(
