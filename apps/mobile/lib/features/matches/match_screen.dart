@@ -122,57 +122,64 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                       'Sin eventos disponibles',
                       'Los eventos aparecerán cuando la fuente los publique.',
                     ),
-                  Card(
-                    child: Column(
-                      children: [
-                        for (final event in match.events)
-                          ListTile(
-                            leading: Text(
-                              "${event['minute'] ?? '—'}′",
-                              style: const TextStyle(color: lime),
-                            ),
-                            title: Text(
-                              data
-                                      .player(
-                                        event['playerId'] as String? ?? '',
-                                      )
-                                      ?.name ??
-                                  eventLabel(event['type'] as String? ?? ''),
-                            ),
-                            subtitle: Text(
-                              [
-                                eventLabel(event['type'] as String? ?? ''),
-                                if (data.team(
-                                      event['teamId'] as String? ?? '',
-                                    ) !=
-                                    null)
-                                  data.team(event['teamId'] as String)!.name,
-                              ].join(' · '),
-                            ),
-                            trailing: Icon(
-                              event['type'] == 'GOAL'
-                                  ? Icons.sports_soccer
-                                  : Icons.square,
-                              size: 20,
-                              color: event['type'] == 'GOAL'
-                                  ? Colors.white
-                                  : event['type'] == 'RED_CARD'
-                                  ? Colors.red
-                                  : Colors.amber,
-                            ),
-                            onTap:
-                                data.player(
-                                      event['playerId'] as String? ?? '',
-                                    ) ==
-                                    null
-                                ? null
-                                : () => context.push(
-                                    '/player/${event['playerId']}',
+                  if (match.events.isNotEmpty)
+                    Card(
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        children: [
+                          for (final event in match.events)
+                            Builder(
+                              builder: (context) {
+                                final type = event['type'] as String? ?? '';
+                                final team = data.team(
+                                  event['teamId'] as String? ?? '',
+                                );
+                                final player = data.player(
+                                  event['playerId'] as String? ?? '',
+                                );
+                                final detail = event['detail']?.toString();
+                                return ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 3,
                                   ),
-                          ),
-                      ],
+                                  leading: SizedBox(
+                                    width: 42,
+                                    child: Text(
+                                      "${event['minute'] ?? '—'}′",
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: lime,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    player?.name ?? eventLabel(type),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    [
+                                      eventLabel(type),
+                                      if (team != null) team.name,
+                                      if (detail?.isNotEmpty == true) detail!,
+                                    ].join(' · '),
+                                  ),
+                                  trailing: EventBadge(type),
+                                  onTap: player == null
+                                      ? null
+                                      : () => context.push(
+                                          '/player/${event['playerId']}',
+                                        ),
+                                );
+                              },
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
                   heading(context, 'Estadísticas clave'),
                   Statistics(match),
                   const SizedBox(height: 20),
@@ -260,6 +267,54 @@ class Statistics extends StatelessWidget {
           ),
         );
 }
+
+class EventBadge extends StatelessWidget {
+  const EventBadge(this.type, {super.key});
+  final String type;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = eventColor(type);
+    return Semantics(
+      label: eventLabel(type),
+      child: Container(
+        width: 36,
+        height: 36,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: .42)),
+        ),
+        child: Icon(eventIcon(type), size: 20, color: color),
+      ),
+    );
+  }
+}
+
+IconData eventIcon(String type) => switch (type) {
+  'GOAL' => Icons.sports_soccer,
+  'YELLOW_CARD' || 'RED_CARD' => Icons.square_rounded,
+  'SUBSTITUTION' => Icons.swap_vert_rounded,
+  'VAR' => Icons.tv_rounded,
+  'MISSED_PENALTY' => Icons.cancel_outlined,
+  'KICKOFF' => Icons.play_arrow_rounded,
+  'HALFTIME' => Icons.pause_rounded,
+  'FULL_TIME' => Icons.flag_rounded,
+  _ => Icons.more_horiz_rounded,
+};
+
+Color eventColor(String type) => switch (type) {
+  'GOAL' => lime,
+  'YELLOW_CARD' => Colors.amber,
+  'RED_CARD' => Colors.redAccent,
+  'SUBSTITUTION' => Colors.lightBlueAccent,
+  'VAR' => Colors.purpleAccent,
+  'MISSED_PENALTY' => Colors.orangeAccent,
+  'KICKOFF' || 'FULL_TIME' => Colors.white,
+  'HALFTIME' => muted,
+  _ => muted,
+};
 
 String eventLabel(String type) => switch (type) {
   'GOAL' => 'Gol',

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'database.dart';
+import 'global_schedule.dart';
 import 'live_realtime.dart';
 import 'models.dart';
 
@@ -34,9 +35,14 @@ class ApiRepository implements FootballRepository {
 }
 
 final repositoryProvider = Provider<FootballRepository>((ref) {
-  const baseUrl = String.fromEnvironment('FUTBEAT_API_URL');
+  const useDemo = bool.fromEnvironment('FUTBEAT_USE_DEMO');
+  const baseUrl = String.fromEnvironment(
+    'FUTBEAT_API_URL',
+    defaultValue:
+        'https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-api',
+  );
   const publicToken = String.fromEnvironment('FUTBEAT_API_PUBLIC_TOKEN');
-  if (baseUrl.isEmpty) return DemoRepository();
+  if (useDemo) return DemoRepository();
   final dio = Dio(
     BaseOptions(
       baseUrl: baseUrl,
@@ -47,9 +53,54 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
       receiveTimeout: const Duration(seconds: 8),
     ),
   );
-  ref.onDispose(() => dio.close(force: true));
-  return ApiRepository(dio);
+
+  const browserHeaders = <String, String>{
+    'accept': 'application/json,text/plain,*/*',
+    'origin': 'https://www.sofascore.com',
+    'referer': 'https://www.sofascore.com/',
+    'user-agent':
+        'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/140.0 Mobile Safari/537.36',
+  };
+  final globalPrimary = Dio(
+    BaseOptions(
+      baseUrl: 'https://api.sofascore.com/api/v1',
+      headers: browserHeaders,
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 8),
+    ),
+  );
+  final globalFallback = Dio(
+    BaseOptions(
+      baseUrl: 'https://www.sofascore.com/api/v1',
+      headers: browserHeaders,
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 8),
+    ),
+  );
+
+  ref.onDispose(() {
+    dio.close(force: true);
+    globalPrimary.close(force: true);
+    globalFallback.close(force: true);
+  });
+
+  final canonical = ApiRepository(dio);
+  final global = GlobalScheduleRepository(
+    canonical.load,
+    GlobalScheduleClient(globalPrimary, globalFallback),
+  );
+  return _GlobalFootballRepository(global);
 });
+
+class _GlobalFootballRepository implements FootballRepository {
+  _GlobalFootballRepository(this.global);
+
+  final GlobalScheduleRepository global;
+
+  @override
+  Future<Snapshot> load() => global.load();
+}
 
 final snapshotProvider = FutureProvider<Snapshot>(
   (ref) => ref.watch(repositoryProvider).load(),

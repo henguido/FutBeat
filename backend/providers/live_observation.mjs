@@ -45,7 +45,7 @@ function normalizeText(value) {
 function trackedCompetition(item) {
   const leagueId = String(item?.league?.id ?? "");
   if (leagueId === "162" || normalizeText(item?.league?.country) === "costa rica") return "fb_comp_cr";
-  return ["2", "39", "140", "253", "262"].includes(leagueId) ? "provider_mapping" : null;
+  return /^\d+$/.test(leagueId) ? "provider_mapping" : null;
 }
 
 export function isTrackedLiveFixture(item) { return trackedCompetition(item) != null; }

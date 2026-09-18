@@ -167,12 +167,13 @@ void main() {
   });
   testWidgets('FB-US-002: empty date and recovery', (tester) async {
     await openApp(tester);
-    await tester.tap(find.byTooltip('Día siguiente'));
+    await tester.tap(find.text('MAÑANA'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Día siguiente'));
+    await tester.tap(find.text('En vivo'));
     await tester.pumpAndSettle();
     expect(find.text('Sin partidos para esta selección'), findsOneWidget);
-    await tester.tap(find.text('Hoy'));
+    await tester.tap(find.text('HOY'));
+    await tester.tap(find.text('Todos'));
     await tester.pumpAndSettle();
     expect(find.text('2 - 1'), findsOneWidget);
   });

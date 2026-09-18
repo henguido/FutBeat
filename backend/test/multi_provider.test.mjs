@@ -163,14 +163,8 @@ test('global response keeps only the five beta leagues and allows zero fixtures'
   assert.deepEqual(filterApiFootballBetaFixtures({ errors: [], results: 0, response: [] }).response, []);
 });
 
-test('LIVE payload normalizes score, goal, player and canonical references', async () => {
-  const ids = new Map();
-  const resolve = async (kind, externalId) => {
-    const key = `${kind}:${externalId}`;
-    if (!ids.has(key)) ids.set(key, `fb_${kind}_${externalId}`);
-    return ids.get(key);
-  };
-  const raw = {
+function liveFixture() {
+  return {
     errors: [],
     results: 1,
     response: [{
@@ -185,10 +179,19 @@ test('LIVE payload normalizes score, goal, player and canonical references', asy
         name: 'Primera División',
         country: 'Costa Rica',
         season: 2026,
+        logo: 'https://media.api-sports.io/football/leagues/162.png',
       },
       teams: {
-        home: { id: 10, name: 'Equipo A' },
-        away: { id: 20, name: 'Equipo B' },
+        home: {
+          id: 10,
+          name: 'Equipo A',
+          logo: 'https://media.api-sports.io/football/teams/10.png',
+        },
+        away: {
+          id: 20,
+          name: 'Equipo B',
+          logo: 'https://media.api-sports.io/football/teams/20.png',
+        },
       },
       goals: { home: 1, away: 0 },
       events: [{
@@ -202,8 +205,23 @@ test('LIVE payload normalizes score, goal, player and canonical references', asy
       }],
     }],
   };
+}
 
-  const snapshot = await normalizeApiFootballLive(raw, resolve, '2026-09-16T03:08:02Z');
+const canonicalResolver = () => {
+  const ids = new Map();
+  return async (kind, externalId) => {
+    const key = `${kind}:${externalId}`;
+    if (!ids.has(key)) ids.set(key, `fb_${kind}_${externalId}`);
+    return ids.get(key);
+  };
+};
+
+test('LIVE payload normalizes score, media, player and canonical references', async () => {
+  const snapshot = await normalizeApiFootballLive(
+    liveFixture(),
+    canonicalResolver(),
+    '2026-09-16T03:08:02Z',
+  );
   validateSnapshot(snapshot);
   assert.equal(snapshot.demo, false);
   assert.equal(snapshot.matches[0].status, 'LIVE');
@@ -213,4 +231,28 @@ test('LIVE payload normalizes score, goal, player and canonical references', asy
   assert.equal(snapshot.matches[0].events[0].playerId, 'fb_player_77');
   assert.equal(snapshot.players[0].name, 'Jugador Gol');
   assert.equal(snapshot.matches[0].provenance.source, 'API-Football');
+
+  assert.equal(
+    snapshot.competitions[0].media.url,
+    'https://media.api-sports.io/football/leagues/162.png',
+  );
+  assert.equal(snapshot.competitions[0].media.kind, 'COMPETITION_LOGO');
+  assert.equal(snapshot.teams[0].media.kind, 'TEAM_LOGO');
+  assert.equal(snapshot.teams[0].media.verificationStatus, 'VERIFIED');
+  assert.equal(snapshot.teams[0].media.rightsStatus, 'REVIEW_REQUIRED');
+  assert.equal(snapshot.teams[0].media.usageScope, 'DEVELOPMENT_ONLY');
+  assert.equal(
+    snapshot.players[0].media.url,
+    'https://media.api-sports.io/football/players/77.png',
+  );
+  assert.equal(snapshot.players[0].media.kind, 'PLAYER_PHOTO');
+});
+
+test('API-Football normalization rejects media URLs outside the provider CDN', async () => {
+  const raw = liveFixture();
+  raw.response[0].teams.home.logo = 'https://example.com/fake-team-logo.png';
+  await assert.rejects(
+    normalizeApiFootballLive(raw, canonicalResolver(), '2026-09-16T03:08:02Z'),
+    /Untrusted TEAM_LOGO media URL/,
+  );
 });

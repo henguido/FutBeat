@@ -7,10 +7,12 @@ import {
 } from './core/provider.mjs';
 
 const baseUrl = 'https://v3.football.api-sports.io';
+const mediaHost = 'media.api-sports.io';
 export const apiFootballBetaLeagueIds = Object.freeze(['2', '39', '140', '253', '262']);
+export const apiFootballRegionalCupLeagueIds = Object.freeze(['1028']);
 
 export function filterApiFootballBetaFixtures(raw) {
-  const allowed = new Set(apiFootballBetaLeagueIds);
+  const allowed = new Set([...apiFootballBetaLeagueIds, ...apiFootballRegionalCupLeagueIds]);
   return {
     ...raw,
     response: raw.response.filter((item) => allowed.has(String(item.league?.id ?? ''))),
@@ -57,6 +59,37 @@ function numberOrNull(value, label) {
   if (value == null) return null;
   if (!Number.isInteger(value) || value < 0) throw new Error(`Invalid ${label}`);
   return value;
+}
+
+function providerMedia(value, receivedAt, kind, { requireApiSportsHost = true } = {}) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') throw new Error(`Invalid ${kind} media URL`);
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid ${kind} media URL`);
+  }
+  if (url.protocol !== 'https:' || (requireApiSportsHost && url.hostname !== mediaHost)) {
+    throw new Error(`Untrusted ${kind} media URL`);
+  }
+  return {
+    url: url.toString(),
+    kind,
+    source: apiFootballDescriptor.source,
+    receivedAt,
+    verificationStatus: 'VERIFIED',
+    rightsStatus: 'REVIEW_REQUIRED',
+    usageScope: 'DEVELOPMENT_ONLY',
+  };
+}
+
+function playerMedia(externalId, receivedAt) {
+  return providerMedia(
+    `https://${mediaHost}/football/players/${externalId}.png`,
+    receivedAt,
+    'PLAYER_PHOTO',
+  );
 }
 
 function mapStatus(short) {
@@ -194,7 +227,7 @@ export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
       name: requiredString(item.league?.name, 'league name'),
       country: requiredString(item.league?.country ?? 'Unknown', 'league country'),
       season: String(item.league?.season ?? ''),
-      media: null,
+      media: providerMedia(item.league?.logo, receivedAt, 'COMPETITION_LOGO'),
     });
 
     const teamIds = {};
@@ -207,7 +240,7 @@ export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
         name: requiredString(item.teams?.[side]?.name, `${side} team name`),
         country: requiredString(item.league?.country ?? 'Unknown', 'team country'),
         competitionId,
-        media: null,
+        media: providerMedia(item.teams?.[side]?.logo, receivedAt, 'TEAM_LOGO'),
         aliases: [],
       });
     }
@@ -232,7 +265,7 @@ export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
           teamId,
           position: '',
           country: '',
-          media: null,
+          media: playerMedia(event.player.id, receivedAt),
         });
       }
 

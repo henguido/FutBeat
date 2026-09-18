@@ -1,4 +1,8 @@
 import { fetchCostaRica, normalize } from "../../../backend/providers/thesportsdb.mjs";
+import {
+  fetchCentralAmericaCup,
+  normalizeCentralAmericaCup,
+} from "../../../backend/providers/central_america_cup.mjs";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -17,6 +21,45 @@ const rpc = async (name: string, body: unknown) => {
   }
 };
 
+function mergeSnapshots(country: any, cup: any, receivedAt: string) {
+  const competitions = new Map(country.competitions.map((item: any) => [item.id, item]));
+  for (const item of cup.competitions) competitions.set(item.id, item);
+
+  const teams = new Map(country.teams.map((item: any) => [item.id, item]));
+  for (const item of cup.teams) {
+    const existing: any = teams.get(item.id);
+    if (!existing) {
+      teams.set(item.id, item);
+      continue;
+    }
+    teams.set(item.id, {
+      ...item,
+      ...existing,
+      media: existing.media ?? item.media ?? null,
+      aliases: [...new Set([...(existing.aliases ?? []), ...(item.aliases ?? [])])],
+    });
+  }
+
+  const matches = new Map(country.matches.map((item: any) => [item.id, item]));
+  for (const item of cup.matches) matches.set(item.id, item);
+
+  return {
+    ...country,
+    updatedAt: receivedAt,
+    coverage: {
+      source: "TheSportsDB",
+      partial: true,
+      live: false,
+      developmentOnly: true,
+      description: "Costa Rica + Copa Centroamericana desde TheSportsDB",
+      sources: ["TheSportsDB"],
+    },
+    competitions: [...competitions.values()],
+    teams: [...teams.values()],
+    matches: [...matches.values()],
+  };
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
@@ -25,8 +68,8 @@ Deno.serve(async (request) => {
   const cron = scheduler && await rpc("futbeat_authorize_push_scheduler", { p_token: scheduler });
   if (!service && !cron) return new Response(null, { status: 403 });
   const reservation = await rpc("futbeat_reserve_provider_call", {
-    p_provider: "thesportsdb", p_call_kind: "country-base-five-requests",
-    p_trigger_source: service ? "manual" : "cron", p_daily_limit: 2,
+    p_provider: "thesportsdb", p_call_kind: "country-plus-regional-cup",
+    p_trigger_source: service ? "manual" : "cron", p_daily_limit: 10,
     p_min_interval_seconds: 3600, p_force: true,
   });
   if (!reservation.allowed) return Response.json({ status: "skipped", reason: reservation.reason });
@@ -36,7 +79,10 @@ Deno.serve(async (request) => {
   const stages: Record<string, number> = {};
   let endpointDiagnostics: unknown;
   try {
-    const raw = await fetchCostaRica();
+    const [raw, cupRaw] = await Promise.all([
+      fetchCostaRica(),
+      fetchCentralAmericaCup(),
+    ]);
     stages.fetchMs = Math.round(performance.now() - stageStarted);
     endpointDiagnostics = raw._fetch?.endpoints;
     stage = "normalize";
@@ -44,20 +90,36 @@ Deno.serve(async (request) => {
     const resolve = (kind: string, external: string) => rpc("futbeat_resolve_country_entity", {
       p_provider: "thesportsdb", p_kind: kind, p_external: external,
     });
-    const snapshot = await normalize(raw, resolve, receivedAt);
+    const [countrySnapshot, cupSnapshot] = await Promise.all([
+      normalize(raw, resolve, receivedAt),
+      normalizeCentralAmericaCup(cupRaw, resolve, receivedAt),
+    ]);
+    const snapshot = mergeSnapshots(countrySnapshot, cupSnapshot, receivedAt);
     stages.normalizeMs = Math.round(performance.now() - stageStarted);
     stage = "store";
     stageStarted = performance.now();
     const result = await rpc("futbeat_store_country_snapshot", {
-      p_job_id: crypto.randomUUID(), p_received_at: receivedAt, p_raw: raw, p_snapshot: snapshot,
+      p_job_id: crypto.randomUUID(),
+      p_received_at: receivedAt,
+      p_raw: { country: raw, centralAmericaCup: cupRaw },
+      p_snapshot: snapshot,
     });
     stages.storeMs = Math.round(performance.now() - stageStarted);
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId, p_status: "SUCCEEDED",
       p_provider_remaining: null, p_http_status: 200, p_error_code: null,
-      p_metadata: { country: "CR", stage: "complete", stages, endpoints: endpointDiagnostics, capabilities: snapshot.coverage?.capabilities },
+      p_metadata: {
+        country: "CR", stage: "complete", stages,
+        endpoints: endpointDiagnostics,
+        capabilities: snapshot.coverage?.capabilities,
+        centralAmericaCupMatches: cupSnapshot.matches.length,
+      },
     });
-    return Response.json({ status: "ok", result, stages, endpoints: endpointDiagnostics, capabilities: snapshot.coverage?.capabilities });
+    return Response.json({
+      status: "ok", result, stages,
+      centralAmericaCupMatches: cupSnapshot.matches.length,
+      endpoints: endpointDiagnostics,
+    });
   } catch (error) {
     const detail = error instanceof Error ? error.message.slice(0, 320) : "unknown";
     const endpoints = error && typeof error === "object" && "diagnostics" in error
