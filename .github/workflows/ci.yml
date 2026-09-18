@@ -41,6 +41,37 @@ jobs:
       - name: Format mobile sources for beta build
         run: dart format lib test
       - run: flutter analyze
+      - name: Smoke global daily schedule
+        shell: pwsh
+        run: |
+          $date = (Get-Date).ToString("yyyy-MM-dd")
+          $headers = @{
+            "Accept" = "application/json,text/plain,*/*"
+            "Origin" = "https://www.sofascore.com"
+            "Referer" = "https://www.sofascore.com/"
+            "User-Agent" = "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36"
+          }
+          $urls = @(
+            "https://api.sofascore.com/api/v1/sport/football/scheduled-events/$date",
+            "https://www.sofascore.com/api/v1/sport/football/scheduled-events/$date"
+          )
+          $ok = $false
+          foreach ($url in $urls) {
+            try {
+              $response = Invoke-RestMethod -Uri $url -Headers $headers -TimeoutSec 15
+              $count = @($response.events).Count
+              if ($count -gt 0) {
+                Write-Output "GLOBAL_SMOKE_OK url=$url events=$count"
+                $ok = $true
+                break
+              }
+            } catch {
+              Write-Warning "Global schedule smoke failed for $url: $($_.Exception.Message)"
+            }
+          }
+          if (-not $ok) {
+            Write-Warning "Global schedule unavailable from this CI runner; mobile keeps the canonical FutBeat snapshot as fallback."
+          }
       - run: flutter test
       - name: Upload Flutter golden failures
         if: failure()
@@ -49,20 +80,6 @@ jobs:
           name: flutter-golden-failures
           path: apps/mobile/test/failures/
           if-no-files-found: ignore
-      - name: Expose failed visual goldens
-        if: failure()
-        run: |
-          $files = @{
-            "MATCH_GOLDEN_BASE64" = "test/failures/match_testImage.png"
-            "MATCHES_GOLDEN_BASE64" = "test/failures/matches_testImage.png"
-          }
-          foreach ($key in $files.Keys) {
-            $path = $files[$key]
-            if (Test-Path $path) {
-              $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))
-              Write-Output "$key=$encoded"
-            }
-          }
       - name: Build FutBeat debug APK
         run: flutter build apk --debug
       - name: Upload FutBeat debug APK
