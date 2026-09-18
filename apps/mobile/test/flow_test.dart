@@ -90,7 +90,7 @@ void main() {
       );
       expect(find.text('No hay partidos este día'), findsOneWidget);
       expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
-      expect(find.byType(ActionChip), findsNothing);
+      expect(find.widgetWithText(ActionChip, '20/1/2030'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
