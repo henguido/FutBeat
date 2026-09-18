@@ -376,10 +376,10 @@ class _DetailPendingCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+              const Icon(
+                Icons.cloud_sync_outlined,
+                size: 20,
+                color: muted,
               ),
               const SizedBox(width: 12),
               Expanded(
