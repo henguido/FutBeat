@@ -5,6 +5,10 @@ import {
   collectGoalApiBaseIdentities,
   normalizeGoalApiFixtures,
 } from "../../../backend/providers/goal_api.mjs";
+import {
+  collectGoalApiPlayerIdentities,
+  normalizeGoalApiSquad,
+} from "../../../backend/providers/goal_api_players.mjs";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -187,11 +191,151 @@ Deno.serve(async (request) => {
     fromDate?: string;
     toDate?: string;
     limit?: number;
+    teamId?: string;
+    externalTeamId?: string;
+    players?: unknown;
   };
   try {
     input = await request.json();
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (input.action === "squad-plan") {
+    if (
+      !Number.isInteger(input.limit) ||
+      Number(input.limit) < 1 ||
+      Number(input.limit) > 25
+    ) {
+      return Response.json({ error: "Invalid squad plan request" }, {
+        status: 400,
+      });
+    }
+
+    try {
+      const teams = await rpc("futbeat_team_squad_plan", {
+        p_limit: input.limit,
+      });
+      return Response.json({
+        status: "ok",
+        teams: Array.isArray(teams) ? teams : [],
+      });
+    } catch (error) {
+      console.error(
+        "squad plan failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return Response.json({ error: "Squad plan unavailable" }, {
+        status: 502,
+      });
+    }
+  }
+
+  if (input.action === "squad-ingest") {
+    if (
+      typeof input.teamId !== "string" ||
+      !input.teamId.startsWith("fb_team_") ||
+      typeof input.externalTeamId !== "string" ||
+      input.externalTeamId.trim().length < 1 ||
+      input.players == null
+    ) {
+      return Response.json({ error: "Invalid squad payload" }, {
+        status: 400,
+      });
+    }
+
+    const reservation = await rpc("futbeat_reserve_provider_call", {
+      p_provider: "goal_api",
+      p_call_kind: "team-squad-ingest",
+      p_trigger_source: "github-actions",
+      p_daily_limit: 16,
+      p_min_interval_seconds: 0,
+      p_force: true,
+    });
+    if (!reservation.allowed) {
+      return Response.json({ status: "skipped", reason: reservation.reason });
+    }
+
+    const receivedAt = new Date().toISOString();
+    const started = performance.now();
+    let stage = "resolve-players";
+
+    try {
+      const identities = collectGoalApiPlayerIdentities(input.players);
+      const resolved = new Map<string, string>();
+      await resolveIdentityItems("goal_api", identities, resolved);
+
+      stage = "normalize-players";
+      const players = await normalizeGoalApiSquad(
+        input.players,
+        input.teamId,
+        localResolver(resolved),
+        receivedAt,
+      );
+
+      stage = "store-squad";
+      const result = await rpc("futbeat_store_team_squad", {
+        p_team_id: input.teamId,
+        p_provider: "goal_api",
+        p_received_at: receivedAt,
+        p_players: players,
+      }, 30000);
+
+      const durationMs = Math.round(performance.now() - started);
+      await rpc("futbeat_complete_provider_call", {
+        p_reservation_id: reservation.reservationId,
+        p_status: "SUCCEEDED",
+        p_provider_remaining: null,
+        p_http_status: 200,
+        p_error_code: null,
+        p_metadata: {
+          stage: "complete",
+          mode: "team-squad",
+          teamId: input.teamId,
+          externalTeamId: input.externalTeamId,
+          players: players.length,
+          durationMs,
+          transport: "github-actions-oidc",
+          provider: "GOAL API",
+        },
+      });
+
+      return Response.json({
+        status: "ok",
+        teamId: input.teamId,
+        externalTeamId: input.externalTeamId,
+        players: players.length,
+        result,
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message.slice(0, 500) : "unknown";
+      try {
+        await rpc("futbeat_complete_provider_call", {
+          p_reservation_id: reservation.reservationId,
+          p_status: "FAILED",
+          p_provider_remaining: null,
+          p_http_status: null,
+          p_error_code: "SQUAD_INGEST_FAILED",
+          p_metadata: {
+            stage,
+            detail,
+            mode: "team-squad",
+            teamId: input.teamId,
+            externalTeamId: input.externalTeamId,
+            durationMs: Math.round(performance.now() - started),
+            transport: "github-actions-oidc",
+          },
+        });
+      } catch {
+        // Preserve the original ingestion error.
+      }
+      console.error("squad ingest failed", stage, detail);
+      return Response.json(
+        { error: "Squad ingest failed", stage, detail },
+        { status: 502 },
+      );
+    }
   }
 
   if (input.action === "calendar-plan") {
