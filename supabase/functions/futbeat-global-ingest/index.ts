@@ -73,7 +73,6 @@ async function rpc(secret: string, name: string, body: unknown) {
     method: "POST",
     headers: {
       apikey: secret,
-      Authorization: `Bearer ${secret}`,
       "content-type": "application/json",
       accept: "application/json",
     },
