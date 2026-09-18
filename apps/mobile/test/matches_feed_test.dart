@@ -161,7 +161,7 @@ void main() {
     final data = _snapshot(includeCup: true);
     expect(
       _ids(data, follows: {'team:fb_team_lda'}),
-      ['fb_comp_laliga', 'fb_comp_cac', 'fb_comp_cr'],
+      ['fb_comp_laliga', 'fb_comp_cr', 'fb_comp_cac'],
     );
   });
 
