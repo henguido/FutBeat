@@ -8,6 +8,58 @@ function required(value, label) {
   return result;
 }
 
+function leagueIdentity(fixture) {
+  const external = clean(fixture?.league?.id ?? fixture?.leagueId);
+  const name = clean(fixture?.league?.name ?? fixture?.leagueName);
+  if (!external || !name) return null;
+  return {
+    kind: 'competition',
+    external,
+    name,
+    country: clean(fixture?.countryName),
+    shortName: '',
+  };
+}
+
+function teamIdentity(fixture, side) {
+  const nested = fixture?.[side];
+  const prefix = side === 'homeTeam' ? 'home' : 'away';
+  const external = clean(nested?.id ?? fixture?.[`${prefix}TeamId`]);
+  const name = clean(nested?.name ?? fixture?.[`${prefix}TeamName`]);
+  if (!external || !name) return null;
+  return {
+    kind: 'team',
+    external,
+    name,
+    country: '',
+    shortName: '',
+  };
+}
+
+export function collectGoalApiBaseIdentities(rawFixtures) {
+  if (!Array.isArray(rawFixtures)) throw new Error('Invalid GOAL API fixtures');
+
+  const identities = new Map();
+  for (const fixture of rawFixtures) {
+    const kickoff = clean(fixture?.kickoffUtc);
+    if (!kickoff || !Number.isFinite(Date.parse(kickoff))) continue;
+
+    const competition = leagueIdentity(fixture);
+    if (!competition) continue;
+    identities.set(
+      `${competition.kind}:${competition.external}`,
+      competition,
+    );
+
+    for (const side of ['homeTeam', 'awayTeam']) {
+      const team = teamIdentity(fixture, side);
+      if (team) identities.set(`${team.kind}:${team.external}`, team);
+    }
+  }
+
+  return [...identities.values()];
+}
+
 function trustedMedia(value, kind, receivedAt) {
   if (!value) return null;
   let url;
@@ -88,16 +140,14 @@ export async function normalizeGoalApiFixtures(
     const kickoff = clean(fixture?.kickoffUtc);
     if (!kickoff || !Number.isFinite(Date.parse(kickoff))) continue;
 
-    const leagueExternal = clean(fixture?.league?.id ?? fixture?.leagueId);
-    const leagueName = clean(fixture?.league?.name ?? fixture?.leagueName);
-    if (!leagueExternal || !leagueName) continue;
+    const competitionIdentity = leagueIdentity(fixture);
+    if (!competitionIdentity) continue;
 
-    const country = clean(fixture?.countryName);
-    const competitionId = await resolve('competition', leagueExternal, {
-      name: leagueName,
-      country,
-      shortName: '',
-    });
+    const competitionId = await resolve(
+      competitionIdentity.kind,
+      competitionIdentity.external,
+      competitionIdentity,
+    );
 
     const previousCompetition = existing?.competitions?.find?.(
       (item) => item.id === competitionId,
@@ -109,35 +159,25 @@ export async function normalizeGoalApiFixtures(
     );
     competitions.set(competitionId, previousCompetition ? {
       ...previousCompetition,
-      name: leagueName,
-      country: previousCompetition.country || country,
+      name: competitionIdentity.name,
+      country: previousCompetition.country || competitionIdentity.country,
       season: clean(fixture?.leagueYear) || previousCompetition.season || '',
       media: previousCompetition.media ?? competitionMedia,
     } : {
       id: competitionId,
-      name: leagueName,
-      country,
+      name: competitionIdentity.name,
+      country: competitionIdentity.country,
       season: clean(fixture?.leagueYear),
       media: competitionMedia,
     });
 
     const normalizeTeam = async (side) => {
-      const nested = fixture?.[side];
-      const prefix = side === 'homeTeam' ? 'home' : 'away';
-      const external = clean(
-        nested?.id ?? fixture?.[`${prefix}TeamId`],
-      );
-      const name = clean(
-        nested?.name ?? fixture?.[`${prefix}TeamName`],
-      );
-      if (!external || !name) return null;
+      const identity = teamIdentity(fixture, side);
+      if (!identity) return null;
 
-      const id = await resolve('team', external, {
-        name,
-        country: '',
-        shortName: '',
-      });
+      const id = await resolve(identity.kind, identity.external, identity);
       const previous = existing?.teams?.find?.((item) => item.id === id);
+      const nested = fixture?.[side];
       const badge = trustedMedia(
         nested?.badge ??
           fixture?.[side === 'homeTeam' ? 'teamHomeBadge' : 'teamAwayBadge'],
@@ -147,12 +187,12 @@ export async function normalizeGoalApiFixtures(
 
       const next = previous ? {
         ...previous,
-        name: previous.name || name,
+        name: previous.name || identity.name,
         competitionId,
         media: previous.media ?? badge,
       } : {
         id,
-        name,
+        name: identity.name,
         shortName: '',
         country: '',
         competitionId,
