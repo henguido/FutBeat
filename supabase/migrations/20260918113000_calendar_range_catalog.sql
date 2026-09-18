@@ -163,6 +163,19 @@ begin
       raise exception 'Invalid calendar coverage count';
     end if;
 
+    -- Replace the indexed GOAL API view of this provider date. Keep canonical
+    -- entities for identity reuse, but remove stale/moved fixtures from the
+    -- browsable calendar when they are absent from the refreshed provider day.
+    delete from futbeat_private.calendar_matches cm
+    where cm.source='GOAL API'
+      and cm.start_time >= (coverage_date::timestamp at time zone 'UTC')
+      and cm.start_time < ((coverage_date + 1)::timestamp at time zone 'UTC')
+      and not exists(
+        select 1
+        from jsonb_array_elements(p_snapshot->'matches') m
+        where m->>'id'=cm.match_id
+      );
+
     insert into futbeat_private.calendar_coverage(
       provider,provider_date,fetched_at,fixture_count
     )
