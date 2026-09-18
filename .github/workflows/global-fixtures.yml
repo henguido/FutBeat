@@ -43,7 +43,7 @@ jobs:
             if ([string]::IsNullOrWhiteSpace($token)) {
               throw "GitHub OIDC token was not issued"
             }
-            Write-Output "::add-mask::$token"
+            Write-Host "::add-mask::$token"
             return $token
           }
 
@@ -62,6 +62,7 @@ jobs:
             $items = New-Object System.Collections.Generic.List[object]
             $offset = 0
             $remaining = $null
+            $requests = 0
 
             do {
               $uri = "https://api.goal-api.com/v1/fixtures/date/${date}?limit=100&offset=$offset"
@@ -71,6 +72,8 @@ jobs:
                 Accept = "application/json"
               } -ResponseHeadersVariable responseHeaders -TimeoutSec 30
 
+              $requests += 1
+
               if (-not $response.success -or -not ($response.PSObject.Properties.Name -contains "data")) {
                 throw "GOAL API returned an invalid fixtures payload for $date"
               }
@@ -79,9 +82,9 @@ jobs:
                 [void]$items.Add($fixture)
               }
 
-              if ($null -ne $responseHeaders -and $responseHeaders.ContainsKey("X-RateLimit-Remaining")) {
+              if ($null -ne $responseHeaders) {
                 $rawRemaining = @($responseHeaders["X-RateLimit-Remaining"])[0]
-                if ($null -ne $rawRemaining) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
                   $remaining = [int]$rawRemaining
                 }
               }
@@ -102,6 +105,7 @@ jobs:
               Items = @($items)
               Count = $items.Count
               Remaining = $remaining
+              Requests = $requests
             }
           }
 
@@ -183,6 +187,8 @@ jobs:
           }
 
           $quotaReserve = 180
+          $calendarRequestBudget = 500
+          $calendarRequestsUsed = 0
           $batchSize = 3
           $batchDates = New-Object System.Collections.Generic.List[string]
           $batchEvents = New-Object System.Collections.Generic.List[object]
@@ -192,8 +198,14 @@ jobs:
           $stopForQuota = $false
 
           foreach ($date in $planDates) {
+            if ($calendarRequestsUsed -ge $calendarRequestBudget) {
+              Write-Output "CALENDAR_EXPAND_STOP reason=request_budget budget=$calendarRequestBudget"
+              break
+            }
+
             $page = Get-GoalApiDate ([string]$date)
-            Write-Output "CALENDAR_FETCH date=$date fixtures=$($page.Count) remaining=$($page.Remaining)"
+            $calendarRequestsUsed += [int]$page.Requests
+            Write-Output "CALENDAR_FETCH date=$date fixtures=$($page.Count) remaining=$($page.Remaining) requests=$($page.Requests) used=$calendarRequestsUsed"
 
             foreach ($fixture in @($page.Items)) {
               $externalId = [string]$fixture.apiId
@@ -214,7 +226,10 @@ jobs:
             })
             $expandedDates += 1
 
-            if ($null -ne $page.Remaining -and [int]$page.Remaining -le $quotaReserve) {
+            if (
+              ($null -ne $page.Remaining -and [int]$page.Remaining -le $quotaReserve) -or
+              $calendarRequestsUsed -ge $calendarRequestBudget
+            ) {
               $stopForQuota = $true
             }
 
@@ -251,4 +266,4 @@ jobs:
             Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
           }
 
-          Write-Output "CALENDAR_EXPAND_OK planned=$($planDates.Count) fetched=$expandedDates"
+          Write-Output "CALENDAR_EXPAND_OK planned=$($planDates.Count) fetched=$expandedDates requests=$calendarRequestsUsed"
