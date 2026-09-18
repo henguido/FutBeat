@@ -88,6 +88,35 @@ void main() {
     }
   });
 
+  test('entity detail is loaded from the FutBeat canonical endpoint', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    Uri? requested;
+    server.listen((request) async {
+      requested = request.uri;
+      request.response.headers.contentType = ContentType.json;
+      final body = File('assets/demo.snapshot.json')
+          .readAsStringSync()
+          .replaceFirst('"demo": true', '"demo": false');
+      request.response.write(body);
+      await request.response.close();
+    });
+
+    final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+    try {
+      final snapshot = await ApiRepository(dio).loadEntity(
+        'team',
+        'fb_team_sap',
+      );
+      expect(snapshot.demo, isFalse);
+      expect(requested?.path, '/v1/entity');
+      expect(requested?.queryParameters['type'], 'team');
+      expect(requested?.queryParameters['id'], 'fb_team_sap');
+    } finally {
+      dio.close(force: true);
+      await server.close(force: true);
+    }
+  });
+
   test('cloud repository never silently accepts demo data', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
