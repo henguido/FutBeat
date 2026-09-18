@@ -11,6 +11,12 @@ const reply = (status: number, data: unknown) =>
 const validDate = (value: string | null) =>
   value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value);
 
+const validEntityType = (value: string | null) =>
+  value !== null && ['team', 'player', 'competition'].includes(value);
+
+const validEntityId = (value: string | null) =>
+  value !== null && /^fb_[A-Za-z0-9_-]{3,120}$/.test(value);
+
 export default {
   fetch: withSupabase({ auth: 'none' }, async (request, ctx) => {
     if (request.method !== 'GET') {
@@ -30,6 +36,35 @@ export default {
         snapshot.schemaVersion !== 1 ||
         snapshot.demo !== false
       ) {
+        return reply(503, { error: 'Datos temporalmente no disponibles' });
+      }
+
+      return reply(200, snapshot);
+    }
+
+    if (path.endsWith('/futbeat-api/v1/entity')) {
+      const type = requestUrl.searchParams.get('type');
+      const id = requestUrl.searchParams.get('id');
+
+      if (!validEntityType(type) || !validEntityId(id)) {
+        return reply(400, { error: 'Entidad inválida' });
+      }
+
+      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_read_entity_detail',
+        {
+          p_type: type,
+          p_id: id,
+        },
+      );
+
+      if (error) {
+        return reply(503, { error: 'Datos temporalmente no disponibles' });
+      }
+      if (!snapshot) {
+        return reply(404, { error: 'Entidad no encontrada' });
+      }
+      if (snapshot.schemaVersion !== 1 || snapshot.demo !== false) {
         return reply(503, { error: 'Datos temporalmente no disponibles' });
       }
 
