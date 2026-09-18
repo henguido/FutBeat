@@ -76,6 +76,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     });
     try {
       await ref.read(pushServiceProvider).saveProfileSettings(value);
+      ref.invalidate(profileSettingsProvider);
     } catch (_) {
       if (mounted) {
         setState(() => message = 'No se pudieron guardar los cambios.');
@@ -190,6 +191,31 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
           const SizedBox(height: 8),
           const CountryPreferencePanel(),
+          const SizedBox(height: 20),
+          const Text(
+            'Preferencias',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            initialValue: settings.hourFormat,
+            decoration: const InputDecoration(labelText: 'Formato de hora'),
+            items: const [
+              DropdownMenuItem(
+                value: 'system',
+                child: Text('Según el dispositivo'),
+              ),
+              DropdownMenuItem(value: '12h', child: Text('12 horas')),
+              DropdownMenuItem(value: '24h', child: Text('24 horas')),
+            ],
+            onChanged: loaded
+                ? (value) {
+                    if (value != null) {
+                      saveSettings(settings.copyWith(hourFormat: value));
+                    }
+                  }
+                : null,
+          ),
           const SizedBox(height: 20),
           const Text(
             'Cuenta',
