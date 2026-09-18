@@ -1,70 +1,5 @@
 -- GOAL API LIVE transport. The existing canonical realtime read model is reused.
-
-create or replace function futbeat_private.store_goal_api_live_key(p_secret text)
-returns void
-language plpgsql
-security definer
-set search_path=''
-as $$
-declare
-  v_id uuid;
-begin
-  if p_secret is null or length(btrim(p_secret)) < 20 then
-    raise exception 'Invalid GOAL API key';
-  end if;
-
-  select id into v_id
-  from vault.decrypted_secrets
-  where name='futbeat_goal_api_live_key';
-
-  if v_id is null then
-    perform vault.create_secret(
-      p_secret,
-      'futbeat_goal_api_live_key',
-      'GOAL API key used by FutBeat server-side LIVE sync'
-    );
-  else
-    perform vault.update_secret(
-      v_id,
-      p_secret,
-      'futbeat_goal_api_live_key',
-      'GOAL API key used by FutBeat server-side LIVE sync'
-    );
-  end if;
-end
-$$;
-
-create or replace function public.futbeat_store_goal_api_live_key(p_secret text)
-returns void
-language sql
-security definer
-set search_path=''
-as $$
-  select futbeat_private.store_goal_api_live_key(p_secret)
-$$;
-
-create or replace function futbeat_private.read_goal_api_live_key()
-returns text
-language sql
-stable
-security definer
-set search_path=''
-as $$
-  select decrypted_secret
-  from vault.decrypted_secrets
-  where name='futbeat_goal_api_live_key'
-  limit 1
-$$;
-
-create or replace function public.futbeat_read_goal_api_live_key()
-returns text
-language sql
-stable
-security definer
-set search_path=''
-as $$
-  select futbeat_private.read_goal_api_live_key()
-$$;
+-- GOAL_API_KEY stays in GitHub Secrets; only normalized provider data reaches Supabase.
 
 create or replace function futbeat_private.futbeat_reserve_goal_live_call(
   p_trigger_source text default 'cron'
@@ -190,19 +125,11 @@ as $$
 $$;
 
 revoke all on function
-  futbeat_private.store_goal_api_live_key(text),
-  public.futbeat_store_goal_api_live_key(text),
-  futbeat_private.read_goal_api_live_key(),
-  public.futbeat_read_goal_api_live_key(),
   futbeat_private.futbeat_reserve_goal_live_call(text),
   public.futbeat_reserve_goal_live_call(text)
 from public,anon,authenticated;
 
 grant execute on function
-  futbeat_private.store_goal_api_live_key(text),
-  public.futbeat_store_goal_api_live_key(text),
-  futbeat_private.read_goal_api_live_key(),
-  public.futbeat_read_goal_api_live_key(),
   futbeat_private.futbeat_reserve_goal_live_call(text),
   public.futbeat_reserve_goal_live_call(text)
 to service_role;
