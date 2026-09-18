@@ -1,0 +1,118 @@
+name: FutBeat global fixtures
+
+on:
+  schedule:
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: futbeat-global-fixtures
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch unfiltered global football calendar
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          function costaRicaDate(offsetDays) {
+            const parts = new Intl.DateTimeFormat('en-CA', {
+              timeZone: 'America/Costa_Rica',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            }).formatToParts(new Date());
+            const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+            const noonUtc = new Date(`${values.year}-${values.month}-${values.day}T12:00:00Z`);
+            noonUtc.setUTCDate(noonUtc.getUTCDate() + offsetDays);
+            return noonUtc.toISOString().slice(0, 10);
+          }
+
+          const headers = {
+            accept: 'application/json,text/plain,*/*',
+            origin: 'https://www.sofascore.com',
+            referer: 'https://www.sofascore.com/',
+            'user-agent':
+              'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36',
+          };
+          const bases = [
+            'https://api.sofascore.com/api/v1',
+            'https://www.sofascore.com/api/v1',
+          ];
+
+          const dates = [-1, 0, 1].map(costaRicaDate);
+          const events = [];
+
+          for (const date of dates) {
+            let body;
+            let lastError;
+            for (const base of bases) {
+              try {
+                const response = await fetch(
+                  `${base}/sport/football/scheduled-events/${date}`,
+                  { headers, signal: AbortSignal.timeout(15000) },
+                );
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                body = await response.json();
+                if (!Array.isArray(body?.events)) {
+                  throw new Error('invalid events payload');
+                }
+                console.log(`GLOBAL_FETCH date=${date} events=${body.events.length} base=${base}`);
+                break;
+              } catch (error) {
+                lastError = error;
+              }
+            }
+            if (!body) {
+              throw new Error(
+                `Global calendar unavailable for ${date}: ${lastError?.message ?? 'unknown'}`,
+              );
+            }
+            events.push(...body.events);
+          }
+
+          fs.writeFileSync(
+            'global-fixtures.json',
+            JSON.stringify({
+              source: 'SofaScore',
+              dates,
+              events,
+            }),
+          );
+          console.log(`GLOBAL_FETCH_TOTAL events=${events.length}`);
+          NODE
+
+      - name: Request GitHub OIDC token
+        id: oidc
+        shell: bash
+        run: |
+          token="$(
+            curl --fail --silent --show-error               -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=futbeat-global-ingest"             | jq -r '.value'
+          )"
+          if [ -z "$token" ] || [ "$token" = "null" ]; then
+            echo "GitHub OIDC token was not issued" >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Ingest into FutBeat central snapshot
+        shell: bash
+        env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+        run: |
+          curl --fail-with-body --silent --show-error             --retry 2             --max-time 90             -X POST             -H "Authorization: Bearer $OIDC_TOKEN"             -H "Content-Type: application/json"             --data-binary @global-fixtures.json             "https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-global-ingest"
+          echo
