@@ -40,6 +40,9 @@ class TestRepository implements FootballRepository {
 
   @override
   Future<Snapshot> loadDate(DateTime date) => load();
+
+  @override
+  Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail.empty(id);
 }
 
 Future<void> openApp(
