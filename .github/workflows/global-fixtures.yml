@@ -56,7 +56,7 @@ jobs:
           foreach ($date in $fetchDates) {
             $offset = 0
             do {
-              $uri = "https://api.goal-api.com/v1/fixtures/date/$date?limit=500&offset=$offset"
+              $uri = "https://api.goal-api.com/v1/fixtures/date/${date}?limit=500&offset=$offset"
               $params = @{
                 Uri = $uri
                 Headers = @{
