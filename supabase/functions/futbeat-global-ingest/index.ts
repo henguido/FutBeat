@@ -193,6 +193,7 @@ Deno.serve(async (request) => {
     limit?: number;
     teamId?: string;
     externalTeamId?: string;
+    providerRemaining?: number | null;
     players?: unknown;
   };
   try {
@@ -237,6 +238,10 @@ Deno.serve(async (request) => {
       !input.teamId.startsWith("fb_team_") ||
       typeof input.externalTeamId !== "string" ||
       input.externalTeamId.trim().length < 1 ||
+      (
+        input.providerRemaining != null &&
+        (!Number.isInteger(input.providerRemaining) || input.providerRemaining < 0)
+      ) ||
       input.players == null
     ) {
       return Response.json({ error: "Invalid squad payload" }, {
@@ -285,7 +290,7 @@ Deno.serve(async (request) => {
       await rpc("futbeat_complete_provider_call", {
         p_reservation_id: reservation.reservationId,
         p_status: "SUCCEEDED",
-        p_provider_remaining: null,
+        p_provider_remaining: input.providerRemaining ?? null,
         p_http_status: 200,
         p_error_code: null,
         p_metadata: {
@@ -314,7 +319,7 @@ Deno.serve(async (request) => {
         await rpc("futbeat_complete_provider_call", {
           p_reservation_id: reservation.reservationId,
           p_status: "FAILED",
-          p_provider_remaining: null,
+          p_provider_remaining: input.providerRemaining ?? null,
           p_http_status: null,
           p_error_code: "SQUAD_INGEST_FAILED",
           p_metadata: {
