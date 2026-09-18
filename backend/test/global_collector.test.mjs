@@ -53,7 +53,7 @@ test('global SQL resolver reuses canonical teams and fixture storage preserves c
         "select public.futbeat_resolve_global_entity('sofascore','competition','4739','CONCACAF Central American Cup','North & Central America','') id",
       )
     ).rows[0].id;
-    assert.match(cupId, /^fb_comp_/);
+    assert.match(cupId, /^fb_competition_/);
 
     const matchId = (
       await db.query(
