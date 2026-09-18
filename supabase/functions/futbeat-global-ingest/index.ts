@@ -458,19 +458,30 @@ Deno.serve(async (request) => {
     let existing = baseExisting;
 
     if (mode === "calendar") {
-      const rangeExisting = await rpc("futbeat_read_calendar_range", {
-        p_from_date: dates[0],
-        p_to_date: dates[dates.length - 1],
-        p_timezone: "UTC",
-      });
+      const daySnapshots = [];
+      for (const date of dates) {
+        daySnapshots.push(
+          await rpc("futbeat_read_calendar_range", {
+            p_from_date: date,
+            p_to_date: date,
+            p_timezone: "UTC",
+          }),
+        );
+      }
       existing = {
         ...baseExisting,
         competitions: mergeById(
           baseExisting?.competitions,
-          rangeExisting?.competitions,
+          ...daySnapshots.map((snapshot) => snapshot?.competitions),
         ),
-        teams: mergeById(baseExisting?.teams, rangeExisting?.teams),
-        matches: mergeById(baseExisting?.matches, rangeExisting?.matches),
+        teams: mergeById(
+          baseExisting?.teams,
+          ...daySnapshots.map((snapshot) => snapshot?.teams),
+        ),
+        matches: mergeById(
+          baseExisting?.matches,
+          ...daySnapshots.map((snapshot) => snapshot?.matches),
+        ),
       };
     }
 
