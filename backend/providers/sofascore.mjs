@@ -99,6 +99,7 @@ export async function normalizeSofaScoreFixtures(rawEvents, resolve, receivedAt,
         const previous = existing?.teams?.find?.((item) => item.id === id);
         teams.set(id, previous ? {
           ...previous,
+          competitionId,
           media: previous.media ?? media(
             `https://img.sofascore.com/api/v1/team/${external}/image`,
             'TEAM_LOGO',
