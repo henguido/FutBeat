@@ -30,20 +30,7 @@ jobs:
             Accept = "application/json"
           }
 
-          $live = Invoke-RestMethod -Uri "https://api.goal-api.com/v1/fixtures/live?limit=50&offset=0" -Headers $headers -TimeoutSec 30
-          if (-not $live.success -or @($live.data).Count -eq 0) {
-            Write-Output "DETAIL_PROBE_SKIPPED reason=no_live_match"
-            exit 0
-          }
-
-          $fixture = @($live.data | Where-Object {
-            -not [string]::IsNullOrWhiteSpace([string]$_.homeTeamSystem) -or
-            -not [string]::IsNullOrWhiteSpace([string]$_.awayTeamSystem)
-          } | Select-Object -First 1)
-          if ($null -eq $fixture) { $fixture = @($live.data)[0] }
-          $id = [string]$fixture.apiId
-          if ([string]::IsNullOrWhiteSpace($id)) { $id = [string]$fixture.id }
-          if ([string]::IsNullOrWhiteSpace($id)) { throw "Missing live fixture id" }
+          $id = "809290"
 
           foreach ($suffix in @("", "/events", "/lineups", "/statistics")) {
             $uri = "https://api.goal-api.com/v1/fixtures/$id$suffix"
