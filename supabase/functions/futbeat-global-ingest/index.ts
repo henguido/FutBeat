@@ -260,6 +260,7 @@ Deno.serve(async (request) => {
     fromDate?: string;
     toDate?: string;
     limit?: number;
+    reserve?: number;
     teamId?: string;
     externalTeamId?: string;
     providerRemaining?: number | null;
@@ -277,6 +278,33 @@ Deno.serve(async (request) => {
     input = await request.json();
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (input.action === "global-quota-plan") {
+    const reserve = input.reserve ?? 350;
+    if (!Number.isInteger(reserve) || reserve < 50 || reserve > 900) {
+      return Response.json({ error: "Invalid GOAL quota reserve" }, {
+        status: 400,
+      });
+    }
+
+    try {
+      const plan = await rpc("futbeat_goal_low_priority_plan", {
+        p_reserve: reserve,
+      });
+      return Response.json({
+        status: plan?.allowed ? "ok" : "skipped",
+        plan,
+      });
+    } catch (error) {
+      console.error(
+        "GOAL low-priority quota plan failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return Response.json({ error: "GOAL quota plan unavailable" }, {
+        status: 502,
+      });
+    }
   }
 
   if (input.action === "live-plan") {
@@ -982,7 +1010,8 @@ Deno.serve(async (request) => {
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId,
       p_status: "SUCCEEDED",
-      p_provider_remaining: null,
+      p_provider_remaining:
+        input.source === "GOAL API" ? input.providerRemaining ?? null : null,
       p_http_status: 200,
       p_error_code: null,
       p_metadata: {

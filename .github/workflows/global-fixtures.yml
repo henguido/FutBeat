@@ -2,7 +2,6 @@ name: FutBeat global fixtures
 
 on:
   schedule:
-    - cron: '*/5 * * *'
     - cron: '17 */3 * * *'
   workflow_dispatch:
   push:
@@ -112,6 +111,15 @@ jobs:
 
           function Invoke-TeamSquadHydration {
             try {
+              $quotaPlan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+                action = "global-quota-plan"
+                reserve = 350
+              })
+              if ($quotaPlan.status -eq "skipped") {
+                Write-Output "SQUAD_HYDRATE_SKIPPED reason=$($quotaPlan.plan.reason) remaining=$($quotaPlan.plan.providerRemaining)"
+                return
+              }
+
               $squadPlan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
                 action = "squad-plan"
                 limit = 5
@@ -127,7 +135,7 @@ jobs:
               return
             }
 
-            $squadReserve = 180
+            $squadReserve = 350
             $hydrated = 0
 
             foreach ($team in $teams) {
@@ -181,6 +189,16 @@ jobs:
             Write-Output "SQUAD_HYDRATE_OK planned=$($teams.Count) hydrated=$hydrated"
           }
 
+          $globalReserve = 350
+          $globalQuota = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+            action = "global-quota-plan"
+            reserve = $globalReserve
+          })
+          if ($globalQuota.status -eq "skipped") {
+            Write-Output "GLOBAL_FETCH_SKIPPED reason=$($globalQuota.plan.reason) remaining=$($globalQuota.plan.providerRemaining) reserve=$globalReserve"
+            exit 0
+          }
+
           # Hot window: yesterday / today / tomorrow in Costa Rica.
           $crNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(-6))
           $dates = @(-1, 0, 1) | ForEach-Object {
@@ -199,8 +217,12 @@ jobs:
 
           $fixtures = New-Object System.Collections.Generic.List[object]
           $seen = @{}
+          $hotRemaining = $null
           foreach ($date in $fetchDates) {
             $page = Get-GoalApiDate $date
+            if ($null -ne $page.Remaining) {
+              $hotRemaining = [int]$page.Remaining
+            }
             foreach ($fixture in @($page.Items)) {
               $externalId = [string]$fixture.apiId
               if ([string]::IsNullOrWhiteSpace($externalId)) {
@@ -230,6 +252,7 @@ jobs:
             source = "GOAL API"
             mode = "hot"
             dates = @($dates)
+            providerRemaining = $hotRemaining
             events = @($events)
           })
 
@@ -241,6 +264,15 @@ jobs:
           $shouldExpand = @("workflow_dispatch", "push") -contains $env:GITHUB_EVENT_NAME -or $utcHour -eq 9
           if (-not $shouldExpand) {
             Write-Output "CALENDAR_EXPAND_SKIPPED reason=not_daily_window"
+            exit 0
+          }
+
+          $postHotQuota = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+            action = "global-quota-plan"
+            reserve = $globalReserve
+          })
+          if ($postHotQuota.status -eq "skipped") {
+            Write-Output "CALENDAR_EXPAND_SKIPPED reason=$($postHotQuota.plan.reason) remaining=$($postHotQuota.plan.providerRemaining) reserve=$globalReserve"
             exit 0
           }
 
@@ -259,14 +291,15 @@ jobs:
             exit 0
           }
 
-          $quotaReserve = 180
-          $calendarRequestBudget = 500
+          $quotaReserve = 350
+          $calendarRequestBudget = 180
           $calendarRequestsUsed = 0
           $batchSize = 3
           $batchDates = New-Object System.Collections.Generic.List[string]
           $batchEvents = New-Object System.Collections.Generic.List[object]
           $batchCoverage = New-Object System.Collections.Generic.List[object]
           $batchSeen = @{}
+          $batchRemaining = $null
           $expandedDates = 0
           $stopForQuota = $false
 
@@ -279,6 +312,9 @@ jobs:
 
             $page = Get-GoalApiDate ([string]$date)
             $calendarRequestsUsed += [int]$page.Requests
+            if ($null -ne $page.Remaining) {
+              $batchRemaining = [int]$page.Remaining
+            }
             Write-Output "CALENDAR_FETCH date=$date fixtures=$($page.Count) remaining=$($page.Remaining) requests=$($page.Requests) used=$calendarRequestsUsed"
 
             foreach ($fixture in @($page.Items)) {
@@ -313,6 +349,7 @@ jobs:
                 mode = "calendar"
                 dates = $batchDates.ToArray()
                 coverage = $batchCoverage.ToArray()
+                providerRemaining = $batchRemaining
                 events = $batchEvents.ToArray()
               })
               Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
@@ -321,6 +358,7 @@ jobs:
               $batchEvents = New-Object System.Collections.Generic.List[object]
               $batchCoverage = New-Object System.Collections.Generic.List[object]
               $batchSeen = @{}
+              $batchRemaining = $null
 
               if ($stopForQuota) {
                 Write-Output "CALENDAR_EXPAND_STOP reason=quota_reserve reserve=$quotaReserve"
@@ -335,6 +373,7 @@ jobs:
               mode = "calendar"
               dates = $batchDates.ToArray()
               coverage = $batchCoverage.ToArray()
+              providerRemaining = $batchRemaining
               events = $batchEvents.ToArray()
             })
             Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"

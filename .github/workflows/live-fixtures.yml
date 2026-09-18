@@ -18,6 +18,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Highest GOAL API quota priority. The database guard preserves only
+  # the emergency reserve; catalog/detail work stops earlier.
   live:
     runs-on: ubuntu-latest
     timeout-minutes: 3
