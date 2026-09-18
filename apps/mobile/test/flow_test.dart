@@ -81,22 +81,16 @@ Future<void> openApp(
 
 void main() {
   testWidgets(
-    'partial provider coverage exposes available dates and stale data',
+    'partial provider coverage keeps freshness warning and calendar recovery',
     (tester) async {
       await openApp(tester, repository: TestRepository(real: true));
       expect(
         find.textContaining('Los datos pueden estar desactualizados'),
         findsOneWidget,
       );
-      await tester.drag(find.byType(ListView).first, const Offset(0, -600));
-      await tester.pumpAndSettle();
-      expect(find.text('Prueba otro día o cambia el filtro.'), findsOneWidget);
-      final available = find.widgetWithText(ActionChip, '20/1/2030');
-      await tester.ensureVisible(available);
-      await tester.tap(available);
-      await tester.pumpAndSettle();
-      expect(find.text('Sin partidos para esta selección'), findsNothing);
-      expect(find.text('Liga Promerica'), findsWidgets);
+      expect(find.text('No hay partidos este día'), findsOneWidget);
+      expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
+      expect(find.byType(ActionChip), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

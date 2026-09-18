@@ -212,7 +212,24 @@ class CalendarDataView extends ConsumerWidget {
             ],
           ),
         ),
-        data: builder,
+        data: (data) => Column(
+          children: [
+            if (!data.demo && data.stale)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
+                ),
+                color: lime.withValues(alpha: .08),
+                child: const Text(
+                  'Los datos pueden estar desactualizados. Desliza para actualizar.',
+                  style: TextStyle(color: lime, fontSize: 12),
+                ),
+              ),
+            Expanded(child: builder(data)),
+          ],
+        ),
       );
 }
 
