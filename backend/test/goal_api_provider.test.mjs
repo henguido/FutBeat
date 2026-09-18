@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeGoalApiFixtures } from '../providers/goal_api.mjs';
+import { collectGoalApiBaseIdentities, normalizeGoalApiFixtures } from '../providers/goal_api.mjs';
 
 function fixture(overrides = {}) {
   return {
@@ -196,4 +196,36 @@ test('GOAL API fixtures without an unambiguous kickoff are skipped', async () =>
   );
 
   assert.equal(snapshot.matches.length, 0);
+});
+
+
+test('GOAL API base identity collection deduplicates competitions and teams', () => {
+  const second = fixture({
+    id: 'cms_second',
+    apiId: '746487',
+    kickoffUtc: '2026-09-18T02:00:00.000Z',
+    awayTeam: {
+      id: 'goal_team_csh',
+      name: 'Herediano',
+      badge: null,
+    },
+  });
+
+  const identities = collectGoalApiBaseIdentities([
+    fixture(),
+    second,
+    fixture({ kickoffUtc: null }),
+  ]);
+
+  const keys = identities.map((item) => `${item.kind}:${item.external}`).sort();
+  assert.deepEqual(keys, [
+    'competition:goal_league_cr',
+    'team:goal_team_csh',
+    'team:goal_team_lda',
+    'team:goal_team_sap',
+  ]);
+  assert.equal(
+    identities.find((item) => item.kind === 'competition')?.country,
+    'Costa Rica',
+  );
 });
