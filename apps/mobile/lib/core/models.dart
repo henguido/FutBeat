@@ -89,6 +89,25 @@ class LiveMatchUpdate {
 
   Json applyTo(Json match) {
     if (match['id'] != matchId) return match;
+
+    const terminalStatuses = {
+      'FINISHED_PENDING_VERIFICATION',
+      'VERIFIED',
+      'POSTPONED',
+      'ABANDONED',
+      'CANCELLED',
+    };
+    final canonicalStatus = match['status'] as String?;
+    final provenance = match['provenance'];
+    final canonicalAt = provenance is Map
+        ? DateTime.tryParse(provenance['receivedAt'] as String? ?? '')
+        : null;
+    if (terminalStatuses.contains(canonicalStatus) &&
+        canonicalAt != null &&
+        !canonicalAt.isBefore(changedAt)) {
+      return match;
+    }
+
     final previousAt = DateTime.tryParse(
       match['liveChangedAt'] as String? ?? '',
     );
@@ -230,8 +249,9 @@ class Snapshot {
     final mergedMatches = matches.map((match) {
       final update = updates[match.id];
       if (update == null) return match.json;
-      changed = true;
-      return update.applyTo(match.json);
+      final merged = update.applyTo(match.json);
+      if (!identical(merged, match.json)) changed = true;
+      return merged;
     }).toList();
     if (!changed) return this;
     return Snapshot({
