@@ -40,6 +40,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
       final detail =
           ref.watch(matchDetailProvider(widget.id)).asData?.value ??
           MatchDetail.empty(widget.id);
+      final venue =
+          detail.stadium ?? match.json['venue']?.toString() ?? '';
       return DefaultTabController(
         length: 4,
         child: Scaffold(
@@ -110,8 +112,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  if ((detail.stadium ?? match.json['venue']?.toString()) case final venue?
-                      when venue.trim().isNotEmpty)
+                  if (venue.trim().isNotEmpty)
                     Center(
                       child: Text(
                         venue,
