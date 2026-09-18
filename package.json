@@ -11,7 +11,7 @@
     "api": "node backend/api/server.mjs",
     "api:real": "node backend/api/real.mjs",
     "data:sync": "node backend/api/real.mjs --sync",
-    "check": "node --check backend/api/server.mjs && node --check backend/providers/core/snapshot.mjs && node --check backend/providers/thesportsdb.mjs && node --check backend/automation/sync.mjs"
+    "check": "node --check backend/api/server.mjs && node --check backend/providers/core/snapshot.mjs && node --check backend/providers/thesportsdb.mjs && node --check backend/providers/sofascore.mjs && node --check backend/automation/global_schedule_payload.mjs && node --check backend/automation/sync.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.8"
