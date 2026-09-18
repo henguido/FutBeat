@@ -11,6 +11,7 @@ import 'models.dart';
 abstract interface class FootballRepository {
   Future<Snapshot> load();
   Future<Snapshot> loadDate(DateTime date);
+  Future<MatchDetail> loadMatchDetail(String id);
 }
 
 class DemoRepository implements FootballRepository {
@@ -22,6 +23,9 @@ class DemoRepository implements FootballRepository {
 
   @override
   Future<Snapshot> loadDate(DateTime date) => load();
+
+  @override
+  Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail.empty(id);
 }
 
 class ApiRepository implements FootballRepository {
@@ -63,6 +67,16 @@ class ApiRepository implements FootballRepository {
       await dio.get<Json>(
         '/v1/entity',
         queryParameters: {'type': type, 'id': id},
+      )
+    ).data!,
+  );
+
+  @override
+  Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail(
+    (
+      await dio.get<Json>(
+        '/v1/match-detail',
+        queryParameters: {'id': id},
       )
     ).data!,
   );
@@ -111,6 +125,19 @@ final entitySnapshotProvider =
         return repository.load();
       },
     );
+
+final matchDetailProvider =
+    StreamProvider.autoDispose.family<MatchDetail, String>((ref, id) async* {
+      final repository = ref.watch(repositoryProvider);
+      while (true) {
+        try {
+          yield await repository.loadMatchDetail(id);
+        } catch (_) {
+          yield MatchDetail.empty(id);
+        }
+        await Future<void>.delayed(const Duration(seconds: 15));
+      }
+    });
 
 final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(
   (ref) => LiveRealtimeConfig.fromEnvironment(),
