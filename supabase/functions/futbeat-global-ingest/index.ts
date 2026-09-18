@@ -269,6 +269,9 @@ Deno.serve(async (request) => {
     reservationId?: number;
     errorCode?: string;
     httpStatus?: number | null;
+    matchId?: string;
+    externalMatchId?: string;
+    detail?: unknown;
   };
   try {
     input = await request.json();
@@ -421,6 +424,144 @@ Deno.serve(async (request) => {
       console.error("GOAL live ingest failed", detail);
       return Response.json(
         { error: "GOAL live ingest failed", detail },
+        { status: 502 },
+      );
+    }
+  }
+
+  if (input.action === "match-detail-plan") {
+    try {
+      const reservation = await rpc("futbeat_reserve_match_detail_call", {
+        p_trigger_source: "github-actions",
+      });
+      return Response.json({
+        status: reservation?.allowed ? "ok" : "skipped",
+        reservation,
+      });
+    } catch (error) {
+      console.error(
+        "match detail reservation failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return Response.json({ error: "Match detail plan unavailable" }, {
+        status: 502,
+      });
+    }
+  }
+
+  if (input.action === "match-detail-fail") {
+    if (
+      !Number.isInteger(input.reservationId) ||
+      Number(input.reservationId) < 1
+    ) {
+      return Response.json({ error: "Invalid match detail reservation" }, {
+        status: 400,
+      });
+    }
+
+    try {
+      await rpc("futbeat_complete_provider_call", {
+        p_reservation_id: input.reservationId,
+        p_status: "FAILED",
+        p_provider_remaining: input.providerRemaining ?? null,
+        p_http_status: input.httpStatus ?? null,
+        p_error_code: clean(
+          input.errorCode || "GOAL_MATCH_DETAIL_FETCH_FAILED",
+        ).slice(0, 80),
+        p_metadata: {
+          mode: "match-detail",
+          matchId: input.matchId ?? null,
+          externalMatchId: input.externalMatchId ?? null,
+          transport: "github-actions-oidc",
+        },
+      });
+      return Response.json({ status: "ok" });
+    } catch {
+      return Response.json({ error: "Match detail failure not recorded" }, {
+        status: 502,
+      });
+    }
+  }
+
+  if (input.action === "match-detail-ingest") {
+    if (
+      !Number.isInteger(input.reservationId) ||
+      Number(input.reservationId) < 1 ||
+      typeof input.matchId !== "string" ||
+      !input.matchId.startsWith("fb_match_") ||
+      typeof input.externalMatchId !== "string" ||
+      input.externalMatchId.trim().length < 1 ||
+      !input.detail ||
+      typeof input.detail !== "object" ||
+      Array.isArray(input.detail) ||
+      (
+        input.providerRemaining != null &&
+        (!Number.isInteger(input.providerRemaining) ||
+          input.providerRemaining < 0)
+      )
+    ) {
+      return Response.json({ error: "Invalid match detail payload" }, {
+        status: 400,
+      });
+    }
+
+    const fetchedAt = new Date().toISOString();
+    const started = performance.now();
+    try {
+      const stored = await rpc("futbeat_store_match_detail", {
+        p_match_id: input.matchId,
+        p_external_match_id: input.externalMatchId,
+        p_fetched_at: fetchedAt,
+        p_payload: input.detail,
+      }, 30000);
+
+      await rpc("futbeat_complete_provider_call", {
+        p_reservation_id: input.reservationId,
+        p_status: "SUCCEEDED",
+        p_provider_remaining: input.providerRemaining ?? null,
+        p_http_status: 200,
+        p_error_code: null,
+        p_metadata: {
+          mode: "match-detail",
+          matchId: input.matchId,
+          externalMatchId: input.externalMatchId,
+          durationMs: Math.round(performance.now() - started),
+          transport: "github-actions-oidc",
+          provider: "GOAL API",
+        },
+      });
+
+      return Response.json({
+        status: "ok",
+        matchId: input.matchId,
+        externalMatchId: input.externalMatchId,
+        detail: stored,
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message.slice(0, 500) : "unknown";
+      try {
+        await rpc("futbeat_complete_provider_call", {
+          p_reservation_id: input.reservationId,
+          p_status: "FAILED",
+          p_provider_remaining: input.providerRemaining ?? null,
+          p_http_status: null,
+          p_error_code: "GOAL_MATCH_DETAIL_INGEST_FAILED",
+          p_metadata: {
+            mode: "match-detail",
+            matchId: input.matchId,
+            externalMatchId: input.externalMatchId,
+            detail,
+            durationMs: Math.round(performance.now() - started),
+            transport: "github-actions-oidc",
+          },
+        });
+      } catch {
+        // Preserve the original ingestion error.
+      }
+      console.error("match detail ingest failed", detail);
+      return Response.json(
+        { error: "Match detail ingest failed", detail },
         { status: 502 },
       );
     }
