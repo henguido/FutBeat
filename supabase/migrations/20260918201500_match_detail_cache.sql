@@ -100,10 +100,9 @@ create or replace function futbeat_private.request_match_detail(
 language plpgsql
 security definer
 set search_path=''
-as $
+as $$
 declare
   v_start timestamptz;
-  v_cached boolean;
   v_goal_mapped boolean;
 begin
   select nullif(payload->>'startTime','')::timestamptz
@@ -114,12 +113,6 @@ begin
   if p_match_id is null or v_start is null then
     raise exception 'Unknown canonical match';
   end if;
-
-  select exists(
-    select 1
-    from futbeat_private.match_detail_cache
-    where match_id=p_match_id
-  ) into v_cached;
 
   select exists(
     select 1
@@ -149,7 +142,7 @@ begin
 
   return futbeat_private.read_match_detail(p_match_id);
 end
-$;
+$$;
 
 create or replace function futbeat_private.reserve_match_detail_call(
   p_trigger_source text default 'github-actions'
