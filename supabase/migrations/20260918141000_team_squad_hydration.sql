@@ -478,8 +478,8 @@ begin
       coalesce(fetched_at,'epoch'::timestamptz)
     )
     into detail_updated_at
-    from futbeat_private.team_detail_coverage
-    where team_id=p_id;
+    from futbeat_private.team_detail_coverage cov
+    where cov.team_id=p_id;
   end if;
 
   return jsonb_build_object(
