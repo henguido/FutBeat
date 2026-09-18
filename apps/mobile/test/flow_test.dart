@@ -176,7 +176,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('En vivo'));
     await tester.pumpAndSettle();
-    expect(find.text('Sin partidos para esta selección'), findsOneWidget);
+    expect(find.text('No hay partidos este día'), findsOneWidget);
     await tester.tap(find.text('HOY'));
     await tester.tap(find.text('Todos'));
     await tester.pumpAndSettle();
@@ -195,7 +195,7 @@ void main() {
   ) async {
     final repository = TestRepository(fail: true);
     await openApp(tester, repository: repository);
-    expect(find.text('No pudimos cargar los datos'), findsOneWidget);
+    expect(find.text('No pudimos cargar esta fecha'), findsOneWidget);
     repository.fail = false;
     await tester.tap(find.text('Reintentar'));
     await tester.pumpAndSettle();
