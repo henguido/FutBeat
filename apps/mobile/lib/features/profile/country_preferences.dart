@@ -63,28 +63,29 @@ class CountryPreferencePanel extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'Tu país',
+                  style: TextStyle(
+                    color: muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
                 Text(
-                  value.selectedCountry == null
-                      ? 'Detectamos ${countryName(country)}'
-                      : 'País elegido: ${countryName(country)}',
+                  countryName(country),
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  available
-                      ? 'Usaremos cobertura base de Costa Rica. Solo lo que sigas será favorito explícito.'
-                      : 'Esta región todavía no tiene cobertura base. Mostraremos claramente lo disponible.',
-                  style: const TextStyle(color: muted),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
                   isExpanded: true,
                   initialValue: value.selectedCountry,
                   decoration: const InputDecoration(
-                    labelText: 'Cambiar país sugerido',
+                    labelText: 'Cambiar país',
                   ),
                   items: [
                     for (final code in supportedCountryChoices)
@@ -92,7 +93,7 @@ class CountryPreferencePanel extends ConsumerWidget {
                         value: code,
                         child: Text(
                           code == null
-                              ? 'Usar región detectada'
+                              ? 'Usar región del dispositivo'
                               : countryName(code),
                         ),
                       ),

@@ -51,8 +51,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         children: [
           const CountryPreferencePanel(),
           const SizedBox(height: 20),
-          const Text('Tus favoritos se guardan en este dispositivo.'),
-          const SizedBox(height: 20),
+          const Text(
+            'Cuenta y notificaciones',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 12),
           if (!PushService.configured)
             const Text(
               'Las notificaciones todavía no están disponibles. Puedes seguir consultando los partidos en vivo.',

@@ -137,52 +137,47 @@ class EmptyState extends StatelessWidget {
 class DataView extends ConsumerWidget {
   const DataView({super.key, required this.builder});
   final Widget Function(Snapshot) builder;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final realtime = ref.watch(liveRealtimeConfigProvider).isConfigured;
-    return ref
-        .watch(effectiveSnapshotProvider)
-        .when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (_, stack) => Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const EmptyState(
-                  'No pudimos cargar los datos',
-                  'Revisa tu conexión e intenta nuevamente.',
-                  icon: Icons.cloud_off,
-                ),
-                FilledButton(
-                  onPressed: () => ref.invalidate(snapshotProvider),
-                  child: const Text('Reintentar'),
-                ),
-              ],
-            ),
-          ),
-          data: (data) => Column(
+  Widget build(BuildContext context, WidgetRef ref) => ref
+      .watch(effectiveSnapshotProvider)
+      .when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (_, stack) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              if (!data.demo && data.coverage != null)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 10,
-                  ),
-                  color: lime.withValues(alpha: .08),
-                  child: Text(
-                    '${data.coverage!['source']} · '
-                    '${data.coverage!['description'] ?? (data.coverage!['partial'] == true ? 'Cobertura parcial' : 'Cobertura disponible')} · '
-                    '${realtime ? 'Directo beta' : 'Sin directo'}'
-                    '${data.stale ? '\nDatos antiguos: pendientes de actualizar' : ''}',
-                    style: const TextStyle(color: lime, fontSize: 12),
-                  ),
-                ),
-              Expanded(child: builder(data)),
+              const EmptyState(
+                'No pudimos cargar los datos',
+                'Revisa tu conexión e intenta nuevamente.',
+                icon: Icons.cloud_off,
+              ),
+              FilledButton(
+                onPressed: () => ref.invalidate(snapshotProvider),
+                child: const Text('Reintentar'),
+              ),
             ],
           ),
-        );
-  }
+        ),
+        data: (data) => Column(
+          children: [
+            if (!data.demo && data.stale)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
+                ),
+                color: lime.withValues(alpha: .08),
+                child: const Text(
+                  'Los datos pueden estar desactualizados. Desliza para actualizar.',
+                  style: TextStyle(color: lime, fontSize: 12),
+                ),
+              ),
+            Expanded(child: builder(data)),
+          ],
+        ),
+      );
 }
 
 class DemoNotice extends StatelessWidget {

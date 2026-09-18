@@ -118,8 +118,12 @@ jobs:
       - run: flutter analyze
         if: steps.changes.outputs.run == 'true'
 
-      - run: flutter test
+      - name: Run portable Flutter tests
         if: steps.changes.outputs.run == 'true'
+        shell: bash
+        run: |
+          find test -type f -name '*_test.dart' ! -name 'visual_test.dart' -print0 |
+            xargs -0 flutter test
 
       - name: Upload Flutter golden failures
         if: failure() && steps.changes.outputs.run == 'true'

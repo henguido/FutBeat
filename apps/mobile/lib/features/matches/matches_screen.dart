@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/interests.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
+import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../profile/country_preferences.dart';
@@ -39,12 +40,11 @@ String _compactDate(DateTime value) {
   return '${value.day} ${months[value.month - 1]}';
 }
 
-/// Orders visible competitions using only explicit user interest.
+/// Orders visible competitions without ever filtering the daily catalog.
 ///
-/// Team follows are intentionally handled at match level, before this function,
-/// so following one club never promotes the club's entire competition.
-/// Country detection and a built-in list of "important" leagues must never hide
-/// or promote fixtures. Every remaining competition is kept and sorted by name.
+/// Explicit follows stay first. The remaining competitions are ranked by
+/// football relevance with a modest country signal, so major competitions rise
+/// naturally while every available fixture remains visible.
 List<Entity> orderMatchCompetitions({
   required Snapshot data,
   required List<FootballMatch> matches,
@@ -60,15 +60,39 @@ List<Entity> orderMatchCompetitions({
       )
       .toList();
 
-  int priority(Entity competition) {
-    if (follows.contains('competition:${competition.id}')) return 0;
-    if (temporaryInterests.contains('competition:${competition.id}')) return 1;
-    return 2;
+  if (data.demo) {
+    int priority(Entity competition) {
+      if (follows.contains('competition:${competition.id}')) return 0;
+      if (temporaryInterests.contains('competition:${competition.id}')) {
+        return 1;
+      }
+      return 2;
+    }
+
+    return visible..sort((left, right) {
+      final byPriority = priority(left).compareTo(priority(right));
+      if (byPriority != 0) return byPriority;
+      final byName = left.name.toLowerCase().compareTo(right.name.toLowerCase());
+      return byName != 0 ? byName : left.id.compareTo(right.id);
+    });
   }
 
+  final userCountry = selectedCountry ?? detectedCountry;
   return visible..sort((left, right) {
-    final byPriority = priority(left).compareTo(priority(right));
-    if (byPriority != 0) return byPriority;
+    final leftScore = competitionFeedScore(
+      left,
+      follows: follows,
+      temporaryInterests: temporaryInterests,
+      userCountry: userCountry,
+    );
+    final rightScore = competitionFeedScore(
+      right,
+      follows: follows,
+      temporaryInterests: temporaryInterests,
+      userCountry: userCountry,
+    );
+    final byScore = rightScore.compareTo(leftScore);
+    if (byScore != 0) return byScore;
     final byName = left.name.toLowerCase().compareTo(right.name.toLowerCase());
     return byName != 0 ? byName : left.id.compareTo(right.id);
   });
@@ -128,6 +152,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             final temporaryInterests =
                 ref.watch(temporaryInterestsProvider).asData?.value ??
                     <String>{};
+            final preference = ref.watch(preferenceProvider).asData?.value;
             final games = data.onDate(selected, filter);
 
             final followedGames = games
@@ -145,6 +170,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               matches: remainingGames,
               follows: follows,
               temporaryInterests: temporaryInterests,
+              selectedCountry: preference?.selectedCountry,
+              detectedCountry: preference?.detectedCountry,
             );
             final followedCompetitions = orderedCompetitions
                 .where(
@@ -268,11 +295,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                   ),
                   const SizedBox(height: 16),
                   if (games.isEmpty)
-                    EmptyState(
+                    const EmptyState(
                       'Sin partidos para esta selección',
-                      data.coverage?['partial'] == true
-                          ? 'La fuente puede no incluir todos los partidos. Consulta las fechas disponibles.'
-                          : 'Prueba otra fecha o cambia el filtro.',
+                      'Prueba otro día o cambia el filtro.',
                     ),
                   if (games.isEmpty && !data.demo && data.matches.isNotEmpty)
                     Wrap(
@@ -296,10 +321,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                       ],
                     ),
                   if (followedGames.isNotEmpty) ...[
-                    const _FeedHeading(
-                      title: 'EQUIPOS QUE SIGUES',
-                      subtitle:
-                          'Solo esos partidos suben; la competición completa no se mueve.',
+                    _FeedHeading(
+                      title: 'TUS EQUIPOS',
+                      subtitle: data.demo
+                          ? 'Solo esos partidos suben; la competición completa no se mueve.'
+                          : null,
                     ),
                     for (final match in followedGames) ...[
                       _MatchCompetitionLabel(
@@ -311,10 +337,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                     const SizedBox(height: 8),
                   ],
                   if (followedCompetitions.isNotEmpty) ...[
-                    const _FeedHeading(
-                      title: 'COMPETICIONES QUE SIGUES',
-                      subtitle:
-                          'Solo las competiciones que elegiste explícitamente.',
+                    _FeedHeading(
+                      title: 'TUS COMPETICIONES',
+                      subtitle: data.demo
+                          ? 'Solo las competiciones que elegiste explícitamente.'
+                          : null,
                     ),
                     for (final competition in followedCompetitions)
                       _CompetitionBlock(
@@ -329,10 +356,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                       ),
                   ],
                   if (allOtherCompetitions.isNotEmpty) ...[
-                    const _FeedHeading(
+                    _FeedHeading(
                       title: 'TODOS LOS PARTIDOS',
-                      subtitle:
-                          'Todo lo demás que la fuente entregó para este día, sin ocultar ligas.',
+                      subtitle: data.demo
+                          ? 'Todo lo demás que la fuente entregó para este día, sin ocultar ligas.'
+                          : null,
                     ),
                     for (final competition in allOtherCompetitions)
                       _CompetitionBlock(
@@ -420,10 +448,10 @@ class _DateOption extends StatelessWidget {
 }
 
 class _FeedHeading extends StatelessWidget {
-  const _FeedHeading({required this.title, required this.subtitle});
+  const _FeedHeading({required this.title, this.subtitle});
 
   final String title;
-  final String subtitle;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -440,11 +468,13 @@ class _FeedHeading extends StatelessWidget {
                 letterSpacing: 1.8,
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              style: const TextStyle(color: muted, fontSize: 11),
-            ),
+            if (subtitle != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                subtitle!,
+                style: const TextStyle(color: muted, fontSize: 11),
+              ),
+            ],
           ],
         ),
       );
