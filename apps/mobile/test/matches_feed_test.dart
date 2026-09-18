@@ -161,11 +161,11 @@ void main() {
     final data = _snapshot(includeCup: true);
     expect(
       _ids(data, follows: {'team:fb_team_lda'}),
-      ['fb_comp_cac', 'fb_comp_laliga', 'fb_comp_cr'],
+      ['fb_comp_laliga', 'fb_comp_cac', 'fb_comp_cr'],
     );
   });
 
-  test('country preference does not reorder the global match catalog', () {
+  test('country preference is a ranking signal without hiding the catalog', () {
     expect(_ids(_snapshot(), selected: 'ES'), [
       'fb_comp_laliga',
       'fb_comp_cr',
@@ -237,8 +237,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('EQUIPOS QUE SIGUES'), findsOneWidget);
-      expect(find.text('COMPETICIONES QUE SIGUES'), findsNothing);
+      expect(find.text('TUS EQUIPOS'), findsOneWidget);
+      expect(find.text('TUS COMPETICIONES'), findsNothing);
       expect(find.text('TODOS LOS PARTIDOS'), findsOneWidget);
       expect(find.text('Marathón'), findsOneWidget);
       expect(find.text('Equipo X'), findsOneWidget);
@@ -288,7 +288,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('COMPETICIONES QUE SIGUES'), findsOneWidget);
+    expect(find.text('TUS COMPETICIONES'), findsOneWidget);
     expect(find.text('TODOS LOS PARTIDOS'), findsOneWidget);
     expect(find.text('Liga Promerica'), findsOneWidget);
     expect(find.text('LaLiga'), findsOneWidget);

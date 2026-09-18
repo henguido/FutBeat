@@ -81,11 +81,13 @@ void main() {
     'partial provider coverage exposes available dates and stale data',
     (tester) async {
       await openApp(tester, repository: TestRepository(real: true));
-      expect(find.textContaining('Cobertura parcial'), findsOneWidget);
-      expect(find.textContaining('Datos antiguos'), findsOneWidget);
+      expect(
+        find.textContaining('Los datos pueden estar desactualizados'),
+        findsOneWidget,
+      );
       await tester.drag(find.byType(ListView).first, const Offset(0, -600));
       await tester.pumpAndSettle();
-      expect(find.textContaining('La fuente puede no incluir'), findsWidgets);
+      expect(find.text('Prueba otro día o cambia el filtro.'), findsOneWidget);
       final available = find.widgetWithText(ActionChip, '20/1/2030');
       await tester.ensureVisible(available);
       await tester.tap(available);
