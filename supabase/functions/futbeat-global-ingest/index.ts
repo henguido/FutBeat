@@ -68,6 +68,7 @@ async function authorize(request: Request) {
   const allowedWorkflows = new Set([
     "henguido/FutBeat/.github/workflows/global-fixtures.yml@refs/heads/main",
     "henguido/FutBeat/.github/workflows/live-fixtures.yml@refs/heads/main",
+    "henguido/FutBeat/.github/workflows/standings.yml@refs/heads/main",
   ]);
   if (!allowedWorkflows.has(workflow)) {
     throw new Error("Unexpected GitHub workflow");
@@ -273,6 +274,10 @@ Deno.serve(async (request) => {
     matchId?: string;
     externalMatchId?: string;
     detail?: unknown;
+    competitionId?: string;
+    externalLeagueId?: string;
+    season?: string;
+    rows?: unknown;
   };
   try {
     input = await request.json();
@@ -590,6 +595,144 @@ Deno.serve(async (request) => {
       console.error("match detail ingest failed", detail);
       return Response.json(
         { error: "Match detail ingest failed", detail },
+        { status: 502 },
+      );
+    }
+  }
+
+  if (input.action === "standings-plan") {
+    try {
+      const reservation = await rpc("futbeat_reserve_goal_standings_call", {
+        p_trigger_source: "github-actions",
+      });
+      return Response.json({
+        status: reservation?.allowed ? "ok" : "skipped",
+        reservation,
+      });
+    } catch (error) {
+      console.error(
+        "standings plan failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return Response.json({ error: "Standings plan unavailable" }, {
+        status: 502,
+      });
+    }
+  }
+
+  if (input.action === "standings-fail") {
+    if (
+      !Number.isInteger(input.reservationId) ||
+      Number(input.reservationId) < 1
+    ) {
+      return Response.json({ error: "Invalid standings reservation" }, {
+        status: 400,
+      });
+    }
+
+    try {
+      await rpc("futbeat_complete_provider_call", {
+        p_reservation_id: input.reservationId,
+        p_status: "FAILED",
+        p_provider_remaining: input.providerRemaining ?? null,
+        p_http_status: input.httpStatus ?? null,
+        p_error_code: clean(input.errorCode || "GOAL_STANDINGS_FETCH_FAILED").slice(0, 80),
+        p_metadata: {
+          mode: "standings",
+          competitionId: input.competitionId ?? null,
+          externalLeagueId: input.externalLeagueId ?? null,
+          transport: "github-actions-oidc",
+        },
+      });
+      return Response.json({ status: "ok" });
+    } catch {
+      return Response.json({ error: "Standings failure not recorded" }, {
+        status: 502,
+      });
+    }
+  }
+
+  if (input.action === "standings-ingest") {
+    if (
+      !Number.isInteger(input.reservationId) ||
+      Number(input.reservationId) < 1 ||
+      typeof input.competitionId !== "string" ||
+      !input.competitionId.startsWith("fb_comp") ||
+      typeof input.externalLeagueId !== "string" ||
+      input.externalLeagueId.trim().length < 1 ||
+      !Array.isArray(input.rows) ||
+      input.rows.length < 2 ||
+      (
+        input.providerRemaining != null &&
+        (!Number.isInteger(input.providerRemaining) || input.providerRemaining < 0)
+      )
+    ) {
+      return Response.json({ error: "Invalid standings payload" }, {
+        status: 400,
+      });
+    }
+
+    const receivedAt = new Date().toISOString();
+    const started = performance.now();
+
+    try {
+      const result = await rpc("futbeat_store_goal_standings", {
+        p_competition_id: input.competitionId,
+        p_external_league_id: input.externalLeagueId,
+        p_received_at: receivedAt,
+        p_season: typeof input.season === "string" ? input.season : "",
+        p_rows: input.rows,
+      }, 30000);
+
+      await rpc("futbeat_complete_provider_call", {
+        p_reservation_id: input.reservationId,
+        p_status: "SUCCEEDED",
+        p_provider_remaining: input.providerRemaining ?? null,
+        p_http_status: 200,
+        p_error_code: null,
+        p_metadata: {
+          mode: "standings",
+          competitionId: input.competitionId,
+          externalLeagueId: input.externalLeagueId,
+          rows: result?.rows ?? input.rows.length,
+          durationMs: Math.round(performance.now() - started),
+          transport: "github-actions-oidc",
+          provider: "GOAL API",
+        },
+      });
+
+      return Response.json({
+        status: "ok",
+        competitionId: input.competitionId,
+        externalLeagueId: input.externalLeagueId,
+        rows: result?.rows ?? input.rows.length,
+        result,
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message.slice(0, 500) : "unknown";
+      try {
+        await rpc("futbeat_complete_provider_call", {
+          p_reservation_id: input.reservationId,
+          p_status: "FAILED",
+          p_provider_remaining: input.providerRemaining ?? null,
+          p_http_status: null,
+          p_error_code: "GOAL_STANDINGS_INGEST_FAILED",
+          p_metadata: {
+            mode: "standings",
+            competitionId: input.competitionId,
+            externalLeagueId: input.externalLeagueId,
+            detail,
+            durationMs: Math.round(performance.now() - started),
+            transport: "github-actions-oidc",
+          },
+        });
+      } catch {
+        // Preserve the original ingestion error.
+      }
+      console.error("standings ingest failed", detail);
+      return Response.json(
+        { error: "Standings ingest failed", detail },
         { status: 502 },
       );
     }
