@@ -132,8 +132,9 @@ begin
   -- Anonymous Match Center requests may only enqueue provider work for
   -- near-term/recent matches that already have a trusted GOAL mapping.
   -- Cached data remains readable outside this window without spending quota.
-  if not v_cached
-     and v_goal_mapped
+  -- A cached near-term match may be queued again; the reservation function
+  -- still enforces the 5m/30m/6h freshness windows before spending quota.
+  if v_goal_mapped
      and v_start between now()-interval '24 hours' and now()+interval '6 hours'
   then
     insert into futbeat_private.match_detail_requests(
