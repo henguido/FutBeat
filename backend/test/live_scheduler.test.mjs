@@ -159,3 +159,59 @@ test('GOAL LIVE links an existing scheduled match by teams and kickoff without a
   assert.equal(rejected.unmappedCount,1);
  } finally {await db.close();}
 });
+
+
+test('Match Center detail is queued once, cached, and not refetched while fresh',async()=>{
+ const db=await openDatabase();
+ try {
+  const ids=await seedBetaMatch(db,{offsetMinutes:-15,status:'LIVE'});
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','match','goal-detail-1',$1)",
+   [ids.match],
+  );
+
+  const initial=(await db.query(
+   'select public.futbeat_request_match_detail($1) value',[ids.match],
+  )).rows[0].value;
+  assert.equal(initial.available,false);
+  assert.equal(initial.detailLevel,'none');
+
+  const plan=(await db.query(
+   "select public.futbeat_reserve_match_detail_call('test') value",
+  )).rows[0].value;
+  assert.equal(plan.allowed,true);
+  assert.equal(plan.matchId,ids.match);
+  assert.equal(plan.externalMatchId,'goal-detail-1');
+
+  const payload={
+   matchReferee:'Ref Test',
+   matchStadium:'Estadio Test',
+   matchRound:'9',
+   homeTeamSystem:'4-3-3',
+   awayTeamSystem:'4-2-3-1',
+   lineups:{
+    hasLineups:true,
+    homeFormation:'4-3-3',
+    awayFormation:'4-2-3-1',
+    home:{startingLineups:[{lineupPlayer:'Home One',lineupNumber:'9',playerPosition:'Forward'}],substitutes:[]},
+    away:{startingLineups:[{lineupPlayer:'Away One',lineupNumber:'1',playerPosition:'Goalkeeper'}],substitutes:[]},
+   },
+   statistics:{match:{fullTime:[{type:'Ball Possession',home:'55%',away:'45%'}]}},
+   cards:[],
+   substitutions:[],
+  };
+  const stored=(await db.query(
+   'select public.futbeat_store_match_detail($1,$2,$3,$4) value',
+   [ids.match,'goal-detail-1',new Date().toISOString(),JSON.stringify(payload)],
+  )).rows[0].value;
+  assert.equal(stored.available,true);
+  assert.equal(stored.detailLevel,'full');
+  assert.equal(stored.payload.matchReferee,'Ref Test');
+
+  const second=(await db.query(
+   "select public.futbeat_reserve_match_detail_call('test') value",
+  )).rows[0].value;
+  assert.equal(second.allowed,false);
+  assert.equal(second.reason,'no_detail_due');
+ } finally {await db.close();}
+});
