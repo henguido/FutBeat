@@ -540,6 +540,20 @@ as $$
   select futbeat_private.futbeat_read_entity_detail(p_type,p_id)
 $$;
 
+revoke all on function futbeat_private.futbeat_team_squad_plan(integer)
+  from public,anon,authenticated;
+revoke all on function futbeat_private.futbeat_store_team_squad(text,text,timestamptz,jsonb)
+  from public,anon,authenticated;
+revoke all on function futbeat_private.futbeat_read_entity_detail(text,text)
+  from public,anon,authenticated;
+
+grant execute on function futbeat_private.futbeat_team_squad_plan(integer)
+  to service_role;
+grant execute on function futbeat_private.futbeat_store_team_squad(text,text,timestamptz,jsonb)
+  to service_role;
+grant execute on function futbeat_private.futbeat_read_entity_detail(text,text)
+  to service_role;
+
 revoke all on function public.futbeat_team_squad_plan(integer)
   from public,anon,authenticated;
 revoke all on function public.futbeat_store_team_squad(text,text,timestamptz,jsonb)
