@@ -136,22 +136,19 @@ begin
   for item in select value from jsonb_array_elements(p_snapshot->'competitions') loop
     insert into futbeat_private.entities(id,kind,payload)
     values(item->>'id','competition',item)
-    on conflict(id) do update set payload=excluded.payload
-      where futbeat_private.entities.kind='competition';
+    on conflict(id) do update set payload=excluded.payload;
   end loop;
 
   for item in select value from jsonb_array_elements(p_snapshot->'teams') loop
     insert into futbeat_private.entities(id,kind,payload)
     values(item->>'id','team',item)
-    on conflict(id) do update set payload=excluded.payload
-      where futbeat_private.entities.kind='team';
+    on conflict(id) do update set payload=excluded.payload;
   end loop;
 
   for item in select value from jsonb_array_elements(p_snapshot->'matches') loop
     insert into futbeat_private.entities(id,kind,payload)
     values(item->>'id','match',item)
-    on conflict(id) do update set payload=excluded.payload
-      where futbeat_private.entities.kind='match';
+    on conflict(id) do update set payload=excluded.payload;
   end loop;
 
   for coverage_item in select value from jsonb_array_elements(p_coverage) loop
