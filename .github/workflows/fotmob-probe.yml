@@ -1,0 +1,53 @@
+name: Probe FotMob access
+
+on:
+  push:
+    branches:
+      - probe/fotmob-access
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - name: Probe FotMob endpoints
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $crNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(-6))
+          $date = $crNow.ToString("yyyyMMdd")
+          $targets = @(
+            "https://www.fotmob.com/api/matches?date=$date",
+            "https://www.fotmob.com/api/data/matches?date=$date&timezone=America%2FCosta_Rica&ccode3=CRI"
+          )
+
+          foreach ($url in $targets) {
+            try {
+              $response = Invoke-WebRequest -Uri $url -Headers @{ "Accept" = "application/json" } -TimeoutSec 20
+              $contentType = [string]$response.Headers["Content-Type"]
+              $body = $response.Content
+              $json = $null
+              try { $json = $body | ConvertFrom-Json } catch { }
+
+              $leagueCount = 0
+              $matchCount = 0
+              if ($null -ne $json -and $json.PSObject.Properties.Name -contains "leagues") {
+                $leagueCount = @($json.leagues).Count
+                foreach ($league in @($json.leagues)) {
+                  $matchCount += @($league.matches).Count
+                }
+              }
+
+              Write-Output "FOTMOB_PROBE_OK os=${{ matrix.os }} url=$url status=$($response.StatusCode) contentType=$contentType leagues=$leagueCount matches=$matchCount bytes=$($body.Length)"
+            } catch {
+              $status = $_.Exception.Response.StatusCode.value__
+              Write-Output "FOTMOB_PROBE_FAIL os=${{ matrix.os }} url=$url status=$status message=$($_.Exception.Message)"
+            }
+          }
