@@ -56,7 +56,7 @@ jobs:
           foreach ($date in $fetchDates) {
             $offset = 0
             do {
-              $uri = "https://api.goal-api.com/v1/fixtures/date/${date}?limit=500&offset=$offset"
+              $uri = "https://api.goal-api.com/v1/fixtures/date/${date}?limit=100&offset=$offset"
               $params = @{
                 Uri = $uri
                 Headers = @{
@@ -84,7 +84,7 @@ jobs:
               }
 
               $hasMore = $false
-              $pageLimit = 500
+              $pageLimit = 100
               if ($null -ne $response.pagination) {
                 $hasMore = [bool]$response.pagination.hasMore
                 if ([int]$response.pagination.limit -gt 0) {
