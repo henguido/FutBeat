@@ -27,67 +27,40 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          $headers = @{
-            "Accept" = "application/json,text/plain,*/*"
-            "Origin" = "https://www.sofascore.com"
-            "Referer" = "https://www.sofascore.com/"
-            "User-Agent" = "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36"
-          }
-          $bases = @(
-            "https://api.sofascore.com/api/v1",
-            "https://www.sofascore.com/api/v1"
-          )
-
           $crNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(-6))
           $dates = @(-1, 0, 1) | ForEach-Object {
             $crNow.Date.AddDays($_).ToString("yyyy-MM-dd")
           }
+          $from = $dates[0].Replace("-", "")
+          $to = $dates[2].Replace("-", "")
 
-          $allEvents = [System.Collections.Generic.List[object]]::new()
+          $url = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=$from-$to&limit=1000"
+          $fetchParams = @{
+            Uri = $url
+            Headers = @{ "Accept" = "application/json" }
+            TimeoutSec = 30
+          }
+          $response = Invoke-RestMethod @fetchParams
 
-          foreach ($date in $dates) {
-            $response = $null
-            $lastError = $null
-
-            foreach ($base in $bases) {
-              $url = "$base/sport/football/scheduled-events/$date"
-              try {
-                $candidate = Invoke-RestMethod -Uri $url -Headers $headers -TimeoutSec 15
-                if (-not ($candidate.PSObject.Properties.Name -contains "events")) {
-                  throw "Invalid events payload"
-                }
-
-                $dateEvents = @($candidate.events)
-                foreach ($event in $dateEvents) {
-                  if ($null -ne $event) {
-                    $allEvents.Add($event)
-                  }
-                }
-
-                Write-Output "GLOBAL_FETCH date=$date events=$($dateEvents.Count) base=$base"
-                $response = $candidate
-                break
-              } catch {
-                $lastError = $_.Exception.Message
-                Write-Warning "Global schedule attempt failed for $($url): $lastError"
-              }
-            }
-
-            if ($null -eq $response) {
-              throw "Global calendar unavailable for $($date): $lastError"
-            }
+          if (-not ($response.PSObject.Properties.Name -contains "events")) {
+            throw "ESPN returned an invalid scoreboard payload"
           }
 
+          $events = @($response.events)
+          if ($events.Count -eq 0) {
+            throw "ESPN returned zero football events for the requested range"
+          }
+
+          Write-Output "GLOBAL_FETCH provider=ESPN from=$($dates[0]) to=$($dates[2]) events=$($events.Count)"
+
           $payloadObject = [ordered]@{
-            source = "SofaScore"
+            source = "ESPN"
             dates = @($dates)
-            events = @($allEvents)
+            events = @($events)
           }
           $payloadObject |
             ConvertTo-Json -Depth 100 -Compress |
             Set-Content -Path "global-fixtures.json" -Encoding utf8NoBOM
-
-          Write-Output "GLOBAL_FETCH_TOTAL events=$($allEvents.Count)"
 
           $oidcUrl = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=futbeat-global-ingest"
           $oidcParams = @{
@@ -114,5 +87,5 @@ jobs:
           }
           $result = Invoke-RestMethod @ingestParams
 
-          Write-Output "GLOBAL_INGEST_OK"
+          Write-Output "GLOBAL_INGEST_OK provider=ESPN"
           $result | ConvertTo-Json -Depth 20 -Compress
