@@ -579,5 +579,7 @@ final pushServiceProvider = Provider<PushService>((ref) {
 });
 
 final profileSettingsProvider = FutureProvider<UserProfileSettings>((ref) async {
-  return ref.watch(pushServiceProvider).loadProfileSettings();
+  final service = ref.watch(pushServiceProvider);
+  await service.restore();
+  return service.loadProfileSettings();
 });
