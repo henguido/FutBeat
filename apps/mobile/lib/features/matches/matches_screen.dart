@@ -14,6 +14,19 @@ bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
     follows.contains('team:${match.homeId}') ||
     follows.contains('team:${match.awayId}');
 
+String _feedEventLabel(String type) => switch (type) {
+  'GOAL' => 'Gol',
+  'YELLOW_CARD' => 'Tarjeta amarilla',
+  'RED_CARD' => 'Tarjeta roja',
+  'SUBSTITUTION' => 'Sustitución',
+  'VAR' => 'VAR',
+  'MISSED_PENALTY' => 'Penal fallado',
+  'KICKOFF' => 'Inicio',
+  'HALFTIME' => 'Medio tiempo',
+  'FULL_TIME' => 'Final',
+  _ => 'Evento',
+};
+
 bool _isFollowedCompetition(
   Entity competition,
   Set<String> follows,
@@ -551,6 +564,7 @@ class MatchCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
+    final latestEvent = match.latestEvent;
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
@@ -635,6 +649,30 @@ class MatchCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (match.isLive && latestEvent != null) ...[
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    color: lime.withValues(alpha: .07),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Último: ${eventMinuteLabel(latestEvent)} · '
+                    '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: lime,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
