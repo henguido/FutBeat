@@ -147,6 +147,60 @@ class LiveMatchUpdate {
   }
 }
 
+class MatchDetail {
+  MatchDetail(this.json);
+
+  factory MatchDetail.empty(String matchId) => MatchDetail({
+    'matchId': matchId,
+    'available': false,
+    'pending': true,
+    'detailLevel': 'none',
+    'home': <String, dynamic>{},
+    'away': <String, dynamic>{},
+    'statistics': <dynamic>[],
+    'incidents': <dynamic>[],
+  });
+
+  final Json json;
+
+  String get matchId => json['matchId'] as String? ?? '';
+  bool get available => json['available'] == true;
+  bool get pending => json['pending'] == true;
+  String get detailLevel => json['detailLevel'] as String? ?? 'none';
+  String? get fetchedAt => json['fetchedAt'] as String?;
+  String? get referee => _optional(json['referee']);
+  String? get stadium => _optional(json['stadium']);
+  String? get round => _optional(json['round']);
+
+  Json get home => _map(json['home']);
+  Json get away => _map(json['away']);
+
+  String? get homeFormation => _optional(home['formation']);
+  String? get awayFormation => _optional(away['formation']);
+
+  List<Json> get homeStarters => _maps(home['starters']);
+  List<Json> get awayStarters => _maps(away['starters']);
+  List<Json> get homeSubstitutes => _maps(home['substitutes']);
+  List<Json> get awaySubstitutes => _maps(away['substitutes']);
+  List<Json> get statistics => _maps(json['statistics']);
+  List<Json> get incidents => _maps(json['incidents']);
+
+  static String? _optional(dynamic value) {
+    final result = value?.toString().trim() ?? '';
+    return result.isEmpty ? null : result;
+  }
+
+  static Json _map(dynamic value) =>
+      value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+
+  static List<Json> _maps(dynamic value) => value is List
+      ? value
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList()
+      : <Json>[];
+}
+
 class FootballMatch {
   FootballMatch(this.json);
   final Json json;
