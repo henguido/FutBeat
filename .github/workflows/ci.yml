@@ -57,11 +57,17 @@ jobs:
           name: flutter-golden-failures
           path: apps/mobile/test/failures/
           if-no-files-found: ignore
-      - name: Expose failed match golden
+      - name: Expose failed visual goldens
         if: failure()
         run: |
-          $path = "test/failures/match_testImage.png"
-          if (Test-Path $path) {
-            $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))
-            Write-Output "MATCH_GOLDEN_BASE64=$encoded"
+          $files = @{
+            "MATCH_GOLDEN_BASE64" = "test/failures/match_testImage.png"
+            "MATCHES_GOLDEN_BASE64" = "test/failures/matches_testImage.png"
+          }
+          foreach ($key in $files.Keys) {
+            $path = $files[$key]
+            if (Test-Path $path) {
+              $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))
+              Write-Output "$key=$encoded"
+            }
           }
