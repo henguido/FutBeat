@@ -138,10 +138,10 @@ function normalizeMatchDetail(raw: unknown) {
           : providerType || 'Evento',
         detail: [
           scorer,
-          if (assist.isNotEmpty) 'Asistencia: $assist',
+          assist ? `Asistencia: ${assist}` : '',
           score,
           cleanText(row.info),
-        ].where((part) => part.isNotEmpty).join(' · ') || null,
+        ].filter((part) => part.length > 0).join(' · ') || null,
       };
     }),
     ...asList(payload.cards).map((value) => {
