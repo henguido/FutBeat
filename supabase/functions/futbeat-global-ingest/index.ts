@@ -46,7 +46,7 @@ async function authorize(request: Request) {
   if (payload.ref !== "refs/heads/main") {
     throw new Error("Unexpected GitHub ref");
   }
-  if (!["schedule", "workflow_dispatch"].includes(String(payload.event_name))) {
+  if (!["schedule", "workflow_dispatch", "push"].includes(String(payload.event_name))) {
     throw new Error("Unexpected GitHub event");
   }
   const workflow = String(
