@@ -180,6 +180,42 @@ class DataView extends ConsumerWidget {
       );
 }
 
+
+class CalendarDataView extends ConsumerWidget {
+  const CalendarDataView({
+    super.key,
+    required this.date,
+    required this.builder,
+  });
+
+  final DateTime date;
+  final Widget Function(Snapshot) builder;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => ref
+      .watch(effectiveCalendarSnapshotProvider(date))
+      .when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (_, stack) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const EmptyState(
+                'No pudimos cargar esta fecha',
+                'Revisa tu conexión e intenta nuevamente.',
+                icon: Icons.cloud_off,
+              ),
+              FilledButton(
+                onPressed: () => ref.invalidate(calendarSnapshotProvider(date)),
+                child: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+        data: (data) => Expanded(child: builder(data)),
+      );
+}
+
 class DemoNotice extends StatelessWidget {
   const DemoNotice({super.key});
   @override
