@@ -2,11 +2,78 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/interests.dart';
+import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
 import 'standings.dart';
+
+List<Entity> orderedTeamCompetitions(Snapshot data, String teamId) {
+  final counts = <String, int>{};
+  final activeCounts = <String, int>{};
+
+  for (final match in data.matches.where(
+    (match) => match.homeId == teamId || match.awayId == teamId,
+  )) {
+    counts.update(match.competitionId, (value) => value + 1, ifAbsent: () => 1);
+    if (match.isLive || match.isUpcoming) {
+      activeCounts.update(
+        match.competitionId,
+        (value) => value + 1,
+        ifAbsent: () => 1,
+      );
+    }
+  }
+
+  final fallback = data.team(teamId)?.json['competitionId']?.toString();
+  final ids = <String>{...counts.keys};
+  if (fallback != null && fallback.isNotEmpty) ids.add(fallback);
+
+  final competitions = ids.map(data.competition).whereType<Entity>().toList();
+  competitions.sort((left, right) {
+    final byMatches = (counts[right.id] ?? 0).compareTo(counts[left.id] ?? 0);
+    if (byMatches != 0) return byMatches;
+    final byActive = (activeCounts[right.id] ?? 0).compareTo(
+      activeCounts[left.id] ?? 0,
+    );
+    if (byActive != 0) return byActive;
+    return left.name.toLowerCase().compareTo(right.name.toLowerCase());
+  });
+  return competitions;
+}
+
+List<Entity> competitionTeams(Snapshot data, String competitionId) {
+  final ids = <String>{};
+
+  for (final match in data.matches.where(
+    (match) => match.competitionId == competitionId,
+  )) {
+    ids
+      ..add(match.homeId)
+      ..add(match.awayId);
+  }
+
+  for (final table in data.standings.where(
+    (table) => table['competitionId'] == competitionId,
+  )) {
+    for (final row in (table['rows'] as List? ?? []).whereType<Map>()) {
+      final teamId = row['teamId']?.toString();
+      if (teamId != null && teamId.isNotEmpty) ids.add(teamId);
+    }
+  }
+
+  for (final team in data.teams.where(
+    (team) => team.json['competitionId']?.toString() == competitionId,
+  )) {
+    ids.add(team.id);
+  }
+
+  final teams = ids.map(data.team).whereType<Entity>().toList()
+    ..sort((left, right) =>
+        left.name.toLowerCase().compareTo(right.name.toLowerCase()));
+  return teams;
+}
 
 class EntityScreen extends ConsumerStatefulWidget {
   const EntityScreen({super.key, required this.type, required this.id});
@@ -76,14 +143,6 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
           _ => null,
         };
         final team = teamId == null ? null : data.team(teamId);
-        final competitionId = type == 'competition'
-            ? id
-            : type == 'player'
-            ? team?.json['competitionId']?.toString()
-            : entity.json['competitionId']?.toString();
-        final competition = competitionId == null
-            ? null
-            : data.competition(competitionId);
         final matches =
             data.matches
                 .where(
@@ -94,6 +153,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                 )
                 .toList()
               ..sort((a, b) => a.startTime.compareTo(b.startTime));
+        final teamCompetitions = teamId == null
+            ? const <Entity>[]
+            : orderedTeamCompetitions(data, teamId);
+        final competitionId = type == 'competition'
+            ? id
+            : type == 'team'
+            ? teamCompetitions.firstOrNull?.id
+            : null;
         final tabs = type == 'player'
             ? ['Resumen', 'Partidos', 'Noticias', 'Transferencias']
             : [
@@ -156,13 +223,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                               'El equipo actual todavía no está publicado.',
                             ),
                         ] else if (type == 'team') ...[
-                          if (competition != null)
-                            EntityTile(competition, 'competition')
-                          else
+                          heading(context, 'Competiciones'),
+                          if (teamCompetitions.isEmpty)
                             const EmptyState(
-                              'Competición no disponible',
-                              'La competición de este equipo todavía no está publicada.',
+                              'Competiciones no disponibles',
+                              'Las competiciones aparecerán según los partidos publicados.',
                             ),
+                          for (final competition in teamCompetitions.take(3))
+                            EntityTile(competition, 'competition'),
                         ] else ...[
                           if ((entity.json['season']?.toString() ?? '').isNotEmpty)
                             Center(
@@ -230,9 +298,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                         ))
                           EntityTile(player, 'player'),
                       ] else if (tab == 'Equipos') ...[
-                        for (final team in data.teams.where(
-                          (t) => t.json['competitionId'] == id,
-                        ))
+                        for (final team in competitionTeams(data, id))
                           EntityTile(team, 'team'),
                       ] else if (tab == 'Noticias')
                         const EmptyState(

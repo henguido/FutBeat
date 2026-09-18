@@ -10,6 +10,7 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/features/entities/entity_screen.dart';
 import 'package:futbeat/main.dart';
 
 class TestRepository implements FootballRepository {
@@ -80,6 +81,111 @@ Future<void> openApp(
 }
 
 void main() {
+  test('team competition ranking follows actual matches instead of stale competitionId', () {
+    final snapshot = Snapshot({
+      'schemaVersion': 1,
+      'demo': false,
+      'updatedAt': '2026-09-18T18:00:00Z',
+      'competitions': [
+        {
+          'id': 'fb_comp_domestic',
+          'name': 'Primera División',
+          'country': 'Costa Rica',
+        },
+        {
+          'id': 'fb_comp_continental',
+          'name': 'Copa Centroamericana',
+          'country': 'intl',
+        },
+      ],
+      'teams': [
+        {
+          'id': 'fb_team_test',
+          'name': 'Equipo CR',
+          'country': 'Costa Rica',
+          'competitionId': 'fb_comp_continental',
+        },
+        {
+          'id': 'fb_team_a',
+          'name': 'Rival A',
+          'country': 'Costa Rica',
+          'competitionId': 'fb_comp_domestic',
+        },
+        {
+          'id': 'fb_team_b',
+          'name': 'Rival B',
+          'country': 'Costa Rica',
+          'competitionId': 'fb_comp_domestic',
+        },
+        {
+          'id': 'fb_team_c',
+          'name': 'Rival C',
+          'country': 'Honduras',
+          'competitionId': 'fb_comp_continental',
+        },
+      ],
+      'players': [],
+      'matches': [
+        {
+          'id': 'fb_match_1',
+          'competitionId': 'fb_comp_domestic',
+          'homeTeamId': 'fb_team_test',
+          'awayTeamId': 'fb_team_a',
+          'startTime': '2026-09-01T00:00:00Z',
+          'status': 'VERIFIED',
+          'score': {'home': 1, 'away': 0},
+          'events': [],
+          'statistics': [],
+          'provenance': {
+            'source': 'GOAL API',
+            'receivedAt': '2026-09-18T18:00:00Z',
+          },
+        },
+        {
+          'id': 'fb_match_2',
+          'competitionId': 'fb_comp_domestic',
+          'homeTeamId': 'fb_team_b',
+          'awayTeamId': 'fb_team_test',
+          'startTime': '2026-09-08T00:00:00Z',
+          'status': 'VERIFIED',
+          'score': {'home': 0, 'away': 2},
+          'events': [],
+          'statistics': [],
+          'provenance': {
+            'source': 'GOAL API',
+            'receivedAt': '2026-09-18T18:00:00Z',
+          },
+        },
+        {
+          'id': 'fb_match_3',
+          'competitionId': 'fb_comp_continental',
+          'homeTeamId': 'fb_team_test',
+          'awayTeamId': 'fb_team_c',
+          'startTime': '2026-09-10T00:00:00Z',
+          'status': 'VERIFIED',
+          'score': {'home': 1, 'away': 1},
+          'events': [],
+          'statistics': [],
+          'provenance': {
+            'source': 'GOAL API',
+            'receivedAt': '2026-09-18T18:00:00Z',
+          },
+        },
+      ],
+      'standings': [],
+    });
+
+    final competitions = orderedTeamCompetitions(snapshot, 'fb_team_test');
+    expect(competitions.map((item) => item.id).toList(), [
+      'fb_comp_domestic',
+      'fb_comp_continental',
+    ]);
+    expect(
+      competitionTeams(snapshot, 'fb_comp_domestic').map((item) => item.id),
+      containsAll(['fb_team_test', 'fb_team_a', 'fb_team_b']),
+    );
+  });
+
   testWidgets(
     'partial provider coverage keeps freshness warning and calendar recovery',
     (tester) async {
