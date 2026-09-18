@@ -64,14 +64,14 @@ GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
   ],
 );
 
-class FutBeatApp extends StatefulWidget {
+class FutBeatApp extends ConsumerStatefulWidget {
   const FutBeatApp({super.key, this.router});
   final GoRouter? router;
   @override
-  State<FutBeatApp> createState() => _FutBeatAppState();
+  ConsumerState<FutBeatApp> createState() => _FutBeatAppState();
 }
 
-class _FutBeatAppState extends State<FutBeatApp> {
+class _FutBeatAppState extends ConsumerState<FutBeatApp> {
   late final GoRouter router = widget.router ?? createRouter();
   @override
   void dispose() {
@@ -80,15 +80,32 @@ class _FutBeatAppState extends State<FutBeatApp> {
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp.router(
-    locale: const Locale('es'),
-    supportedLocales: const [Locale('es')],
-    localizationsDelegates: GlobalMaterialLocalizations.delegates,
-    title: 'FutBeat',
-    debugShowCheckedModeBanner: false,
-    theme: futbeatTheme(),
-    routerConfig: router,
-  );
+  Widget build(BuildContext context) {
+    final hourFormat =
+        ref.watch(profileSettingsProvider).asData?.value.hourFormat ?? 'system';
+
+    return MaterialApp.router(
+      locale: const Locale('es'),
+      supportedLocales: const [Locale('es')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      title: 'FutBeat',
+      debugShowCheckedModeBanner: false,
+      theme: futbeatTheme(),
+      builder: (context, child) {
+        final media = MediaQuery.of(context);
+        final use24HourClock = switch (hourFormat) {
+          '24h' => true,
+          '12h' => false,
+          _ => media.alwaysUse24HourFormat,
+        };
+        return MediaQuery(
+          data: media.copyWith(alwaysUse24HourFormat: use24HourClock),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+      routerConfig: router,
+    );
+  }
 }
 
 class AppShell extends ConsumerWidget {

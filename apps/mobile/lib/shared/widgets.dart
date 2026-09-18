@@ -285,5 +285,5 @@ Widget heading(BuildContext context, String title) => Padding(
 String localTime(BuildContext context, DateTime date) =>
     MaterialLocalizations.of(context).formatTimeOfDay(
       TimeOfDay.fromDateTime(date),
-      alwaysUse24HourFormat: true,
+      alwaysUse24HourFormat: MediaQuery.of(context).alwaysUse24HourFormat,
     );
