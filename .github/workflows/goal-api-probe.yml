@@ -52,7 +52,7 @@ jobs:
             $offset = 0
             $dateReceived = 0
             do {
-              $uri = "https://api.goal-api.com/v1/fixtures/date/$date?limit=500&offset=$offset"
+              $uri = "https://api.goal-api.com/v1/fixtures/date/${date}?limit=500&offset=$offset"
               $response = Invoke-RestMethod -Uri $uri -Headers @{
                 Authorization = "Bearer $env:GOAL_API_KEY"
                 Accept = "application/json"
