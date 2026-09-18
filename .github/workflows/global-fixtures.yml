@@ -237,9 +237,9 @@ jobs:
               $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
                 source = "GOAL API"
                 mode = "calendar"
-                dates = @($batchDates)
-                coverage = @($batchCoverage)
-                events = @($batchEvents)
+                dates = $batchDates.ToArray()
+                coverage = $batchCoverage.ToArray()
+                events = $batchEvents.ToArray()
               })
               Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
 
@@ -259,9 +259,9 @@ jobs:
             $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
               source = "GOAL API"
               mode = "calendar"
-              dates = @($batchDates)
-              coverage = @($batchCoverage)
-              events = @($batchEvents)
+              dates = $batchDates.ToArray()
+              coverage = $batchCoverage.ToArray()
+              events = $batchEvents.ToArray()
             })
             Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
           }
