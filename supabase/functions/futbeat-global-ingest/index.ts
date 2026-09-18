@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.1.0";
 import { normalizeSofaScoreFixtures } from "../../../backend/providers/sofascore.mjs";
 import { normalizeEspnFixtures } from "../../../backend/providers/espn.mjs";
+import { normalizeGoalApiFixtures } from "../../../backend/providers/goal_api.mjs";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -65,6 +66,25 @@ function validDate(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+function nextDate(value: string) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function withinCostaRicaWindow(
+  event: Record<string, unknown>,
+  dates: string[],
+) {
+  const kickoff = String(event.kickoffUtc ?? "");
+  const instant = Date.parse(kickoff);
+  if (!Number.isFinite(instant)) return false;
+
+  const start = Date.parse(`${dates[0]}T06:00:00Z`);
+  const end = Date.parse(`${nextDate(dates[2])}T06:00:00Z`);
+  return instant >= start && instant < end;
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
 
@@ -90,7 +110,7 @@ Deno.serve(async (request) => {
   }
 
   if (
-    !["SofaScore", "ESPN"].includes(input.source ?? "") ||
+    !["SofaScore", "ESPN", "GOAL API"].includes(input.source ?? "") ||
     !Array.isArray(input.dates) ||
     input.dates.length !== 3 ||
     !input.dates.every(validDate) ||
@@ -102,7 +122,7 @@ Deno.serve(async (request) => {
   }
 
   const dates = [...input.dates].sort() as string[];
-  const events = input.events.filter(
+  let events = input.events.filter(
     (event): event is Record<string, unknown> =>
       Boolean(event && typeof event === "object" && !Array.isArray(event)),
   );
@@ -110,7 +130,15 @@ Deno.serve(async (request) => {
     return Response.json({ error: "Invalid event item" }, { status: 400 });
   }
 
-  const provider = input.source === "ESPN" ? "espn" : "sofascore";
+  if (input.source === "GOAL API") {
+    events = events.filter((event) => withinCostaRicaWindow(event, dates));
+  }
+
+  const provider = input.source === "ESPN"
+    ? "espn"
+    : input.source === "GOAL API"
+    ? "goal_api"
+    : "sofascore";
 
   const reservation = await rpc("futbeat_reserve_provider_call", {
     p_provider: provider,
@@ -148,6 +176,8 @@ Deno.serve(async (request) => {
 
     const snapshot = input.source === "ESPN"
       ? await normalizeEspnFixtures(events, resolve, receivedAt, existing)
+      : input.source === "GOAL API"
+      ? await normalizeGoalApiFixtures(events, resolve, receivedAt, existing)
       : await normalizeSofaScoreFixtures(events, resolve, receivedAt, existing);
 
     stage = "store";
