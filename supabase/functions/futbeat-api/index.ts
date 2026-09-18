@@ -106,6 +106,44 @@ function normalizeMatchDetail(raw: unknown) {
     }));
 
   const incidents = [
+    ...asList(payload.events).map((value) => {
+      const row = asRecord(value);
+      const providerType = cleanText(row.type).toUpperCase();
+      const type = providerType.includes('MISSED') &&
+          providerType.includes('PENAL')
+        ? 'MISSED_PENALTY'
+        : providerType.includes('VAR')
+        ? 'VAR'
+        : providerType.includes('GOAL')
+        ? 'GOAL'
+        : 'OTHER';
+      const scorer =
+        cleanText(row.homeScorer) ||
+        cleanText(row.awayScorer) ||
+        cleanText(row.player);
+      const assist =
+        cleanText(row.homeAssist) ||
+        cleanText(row.awayAssist) ||
+        cleanText(row.assist);
+      const score = cleanText(row.score);
+      return {
+        type,
+        minute: minuteValue(row.time),
+        label: type === 'GOAL'
+          ? 'Gol'
+          : type === 'VAR'
+          ? 'VAR'
+          : type === 'MISSED_PENALTY'
+          ? 'Penal fallado'
+          : providerType || 'Evento',
+        detail: [
+          scorer,
+          if (assist.isNotEmpty) 'Asistencia: $assist',
+          score,
+          cleanText(row.info),
+        ].where((part) => part.isNotEmpty).join(' · ') || null,
+      };
+    }),
     ...asList(payload.cards).map((value) => {
       const row = asRecord(value);
       const card = cleanText(row.card);
