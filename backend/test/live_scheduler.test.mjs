@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { openDatabase } from '../storage/database.mjs';
 
 const call = async (db, source = 'cron') => (await db.query(
@@ -70,5 +71,91 @@ test('existing canonical fixture transitions SCHEDULED to LIVE to FT without dup
   assert.equal(update.home_score,2);
   assert.equal((await db.query("select count(*)::int n from futbeat_private.entities where kind='match'")).rows[0].n,1);
   assert.equal((await db.query("select canonical_id from futbeat_private.provider_entities where provider='api_football' and kind='match' and external_id='700'")).rows[0].canonical_id,ids.match);
+ } finally {await db.close();}
+});
+
+
+test('GOAL LIVE pagination is not capped to the first 100 fixtures',async()=>{
+ const workflow=await readFile(new URL('../../.github/workflows/live-fixtures.yml',import.meta.url),'utf8');
+ assert.match(workflow,/fixtures\/live\?limit=100&offset=\$offset/);
+ assert.match(workflow,/pagination\.hasMore/);
+ assert.match(workflow,/providerRequests/);
+});
+
+test('GOAL LIVE links an existing scheduled match by teams and kickoff without a preexisting external id',async()=>{
+ const db=await openDatabase();
+ try {
+  const competition='fb_comp_goal_live',home='fb_team_brentford',away='fb_team_chelsea',match='fb_match_goal_live';
+  const start=new Date().toISOString();
+
+  await db.query("insert into futbeat_private.entities values($1,'competition',$2)",[
+   competition,JSON.stringify({id:competition,name:'Premier League',country:'England'})
+  ]);
+  await db.query("insert into futbeat_private.entities values($1,'team',$2)",[
+   home,JSON.stringify({id:home,name:'Brentford',country:'England',competitionId:competition})
+  ]);
+  await db.query("insert into futbeat_private.entities values($1,'team',$2)",[
+   away,JSON.stringify({id:away,name:'Chelsea',country:'England',competitionId:competition})
+  ]);
+  await db.query("insert into futbeat_private.entities values($1,'match',$2)",[
+   match,JSON.stringify({
+    id:match,competitionId:competition,homeTeamId:home,awayTeamId:away,startTime:start,
+    status:'SCHEDULED',score:null,events:[],statistics:[],
+    provenance:{source:'FutBeat Global',receivedAt:new Date().toISOString()}
+   })
+  ]);
+
+  const fixture={
+   apiId:'812690',
+   kickoffUtc:start,
+   matchStatus:'LIVE',
+   matchElapsed:18,
+   homeTeamScore:'1',
+   awayTeamScore:'0',
+   homeTeam:{id:'goal-home',name:'Brentford'},
+   awayTeam:{id:'goal-away',name:'Chelsea'},
+  };
+
+  const linked=(await db.query(
+   'select public.futbeat_link_goal_live_matches($1) result',
+   [JSON.stringify([fixture])],
+  )).rows[0].result;
+
+  assert.equal(linked.linked,1);
+  assert.equal(linked.unmappedCount,0);
+  assert.equal((await db.query(
+   "select canonical_id from futbeat_private.provider_entities where provider='goal_api' and kind='match' and external_id='812690'"
+  )).rows[0].canonical_id,match);
+
+  const observation={
+   externalMatchId:'812690',
+   status:'LIVE',
+   minute:18,
+   score:{home:1,away:0},
+   events:[],
+   rawPayload:fixture,
+  };
+  observation.payloadHash=createHash('sha256').update(JSON.stringify([
+   observation.externalMatchId,observation.status,observation.minute,1,0
+  ])).digest('hex');
+
+  await db.query('select public.futbeat_record_live_batch($1,$2,$3)',[
+   'goal_api',new Date().toISOString(),JSON.stringify([observation])
+  ]);
+
+  const update=(await db.query(
+   'select * from public.live_match_updates where match_id=$1',[match]
+  )).rows[0];
+  assert.equal(update.status,'LIVE');
+  assert.equal(update.minute,18);
+  assert.equal(update.home_score,1);
+
+  const unrelated={...fixture,apiId:'812691',kickoffUtc:new Date(Date.now()+8*3600000).toISOString()};
+  const rejected=(await db.query(
+   'select public.futbeat_link_goal_live_matches($1) result',
+   [JSON.stringify([unrelated])],
+  )).rows[0].result;
+  assert.equal(rejected.linked,0);
+  assert.equal(rejected.unmappedCount,1);
  } finally {await db.close();}
 });

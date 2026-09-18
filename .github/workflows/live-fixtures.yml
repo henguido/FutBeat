@@ -71,35 +71,76 @@ jobs:
           $remaining = $null
 
           try {
-            $responseHeaders = $null
-            $response = Invoke-RestMethod -Uri "https://api.goal-api.com/v1/fixtures/live" `
-              -Headers @{
-                Authorization = "Bearer $env:GOAL_API_KEY"
-                Accept = "application/json"
-              } `
-              -ResponseHeadersVariable responseHeaders `
-              -TimeoutSec 30
+            $events = New-Object System.Collections.Generic.List[object]
+            $seen = @{}
+            $offset = 0
+            $pageLimit = 100
+            $providerRequests = 0
+            $providerTotal = $null
+            $hasMore = $true
 
-            if (-not $response.success -or -not ($response.PSObject.Properties.Name -contains "data")) {
-              throw "GOAL API returned an invalid live fixtures payload"
-            }
+            while ($hasMore) {
+              $responseHeaders = $null
+              $uri = "https://api.goal-api.com/v1/fixtures/live?limit=100&offset=$offset"
+              $response = Invoke-RestMethod -Uri $uri `
+                -Headers @{
+                  Authorization = "Bearer $env:GOAL_API_KEY"
+                  Accept = "application/json"
+                } `
+                -ResponseHeadersVariable responseHeaders `
+                -TimeoutSec 30
 
-            if ($null -ne $responseHeaders) {
-              $rawRemaining = @($responseHeaders["X-RateLimit-Remaining"])[0]
-              if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
-                $remaining = [int]$rawRemaining
+              $providerRequests += 1
+
+              if (-not $response.success -or -not ($response.PSObject.Properties.Name -contains "data")) {
+                throw "GOAL API returned an invalid live fixtures payload at offset $offset"
+              }
+
+              if ($null -ne $responseHeaders) {
+                $rawRemaining = @($responseHeaders["X-RateLimit-Remaining"])[0]
+                if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
+                  $remaining = [int]$rawRemaining
+                }
+              }
+
+              foreach ($fixture in @($response.data)) {
+                $externalId = [string]$fixture.apiId
+                if ([string]::IsNullOrWhiteSpace($externalId)) {
+                  $externalId = [string]$fixture.id
+                }
+                if ([string]::IsNullOrWhiteSpace($externalId) -or $seen.ContainsKey($externalId)) {
+                  continue
+                }
+                $seen[$externalId] = $true
+                [void]$events.Add($fixture)
+              }
+
+              $hasMore = $false
+              if ($null -ne $response.pagination) {
+                if ($null -ne $response.pagination.total) {
+                  $providerTotal = [int]$response.pagination.total
+                }
+                if ([int]$response.pagination.limit -gt 0) {
+                  $pageLimit = [int]$response.pagination.limit
+                }
+                $hasMore = [bool]$response.pagination.hasMore
+              }
+
+              if ($hasMore) {
+                $offset += $pageLimit
               }
             }
 
-            $events = @($response.data)
             $result = Invoke-FutBeatLiveEndpoint ([ordered]@{
               action = "live-ingest"
               reservationId = $reservationId
               providerRemaining = $remaining
-              events = $events
+              providerRequests = $providerRequests
+              providerTotal = $providerTotal
+              events = $events.ToArray()
             })
 
-            Write-Output "GOAL_LIVE_OK matches=$($result.liveMatches) remaining=$remaining"
+            Write-Output "GOAL_LIVE_OK matches=$($result.liveMatches) mapped=$($result.linkedMatches) unmapped=$($result.unmappedMatches) total=$providerTotal pages=$providerRequests remaining=$remaining"
           } catch {
             try {
               Invoke-FutBeatLiveEndpoint ([ordered]@{

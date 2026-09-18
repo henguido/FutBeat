@@ -263,6 +263,8 @@ Deno.serve(async (request) => {
     teamId?: string;
     externalTeamId?: string;
     providerRemaining?: number | null;
+    providerRequests?: number;
+    providerTotal?: number | null;
     players?: unknown;
     reservationId?: number;
     errorCode?: string;
@@ -344,6 +346,10 @@ Deno.serve(async (request) => {
     const started = performance.now();
 
     try {
+      const linkResult = await rpc("futbeat_link_goal_live_matches", {
+        p_fixtures: input.events,
+      }, 30000);
+
       const observations = await Promise.all(
         input.events.map((item) => {
           if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -368,6 +374,11 @@ Deno.serve(async (request) => {
         p_metadata: {
           mode: "live",
           liveMatches: observations.length,
+          linkedMatches: linkResult?.linked ?? 0,
+          alreadyLinkedMatches: linkResult?.alreadyLinked ?? 0,
+          unmappedMatches: linkResult?.unmappedCount ?? 0,
+          providerRequests: input.providerRequests ?? 1,
+          providerTotal: input.providerTotal ?? observations.length,
           insertedObservations: persistence?.insertedObservations ?? 0,
           duplicates: persistence?.duplicates ?? 0,
           durationMs: Math.round(performance.now() - started),
@@ -380,6 +391,11 @@ Deno.serve(async (request) => {
         status: "ok",
         provider: "GOAL API",
         liveMatches: observations.length,
+        linkedMatches: linkResult?.linked ?? 0,
+        alreadyLinkedMatches: linkResult?.alreadyLinked ?? 0,
+        unmappedMatches: linkResult?.unmappedCount ?? 0,
+        providerRequests: input.providerRequests ?? 1,
+        providerTotal: input.providerTotal ?? observations.length,
         persistence,
       });
     } catch (error) {
