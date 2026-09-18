@@ -6,6 +6,26 @@ DateTime costaRicaTime(DateTime instant) =>
 
 DateTime costaRicaNow() => costaRicaTime(DateTime.now());
 
+String eventMinuteLabel(Json event) {
+  final minute = event['minute'];
+  if (minute is! int) return '—';
+  final extra = event['extraMinute'];
+  return extra is int && extra > 0 ? '$minute+$extra′' : '$minute′';
+}
+
+int _eventTypeOrder(String type) => switch (type) {
+  'KICKOFF' => 0,
+  'GOAL' => 1,
+  'MISSED_PENALTY' => 2,
+  'YELLOW_CARD' => 3,
+  'RED_CARD' => 4,
+  'SUBSTITUTION' => 5,
+  'VAR' => 6,
+  'HALFTIME' => 7,
+  'FULL_TIME' => 8,
+  _ => 9,
+};
+
 class Entity {
   Entity(this.json);
   final Json json;
@@ -140,10 +160,31 @@ class FootballMatch {
     'CANCELLED' => 'Cancelado',
     _ => 'Próximo',
   };
-  List<Json> get events => (json['events'] as List).cast<Json>().toList()
-    ..sort(
-      (a, b) => (a['minute'] as int? ?? 0).compareTo(b['minute'] as int? ?? 0),
-    );
+  List<Json> get events {
+    final items = (json['events'] as List).cast<Json>().toList();
+    items.sort((a, b) {
+      final byMinute = (a['minute'] as int? ?? -1).compareTo(
+        b['minute'] as int? ?? -1,
+      );
+      if (byMinute != 0) return byMinute;
+      final byExtra = (a['extraMinute'] as int? ?? 0).compareTo(
+        b['extraMinute'] as int? ?? 0,
+      );
+      if (byExtra != 0) return byExtra;
+      final byType = _eventTypeOrder(
+        a['type'] as String? ?? '',
+      ).compareTo(_eventTypeOrder(b['type'] as String? ?? ''));
+      if (byType != 0) return byType;
+      return (a['id'] as String? ?? '').compareTo(b['id'] as String? ?? '');
+    });
+    return items;
+  }
+
+  Json? get latestEvent {
+    final timeline = events;
+    return timeline.isEmpty ? null : timeline.last;
+  }
+
   List<Json> get statistics => (json['statistics'] as List).cast<Json>();
 }
 
