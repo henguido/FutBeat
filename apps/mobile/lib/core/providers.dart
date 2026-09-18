@@ -57,6 +57,15 @@ class ApiRepository implements FootballRepository {
       )
     ).data!,
   );
+
+  Future<Snapshot> loadEntity(String type, String id) async => _canonical(
+    (
+      await dio.get<Json>(
+        '/v1/entity',
+        queryParameters: {'type': type, 'id': id},
+      )
+    ).data!,
+  );
 }
 
 final repositoryProvider = Provider<FootballRepository>((ref) {
@@ -90,6 +99,18 @@ final snapshotProvider = FutureProvider<Snapshot>(
 final calendarSnapshotProvider = FutureProvider.family<Snapshot, DateTime>(
   (ref, date) => ref.watch(repositoryProvider).loadDate(date),
 );
+
+
+final entitySnapshotProvider =
+    FutureProvider.family<Snapshot, ({String type, String id})>(
+      (ref, request) async {
+        final repository = ref.watch(repositoryProvider);
+        if (repository is ApiRepository) {
+          return repository.loadEntity(request.type, request.id);
+        }
+        return repository.load();
+      },
+    );
 
 final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(
   (ref) => LiveRealtimeConfig.fromEnvironment(),
