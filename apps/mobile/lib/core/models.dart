@@ -153,7 +153,7 @@ class MatchDetail {
   factory MatchDetail.empty(String matchId) => MatchDetail({
     'matchId': matchId,
     'available': false,
-    'pending': true,
+    'pending': false,
     'detailLevel': 'none',
     'home': <String, dynamic>{},
     'away': <String, dynamic>{},
