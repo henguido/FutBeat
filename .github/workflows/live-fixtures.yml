@@ -62,15 +62,14 @@ jobs:
             action = "live-plan"
           })
 
-          if ($plan.status -eq "skipped") {
-            Write-Output "GOAL_LIVE_SKIPPED reason=$($plan.reservation.reason)"
-            exit 0
-          }
-
-          $reservationId = [int]$plan.reservation.reservationId
           $remaining = $null
 
-          try {
+          if ($plan.status -eq "skipped") {
+            Write-Output "GOAL_LIVE_SKIPPED reason=$($plan.reservation.reason)"
+          } else {
+            $reservationId = [int]$plan.reservation.reservationId
+
+            try {
             $events = New-Object System.Collections.Generic.List[object]
             $seen = @{}
             $offset = 0
