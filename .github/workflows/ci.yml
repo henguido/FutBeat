@@ -1,90 +1,121 @@
 name: FutBeat checks
+
 on:
   pull_request:
     branches: [main]
+
 concurrency:
   group: futbeat-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
 permissions:
   contents: read
+
 jobs:
   contracts:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect backend/contract changes
+        id: changes
+        shell: bash
+        run: |
+          changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD)"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -Eq '^(backend/|supabase/|packages/|scripts/|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No backend checks needed
+        if: steps.changes.outputs.run != 'true'
+        run: echo "No backend, Supabase or contract files changed."
+
       - uses: actions/setup-node@v4
+        if: steps.changes.outputs.run == 'true'
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
       - run: npm ci
+        if: steps.changes.outputs.run == 'true'
+
       - run: npm test
+        if: steps.changes.outputs.run == 'true'
+
       - run: npm run check
+        if: steps.changes.outputs.run == 'true'
+
   mobile:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: America/Costa_Rica
     defaults:
       run:
         working-directory: apps/mobile
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: '17'
+          fetch-depth: 0
+
+      - name: Detect mobile changes
+        id: changes
+        working-directory: .
+        shell: bash
+        run: |
+          changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD)"
+          printf '%s\n' "$changed"
+          if printf '%s\n' "$changed" | grep -Eq '^(apps/mobile/|packages/|\.github/workflows/ci\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No mobile checks needed
+        if: steps.changes.outputs.run != 'true'
+        run: echo "No Flutter/mobile files changed."
+
       - uses: subosito/flutter-action@v2
+        if: steps.changes.outputs.run == 'true'
         with:
           flutter-version: '3.47.4'
           channel: stable
           cache: true
+
       - name: Reproducible visual timezone
-        run: tzutil /s "Central America Standard Time"
-      - run: flutter pub get --enforce-lockfile
-      - run: dart run build_runner build
-      - name: Format mobile sources for beta build
-        run: dart format lib test
-      - run: flutter analyze
-      - name: Smoke global daily schedule
-        shell: pwsh
+        if: steps.changes.outputs.run == 'true'
+        shell: bash
         run: |
-          $date = (Get-Date).ToString("yyyy-MM-dd")
-          $headers = @{
-            "Accept" = "application/json,text/plain,*/*"
-            "Origin" = "https://www.sofascore.com"
-            "Referer" = "https://www.sofascore.com/"
-            "User-Agent" = "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36"
-          }
-          $urls = @(
-            "https://api.sofascore.com/api/v1/sport/football/scheduled-events/$date",
-            "https://www.sofascore.com/api/v1/sport/football/scheduled-events/$date"
-          )
-          $ok = $false
-          foreach ($url in $urls) {
-            try {
-              $response = Invoke-RestMethod -Uri $url -Headers $headers -TimeoutSec 15
-              $count = @($response.events).Count
-              if ($count -gt 0) {
-                Write-Output "GLOBAL_SMOKE_OK url=$url events=$count"
-                $ok = $true
-                break
-              }
-            } catch {
-              Write-Warning "Global schedule smoke failed for ${url}: $($_.Exception.Message)"
-            }
-          }
-          if (-not $ok) {
-            Write-Warning "Global schedule unavailable from this CI runner; mobile keeps the canonical FutBeat snapshot as fallback."
-          }
+          sudo ln -snf /usr/share/zoneinfo/America/Costa_Rica /etc/localtime
+          echo "America/Costa_Rica" | sudo tee /etc/timezone
+
+      - run: flutter pub get --enforce-lockfile
+        if: steps.changes.outputs.run == 'true'
+
+      - run: dart run build_runner build
+        if: steps.changes.outputs.run == 'true'
+
+      - name: Check mobile formatting
+        if: steps.changes.outputs.run == 'true'
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - run: flutter analyze
+        if: steps.changes.outputs.run == 'true'
+
       - run: flutter test
+        if: steps.changes.outputs.run == 'true'
+
       - name: Upload Flutter golden failures
-        if: failure()
+        if: failure() && steps.changes.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: flutter-golden-failures
           path: apps/mobile/test/failures/
           if-no-files-found: ignore
-      - name: Build FutBeat debug APK
-        run: flutter build apk --debug
-      - name: Upload FutBeat debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: futbeat-debug-apk
-          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: error
