@@ -1,0 +1,104 @@
+name: Probe GOAL API global catalog
+
+on:
+  push:
+    branches:
+      - feature/goal-api-global-collector
+    paths:
+      - '.github/workflows/goal-api-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
+    steps:
+      - name: Probe global fixture catalog
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:GOAL_API_KEY)) {
+            Write-Output "GOAL_PROBE_SKIPPED reason=missing_GOAL_API_KEY"
+            exit 0
+          }
+
+          Write-Output "::add-mask::$env:GOAL_API_KEY"
+
+          $crNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(-6))
+          $localDates = @(-1, 0, 1) | ForEach-Object {
+            $crNow.Date.AddDays($_).ToString("yyyy-MM-dd")
+          }
+          $windowStart = [DateTimeOffset]::Parse("$($localDates[0])T00:00:00-06:00")
+          $windowEnd = [DateTimeOffset]::Parse("$($crNow.Date.AddDays(2).ToString("yyyy-MM-dd"))T00:00:00-06:00")
+
+          $fetchDates = New-Object System.Collections.Generic.List[string]
+          $cursor = $windowStart.UtcDateTime.Date
+          $lastUtcDate = $windowEnd.UtcDateTime.Date
+          while ($cursor -le $lastUtcDate) {
+            $fetchDates.Add($cursor.ToString("yyyy-MM-dd"))
+            $cursor = $cursor.AddDays(1)
+          }
+
+          $seen = @{}
+          $accepted = 0
+
+          foreach ($date in $fetchDates) {
+            $offset = 0
+            $dateReceived = 0
+            do {
+              $uri = "https://api.goal-api.com/v1/fixtures/date/$date?limit=500&offset=$offset"
+              $response = Invoke-RestMethod -Uri $uri -Headers @{
+                Authorization = "Bearer $env:GOAL_API_KEY"
+                Accept = "application/json"
+              } -TimeoutSec 30
+
+              if (-not $response.success -or -not ($response.PSObject.Properties.Name -contains "data")) {
+                throw "GOAL API returned an invalid payload for $date"
+              }
+
+              $items = @($response.data)
+              $dateReceived += $items.Count
+              foreach ($fixture in $items) {
+                $externalId = [string]$fixture.apiId
+                if ([string]::IsNullOrWhiteSpace($externalId)) {
+                  $externalId = [string]$fixture.id
+                }
+                if ([string]::IsNullOrWhiteSpace($externalId) -or $seen.ContainsKey($externalId)) {
+                  continue
+                }
+                $seen[$externalId] = $true
+
+                $kickoff = [DateTimeOffset]::MinValue
+                if (
+                  [DateTimeOffset]::TryParse([string]$fixture.kickoffUtc, [ref]$kickoff) -and
+                  $kickoff -ge $windowStart -and $kickoff -lt $windowEnd
+                ) {
+                  $accepted += 1
+                }
+              }
+
+              $hasMore = $false
+              $pageLimit = 500
+              if ($null -ne $response.pagination) {
+                $hasMore = [bool]$response.pagination.hasMore
+                if ([int]$response.pagination.limit -gt 0) {
+                  $pageLimit = [int]$response.pagination.limit
+                }
+              }
+              $offset += $pageLimit
+            } while ($hasMore)
+
+            Write-Output "GOAL_PROBE_DATE date=$date received=$dateReceived"
+          }
+
+          if ($accepted -eq 0) {
+            throw "GOAL API returned zero fixtures in the Costa Rica window"
+          }
+
+          Write-Output "GOAL_PROBE_OK from=$($localDates[0]) to=$($localDates[2]) utcDates=$($fetchDates.Count) unique=$($seen.Count) accepted=$accepted"
