@@ -102,7 +102,7 @@ jobs:
 
             return [pscustomobject]@{
               Date = $date
-              Items = @($items)
+              Items = $items.ToArray()
               Count = $items.Count
               Remaining = $remaining
               Requests = $requests
@@ -166,7 +166,7 @@ jobs:
           # Do not create another scheduled Action. Once per day, the existing
           # 09:17 UTC run also expands the cold calendar. Manual runs expand too.
           $utcHour = [DateTime]::UtcNow.Hour
-          $shouldExpand = $env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -or $utcHour -eq 9
+          $shouldExpand = @("workflow_dispatch", "push") -contains $env:GITHUB_EVENT_NAME -or $utcHour -eq 9
           if (-not $shouldExpand) {
             Write-Output "CALENDAR_EXPAND_SKIPPED reason=not_daily_window"
             exit 0
