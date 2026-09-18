@@ -49,11 +49,12 @@ async function authorize(request: Request) {
   if (!["schedule", "workflow_dispatch"].includes(String(payload.event_name))) {
     throw new Error("Unexpected GitHub event");
   }
-  const workflow = String(payload.job_workflow_ref ?? "");
+  const workflow = String(
+    payload.workflow_ref ?? payload.job_workflow_ref ?? "",
+  );
   if (
-    !workflow.startsWith(
-      "henguido/FutBeat/.github/workflows/global-fixtures.yml@refs/heads/main",
-    )
+    workflow !==
+    "henguido/FutBeat/.github/workflows/global-fixtures.yml@refs/heads/main"
   ) {
     throw new Error("Unexpected GitHub workflow");
   }
