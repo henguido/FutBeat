@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.1.0";
 import { normalizeSofaScoreFixtures } from "../../../backend/providers/sofascore.mjs";
+import { normalizeEspnFixtures } from "../../../backend/providers/espn.mjs";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -89,7 +90,7 @@ Deno.serve(async (request) => {
   }
 
   if (
-    input.source !== "SofaScore" ||
+    !["SofaScore", "ESPN"].includes(input.source ?? "") ||
     !Array.isArray(input.dates) ||
     input.dates.length !== 3 ||
     !input.dates.every(validDate) ||
@@ -109,8 +110,10 @@ Deno.serve(async (request) => {
     return Response.json({ error: "Invalid event item" }, { status: 400 });
   }
 
+  const provider = input.source === "ESPN" ? "espn" : "sofascore";
+
   const reservation = await rpc("futbeat_reserve_provider_call", {
-    p_provider: "sofascore",
+    p_provider: provider,
     p_call_kind: "global-ingest",
     p_trigger_source: "github-actions",
     p_daily_limit: 24,
@@ -135,7 +138,7 @@ Deno.serve(async (request) => {
       identity: { name?: string; country?: string; shortName?: string },
     ) =>
       rpc("futbeat_resolve_global_entity", {
-        p_provider: "sofascore",
+        p_provider: provider,
         p_kind: kind,
         p_external: external,
         p_name: identity.name ?? "",
@@ -143,12 +146,9 @@ Deno.serve(async (request) => {
         p_short_name: identity.shortName ?? "",
       });
 
-    const snapshot = await normalizeSofaScoreFixtures(
-      events,
-      resolve,
-      receivedAt,
-      existing,
-    );
+    const snapshot = input.source === "ESPN"
+      ? await normalizeEspnFixtures(events, resolve, receivedAt, existing)
+      : await normalizeSofaScoreFixtures(events, resolve, receivedAt, existing);
 
     stage = "store";
     const result = await rpc("futbeat_store_global_fixture_window", {
@@ -157,7 +157,7 @@ Deno.serve(async (request) => {
       p_from_date: dates[0],
       p_to_date: dates[2],
       p_raw: {
-        provider: "SofaScore",
+        provider: input.source,
         transport: "GitHub Actions OIDC",
         dates,
         events,
@@ -181,6 +181,7 @@ Deno.serve(async (request) => {
         competitions: snapshot.competitions.length,
         teams: snapshot.teams.length,
         transport: "github-actions-oidc",
+        provider: input.source,
       },
     });
 
