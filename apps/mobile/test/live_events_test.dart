@@ -71,6 +71,43 @@ void main() {
       2,
     );
   });
+  test('timeline orders stoppage time deterministically and exposes the latest event', () {
+    final match = FootballMatch({
+      'id': 'fb_match_test',
+      'competitionId': 'fb_comp_test',
+      'homeTeamId': 'fb_team_home',
+      'awayTeamId': 'fb_team_away',
+      'startTime': '2026-09-18T18:00:00Z',
+      'status': 'LIVE',
+      'score': {'home': 1, 'away': 0},
+      'minute': 45,
+      'events': [
+        {
+          'id': 'fb_event_var',
+          'type': 'VAR',
+          'minute': 45,
+          'extraMinute': 2,
+        },
+        {
+          'id': 'fb_event_goal',
+          'type': 'GOAL',
+          'minute': 45,
+          'extraMinute': 1,
+        },
+        {'id': 'fb_event_kickoff', 'type': 'KICKOFF', 'minute': 0},
+      ],
+      'statistics': [],
+    });
+
+    expect(
+      match.events.map((event) => event['id']).toList(),
+      ['fb_event_kickoff', 'fb_event_goal', 'fb_event_var'],
+    );
+    expect(eventMinuteLabel(match.events[1]), '45+1′');
+    expect(eventMinuteLabel(match.events[2]), '45+2′');
+    expect(match.latestEvent?['id'], 'fb_event_var');
+  });
+
   test('Realtime reconnect bootstraps missing events and ignores repeated/older revisions', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var revision = 1, connections = 0;

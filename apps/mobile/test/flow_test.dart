@@ -153,6 +153,7 @@ void main() {
   ) async {
     await openApp(tester);
     expect(find.text('Modo demo · resultados ficticios'), findsOneWidget);
+    expect(find.text('Último: 64′ · Gol'), findsOneWidget);
     await tester.tap(find.text('2 - 1').first);
     await tester.pumpAndSettle();
     expect(find.text('Match Center'), findsOneWidget);

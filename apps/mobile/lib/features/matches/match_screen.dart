@@ -96,12 +96,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                       ),
                     ),
                   ),
-                  Center(
-                    child: Text(
-                      match.statusLabel,
-                      style: const TextStyle(color: lime),
-                    ),
-                  ),
+                  Center(child: _MatchStatePill(match)),
+
                   const SizedBox(height: 12),
                   Center(
                     child: Text(
@@ -146,7 +142,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                                   leading: SizedBox(
                                     width: 42,
                                     child: Text(
-                                      "${event['minute'] ?? '—'}′",
+                                      eventMinuteLabel(event),
                                       textAlign: TextAlign.center,
                                       style: const TextStyle(
                                         color: lime,
@@ -222,6 +218,42 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
         ),
       );
     },
+  );
+}
+
+class _MatchStatePill extends StatelessWidget {
+  const _MatchStatePill(this.match);
+
+  final FootballMatch match;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+    decoration: BoxDecoration(
+      color: (match.isLive ? lime : muted).withValues(alpha: .12),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(
+        color: (match.isLive ? lime : muted).withValues(alpha: .35),
+      ),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (match.isLive) ...[
+          const Icon(Icons.circle, size: 8, color: lime),
+          const SizedBox(width: 7),
+        ],
+        Text(
+          match.statusLabel.toUpperCase(),
+          style: TextStyle(
+            color: match.isLive ? lime : muted,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: .8,
+          ),
+        ),
+      ],
+    ),
   );
 }
 
