@@ -27,55 +27,6 @@ set search_path=''
 as $$
 declare
   uid uuid:=auth.uid();
-  hour_format text:=coalesce(nullif(trim(p_hour_format),''),'system');
-begin
-  if uid is null then
-    raise exception 'Authentication required' using errcode='42501';
-  end if;
-  if hour_format not in ('system','12h','24h') then
-    raise exception 'Invalid hour format';
-  end if;
-
-  perform futbeat_private.sync_user_profile(
-    p_display_name,
-    p_language_code,
-    p_timezone,
-    p_notify_kickoff,
-    p_notify_goals,
-    p_notify_final,
-    p_notify_cards,
-    p_notify_lineups,
-    p_notify_news,
-    p_notify_transfers
-  );
-
-  update futbeat_private.user_preferences
-     set hour_format=hour_format,
-         updated_at=now()
-   where user_id=uid;
-end;
-$$;
-
--- Avoid the PL/pgSQL variable/column name collision explicitly.
-create or replace function futbeat_private.sync_user_profile_v2(
-  p_display_name text,
-  p_language_code text,
-  p_timezone text,
-  p_hour_format text,
-  p_notify_kickoff boolean,
-  p_notify_goals boolean,
-  p_notify_final boolean,
-  p_notify_cards boolean,
-  p_notify_lineups boolean,
-  p_notify_news boolean,
-  p_notify_transfers boolean
-) returns void
-language plpgsql
-security definer
-set search_path=''
-as $$
-declare
-  uid uuid:=auth.uid();
   normalized_hour_format text:=coalesce(nullif(trim(p_hour_format),''),'system');
 begin
   if uid is null then
