@@ -67,6 +67,37 @@ jobs:
                 }
               }
 
+              if ($kind -eq "lineups") {
+                foreach ($side in @("home","away")) {
+                  $sideData = $data.$side
+                  foreach ($group in @("startingLineups","substitutes","missingPlayers")) {
+                    $items = @($sideData.$group)
+                    if ($items.Count -gt 0 -and $null -ne $items[0]) {
+                      Write-Output "LINEUP_KEYS side=$side group=$group keys=$((@($items[0].PSObject.Properties.Name) | Sort-Object) -join ',')"
+                    }
+                  }
+                  if ($null -ne $sideData.coach) {
+                    Write-Output "COACH_KEYS side=$side keys=$((@($sideData.coach.PSObject.Properties.Name) | Sort-Object) -join ',')"
+                  }
+                }
+              }
+              if ($kind -eq "statistics") {
+                if ($null -ne $data.match.fullTime) {
+                  Write-Output "STAT_KEYS period=fullTime keys=$((@($data.match.fullTime.PSObject.Properties.Name) | Sort-Object) -join ',')"
+                  foreach ($prop in @($data.match.fullTime.PSObject.Properties)) {
+                    if ($null -ne $prop.Value -and $prop.Value -is [System.Management.Automation.PSCustomObject]) {
+                      Write-Output "STAT_NESTED field=$($prop.Name) keys=$((@($prop.Value.PSObject.Properties.Name) | Sort-Object) -join ',')"
+                    }
+                  }
+                }
+                foreach ($side in @("home","away")) {
+                  $items = @($data.players.$side)
+                  if ($items.Count -gt 0 -and $null -ne $items[0]) {
+                    Write-Output "PLAYER_STAT_KEYS side=$side keys=$((@($items[0].PSObject.Properties.Name) | Sort-Object) -join ',')"
+                  }
+                }
+              }
+
               if ($kind -eq "detail") {
                 foreach ($field in @("events","cards","substitutions")) {
                   $items = @($data.$field)
