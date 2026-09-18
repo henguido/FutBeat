@@ -36,6 +36,9 @@ class TestRepository implements FootballRepository {
     }
     return Snapshot(json);
   }
+
+  @override
+  Future<Snapshot> loadDate(DateTime date) => load();
 }
 
 Future<void> openApp(
