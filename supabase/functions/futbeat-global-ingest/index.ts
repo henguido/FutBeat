@@ -125,6 +125,31 @@ function localResolver(resolved: Map<string, string>) {
   };
 }
 
+async function resolveIdentityItems(
+  provider: string,
+  items: Array<Record<string, unknown>>,
+  target: Map<string, string>,
+) {
+  const chunkSize = 800;
+  for (let offset = 0; offset < items.length; offset += chunkSize) {
+    const chunk = items.slice(offset, offset + chunkSize);
+    const rows = await rpc(
+      "futbeat_resolve_global_entities",
+      {
+        p_provider: provider,
+        p_items: chunk,
+      },
+      60000,
+    );
+    if (!Array.isArray(rows) || rows.length !== chunk.length) {
+      throw new Error(
+        `Incomplete batch resolver response: ${Array.isArray(rows) ? rows.length : 0}/${chunk.length}`,
+      );
+    }
+    addResolvedRows(target, rows);
+  }
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
 
@@ -207,15 +232,11 @@ Deno.serve(async (request) => {
 
       stage = "resolve-base";
       const baseIdentities = collectGoalApiBaseIdentities(events);
-      const baseRows = await rpc(
-        "futbeat_resolve_global_entities",
-        {
-          p_provider: provider,
-          p_items: baseIdentities,
-        },
-        60000,
+      await resolveIdentityItems(
+        provider,
+        baseIdentities,
+        resolved,
       );
-      addResolvedRows(resolved, baseRows);
       resolvedBase = resolved.size;
 
       stage = "discover-matches";
@@ -267,16 +288,13 @@ Deno.serve(async (request) => {
       );
 
       stage = "resolve-matches";
-      const matchRows = await rpc(
-        "futbeat_resolve_global_entities",
-        {
-          p_provider: provider,
-          p_items: [...pendingMatches.values()],
-        },
-        60000,
+      const matchIdentities = [...pendingMatches.values()];
+      await resolveIdentityItems(
+        provider,
+        matchIdentities,
+        resolved,
       );
-      addResolvedRows(resolved, matchRows);
-      resolvedMatches = Array.isArray(matchRows) ? matchRows.length : 0;
+      resolvedMatches = matchIdentities.length;
 
       stage = "normalize";
       snapshot = await normalizeGoalApiFixtures(
