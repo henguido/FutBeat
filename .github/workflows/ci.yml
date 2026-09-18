@@ -41,14 +41,6 @@ jobs:
       - name: Format mobile sources for beta build
         run: dart format lib test
       - run: flutter analyze
-      - name: Build FutBeat debug APK
-        run: flutter build apk --debug
-      - name: Upload FutBeat debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: futbeat-debug-apk
-          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: error
       - run: flutter test
       - name: Upload Flutter golden failures
         if: failure()
@@ -71,3 +63,11 @@ jobs:
               Write-Output "$key=$encoded"
             }
           }
+      - name: Build FutBeat debug APK
+        run: flutter build apk --debug
+      - name: Upload FutBeat debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: futbeat-debug-apk
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
