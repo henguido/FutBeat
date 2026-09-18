@@ -1,6 +1,13 @@
 const validDate = (value) =>
   typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
 
+const validEntityType = (value) =>
+  typeof value === 'string' &&
+  ['team', 'player', 'competition'].includes(value);
+
+const validEntityId = (value) =>
+  typeof value === 'string' && /^fb_[A-Za-z0-9_-]{3,120}$/.test(value);
+
 export function createHandler({ url, serviceKey, fetcher = fetch }) {
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
@@ -25,8 +32,11 @@ export function createHandler({ url, serviceKey, fetcher = fetch }) {
     const calendarPath =
       path === '/futbeat-api/v1/calendar' ||
       path === '/functions/v1/futbeat-api/v1/calendar';
+    const entityPath =
+      path === '/futbeat-api/v1/entity' ||
+      path === '/functions/v1/futbeat-api/v1/entity';
 
-    if (!snapshotPath && !calendarPath) {
+    if (!snapshotPath && !calendarPath && !entityPath) {
       return reply(404, { error: 'Not found' });
     }
 
@@ -48,6 +58,19 @@ export function createHandler({ url, serviceKey, fetcher = fetch }) {
       };
     }
 
+    if (entityPath) {
+      const type = requestUrl.searchParams.get('type');
+      const id = requestUrl.searchParams.get('id');
+      if (!validEntityType(type) || !validEntityId(id)) {
+        return reply(400, { error: 'Entidad inválida' });
+      }
+      rpcName = 'futbeat_read_entity_detail';
+      body = {
+        p_type: type,
+        p_id: id,
+      };
+    }
+
     try {
       const response = await fetcher(`${url}/rest/v1/rpc/${rpcName}`, {
         method: 'POST',
@@ -63,6 +86,9 @@ export function createHandler({ url, serviceKey, fetcher = fetch }) {
         return reply(503, { error: 'Datos temporalmente no disponibles' });
       }
       const snapshot = await response.json();
+      if (entityPath && snapshot == null) {
+        return reply(404, { error: 'Entidad no encontrada' });
+      }
       if (
         !snapshot ||
         snapshot.schemaVersion !== 1 ||
