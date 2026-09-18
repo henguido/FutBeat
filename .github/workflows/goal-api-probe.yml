@@ -1,11 +1,6 @@
 name: Probe GOAL API global catalog
 
 on:
-  push:
-    branches:
-      - feature/goal-api-global-collector
-    paths:
-      - '.github/workflows/goal-api-probe.yml'
   workflow_dispatch:
 
 permissions:
