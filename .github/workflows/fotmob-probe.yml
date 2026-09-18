@@ -46,6 +46,22 @@ jobs:
               }
 
               Write-Output "FOTMOB_PROBE_OK os=${{ matrix.os }} url=$url status=$($response.StatusCode) contentType=$contentType leagues=$leagueCount matches=$matchCount bytes=$($body.Length)"
+
+              if ($matchCount -gt 0) {
+                $sampleLeague = @($json.leagues | Where-Object { @($_.matches).Count -gt 0 })[0]
+                $sampleMatch = @($sampleLeague.matches)[0]
+                $topKeys = @($json.PSObject.Properties.Name) -join ","
+                $leagueKeys = @($sampleLeague.PSObject.Properties.Name) -join ","
+                $matchKeys = @($sampleMatch.PSObject.Properties.Name) -join ","
+                $homeKeys = @($sampleMatch.home.PSObject.Properties.Name) -join ","
+                $awayKeys = @($sampleMatch.away.PSObject.Properties.Name) -join ","
+                $statusKeys = @($sampleMatch.status.PSObject.Properties.Name) -join ","
+                Write-Output "FOTMOB_SCHEMA topKeys=$topKeys"
+                Write-Output "FOTMOB_SCHEMA leagueKeys=$leagueKeys"
+                Write-Output "FOTMOB_SCHEMA matchKeys=$matchKeys"
+                Write-Output "FOTMOB_SCHEMA homeKeys=$homeKeys awayKeys=$awayKeys statusKeys=$statusKeys"
+                Write-Output "FOTMOB_SAMPLE leagueId=$($sampleLeague.id) leagueName=$($sampleLeague.name) ccode=$($sampleLeague.ccode) matchId=$($sampleMatch.id) time=$($sampleMatch.time) homeId=$($sampleMatch.home.id) homeName=$($sampleMatch.home.name) awayId=$($sampleMatch.away.id) awayName=$($sampleMatch.away.name) started=$($sampleMatch.status.started) finished=$($sampleMatch.status.finished) cancelled=$($sampleMatch.status.cancelled) score=$($sampleMatch.status.scoreStr)"
+              }
             } catch {
               $status = $_.Exception.Response.StatusCode.value__
               Write-Output "FOTMOB_PROBE_FAIL os=${{ matrix.os }} url=$url status=$status message=$($_.Exception.Message)"
