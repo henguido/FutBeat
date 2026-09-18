@@ -30,13 +30,17 @@ jobs:
             Accept = "application/json"
           }
 
-          $live = Invoke-RestMethod -Uri "https://api.goal-api.com/v1/fixtures/live?limit=1&offset=0" -Headers $headers -TimeoutSec 30
+          $live = Invoke-RestMethod -Uri "https://api.goal-api.com/v1/fixtures/live?limit=50&offset=0" -Headers $headers -TimeoutSec 30
           if (-not $live.success -or @($live.data).Count -eq 0) {
             Write-Output "DETAIL_PROBE_SKIPPED reason=no_live_match"
             exit 0
           }
 
-          $fixture = @($live.data)[0]
+          $fixture = @($live.data | Where-Object {
+            -not [string]::IsNullOrWhiteSpace([string]$_.homeTeamSystem) -or
+            -not [string]::IsNullOrWhiteSpace([string]$_.awayTeamSystem)
+          } | Select-Object -First 1)
+          if ($null -eq $fixture) { $fixture = @($live.data)[0] }
           $id = [string]$fixture.apiId
           if ([string]::IsNullOrWhiteSpace($id)) { $id = [string]$fixture.id }
           if ([string]::IsNullOrWhiteSpace($id)) { throw "Missing live fixture id" }
@@ -82,13 +86,9 @@ jobs:
                 }
               }
               if ($kind -eq "statistics") {
-                if ($null -ne $data.match.fullTime) {
-                  Write-Output "STAT_KEYS period=fullTime keys=$((@($data.match.fullTime.PSObject.Properties.Name) | Sort-Object) -join ',')"
-                  foreach ($prop in @($data.match.fullTime.PSObject.Properties)) {
-                    if ($null -ne $prop.Value -and $prop.Value -is [System.Management.Automation.PSCustomObject]) {
-                      Write-Output "STAT_NESTED field=$($prop.Name) keys=$((@($prop.Value.PSObject.Properties.Name) | Sort-Object) -join ',')"
-                    }
-                  }
+                $fullTimeStats = @($data.match.fullTime)
+                if ($fullTimeStats.Count -gt 0 -and $null -ne $fullTimeStats[0]) {
+                  Write-Output "STAT_KEYS period=fullTime keys=$((@($fullTimeStats[0].PSObject.Properties.Name) | Sort-Object) -join ',')"
                 }
                 foreach ($side in @("home","away")) {
                   $items = @($data.players.$side)
@@ -114,8 +114,9 @@ jobs:
                         Write-Output "LINEUP_KEYS side=$side group=$group keys=$((@($items[0].PSObject.Properties.Name) | Sort-Object) -join ',')"
                       }
                     }
-                    if ($null -ne $sideData.coach) {
-                      Write-Output "COACH_KEYS side=$side keys=$((@($sideData.coach.PSObject.Properties.Name) | Sort-Object) -join ',')"
+                    $coaches = @($sideData.coach)
+                    if ($coaches.Count -gt 0 -and $null -ne $coaches[0]) {
+                      Write-Output "COACH_KEYS side=$side keys=$((@($coaches[0].PSObject.Properties.Name) | Sort-Object) -join ',')"
                     }
                   }
                 }
