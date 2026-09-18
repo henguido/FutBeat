@@ -14,4 +14,3 @@ verify_jwt = true
 
 [functions.futbeat-fixtures-sync]
 verify_jwt = true
-
