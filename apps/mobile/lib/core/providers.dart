@@ -10,6 +10,7 @@ import 'models.dart';
 
 abstract interface class FootballRepository {
   Future<Snapshot> load();
+  Future<Snapshot> loadDate(DateTime date);
 }
 
 class DemoRepository implements FootballRepository {
@@ -18,19 +19,44 @@ class DemoRepository implements FootballRepository {
     jsonDecode(await rootBundle.loadString('assets/demo.snapshot.json'))
         as Json,
   );
+
+  @override
+  Future<Snapshot> loadDate(DateTime date) => load();
 }
 
 class ApiRepository implements FootballRepository {
   ApiRepository(this.dio);
   final Dio dio;
-  @override
-  Future<Snapshot> load() async {
-    final snapshot = Snapshot((await dio.get<Json>('/v1/snapshot')).data!);
+
+  static String _dateParam(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')}';
+
+  Snapshot _canonical(Json json) {
+    final snapshot = Snapshot(json);
     if (snapshot.demo) {
       throw StateError('Cloud endpoint returned demo data');
     }
     return snapshot;
   }
+
+  @override
+  Future<Snapshot> load() async =>
+      _canonical((await dio.get<Json>('/v1/snapshot')).data!);
+
+  @override
+  Future<Snapshot> loadDate(DateTime date) async => _canonical(
+    (
+      await dio.get<Json>(
+        '/v1/calendar',
+        queryParameters: {
+          'date': _dateParam(date),
+          'timezone': 'America/Costa_Rica',
+        },
+      )
+    ).data!,
+  );
 }
 
 final repositoryProvider = Provider<FootballRepository>((ref) {
@@ -61,6 +87,10 @@ final snapshotProvider = FutureProvider<Snapshot>(
   (ref) => ref.watch(repositoryProvider).load(),
 );
 
+final calendarSnapshotProvider = FutureProvider.family<Snapshot, DateTime>(
+  (ref, date) => ref.watch(repositoryProvider).loadDate(date),
+);
+
 final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(
   (ref) => LiveRealtimeConfig.fromEnvironment(),
 );
@@ -88,6 +118,16 @@ final effectiveSnapshotProvider = Provider<AsyncValue<Snapshot>>((ref) {
       .watch(snapshotProvider)
       .whenData((snapshot) => snapshot.withLiveUpdates(updates));
 });
+
+final effectiveCalendarSnapshotProvider =
+    Provider.family<AsyncValue<Snapshot>, DateTime>((ref, date) {
+      final updates =
+          ref.watch(liveMatchUpdatesProvider).asData?.value ??
+          const <String, LiveMatchUpdate>{};
+      return ref
+          .watch(calendarSnapshotProvider(date))
+          .whenData((snapshot) => snapshot.withLiveUpdates(updates));
+    });
 
 final databaseProvider = Provider<AppDatabase>((ref) {
   final db = AppDatabase();
