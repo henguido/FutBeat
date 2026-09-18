@@ -161,6 +161,7 @@ jobs:
                   action = "squad-ingest"
                   teamId = $teamId
                   externalTeamId = $externalTeamId
+                  providerRemaining = $remaining
                   players = $response
                 })
 
@@ -270,6 +271,7 @@ jobs:
 
           foreach ($date in $planDates) {
             if ($calendarRequestsUsed -ge $calendarRequestBudget) {
+              $stopForQuota = $true
               Write-Output "CALENDAR_EXPAND_STOP reason=request_budget budget=$calendarRequestBudget"
               break
             }
@@ -339,4 +341,8 @@ jobs:
 
           Write-Output "CALENDAR_EXPAND_OK planned=$($planDates.Count) fetched=$expandedDates requests=$calendarRequestsUsed"
 
-          Invoke-TeamSquadHydration
+          if ($stopForQuota) {
+            Write-Output "SQUAD_HYDRATE_SKIPPED reason=calendar_quota_guard"
+          } else {
+            Invoke-TeamSquadHydration
+          }
