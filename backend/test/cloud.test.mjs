@@ -77,3 +77,47 @@ test('cloud BFF reads one canonical calendar day with an explicit timezone', asy
   );
   assert.equal(invalid.status, 400);
 });
+
+test('cloud BFF reads canonical entity detail without exposing raw tables', async () => {
+  let seenBody;
+  const handler = createHandler({
+    url: 'https://example.supabase.co',
+    serviceKey: 'server-only',
+    fetcher: async (url, options) => {
+      assert.equal(
+        url,
+        'https://example.supabase.co/rest/v1/rpc/futbeat_read_entity_detail',
+      );
+      seenBody = JSON.parse(options.body);
+      return Response.json({
+        schemaVersion: 1,
+        demo: false,
+        matches: [],
+        teams: [{ id: 'fb_team_test', name: 'Test', country: 'Costa Rica' }],
+        players: [],
+        competitions: [],
+        standings: [],
+        updatedAt: '2026-09-18T13:30:00.000Z',
+      });
+    },
+  });
+
+  const response = await handler(
+    new Request(
+      'https://example.supabase.co/functions/v1/futbeat-api/v1/entity?type=team&id=fb_team_test',
+    ),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(seenBody, {
+    p_type: 'team',
+    p_id: 'fb_team_test',
+  });
+
+  const invalid = await handler(
+    new Request(
+      'https://example.supabase.co/functions/v1/futbeat-api/v1/entity?type=unknown&id=fb_team_test',
+    ),
+  );
+  assert.equal(invalid.status, 400);
+});
