@@ -19,46 +19,99 @@ concurrency:
 
 jobs:
   collect:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
     steps:
       - name: Collect and ingest global football calendar
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
+          if ([string]::IsNullOrWhiteSpace($env:GOAL_API_KEY)) {
+            throw "GOAL_API_KEY repository secret is required"
+          }
+
           $crNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(-6))
           $dates = @(-1, 0, 1) | ForEach-Object {
             $crNow.Date.AddDays($_).ToString("yyyy-MM-dd")
           }
-          $from = $dates[0].Replace("-", "")
-          $to = $dates[2].Replace("-", "")
 
-          $url = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates=$from-$to&limit=1000"
-          $fetchParams = @{
-            Uri = $url
-            Headers = @{ "Accept" = "application/json" }
-            TimeoutSec = 30
-          }
-          $response = Invoke-RestMethod @fetchParams
-
-          if (-not ($response.PSObject.Properties.Name -contains "events")) {
-            throw "ESPN returned an invalid scoreboard payload"
+          # A Costa Rica calendar day crosses two UTC dates. Fetch the four UTC
+          # dates that fully cover the three-day CR snapshot window, then trim.
+          $windowStart = [DateTimeOffset]::Parse("$($dates[0])T00:00:00-06:00")
+          $windowEnd = [DateTimeOffset]::Parse("$($crNow.Date.AddDays(2).ToString("yyyy-MM-dd"))T00:00:00-06:00")
+          $fetchDates = New-Object System.Collections.Generic.List[string]
+          $cursor = $windowStart.UtcDateTime.Date
+          $lastUtcDate = $windowEnd.UtcDateTime.Date
+          while ($cursor -le $lastUtcDate) {
+            $fetchDates.Add($cursor.ToString("yyyy-MM-dd"))
+            $cursor = $cursor.AddDays(1)
           }
 
-          $events = @($response.events)
+          $fixtures = New-Object System.Collections.Generic.List[object]
+          $seen = @{}
+
+          foreach ($date in $fetchDates) {
+            $offset = 0
+            do {
+              $uri = "https://api.goal-api.com/v1/fixtures/date/${date}?limit=100&offset=$offset"
+              $params = @{
+                Uri = $uri
+                Headers = @{
+                  Authorization = "Bearer $env:GOAL_API_KEY"
+                  Accept = "application/json"
+                }
+                TimeoutSec = 30
+              }
+              $response = Invoke-RestMethod @params
+
+              if (-not $response.success -or -not ($response.PSObject.Properties.Name -contains "data")) {
+                throw "GOAL API returned an invalid fixtures payload for $date"
+              }
+
+              foreach ($fixture in @($response.data)) {
+                $externalId = [string]$fixture.apiId
+                if ([string]::IsNullOrWhiteSpace($externalId)) {
+                  $externalId = [string]$fixture.id
+                }
+                if ([string]::IsNullOrWhiteSpace($externalId) -or $seen.ContainsKey($externalId)) {
+                  continue
+                }
+                $seen[$externalId] = $true
+                $fixtures.Add($fixture)
+              }
+
+              $hasMore = $false
+              $pageLimit = 100
+              if ($null -ne $response.pagination) {
+                $hasMore = [bool]$response.pagination.hasMore
+                if ([int]$response.pagination.limit -gt 0) {
+                  $pageLimit = [int]$response.pagination.limit
+                }
+              }
+              $offset += $pageLimit
+            } while ($hasMore)
+          }
+
+          $events = @($fixtures | Where-Object {
+            $kickoff = [DateTimeOffset]::MinValue
+            [DateTimeOffset]::TryParse([string]$_.kickoffUtc, [ref]$kickoff) -and
+              $kickoff -ge $windowStart -and $kickoff -lt $windowEnd
+          })
+
           if ($events.Count -eq 0) {
-            throw "ESPN returned zero football events for the requested range"
+            throw "GOAL API returned zero fixtures inside the Costa Rica snapshot window"
           }
 
-          Write-Output "GLOBAL_FETCH provider=ESPN from=$($dates[0]) to=$($dates[2]) events=$($events.Count)"
+          Write-Output "GLOBAL_FETCH provider=GOAL_API from=$($dates[0]) to=$($dates[2]) utcDates=$($fetchDates.Count) fixtures=$($events.Count)"
 
-          $payloadObject = [ordered]@{
-            source = "ESPN"
+          [ordered]@{
+            source = "GOAL API"
             dates = @($dates)
             events = @($events)
-          }
-          $payloadObject |
+          } |
             ConvertTo-Json -Depth 100 -Compress |
             Set-Content -Path "global-fixtures.json" -Encoding utf8NoBOM
 
@@ -87,5 +140,5 @@ jobs:
           }
           $result = Invoke-RestMethod @ingestParams
 
-          Write-Output "GLOBAL_INGEST_OK provider=ESPN"
+          Write-Output "GLOBAL_INGEST_OK provider=GOAL_API accepted=$($result.accepted)"
           $result | ConvertTo-Json -Depth 20 -Compress
