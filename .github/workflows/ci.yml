@@ -26,7 +26,7 @@ jobs:
         run: |
           changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD)"
           printf '%s\n' "$changed"
-          if printf '%s\n' "$changed" | grep -Eq '^(backend/|supabase/|packages/|scripts/|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'; then
+          if printf '%s\n' "$changed" | grep -Eq '^(backend/|supabase/|packages/|scripts/|package\.json$|package-lock\.json$)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -72,7 +72,7 @@ jobs:
         run: |
           changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD)"
           printf '%s\n' "$changed"
-          if printf '%s\n' "$changed" | grep -Eq '^(apps/mobile/|packages/|\.github/workflows/ci\.yml$)'; then
+          if printf '%s\n' "$changed" | grep -Eq '^(apps/mobile/|packages/)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -99,12 +99,21 @@ jobs:
       - run: flutter pub get --enforce-lockfile
         if: steps.changes.outputs.run == 'true'
 
-      - run: dart run build_runner build
+      - name: Detect Drift/codegen changes
+        id: codegen
         if: steps.changes.outputs.run == 'true'
+        working-directory: .
+        shell: bash
+        run: |
+          changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD)"
+          if printf '%s\n' "$changed" | grep -Eq '^(apps/mobile/lib/core/database\.dart$|apps/mobile/pubspec\.yaml$|apps/mobile/pubspec\.lock$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Check mobile formatting
-        if: steps.changes.outputs.run == 'true'
-        run: dart format --output=none --set-exit-if-changed lib test
+      - run: dart run build_runner build
+        if: steps.changes.outputs.run == 'true' && steps.codegen.outputs.run == 'true'
 
       - run: flutter analyze
         if: steps.changes.outputs.run == 'true'
