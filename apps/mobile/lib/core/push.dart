@@ -18,6 +18,7 @@ class UserProfileSettings {
     this.displayName,
     this.languageCode = 'es',
     this.timezone = 'device',
+    this.hourFormat = 'system',
     this.notifyKickoff = true,
     this.notifyGoals = true,
     this.notifyFinal = true,
@@ -30,6 +31,7 @@ class UserProfileSettings {
   final String? displayName;
   final String languageCode;
   final String timezone;
+  final String hourFormat;
   final bool notifyKickoff;
   final bool notifyGoals;
   final bool notifyFinal;
@@ -43,6 +45,7 @@ class UserProfileSettings {
         displayName: _cleanOptional(json['displayName']),
         languageCode: _clean(json['languageCode'], 'es'),
         timezone: _clean(json['timezone'], 'device'),
+        hourFormat: _hourFormat(json['hourFormat']),
         notifyKickoff: _bool(json['notifyKickoff'], true),
         notifyGoals: _bool(json['notifyGoals'], true),
         notifyFinal: _bool(json['notifyFinal'], true),
@@ -65,10 +68,16 @@ class UserProfileSettings {
   static bool _bool(dynamic value, bool fallback) =>
       value is bool ? value : fallback;
 
+  static String _hourFormat(dynamic value) {
+    final format = value?.toString().trim() ?? '';
+    return const {'system', '12h', '24h'}.contains(format) ? format : 'system';
+  }
+
   Map<String, dynamic> toJson() => {
     'displayName': displayName,
     'languageCode': languageCode,
     'timezone': timezone,
+    'hourFormat': hourFormat,
     'notifyKickoff': notifyKickoff,
     'notifyGoals': notifyGoals,
     'notifyFinal': notifyFinal,
@@ -83,6 +92,7 @@ class UserProfileSettings {
     bool clearDisplayName = false,
     String? languageCode,
     String? timezone,
+    String? hourFormat,
     bool? notifyKickoff,
     bool? notifyGoals,
     bool? notifyFinal,
@@ -94,6 +104,7 @@ class UserProfileSettings {
     displayName: clearDisplayName ? null : (displayName ?? this.displayName),
     languageCode: languageCode ?? this.languageCode,
     timezone: timezone ?? this.timezone,
+    hourFormat: hourFormat ?? this.hourFormat,
     notifyKickoff: notifyKickoff ?? this.notifyKickoff,
     notifyGoals: notifyGoals ?? this.notifyGoals,
     notifyFinal: notifyFinal ?? this.notifyFinal,
@@ -371,12 +382,13 @@ class PushService {
   Future<void> _syncProfileSettings(UserProfileSettings settings) async {
     if (!authenticated || disposed) return;
     await dio.post(
-      '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_profile',
+      '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_profile_v2',
       options: authHeaders,
       data: {
         'p_display_name': settings.displayName,
         'p_language_code': settings.languageCode,
         'p_timezone': settings.timezone,
+        'p_hour_format': settings.hourFormat,
         'p_notify_kickoff': settings.notifyKickoff,
         'p_notify_goals': settings.notifyGoals,
         'p_notify_final': settings.notifyFinal,
@@ -564,4 +576,8 @@ final pushServiceProvider = Provider<PushService>((ref) {
   ref.onDispose(service.dispose);
   unawaited(service.restore());
   return service;
+});
+
+final profileSettingsProvider = FutureProvider<UserProfileSettings>((ref) async {
+  return ref.watch(pushServiceProvider).loadProfileSettings();
 });
