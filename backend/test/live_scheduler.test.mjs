@@ -215,3 +215,49 @@ test('Match Center detail is queued once, cached, and not refetched while fresh'
   assert.equal(second.reason,'no_detail_due');
  } finally {await db.close();}
 });
+
+
+test('GOAL quota priority preserves LIVE before detail and catalog work',async()=>{
+ const db=await openDatabase();
+ try {
+  const ids=await seedBetaMatch(db,{offsetMinutes:-15,status:'LIVE'});
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','match','goal-quota-match',$1)",
+   [ids.match],
+  );
+  await db.query('select public.futbeat_request_match_detail($1)',[ids.match]);
+  await db.query(
+   "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining) values('goal_api','global-ingest','test',now()-interval '10 minutes',now()-interval '10 minutes','SUCCEEDED',200)"
+  );
+
+  const catalog=(await db.query(
+   'select public.futbeat_goal_low_priority_plan(350) value'
+  )).rows[0].value;
+  assert.equal(catalog.allowed,false);
+  assert.equal(catalog.reason,'provider_remaining_reserve');
+  assert.equal(catalog.reserve,350);
+
+  const detail=(await db.query(
+   "select public.futbeat_reserve_match_detail_call('test') value"
+  )).rows[0].value;
+  assert.equal(detail.allowed,false);
+  assert.equal(detail.reason,'provider_remaining_reserve');
+  assert.equal(detail.reserve,220);
+
+  const live=(await db.query(
+   "select public.futbeat_reserve_goal_live_call('test') value"
+  )).rows[0].value;
+  assert.equal(live.allowed,true);
+  assert.equal(live.reserve,20);
+ } finally {await db.close();}
+});
+
+test('global catalog workflow uses only its three-hour schedule and low-priority guard',async()=>{
+ const workflow=await readFile(new URL('../../.github/workflows/global-fixtures.yml',import.meta.url),'utf8');
+ assert.match(workflow,/cron: '17 \*\/3 \* \* \*'/);
+ assert.doesNotMatch(workflow,/cron: '\*\/5 \* \* \*'/);
+ assert.match(workflow,/action = "global-quota-plan"/);
+ assert.match(workflow,/\$quotaReserve = 350/);
+ assert.match(workflow,/\$squadReserve = 350/);
+ assert.match(workflow,/\$calendarRequestBudget = 180/);
+});
