@@ -1,7 +1,10 @@
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.1.0";
 import { normalizeSofaScoreFixtures } from "../../../backend/providers/sofascore.mjs";
 import { normalizeEspnFixtures } from "../../../backend/providers/espn.mjs";
-import { normalizeGoalApiFixtures } from "../../../backend/providers/goal_api.mjs";
+import {
+  collectGoalApiBaseIdentities,
+  normalizeGoalApiFixtures,
+} from "../../../backend/providers/goal_api.mjs";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -15,12 +18,16 @@ const githubJwks = createRemoteJWKSet(
   new URL("https://token.actions.githubusercontent.com/.well-known/jwks"),
 );
 
-const rpc = async (name: string, body: unknown = {}) => {
+const rpc = async (
+  name: string,
+  body: unknown = {},
+  timeoutMs = 20000,
+) => {
   const response = await fetch(`${url}/rest/v1/rpc/${name}`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const text = await response.text();
   if (!response.ok) {
@@ -85,6 +92,78 @@ function withinCostaRicaWindow(
   return instant >= start && instant < end;
 }
 
+const entityKey = (kind: string, external: string) => `${kind}:${external}`;
+
+function addResolvedRows(
+  target: Map<string, string>,
+  rows: unknown,
+) {
+  if (!Array.isArray(rows)) throw new Error("Invalid batch resolver response");
+
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new Error("Invalid batch resolver row");
+    }
+    const item = row as Record<string, unknown>;
+    const kind = String(item.entity_kind ?? "");
+    const external = String(item.external_id ?? "");
+    const canonical = String(item.canonical_id ?? "");
+    if (!kind || !external || !canonical) {
+      throw new Error("Incomplete batch resolver row");
+    }
+    target.set(entityKey(kind, external), canonical);
+  }
+}
+
+function localResolver(resolved: Map<string, string>) {
+  return async (kind: string, external: string) => {
+    const canonical = resolved.get(entityKey(kind, external));
+    if (!canonical) {
+      throw new Error(`Missing canonical identity for ${kind}:${external}`);
+    }
+    return canonical;
+  };
+}
+
+function mergeById(...lists: unknown[]) {
+  const merged = new Map<string, Record<string, unknown>>();
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const row = item as Record<string, unknown>;
+      const id = String(row.id ?? "");
+      if (id) merged.set(id, row);
+    }
+  }
+  return [...merged.values()];
+}
+
+async function resolveIdentityItems(
+  provider: string,
+  items: Array<Record<string, unknown>>,
+  target: Map<string, string>,
+) {
+  const chunkSize = 800;
+  for (let offset = 0; offset < items.length; offset += chunkSize) {
+    const chunk = items.slice(offset, offset + chunkSize);
+    const rows = await rpc(
+      "futbeat_resolve_global_entities",
+      {
+        p_provider: provider,
+        p_items: chunk,
+      },
+      60000,
+    );
+    if (!Array.isArray(rows) || rows.length !== chunk.length) {
+      throw new Error(
+        `Incomplete batch resolver response: ${Array.isArray(rows) ? rows.length : 0}/${chunk.length}`,
+      );
+    }
+    addResolvedRows(target, rows);
+  }
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
 
@@ -99,9 +178,15 @@ Deno.serve(async (request) => {
   }
 
   let input: {
+    action?: string;
     source?: string;
+    mode?: string;
     dates?: unknown[];
+    coverage?: unknown[];
     events?: unknown[];
+    fromDate?: string;
+    toDate?: string;
+    limit?: number;
   };
   try {
     input = await request.json();
@@ -109,19 +194,68 @@ Deno.serve(async (request) => {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  if (input.action === "calendar-plan") {
+    if (
+      !validDate(input.fromDate) ||
+      !validDate(input.toDate) ||
+      !Number.isInteger(input.limit) ||
+      Number(input.limit) < 1 ||
+      Number(input.limit) > 90
+    ) {
+      return Response.json({ error: "Invalid calendar plan request" }, {
+        status: 400,
+      });
+    }
+
+    try {
+      const dates = await rpc("futbeat_calendar_missing_provider_dates", {
+        p_provider: "goal_api",
+        p_from_date: input.fromDate,
+        p_to_date: input.toDate,
+        p_limit: input.limit,
+      });
+      return Response.json({
+        status: "ok",
+        dates: Array.isArray(dates) ? dates : [],
+      });
+    } catch (error) {
+      console.error(
+        "calendar plan failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return Response.json({ error: "Calendar plan unavailable" }, {
+        status: 502,
+      });
+    }
+  }
+
+  const mode = input.mode === "calendar" ? "calendar" : "hot";
+  const validDateCount = Array.isArray(input.dates) &&
+    input.dates.every(validDate) &&
+    (
+      (mode === "hot" && input.dates.length === 3) ||
+      (mode === "calendar" && input.dates.length >= 1 && input.dates.length <= 31)
+    );
+
   if (
     !["SofaScore", "ESPN", "GOAL API"].includes(input.source ?? "") ||
-    !Array.isArray(input.dates) ||
-    input.dates.length !== 3 ||
-    !input.dates.every(validDate) ||
-    !Array.isArray(input.events)
+    !validDateCount ||
+    !Array.isArray(input.events) ||
+    (mode === "calendar" && input.source !== "GOAL API") ||
+    (
+      mode === "calendar" &&
+      (
+        !Array.isArray(input.coverage) ||
+        input.coverage.length !== input.dates!.length
+      )
+    )
   ) {
     return Response.json({ error: "Invalid global fixture payload" }, {
       status: 400,
     });
   }
 
-  const dates = [...input.dates].sort() as string[];
+  const dates = [...input.dates!].sort() as string[];
   let events = input.events.filter(
     (event): event is Record<string, unknown> =>
       Boolean(event && typeof event === "object" && !Array.isArray(event)),
@@ -130,8 +264,20 @@ Deno.serve(async (request) => {
     return Response.json({ error: "Invalid event item" }, { status: 400 });
   }
 
-  if (input.source === "GOAL API") {
+  if (input.source === "GOAL API" && mode === "hot") {
     events = events.filter((event) => withinCostaRicaWindow(event, dates));
+  }
+
+  const coverage = mode === "calendar"
+    ? (input.coverage ?? []).filter(
+      (item): item is Record<string, unknown> =>
+        Boolean(item && typeof item === "object" && !Array.isArray(item)),
+    )
+    : [];
+  if (mode === "calendar" && coverage.length !== input.coverage!.length) {
+    return Response.json({ error: "Invalid calendar coverage item" }, {
+      status: 400,
+    });
   }
 
   const provider = input.source === "ESPN"
@@ -142,9 +288,9 @@ Deno.serve(async (request) => {
 
   const reservation = await rpc("futbeat_reserve_provider_call", {
     p_provider: provider,
-    p_call_kind: "global-ingest",
+    p_call_kind: mode === "calendar" ? "calendar-ingest" : "global-ingest",
     p_trigger_source: "github-actions",
-    p_daily_limit: 24,
+    p_daily_limit: mode === "calendar" ? 64 : 24,
     p_min_interval_seconds: 0,
     p_force: true,
   });
@@ -155,45 +301,157 @@ Deno.serve(async (request) => {
   const receivedAt = new Date().toISOString();
   const started = performance.now();
   let stage = "read-current";
+  let resolvedBase = 0;
+  let resolvedMatches = 0;
 
   try {
-    const existing = await rpc("futbeat_read_snapshot");
+    const baseExisting = await rpc("futbeat_read_snapshot");
+    let existing = baseExisting;
 
-    stage = "normalize";
-    const resolve = (
-      kind: string,
-      external: string,
-      identity: { name?: string; country?: string; shortName?: string },
-    ) =>
-      rpc("futbeat_resolve_global_entity", {
-        p_provider: provider,
-        p_kind: kind,
-        p_external: external,
-        p_name: identity.name ?? "",
-        p_country: identity.country ?? "",
-        p_short_name: identity.shortName ?? "",
+    if (mode === "calendar") {
+      const rangeExisting = await rpc("futbeat_read_calendar_range", {
+        p_from_date: dates[0],
+        p_to_date: dates[dates.length - 1],
+        p_timezone: "UTC",
       });
+      existing = {
+        ...baseExisting,
+        competitions: mergeById(
+          baseExisting?.competitions,
+          rangeExisting?.competitions,
+        ),
+        teams: mergeById(baseExisting?.teams, rangeExisting?.teams),
+        matches: mergeById(baseExisting?.matches, rangeExisting?.matches),
+      };
+    }
 
-    const snapshot = input.source === "ESPN"
-      ? await normalizeEspnFixtures(events, resolve, receivedAt, existing)
-      : input.source === "GOAL API"
-      ? await normalizeGoalApiFixtures(events, resolve, receivedAt, existing)
-      : await normalizeSofaScoreFixtures(events, resolve, receivedAt, existing);
+    let snapshot;
+    if (input.source === "GOAL API") {
+      const resolved = new Map<string, string>();
+
+      stage = "resolve-base";
+      const baseIdentities = collectGoalApiBaseIdentities(events);
+      await resolveIdentityItems(
+        provider,
+        baseIdentities,
+        resolved,
+      );
+      resolvedBase = resolved.size;
+
+      stage = "discover-matches";
+      const pendingMatches = new Map<string, {
+        kind: string;
+        external: string;
+        name: string;
+        country: string;
+        shortName: string;
+      }>();
+      const temporaryIds = new Map<string, string>();
+      let sequence = 0;
+
+      const discoveryResolver = async (
+        kind: string,
+        external: string,
+        identity: { name?: string; country?: string; shortName?: string },
+      ) => {
+        if (kind !== "match") {
+          const canonical = resolved.get(entityKey(kind, external));
+          if (!canonical) {
+            throw new Error(`Missing base canonical identity for ${kind}:${external}`);
+          }
+          return canonical;
+        }
+
+        const key = entityKey(kind, external);
+        if (!pendingMatches.has(key)) {
+          pendingMatches.set(key, {
+            kind,
+            external,
+            name: identity.name ?? "",
+            country: identity.country ?? "",
+            shortName: identity.shortName ?? "",
+          });
+        }
+        if (!temporaryIds.has(key)) {
+          sequence += 1;
+          temporaryIds.set(key, `fb_match_pending_${sequence}`);
+        }
+        return temporaryIds.get(key)!;
+      };
+
+      await normalizeGoalApiFixtures(
+        events,
+        discoveryResolver,
+        receivedAt,
+        existing,
+      );
+
+      stage = "resolve-matches";
+      const matchIdentities = [...pendingMatches.values()];
+      await resolveIdentityItems(
+        provider,
+        matchIdentities,
+        resolved,
+      );
+      resolvedMatches = matchIdentities.length;
+
+      stage = "normalize";
+      snapshot = await normalizeGoalApiFixtures(
+        events,
+        localResolver(resolved),
+        receivedAt,
+        existing,
+      );
+    } else {
+      stage = "normalize";
+      const resolve = (
+        kind: string,
+        external: string,
+        identity: { name?: string; country?: string; shortName?: string },
+      ) =>
+        rpc("futbeat_resolve_global_entity", {
+          p_provider: provider,
+          p_kind: kind,
+          p_external: external,
+          p_name: identity.name ?? "",
+          p_country: identity.country ?? "",
+          p_short_name: identity.shortName ?? "",
+        });
+
+      snapshot = input.source === "ESPN"
+        ? await normalizeEspnFixtures(events, resolve, receivedAt, existing)
+        : await normalizeSofaScoreFixtures(events, resolve, receivedAt, existing);
+    }
 
     stage = "store";
-    const result = await rpc("futbeat_store_global_fixture_window", {
-      p_job_id: crypto.randomUUID(),
-      p_received_at: receivedAt,
-      p_from_date: dates[0],
-      p_to_date: dates[2],
-      p_raw: {
-        provider: input.source,
-        transport: "GitHub Actions OIDC",
-        dates,
-        events,
-      },
-      p_snapshot: snapshot,
-    });
+    const result = mode === "calendar"
+      ? await rpc(
+        "futbeat_store_calendar_range",
+        {
+          p_provider: provider,
+          p_received_at: receivedAt,
+          p_coverage: coverage,
+          p_snapshot: snapshot,
+        },
+        60000,
+      )
+      : await rpc(
+        "futbeat_store_global_fixture_window",
+        {
+          p_job_id: crypto.randomUUID(),
+          p_received_at: receivedAt,
+          p_from_date: dates[0],
+          p_to_date: dates[2],
+          p_raw: {
+            provider: input.source,
+            transport: "GitHub Actions OIDC",
+            dates,
+            events,
+          },
+          p_snapshot: snapshot,
+        },
+        60000,
+      );
 
     const durationMs = Math.round(performance.now() - started);
     await rpc("futbeat_complete_provider_call", {
@@ -210,8 +468,11 @@ Deno.serve(async (request) => {
         accepted: snapshot.matches.length,
         competitions: snapshot.competitions.length,
         teams: snapshot.teams.length,
+        resolvedBase,
+        resolvedMatches,
         transport: "github-actions-oidc",
         provider: input.source,
+        mode,
       },
     });
 
@@ -222,6 +483,9 @@ Deno.serve(async (request) => {
       accepted: snapshot.matches.length,
       competitions: snapshot.competitions.length,
       teams: snapshot.teams.length,
+      resolvedBase,
+      resolvedMatches,
+      mode,
       result,
     });
   } catch (error) {
@@ -237,7 +501,10 @@ Deno.serve(async (request) => {
         stage,
         detail,
         durationMs: Math.round(performance.now() - started),
+        resolvedBase,
+        resolvedMatches,
         transport: "github-actions-oidc",
+        mode,
       },
     });
     console.error("global ingest failed", stage, detail);

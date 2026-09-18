@@ -40,6 +40,17 @@ String _compactDate(DateTime value) {
   return '${value.day} ${months[value.month - 1]}';
 }
 
+String _dateContextLabel(DateTime value, DateTime today) {
+  final date = DateUtils.dateOnly(value);
+  final anchor = DateUtils.dateOnly(today);
+  final difference = date.difference(anchor).inDays;
+  if (difference == -1) return 'AYER';
+  if (difference == 0) return 'HOY';
+  if (difference == 1) return 'MAÑANA';
+  const weekdays = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM'];
+  return weekdays[date.weekday - 1];
+}
+
 /// Orders visible competitions without ever filtering the daily catalog.
 ///
 /// Explicit follows stay first. The remaining competitions are ranked by
@@ -119,8 +130,32 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
     if (picked != null && mounted) setState(() => date = picked);
   }
 
+  Widget _centeredDateOption(
+    int offset,
+    DateTime selected,
+    DateTime today,
+  ) {
+    final candidate = DateUtils.dateOnly(
+      selected.add(Duration(days: offset)),
+    );
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: _DateOption(
+          label: _dateContextLabel(candidate, today),
+          date: candidate,
+          selected: offset == 0,
+          onTap: () => setState(() => date = candidate),
+        ),
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    final requestDate = DateUtils.dateOnly(date ?? costaRicaNow());
+
+    return Scaffold(
         appBar: AppBar(
           title: const Row(
             children: [
@@ -141,12 +176,13 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             ),
           ],
         ),
-        body: DataView(
+        body: CalendarDataView(
+          date: requestDate,
           builder: (data) {
             final anchor = data.demo
                 ? DateTime(2026, 9, 15)
                 : DateUtils.dateOnly(costaRicaNow());
-            final selected = date ?? anchor;
+            final selected = DateUtils.dateOnly(date ?? anchor);
             final follows =
                 ref.watch(followsProvider).asData?.value ?? <String>{};
             final temporaryInterests =
@@ -193,11 +229,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
 
             return RefreshIndicator(
               onRefresh: () async {
-                ref.invalidate(snapshotProvider);
+                ref.invalidate(calendarSnapshotProvider(selected));
                 try {
-                  await ref.read(snapshotProvider.future);
+                  await ref.read(calendarSnapshotProvider(selected).future);
                 } catch (_) {
-                  // DataView exposes the provider error and retry action.
+                  // CalendarDataView exposes the provider error and retry action.
                 }
               },
               child: ListView(
@@ -219,39 +255,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                   if (!data.demo) const SizedBox(height: 16),
                   Row(
                     children: [
-                      for (final (offset, label) in [
-                        (-1, 'AYER'),
-                        (0, 'HOY'),
-                        (1, 'MAÑANA'),
-                      ])
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: _DateOption(
-                              label: label,
-                              date: DateTime(
-                                anchor.year,
-                                anchor.month,
-                                anchor.day + offset,
-                              ),
-                              selected: DateUtils.isSameDay(
-                                selected,
-                                DateTime(
-                                  anchor.year,
-                                  anchor.month,
-                                  anchor.day + offset,
-                                ),
-                              ),
-                              onTap: () => setState(
-                                () => date = DateTime(
-                                  anchor.year,
-                                  anchor.month,
-                                  anchor.day + offset,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
+                      for (final offset in [-1, 0, 1])
+                        _centeredDateOption(offset, selected, anchor),
                       SizedBox(
                         width: 46,
                         height: 64,
@@ -296,29 +301,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                   const SizedBox(height: 16),
                   if (games.isEmpty)
                     const EmptyState(
-                      'Sin partidos para esta selección',
-                      'Prueba otro día o cambia el filtro.',
-                    ),
-                  if (games.isEmpty && !data.demo && data.matches.isNotEmpty)
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final available
-                            in (data.matches
-                                .map((m) => DateUtils.dateOnly(m.startTime))
-                                .toSet()
-                                .toList()
-                              ..sort()))
-                          ActionChip(
-                            label: Text(
-                              '${available.day}/${available.month}/${available.year}',
-                            ),
-                            onPressed: () => setState(() {
-                              date = available;
-                              filter = 'Todos';
-                            }),
-                          ),
-                      ],
+                      'No hay partidos este día',
+                      'Prueba otra fecha o cambia el filtro.',
                     ),
                   if (followedGames.isNotEmpty) ...[
                     _FeedHeading(
@@ -380,6 +364,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           },
         ),
       );
+  }
 }
 
 class _DateOption extends StatelessWidget {

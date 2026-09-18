@@ -12,6 +12,9 @@ class _Repository implements FootballRepository {
   final Snapshot snapshot;
   @override
   Future<Snapshot> load() async => snapshot;
+
+  @override
+  Future<Snapshot> loadDate(DateTime date) async => snapshot;
 }
 
 Snapshot _snapshot({
@@ -251,6 +254,67 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('date strip recenters indefinitely and keeps calendar access', (
+    tester,
+  ) async {
+    final data = _snapshot();
+    tester.view.physicalSize = const Size(390, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(_Repository(data)),
+          liveMatchUpdatesProvider.overrideWith(
+            (ref) => Stream.value(const <String, LiveMatchUpdate>{}),
+          ),
+          preferenceProvider.overrideWith(
+            (ref) => Stream.value(
+              const CountryPreference(
+                detectedCountry: 'CR',
+                selectedCountry: null,
+                bootstrapDismissed: true,
+              ),
+            ),
+          ),
+          followsProvider.overrideWith(
+            (ref) => Stream.value(<String>{}),
+          ),
+          temporaryInterestsProvider.overrideWith(
+            (ref) => Stream.value(<String>{}),
+          ),
+        ],
+        child: const MaterialApp(home: MatchesScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final today = DateUtils.dateOnly(costaRicaNow());
+    String compact(DateTime value) {
+      const months = [
+        'ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN',
+        'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC',
+      ];
+      return '${value.day} ${months[value.month - 1]}';
+    }
+
+    final todayFinder = find.text(compact(today));
+    final initialCenter = tester.getCenter(todayFinder).dx;
+
+    await tester.tap(find.text('MAÑANA'));
+    await tester.pumpAndSettle();
+
+    expect(tester.getCenter(todayFinder).dx, lessThan(initialCenter));
+    expect(
+      find.text(compact(today.add(const Duration(days: 2)))),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('a followed competition gets its own block before all matches', (
     tester,

@@ -20,7 +20,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
     steps:
@@ -32,55 +32,61 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:GOAL_API_KEY)) {
             throw "GOAL_API_KEY repository secret is required"
           }
+          Write-Output "::add-mask::$env:GOAL_API_KEY"
 
-          $crNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(-6))
-          $dates = @(-1, 0, 1) | ForEach-Object {
-            $crNow.Date.AddDays($_).ToString("yyyy-MM-dd")
+          function Get-GitHubOidcToken {
+            $oidcUrl = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=futbeat-global-ingest"
+            $oidc = Invoke-RestMethod -Uri $oidcUrl -Headers @{
+              Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+            } -TimeoutSec 15
+            $token = [string]$oidc.value
+            if ([string]::IsNullOrWhiteSpace($token)) {
+              throw "GitHub OIDC token was not issued"
+            }
+            Write-Host "::add-mask::$token"
+            return $token
           }
 
-          # A Costa Rica calendar day crosses two UTC dates. Fetch the four UTC
-          # dates that fully cover the three-day CR snapshot window, then trim.
-          $windowStart = [DateTimeOffset]::Parse("$($dates[0])T00:00:00-06:00")
-          $windowEnd = [DateTimeOffset]::Parse("$($crNow.Date.AddDays(2).ToString("yyyy-MM-dd"))T00:00:00-06:00")
-          $fetchDates = New-Object System.Collections.Generic.List[string]
-          $cursor = $windowStart.UtcDateTime.Date
-          $lastUtcDate = $windowEnd.UtcDateTime.Date
-          while ($cursor -le $lastUtcDate) {
-            $fetchDates.Add($cursor.ToString("yyyy-MM-dd"))
-            $cursor = $cursor.AddDays(1)
+          function Invoke-FutBeatGlobalEndpoint([object]$payload) {
+            $token = Get-GitHubOidcToken
+            $body = $payload | ConvertTo-Json -Depth 100 -Compress
+            return Invoke-RestMethod -Uri "https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-global-ingest" `
+              -Method Post `
+              -Headers @{ Authorization = "Bearer $token" } `
+              -ContentType "application/json" `
+              -Body $body `
+              -TimeoutSec 90
           }
 
-          $fixtures = New-Object System.Collections.Generic.List[object]
-          $seen = @{}
-
-          foreach ($date in $fetchDates) {
+          function Get-GoalApiDate([string]$date) {
+            $items = New-Object System.Collections.Generic.List[object]
             $offset = 0
+            $remaining = $null
+            $requests = 0
+
             do {
               $uri = "https://api.goal-api.com/v1/fixtures/date/${date}?limit=100&offset=$offset"
-              $params = @{
-                Uri = $uri
-                Headers = @{
-                  Authorization = "Bearer $env:GOAL_API_KEY"
-                  Accept = "application/json"
-                }
-                TimeoutSec = 30
-              }
-              $response = Invoke-RestMethod @params
+              $responseHeaders = $null
+              $response = Invoke-RestMethod -Uri $uri -Headers @{
+                Authorization = "Bearer $env:GOAL_API_KEY"
+                Accept = "application/json"
+              } -ResponseHeadersVariable responseHeaders -TimeoutSec 30
+
+              $requests += 1
 
               if (-not $response.success -or -not ($response.PSObject.Properties.Name -contains "data")) {
                 throw "GOAL API returned an invalid fixtures payload for $date"
               }
 
               foreach ($fixture in @($response.data)) {
-                $externalId = [string]$fixture.apiId
-                if ([string]::IsNullOrWhiteSpace($externalId)) {
-                  $externalId = [string]$fixture.id
+                [void]$items.Add($fixture)
+              }
+
+              if ($null -ne $responseHeaders) {
+                $rawRemaining = @($responseHeaders["X-RateLimit-Remaining"])[0]
+                if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
+                  $remaining = [int]$rawRemaining
                 }
-                if ([string]::IsNullOrWhiteSpace($externalId) -or $seen.ContainsKey($externalId)) {
-                  continue
-                }
-                $seen[$externalId] = $true
-                $fixtures.Add($fixture)
               }
 
               $hasMore = $false
@@ -93,6 +99,47 @@ jobs:
               }
               $offset += $pageLimit
             } while ($hasMore)
+
+            return [pscustomobject]@{
+              Date = $date
+              Items = @($items)
+              Count = $items.Count
+              Remaining = $remaining
+              Requests = $requests
+            }
+          }
+
+          # Hot window: yesterday / today / tomorrow in Costa Rica.
+          $crNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(-6))
+          $dates = @(-1, 0, 1) | ForEach-Object {
+            $crNow.Date.AddDays($_).ToString("yyyy-MM-dd")
+          }
+          $windowStart = [DateTimeOffset]::Parse("$($dates[0])T00:00:00-06:00")
+          $windowEnd = [DateTimeOffset]::Parse("$($crNow.Date.AddDays(2).ToString("yyyy-MM-dd"))T00:00:00-06:00")
+
+          $fetchDates = New-Object System.Collections.Generic.List[string]
+          $cursor = $windowStart.UtcDateTime.Date
+          $lastUtcDate = $windowEnd.UtcDateTime.Date
+          while ($cursor -le $lastUtcDate) {
+            [void]$fetchDates.Add($cursor.ToString("yyyy-MM-dd"))
+            $cursor = $cursor.AddDays(1)
+          }
+
+          $fixtures = New-Object System.Collections.Generic.List[object]
+          $seen = @{}
+          foreach ($date in $fetchDates) {
+            $page = Get-GoalApiDate $date
+            foreach ($fixture in @($page.Items)) {
+              $externalId = [string]$fixture.apiId
+              if ([string]::IsNullOrWhiteSpace($externalId)) {
+                $externalId = [string]$fixture.id
+              }
+              if ([string]::IsNullOrWhiteSpace($externalId) -or $seen.ContainsKey($externalId)) {
+                continue
+              }
+              $seen[$externalId] = $true
+              [void]$fixtures.Add($fixture)
+            }
           }
 
           $events = @($fixtures | Where-Object {
@@ -107,38 +154,116 @@ jobs:
 
           Write-Output "GLOBAL_FETCH provider=GOAL_API from=$($dates[0]) to=$($dates[2]) utcDates=$($fetchDates.Count) fixtures=$($events.Count)"
 
-          [ordered]@{
+          $hotResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             source = "GOAL API"
+            mode = "hot"
             dates = @($dates)
             events = @($events)
-          } |
-            ConvertTo-Json -Depth 100 -Compress |
-            Set-Content -Path "global-fixtures.json" -Encoding utf8NoBOM
+          })
 
-          $oidcUrl = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=futbeat-global-ingest"
-          $oidcParams = @{
-            Uri = $oidcUrl
-            Headers = @{ Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" }
-            TimeoutSec = 15
+          Write-Output "GLOBAL_INGEST_OK provider=GOAL_API accepted=$($hotResult.accepted)"
+
+          # Do not create another scheduled Action. Once per day, the existing
+          # 09:17 UTC run also expands the cold calendar. Manual runs expand too.
+          $utcHour = [DateTime]::UtcNow.Hour
+          $shouldExpand = $env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -or $utcHour -eq 9
+          if (-not $shouldExpand) {
+            Write-Output "CALENDAR_EXPAND_SKIPPED reason=not_daily_window"
+            exit 0
           }
-          $oidc = Invoke-RestMethod @oidcParams
 
-          $token = [string]$oidc.value
-          if ([string]::IsNullOrWhiteSpace($token)) {
-            throw "GitHub OIDC token was not issued"
+          $todayUtc = [DateTime]::UtcNow.Date
+          $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+            action = "calendar-plan"
+            fromDate = $todayUtc.AddDays(-90).ToString("yyyy-MM-dd")
+            toDate = $todayUtc.AddDays(180).ToString("yyyy-MM-dd")
+            limit = 45
+          })
+          $planDates = @($plan.dates)
+
+          if ($planDates.Count -eq 0) {
+            Write-Output "CALENDAR_EXPAND_OK dates=0 reason=coverage_fresh"
+            exit 0
           }
-          Write-Output "::add-mask::$token"
 
-          $body = Get-Content -Raw -Path "global-fixtures.json"
-          $ingestParams = @{
-            Uri = "https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-global-ingest"
-            Method = "Post"
-            Headers = @{ Authorization = "Bearer $token" }
-            ContentType = "application/json"
-            Body = $body
-            TimeoutSec = 90
+          $quotaReserve = 180
+          $calendarRequestBudget = 500
+          $calendarRequestsUsed = 0
+          $batchSize = 3
+          $batchDates = New-Object System.Collections.Generic.List[string]
+          $batchEvents = New-Object System.Collections.Generic.List[object]
+          $batchCoverage = New-Object System.Collections.Generic.List[object]
+          $batchSeen = @{}
+          $expandedDates = 0
+          $stopForQuota = $false
+
+          foreach ($date in $planDates) {
+            if ($calendarRequestsUsed -ge $calendarRequestBudget) {
+              Write-Output "CALENDAR_EXPAND_STOP reason=request_budget budget=$calendarRequestBudget"
+              break
+            }
+
+            $page = Get-GoalApiDate ([string]$date)
+            $calendarRequestsUsed += [int]$page.Requests
+            Write-Output "CALENDAR_FETCH date=$date fixtures=$($page.Count) remaining=$($page.Remaining) requests=$($page.Requests) used=$calendarRequestsUsed"
+
+            foreach ($fixture in @($page.Items)) {
+              $externalId = [string]$fixture.apiId
+              if ([string]::IsNullOrWhiteSpace($externalId)) {
+                $externalId = [string]$fixture.id
+              }
+              if ([string]::IsNullOrWhiteSpace($externalId) -or $batchSeen.ContainsKey($externalId)) {
+                continue
+              }
+              $batchSeen[$externalId] = $true
+              [void]$batchEvents.Add($fixture)
+            }
+
+            [void]$batchDates.Add([string]$date)
+            [void]$batchCoverage.Add([ordered]@{
+              date = [string]$date
+              count = [int]$page.Count
+            })
+            $expandedDates += 1
+
+            if (
+              ($null -ne $page.Remaining -and [int]$page.Remaining -le $quotaReserve) -or
+              $calendarRequestsUsed -ge $calendarRequestBudget
+            ) {
+              $stopForQuota = $true
+            }
+
+            if ($batchDates.Count -ge $batchSize -or $stopForQuota) {
+              $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+                source = "GOAL API"
+                mode = "calendar"
+                dates = @($batchDates)
+                coverage = @($batchCoverage)
+                events = @($batchEvents)
+              })
+              Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
+
+              $batchDates = New-Object System.Collections.Generic.List[string]
+              $batchEvents = New-Object System.Collections.Generic.List[object]
+              $batchCoverage = New-Object System.Collections.Generic.List[object]
+              $batchSeen = @{}
+
+              if ($stopForQuota) {
+                Write-Output "CALENDAR_EXPAND_STOP reason=quota_reserve reserve=$quotaReserve"
+                break
+              }
+            }
           }
-          $result = Invoke-RestMethod @ingestParams
 
-          Write-Output "GLOBAL_INGEST_OK provider=GOAL_API accepted=$($result.accepted)"
-          $result | ConvertTo-Json -Depth 20 -Compress
+          if ($batchDates.Count -gt 0) {
+            $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+              source = "GOAL API"
+              mode = "calendar"
+              dates = @($batchDates)
+              coverage = @($batchCoverage)
+              events = @($batchEvents)
+            })
+            Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
+          }
+
+          Write-Output "CALENDAR_EXPAND_OK planned=$($planDates.Count) fetched=$expandedDates requests=$calendarRequestsUsed"

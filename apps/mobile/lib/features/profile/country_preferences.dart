@@ -37,11 +37,9 @@ class CountryPreferencePanel extends ConsumerWidget {
       selectedCountry: value,
       bootstrapDismissed: compact ? true : current.bootstrapDismissed,
     );
-    if (PushService.configured) {
-      await ref
-          .read(pushServiceProvider)
-          .syncCountries(current.detectedCountry, value);
-    }
+    await ref
+        .read(pushServiceProvider)
+        .syncCountries(current.detectedCountry, value);
   }
 
   @override
