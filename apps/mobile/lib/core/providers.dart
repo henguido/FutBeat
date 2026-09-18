@@ -127,15 +127,12 @@ final entitySnapshotProvider =
     );
 
 final matchDetailProvider =
-    StreamProvider.autoDispose.family<MatchDetail, String>((ref, id) async* {
+    FutureProvider.autoDispose.family<MatchDetail, String>((ref, id) async {
       final repository = ref.watch(repositoryProvider);
-      while (true) {
-        try {
-          yield await repository.loadMatchDetail(id);
-        } catch (_) {
-          yield MatchDetail.empty(id);
-        }
-        await Future<void>.delayed(const Duration(seconds: 15));
+      try {
+        return await repository.loadMatchDetail(id);
+      } catch (_) {
+        return MatchDetail.empty(id);
       }
     });
 
