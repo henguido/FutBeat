@@ -153,11 +153,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const demoMode = bool.fromEnvironment('FUTBEAT_USE_DEMO');
-    final anchor = demoMode
-        ? DateTime(2026, 9, 15)
-        : DateUtils.dateOnly(costaRicaNow());
-    final selected = DateUtils.dateOnly(date ?? anchor);
+    final requestDate = DateUtils.dateOnly(date ?? costaRicaNow());
 
     return Scaffold(
         appBar: AppBar(
@@ -181,8 +177,12 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           ],
         ),
         body: CalendarDataView(
-          date: selected,
+          date: requestDate,
           builder: (data) {
+            final anchor = data.demo
+                ? DateTime(2026, 9, 15)
+                : DateUtils.dateOnly(costaRicaNow());
+            final selected = DateUtils.dateOnly(date ?? anchor);
             final follows =
                 ref.watch(followsProvider).asData?.value ?? <String>{};
             final temporaryInterests =
