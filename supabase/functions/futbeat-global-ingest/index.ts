@@ -65,10 +65,11 @@ async function authorize(request: Request) {
   const workflow = String(
     payload.workflow_ref ?? payload.job_workflow_ref ?? "",
   );
-  if (
-    workflow !==
-    "henguido/FutBeat/.github/workflows/global-fixtures.yml@refs/heads/main"
-  ) {
+  const allowedWorkflows = new Set([
+    "henguido/FutBeat/.github/workflows/global-fixtures.yml@refs/heads/main",
+    "henguido/FutBeat/.github/workflows/live-fixtures.yml@refs/heads/main",
+  ]);
+  if (!allowedWorkflows.has(workflow)) {
     throw new Error("Unexpected GitHub workflow");
   }
 }
