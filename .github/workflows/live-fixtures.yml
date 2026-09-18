@@ -1,0 +1,116 @@
+name: FutBeat live scores
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-fixtures.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: futbeat-live-fixtures
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
+    steps:
+      - name: Sync GOAL API live matches
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:GOAL_API_KEY)) {
+            throw "GOAL_API_KEY repository secret is required"
+          }
+          Write-Output "::add-mask::$env:GOAL_API_KEY"
+
+          function Get-GitHubOidcToken {
+            $oidcUrl = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=futbeat-global-ingest"
+            $oidc = Invoke-RestMethod -Uri $oidcUrl -Headers @{
+              Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+            } -TimeoutSec 15
+            $token = [string]$oidc.value
+            if ([string]::IsNullOrWhiteSpace($token)) {
+              throw "GitHub OIDC token was not issued"
+            }
+            Write-Host "::add-mask::$token"
+            return $token
+          }
+
+          function Invoke-FutBeatLiveEndpoint([object]$payload) {
+            $token = Get-GitHubOidcToken
+            $body = $payload | ConvertTo-Json -Depth 100 -Compress
+            return Invoke-RestMethod -Uri "https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-global-ingest" `
+              -Method Post `
+              -Headers @{ Authorization = "Bearer $token" } `
+              -ContentType "application/json" `
+              -Body $body `
+              -TimeoutSec 60
+          }
+
+          $plan = Invoke-FutBeatLiveEndpoint ([ordered]@{
+            action = "live-plan"
+          })
+
+          if ($plan.status -eq "skipped") {
+            Write-Output "GOAL_LIVE_SKIPPED reason=$($plan.reservation.reason)"
+            exit 0
+          }
+
+          $reservationId = [int]$plan.reservation.reservationId
+          $remaining = $null
+
+          try {
+            $responseHeaders = $null
+            $response = Invoke-RestMethod -Uri "https://api.goal-api.com/v1/fixtures/live" `
+              -Headers @{
+                Authorization = "Bearer $env:GOAL_API_KEY"
+                Accept = "application/json"
+              } `
+              -ResponseHeadersVariable responseHeaders `
+              -TimeoutSec 30
+
+            if (-not $response.success -or -not ($response.PSObject.Properties.Name -contains "data")) {
+              throw "GOAL API returned an invalid live fixtures payload"
+            }
+
+            if ($null -ne $responseHeaders) {
+              $rawRemaining = @($responseHeaders["X-RateLimit-Remaining"])[0]
+              if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
+                $remaining = [int]$rawRemaining
+              }
+            }
+
+            $events = @($response.data)
+            $result = Invoke-FutBeatLiveEndpoint ([ordered]@{
+              action = "live-ingest"
+              reservationId = $reservationId
+              providerRemaining = $remaining
+              events = $events
+            })
+
+            Write-Output "GOAL_LIVE_OK matches=$($result.liveMatches) remaining=$remaining"
+          } catch {
+            try {
+              Invoke-FutBeatLiveEndpoint ([ordered]@{
+                action = "live-fail"
+                reservationId = $reservationId
+                providerRemaining = $remaining
+                errorCode = "GOAL_LIVE_FETCH_FAILED"
+                httpStatus = $null
+              }) | Out-Null
+            } catch {
+              Write-Warning "GOAL_LIVE_FAILURE_RECORD_FAILED"
+            }
+            throw
+          }
