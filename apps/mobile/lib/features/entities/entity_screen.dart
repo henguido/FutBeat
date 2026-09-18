@@ -142,14 +142,6 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
           _ => null,
         };
         final team = teamId == null ? null : data.team(teamId);
-        final competitionId = type == 'competition'
-            ? id
-            : type == 'player'
-            ? team?.json['competitionId']?.toString()
-            : entity.json['competitionId']?.toString();
-        final competition = competitionId == null
-            ? null
-            : data.competition(competitionId);
         final matches =
             data.matches
                 .where(
@@ -160,6 +152,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                 )
                 .toList()
               ..sort((a, b) => a.startTime.compareTo(b.startTime));
+        final teamCompetitions = teamId == null
+            ? const <Entity>[]
+            : orderedTeamCompetitions(data, teamId);
+        final competitionId = type == 'competition'
+            ? id
+            : type == 'team'
+            ? teamCompetitions.firstOrNull?.id
+            : null;
         final tabs = type == 'player'
             ? ['Resumen', 'Partidos', 'Noticias', 'Transferencias']
             : [
@@ -222,13 +222,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                               'El equipo actual todavía no está publicado.',
                             ),
                         ] else if (type == 'team') ...[
-                          if (competition != null)
-                            EntityTile(competition, 'competition')
-                          else
+                          heading(context, 'Competiciones'),
+                          if (teamCompetitions.isEmpty)
                             const EmptyState(
-                              'Competición no disponible',
-                              'La competición de este equipo todavía no está publicada.',
+                              'Competiciones no disponibles',
+                              'Las competiciones aparecerán según los partidos publicados.',
                             ),
+                          for (final competition in teamCompetitions.take(3))
+                            EntityTile(competition, 'competition'),
                         ] else ...[
                           if ((entity.json['season']?.toString() ?? '').isNotEmpty)
                             Center(
@@ -296,9 +297,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                         ))
                           EntityTile(player, 'player'),
                       ] else if (tab == 'Equipos') ...[
-                        for (final team in data.teams.where(
-                          (t) => t.json['competitionId'] == id,
-                        ))
+                        for (final team in competitionTeams(data, id))
                           EntityTile(team, 'team'),
                       ] else if (tab == 'Noticias')
                         const EmptyState(
