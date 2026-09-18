@@ -140,7 +140,9 @@ function normalizeMatchDetail(raw: unknown) {
   return {
     matchId: cleanText(envelope.matchId),
     available: envelope.available === true,
-    pending: cleanText(envelope.detailLevel) !== 'full',
+    pending:
+      envelope.requestedAt != null &&
+      cleanText(envelope.detailLevel) !== 'full',
     detailLevel: cleanText(envelope.detailLevel) || 'none',
     fetchedAt: envelope.fetchedAt ?? null,
     provider: envelope.provider ?? null,
