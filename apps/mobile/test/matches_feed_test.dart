@@ -15,6 +15,9 @@ class _Repository implements FootballRepository {
 
   @override
   Future<Snapshot> loadDate(DateTime date) async => snapshot;
+
+  @override
+  Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail.empty(id);
 }
 
 Snapshot _snapshot({

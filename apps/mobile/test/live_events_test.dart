@@ -147,6 +147,62 @@ void main() {
     expect(match.latestEvent?['id'], 'fb_event_var');
   });
 
+  test('MatchDetail exposes normalized stats lineups and incidents', () {
+    final detail = MatchDetail({
+      'matchId': 'fb_match_test',
+      'available': true,
+      'pending': false,
+      'detailLevel': 'full',
+      'referee': 'Ref Test',
+      'stadium': 'Estadio Test',
+      'round': '9',
+      'home': {
+        'formation': '4-3-3',
+        'starters': [
+          {
+            'id': 'p1',
+            'name': 'Home One',
+            'number': '9',
+            'position': 'Forward',
+          },
+        ],
+        'substitutes': <dynamic>[],
+      },
+      'away': {
+        'formation': '4-2-3-1',
+        'starters': [
+          {
+            'id': 'p2',
+            'name': 'Away One',
+            'number': '1',
+            'position': 'Goalkeeper',
+          },
+        ],
+        'substitutes': <dynamic>[],
+      },
+      'statistics': [
+        {'label': 'Ball Possession', 'home': '55%', 'away': '45%'},
+      ],
+      'incidents': [
+        {
+          'type': 'YELLOW_CARD',
+          'minute': 44,
+          'label': 'Yellow Card',
+          'detail': 'Home One',
+        },
+      ],
+    });
+
+    expect(detail.available, isTrue);
+    expect(detail.pending, isFalse);
+    expect(detail.homeFormation, '4-3-3');
+    expect(detail.awayFormation, '4-2-3-1');
+    expect(detail.homeStarters.single['name'], 'Home One');
+    expect(detail.statistics.single['home'], '55%');
+    expect(detail.incidents.single['minute'], 44);
+    expect(detail.referee, 'Ref Test');
+  });
+
   test('Realtime reconnect bootstraps missing events and ignores repeated/older revisions', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var revision = 1, connections = 0;

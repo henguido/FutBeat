@@ -62,15 +62,14 @@ jobs:
             action = "live-plan"
           })
 
-          if ($plan.status -eq "skipped") {
-            Write-Output "GOAL_LIVE_SKIPPED reason=$($plan.reservation.reason)"
-            exit 0
-          }
-
-          $reservationId = [int]$plan.reservation.reservationId
           $remaining = $null
 
-          try {
+          if ($plan.status -eq "skipped") {
+            Write-Output "GOAL_LIVE_SKIPPED reason=$($plan.reservation.reason)"
+          } else {
+            $reservationId = [int]$plan.reservation.reservationId
+
+            try {
             $events = New-Object System.Collections.Generic.List[object]
             $seen = @{}
             $offset = 0
@@ -152,6 +151,70 @@ jobs:
               }) | Out-Null
             } catch {
               Write-Warning "GOAL_LIVE_FAILURE_RECORD_FAILED"
+            }
+            throw
+          }
+          }
+
+          $detailPlan = Invoke-FutBeatLiveEndpoint ([ordered]@{
+            action = "match-detail-plan"
+          })
+
+          if ($detailPlan.status -eq "skipped") {
+            Write-Output "GOAL_MATCH_DETAIL_SKIPPED reason=$($detailPlan.reservation.reason)"
+            exit 0
+          }
+
+          $detailReservationId = [int]$detailPlan.reservation.reservationId
+          $detailMatchId = [string]$detailPlan.reservation.matchId
+          $detailExternalId = [string]$detailPlan.reservation.externalMatchId
+          $detailRemaining = $remaining
+
+          try {
+            $detailHeaders = $null
+            $detailResponse = Invoke-RestMethod `
+              -Uri "https://api.goal-api.com/v1/fixtures/$detailExternalId" `
+              -Headers @{
+                Authorization = "Bearer $env:GOAL_API_KEY"
+                Accept = "application/json"
+              } `
+              -ResponseHeadersVariable detailHeaders `
+              -TimeoutSec 30
+
+            if (-not $detailResponse.success -or -not ($detailResponse.PSObject.Properties.Name -contains "data")) {
+              throw "GOAL API returned an invalid match detail payload"
+            }
+
+            if ($null -ne $detailHeaders) {
+              $rawRemaining = @($detailHeaders["X-RateLimit-Remaining"])[0]
+              if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
+                $detailRemaining = [int]$rawRemaining
+              }
+            }
+
+            $detailResult = Invoke-FutBeatLiveEndpoint ([ordered]@{
+              action = "match-detail-ingest"
+              reservationId = $detailReservationId
+              matchId = $detailMatchId
+              externalMatchId = $detailExternalId
+              providerRemaining = $detailRemaining
+              detail = $detailResponse.data
+            })
+
+            Write-Output "GOAL_MATCH_DETAIL_OK match=$detailMatchId external=$detailExternalId remaining=$detailRemaining"
+          } catch {
+            try {
+              Invoke-FutBeatLiveEndpoint ([ordered]@{
+                action = "match-detail-fail"
+                reservationId = $detailReservationId
+                matchId = $detailMatchId
+                externalMatchId = $detailExternalId
+                providerRemaining = $detailRemaining
+                errorCode = "GOAL_MATCH_DETAIL_FETCH_FAILED"
+                httpStatus = $null
+              }) | Out-Null
+            } catch {
+              Write-Warning "GOAL_MATCH_DETAIL_FAILURE_RECORD_FAILED"
             }
             throw
           }

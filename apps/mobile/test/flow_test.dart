@@ -40,6 +40,9 @@ class TestRepository implements FootballRepository {
 
   @override
   Future<Snapshot> loadDate(DateTime date) => load();
+
+  @override
+  Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail.empty(id);
 }
 
 Future<void> openApp(
@@ -59,6 +62,9 @@ Future<void> openApp(
     ProviderScope(
       overrides: [
         repositoryProvider.overrideWithValue(repository ?? TestRepository()),
+        matchDetailProvider.overrideWith(
+          (ref, id) async => MatchDetail.empty(id),
+        ),
         databaseProvider.overrideWithValue(database),
         preferenceProvider.overrideWith(
           (ref) => Stream.value(
