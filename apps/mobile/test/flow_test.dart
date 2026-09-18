@@ -62,6 +62,9 @@ Future<void> openApp(
     ProviderScope(
       overrides: [
         repositoryProvider.overrideWithValue(repository ?? TestRepository()),
+        matchDetailProvider.overrideWith(
+          (ref, id) => Stream.value(MatchDetail.empty(id)),
+        ),
         databaseProvider.overrideWithValue(database),
         preferenceProvider.overrideWith(
           (ref) => Stream.value(
