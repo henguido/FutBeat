@@ -125,6 +125,20 @@ function localResolver(resolved: Map<string, string>) {
   };
 }
 
+function mergeById(...lists: unknown[]) {
+  const merged = new Map<string, Record<string, unknown>>();
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const row = item as Record<string, unknown>;
+      const id = String(row.id ?? "");
+      if (id) merged.set(id, row);
+    }
+  }
+  return [...merged.values()];
+}
+
 async function resolveIdentityItems(
   provider: string,
   items: Array<Record<string, unknown>>,
@@ -164,9 +178,15 @@ Deno.serve(async (request) => {
   }
 
   let input: {
+    action?: string;
     source?: string;
+    mode?: string;
     dates?: unknown[];
+    coverage?: unknown[];
     events?: unknown[];
+    fromDate?: string;
+    toDate?: string;
+    limit?: number;
   };
   try {
     input = await request.json();
@@ -174,19 +194,68 @@ Deno.serve(async (request) => {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  if (input.action === "calendar-plan") {
+    if (
+      !validDate(input.fromDate) ||
+      !validDate(input.toDate) ||
+      !Number.isInteger(input.limit) ||
+      Number(input.limit) < 1 ||
+      Number(input.limit) > 90
+    ) {
+      return Response.json({ error: "Invalid calendar plan request" }, {
+        status: 400,
+      });
+    }
+
+    try {
+      const dates = await rpc("futbeat_calendar_missing_provider_dates", {
+        p_provider: "goal_api",
+        p_from_date: input.fromDate,
+        p_to_date: input.toDate,
+        p_limit: input.limit,
+      });
+      return Response.json({
+        status: "ok",
+        dates: Array.isArray(dates) ? dates : [],
+      });
+    } catch (error) {
+      console.error(
+        "calendar plan failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return Response.json({ error: "Calendar plan unavailable" }, {
+        status: 502,
+      });
+    }
+  }
+
+  const mode = input.mode === "calendar" ? "calendar" : "hot";
+  const validDateCount = Array.isArray(input.dates) &&
+    input.dates.every(validDate) &&
+    (
+      (mode === "hot" && input.dates.length === 3) ||
+      (mode === "calendar" && input.dates.length >= 1 && input.dates.length <= 31)
+    );
+
   if (
     !["SofaScore", "ESPN", "GOAL API"].includes(input.source ?? "") ||
-    !Array.isArray(input.dates) ||
-    input.dates.length !== 3 ||
-    !input.dates.every(validDate) ||
-    !Array.isArray(input.events)
+    !validDateCount ||
+    !Array.isArray(input.events) ||
+    (mode === "calendar" && input.source !== "GOAL API") ||
+    (
+      mode === "calendar" &&
+      (
+        !Array.isArray(input.coverage) ||
+        input.coverage.length !== input.dates!.length
+      )
+    )
   ) {
     return Response.json({ error: "Invalid global fixture payload" }, {
       status: 400,
     });
   }
 
-  const dates = [...input.dates].sort() as string[];
+  const dates = [...input.dates!].sort() as string[];
   let events = input.events.filter(
     (event): event is Record<string, unknown> =>
       Boolean(event && typeof event === "object" && !Array.isArray(event)),
@@ -195,8 +264,20 @@ Deno.serve(async (request) => {
     return Response.json({ error: "Invalid event item" }, { status: 400 });
   }
 
-  if (input.source === "GOAL API") {
+  if (input.source === "GOAL API" && mode === "hot") {
     events = events.filter((event) => withinCostaRicaWindow(event, dates));
+  }
+
+  const coverage = mode === "calendar"
+    ? (input.coverage ?? []).filter(
+      (item): item is Record<string, unknown> =>
+        Boolean(item && typeof item === "object" && !Array.isArray(item)),
+    )
+    : [];
+  if (mode === "calendar" && coverage.length !== input.coverage!.length) {
+    return Response.json({ error: "Invalid calendar coverage item" }, {
+      status: 400,
+    });
   }
 
   const provider = input.source === "ESPN"
@@ -207,9 +288,9 @@ Deno.serve(async (request) => {
 
   const reservation = await rpc("futbeat_reserve_provider_call", {
     p_provider: provider,
-    p_call_kind: "global-ingest",
+    p_call_kind: mode === "calendar" ? "calendar-ingest" : "global-ingest",
     p_trigger_source: "github-actions",
-    p_daily_limit: 24,
+    p_daily_limit: mode === "calendar" ? 64 : 24,
     p_min_interval_seconds: 0,
     p_force: true,
   });
@@ -224,7 +305,25 @@ Deno.serve(async (request) => {
   let resolvedMatches = 0;
 
   try {
-    const existing = await rpc("futbeat_read_snapshot");
+    const baseExisting = await rpc("futbeat_read_snapshot");
+    let existing = baseExisting;
+
+    if (mode === "calendar") {
+      const rangeExisting = await rpc("futbeat_read_calendar_range", {
+        p_from_date: dates[0],
+        p_to_date: dates[dates.length - 1],
+        p_timezone: "UTC",
+      });
+      existing = {
+        ...baseExisting,
+        competitions: mergeById(
+          baseExisting?.competitions,
+          rangeExisting?.competitions,
+        ),
+        teams: mergeById(baseExisting?.teams, rangeExisting?.teams),
+        matches: mergeById(baseExisting?.matches, rangeExisting?.matches),
+      };
+    }
 
     let snapshot;
     if (input.source === "GOAL API") {
@@ -325,23 +424,34 @@ Deno.serve(async (request) => {
     }
 
     stage = "store";
-    const result = await rpc(
-      "futbeat_store_global_fixture_window",
-      {
-        p_job_id: crypto.randomUUID(),
-        p_received_at: receivedAt,
-        p_from_date: dates[0],
-        p_to_date: dates[2],
-        p_raw: {
-          provider: input.source,
-          transport: "GitHub Actions OIDC",
-          dates,
-          events,
+    const result = mode === "calendar"
+      ? await rpc(
+        "futbeat_store_calendar_range",
+        {
+          p_provider: provider,
+          p_received_at: receivedAt,
+          p_coverage: coverage,
+          p_snapshot: snapshot,
         },
-        p_snapshot: snapshot,
-      },
-      60000,
-    );
+        60000,
+      )
+      : await rpc(
+        "futbeat_store_global_fixture_window",
+        {
+          p_job_id: crypto.randomUUID(),
+          p_received_at: receivedAt,
+          p_from_date: dates[0],
+          p_to_date: dates[2],
+          p_raw: {
+            provider: input.source,
+            transport: "GitHub Actions OIDC",
+            dates,
+            events,
+          },
+          p_snapshot: snapshot,
+        },
+        60000,
+      );
 
     const durationMs = Math.round(performance.now() - started);
     await rpc("futbeat_complete_provider_call", {
@@ -362,6 +472,7 @@ Deno.serve(async (request) => {
         resolvedMatches,
         transport: "github-actions-oidc",
         provider: input.source,
+        mode,
       },
     });
 
@@ -374,6 +485,7 @@ Deno.serve(async (request) => {
       teams: snapshot.teams.length,
       resolvedBase,
       resolvedMatches,
+      mode,
       result,
     });
   } catch (error) {
@@ -392,6 +504,7 @@ Deno.serve(async (request) => {
         resolvedBase,
         resolvedMatches,
         transport: "github-actions-oidc",
+        mode,
       },
     });
     console.error("global ingest failed", stage, detail);
