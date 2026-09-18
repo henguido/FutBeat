@@ -14,3 +14,6 @@ verify_jwt = true
 
 [functions.futbeat-fixtures-sync]
 verify_jwt = true
+
+[functions.futbeat-goal-live-sync]
+verify_jwt = false
