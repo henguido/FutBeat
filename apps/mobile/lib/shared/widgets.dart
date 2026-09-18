@@ -212,7 +212,7 @@ class CalendarDataView extends ConsumerWidget {
             ],
           ),
         ),
-        data: (data) => Expanded(child: builder(data)),
+        data: builder,
       );
 }
 
