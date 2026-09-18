@@ -109,6 +109,77 @@ jobs:
             }
           }
 
+          function Invoke-TeamSquadHydration {
+            try {
+              $squadPlan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+                action = "squad-plan"
+                limit = 5
+              })
+              $teams = @($squadPlan.teams)
+            } catch {
+              Write-Warning "SQUAD_PLAN_SKIPPED $($_.Exception.Message)"
+              return
+            }
+
+            if ($teams.Count -eq 0) {
+              Write-Output "SQUAD_HYDRATE_OK teams=0 reason=coverage_fresh"
+              return
+            }
+
+            $squadReserve = 180
+            $hydrated = 0
+
+            foreach ($team in $teams) {
+              $teamId = [string]$team.teamId
+              $externalTeamId = [string]$team.externalTeamId
+              if ([string]::IsNullOrWhiteSpace($teamId) -or [string]::IsNullOrWhiteSpace($externalTeamId)) {
+                continue
+              }
+
+              try {
+                $encodedTeamId = [uri]::EscapeDataString($externalTeamId)
+                $responseHeaders = $null
+                $response = Invoke-RestMethod -Uri "https://api.goal-api.com/v1/teams/$encodedTeamId/players" -Headers @{
+                  Authorization = "Bearer $env:GOAL_API_KEY"
+                  Accept = "application/json"
+                } -ResponseHeadersVariable responseHeaders -TimeoutSec 30
+
+                if (-not $response.success -or -not ($response.PSObject.Properties.Name -contains "data")) {
+                  Write-Warning "SQUAD_FETCH_INVALID team=$teamId external=$externalTeamId"
+                  continue
+                }
+
+                $remaining = $null
+                if ($null -ne $responseHeaders) {
+                  $rawRemaining = @($responseHeaders["X-RateLimit-Remaining"])[0]
+                  if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
+                    $remaining = [int]$rawRemaining
+                  }
+                }
+
+                $result = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+                  action = "squad-ingest"
+                  teamId = $teamId
+                  externalTeamId = $externalTeamId
+                  providerRemaining = $remaining
+                  players = $response
+                })
+
+                $hydrated += 1
+                Write-Output "SQUAD_INGEST_OK team=$teamId players=$($result.players) remaining=$remaining"
+
+                if ($null -ne $remaining -and $remaining -le $squadReserve) {
+                  Write-Output "SQUAD_HYDRATE_STOP reason=quota_reserve reserve=$squadReserve"
+                  break
+                }
+              } catch {
+                Write-Warning "SQUAD_HYDRATE_FAILED team=$teamId external=$externalTeamId $($_.Exception.Message)"
+              }
+            }
+
+            Write-Output "SQUAD_HYDRATE_OK planned=$($teams.Count) hydrated=$hydrated"
+          }
+
           # Hot window: yesterday / today / tomorrow in Costa Rica.
           $crNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(-6))
           $dates = @(-1, 0, 1) | ForEach-Object {
@@ -183,6 +254,7 @@ jobs:
 
           if ($planDates.Count -eq 0) {
             Write-Output "CALENDAR_EXPAND_OK dates=0 reason=coverage_fresh"
+            Invoke-TeamSquadHydration
             exit 0
           }
 
@@ -199,6 +271,7 @@ jobs:
 
           foreach ($date in $planDates) {
             if ($calendarRequestsUsed -ge $calendarRequestBudget) {
+              $stopForQuota = $true
               Write-Output "CALENDAR_EXPAND_STOP reason=request_budget budget=$calendarRequestBudget"
               break
             }
@@ -267,3 +340,9 @@ jobs:
           }
 
           Write-Output "CALENDAR_EXPAND_OK planned=$($planDates.Count) fetched=$expandedDates requests=$calendarRequestsUsed"
+
+          if ($stopForQuota) {
+            Write-Output "SQUAD_HYDRATE_SKIPPED reason=calendar_quota_guard"
+          } else {
+            Invoke-TeamSquadHydration
+          }
