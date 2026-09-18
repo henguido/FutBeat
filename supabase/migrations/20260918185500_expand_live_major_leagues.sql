@@ -24,10 +24,8 @@ resolved as (
   from desired d
   join futbeat_private.entities e
     on e.kind='competition'
-   and lower(extensions.unaccent(coalesce(e.payload->>'name','')))
-       = lower(extensions.unaccent(d.name))
-   and lower(extensions.unaccent(coalesce(e.payload->>'country','')))
-       = lower(extensions.unaccent(d.country))
+   and lower(coalesce(e.payload->>'name','')) = lower(d.name)
+   and lower(coalesce(e.payload->>'country','')) = lower(d.country)
   group by d.external_id
 )
 insert into futbeat_private.provider_entities(provider,kind,external_id,canonical_id)
