@@ -1,0 +1,70 @@
+name: Probe GOAL match detail
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/probe-match-detail.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
+    steps:
+      - name: Inspect live match detail shapes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:GOAL_API_KEY)) {
+            throw "GOAL_API_KEY repository secret is required"
+          }
+          Write-Output "::add-mask::$env:GOAL_API_KEY"
+
+          $headers = @{
+            Authorization = "Bearer $env:GOAL_API_KEY"
+            Accept = "application/json"
+          }
+
+          $live = Invoke-RestMethod -Uri "https://api.goal-api.com/v1/fixtures/live?limit=1&offset=0" -Headers $headers -TimeoutSec 30
+          if (-not $live.success -or @($live.data).Count -eq 0) {
+            Write-Output "DETAIL_PROBE_SKIPPED reason=no_live_match"
+            exit 0
+          }
+
+          $fixture = @($live.data)[0]
+          $id = [string]$fixture.apiId
+          if ([string]::IsNullOrWhiteSpace($id)) { $id = [string]$fixture.id }
+          if ([string]::IsNullOrWhiteSpace($id)) { throw "Missing live fixture id" }
+
+          foreach ($suffix in @("", "/events", "/lineups", "/statistics")) {
+            $uri = "https://api.goal-api.com/v1/fixtures/$id$suffix"
+            $response = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 30
+            $data = $response.data
+            $kind = if ($suffix -eq "") { "detail" } else { $suffix.TrimStart("/") }
+            $topType = if ($null -eq $data) { "null" } elseif ($data -is [System.Array]) { "array" } else { $data.GetType().Name }
+            $count = if ($data -is [System.Array]) { @($data).Count } else { 1 }
+            Write-Output "DETAIL_PROBE kind=$kind type=$topType count=$count"
+            if ($data -is [System.Array] -and @($data).Count -gt 0) {
+              $sample = @($data)[0]
+              Write-Output "DETAIL_KEYS kind=$kind keys=$((@($sample.PSObject.Properties.Name) | Sort-Object) -join ',')"
+              foreach ($prop in @($sample.PSObject.Properties)) {
+                if ($null -eq $prop.Value) { continue }
+                if ($prop.Value -is [System.Management.Automation.PSCustomObject]) {
+                  Write-Output "DETAIL_NESTED kind=$kind field=$($prop.Name) keys=$((@($prop.Value.PSObject.Properties.Name) | Sort-Object) -join ',')"
+                }
+              }
+            } elseif ($data -is [System.Management.Automation.PSCustomObject]) {
+              Write-Output "DETAIL_KEYS kind=$kind keys=$((@($data.PSObject.Properties.Name) | Sort-Object) -join ',')"
+              foreach ($prop in @($data.PSObject.Properties)) {
+                if ($null -eq $prop.Value) { continue }
+                if ($prop.Value -is [System.Management.Automation.PSCustomObject]) {
+                  Write-Output "DETAIL_NESTED kind=$kind field=$($prop.Name) keys=$((@($prop.Value.PSObject.Properties.Name) | Sort-Object) -join ',')"
+                }
+              }
+            }
+          }
