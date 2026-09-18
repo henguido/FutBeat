@@ -73,6 +73,74 @@ async function authorize(request: Request) {
   }
 }
 
+function clean(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function goalLiveStatus(fixture: Record<string, unknown>) {
+  const status = clean(fixture.matchStatus).toUpperCase();
+  const period = clean(fixture.matchPeriod).toUpperCase();
+
+  if (status === "POSTPONED") return "POSTPONED";
+  if (status === "CANCELLED") return "CANCELLED";
+  if (status === "SUSPENDED") return "SUSPENDED";
+  if (status === "ABANDONED") return "ABANDONED";
+  if (status === "HALF_TIME" || period === "HALF_TIME") return "HALFTIME";
+  if (status === "LIVE") {
+    if (period === "EXTRA_TIME") return "EXTRA_TIME";
+    if (period === "PENALTIES") return "PENALTIES";
+    return "LIVE";
+  }
+  if (["FINISHED", "AFTER_ET", "AFTER_PEN", "AWARDED"].includes(status)) {
+    return "FINISHED_PENDING_VERIFICATION";
+  }
+  return "SCHEDULED";
+}
+
+function goalLiveScore(value: unknown) {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return [...new Uint8Array(digest)]
+    .map((item) => item.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function normalizeGoalLiveFixture(fixture: Record<string, unknown>) {
+  const externalMatchId = clean(fixture.apiId ?? fixture.id);
+  if (!externalMatchId) throw new Error("Missing GOAL API live fixture id");
+
+  const status = goalLiveStatus(fixture);
+  const elapsed = Number(fixture.matchElapsed);
+  const minute = Number.isInteger(elapsed) && elapsed >= 0 ? elapsed : null;
+  const home = goalLiveScore(fixture.homeTeamScore);
+  const away = goalLiveScore(fixture.awayTeamScore);
+  const payloadHash = await sha256Hex(JSON.stringify([
+    externalMatchId,
+    status,
+    minute,
+    home,
+    away,
+  ]));
+
+  return {
+    externalMatchId,
+    payloadHash,
+    status,
+    minute,
+    score: { home, away },
+    events: [],
+    rawPayload: fixture,
+  };
+}
+
 function validDate(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -195,11 +263,150 @@ Deno.serve(async (request) => {
     externalTeamId?: string;
     providerRemaining?: number | null;
     players?: unknown;
+    reservationId?: number;
+    errorCode?: string;
+    httpStatus?: number | null;
   };
   try {
     input = await request.json();
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (input.action === "live-plan") {
+    try {
+      const reservation = await rpc("futbeat_reserve_goal_live_call", {
+        p_trigger_source: "github-actions",
+      });
+      return Response.json({
+        status: reservation?.allowed ? "ok" : "skipped",
+        reservation,
+      });
+    } catch (error) {
+      console.error(
+        "GOAL live reservation failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return Response.json({ error: "GOAL live plan unavailable" }, {
+        status: 502,
+      });
+    }
+  }
+
+  if (input.action === "live-fail") {
+    if (
+      !Number.isInteger(input.reservationId) ||
+      Number(input.reservationId) < 1
+    ) {
+      return Response.json({ error: "Invalid live reservation" }, {
+        status: 400,
+      });
+    }
+
+    try {
+      await rpc("futbeat_complete_provider_call", {
+        p_reservation_id: input.reservationId,
+        p_status: "FAILED",
+        p_provider_remaining: input.providerRemaining ?? null,
+        p_http_status: input.httpStatus ?? null,
+        p_error_code: clean(input.errorCode || "GOAL_LIVE_FETCH_FAILED").slice(0, 80),
+        p_metadata: {
+          mode: "live",
+          transport: "github-actions-oidc",
+        },
+      });
+      return Response.json({ status: "ok" });
+    } catch {
+      return Response.json({ error: "GOAL live failure not recorded" }, {
+        status: 502,
+      });
+    }
+  }
+
+  if (input.action === "live-ingest") {
+    if (
+      !Number.isInteger(input.reservationId) ||
+      Number(input.reservationId) < 1 ||
+      !Array.isArray(input.events) ||
+      (
+        input.providerRemaining != null &&
+        (!Number.isInteger(input.providerRemaining) ||
+          input.providerRemaining < 0)
+      )
+    ) {
+      return Response.json({ error: "Invalid GOAL live payload" }, {
+        status: 400,
+      });
+    }
+
+    const receivedAt = new Date().toISOString();
+    const started = performance.now();
+
+    try {
+      const observations = await Promise.all(
+        input.events.map((item) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) {
+            throw new Error("Invalid GOAL live fixture");
+          }
+          return normalizeGoalLiveFixture(item as Record<string, unknown>);
+        }),
+      );
+
+      const persistence = await rpc("futbeat_record_live_batch", {
+        p_provider: "goal_api",
+        p_received_at: receivedAt,
+        p_observations: observations,
+      }, 30000);
+
+      await rpc("futbeat_complete_provider_call", {
+        p_reservation_id: input.reservationId,
+        p_status: "SUCCEEDED",
+        p_provider_remaining: input.providerRemaining ?? null,
+        p_http_status: 200,
+        p_error_code: null,
+        p_metadata: {
+          mode: "live",
+          liveMatches: observations.length,
+          insertedObservations: persistence?.insertedObservations ?? 0,
+          duplicates: persistence?.duplicates ?? 0,
+          durationMs: Math.round(performance.now() - started),
+          transport: "github-actions-oidc",
+          provider: "GOAL API",
+        },
+      });
+
+      return Response.json({
+        status: "ok",
+        provider: "GOAL API",
+        liveMatches: observations.length,
+        persistence,
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message.slice(0, 500) : "unknown";
+      try {
+        await rpc("futbeat_complete_provider_call", {
+          p_reservation_id: input.reservationId,
+          p_status: "FAILED",
+          p_provider_remaining: input.providerRemaining ?? null,
+          p_http_status: null,
+          p_error_code: "GOAL_LIVE_INGEST_FAILED",
+          p_metadata: {
+            mode: "live",
+            detail,
+            durationMs: Math.round(performance.now() - started),
+            transport: "github-actions-oidc",
+          },
+        });
+      } catch {
+        // Preserve the original ingestion error.
+      }
+      console.error("GOAL live ingest failed", detail);
+      return Response.json(
+        { error: "GOAL live ingest failed", detail },
+        { status: 502 },
+      );
+    }
   }
 
   if (input.action === "squad-plan") {
