@@ -12,7 +12,7 @@ Entity _entity(
       'id': id,
       'name': name,
       'country': country,
-      if (competitionId != null) 'competitionId': competitionId,
+      'competitionId': ?competitionId,
       'aliases': <dynamic>[],
     });
 
