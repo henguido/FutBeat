@@ -71,6 +71,45 @@ void main() {
       2,
     );
   });
+  test('newer canonical terminal state cannot be reopened by a stale LIVE overlay', () {
+    final raw = jsonDecode(
+      File('assets/demo.snapshot.json').readAsStringSync(),
+    ) as Json;
+    raw['demo'] = false;
+    final matches = raw['matches'] as List;
+    final canonical = Map<String, dynamic>.from(
+      matches.firstWhere((item) => item['id'] == 'fb_match_clasico') as Map,
+    )
+      ..['status'] = 'VERIFIED'
+      ..['minute'] = null
+      ..['score'] = {'home': 2, 'away': 1}
+      ..['provenance'] = {
+        'source': 'GOAL API',
+        'receivedAt': '2026-09-18T13:16:26.355Z',
+        'verificationStatus': 'PROVISIONAL',
+      };
+    matches[matches.indexWhere((item) => item['id'] == 'fb_match_clasico')] =
+        canonical;
+
+    final snapshot = Snapshot(raw);
+    final stale = LiveMatchUpdate.fromJson({
+      ...row(9, [goal]),
+      'minute': 55,
+      'home_score': 1,
+      'away_score': 0,
+      'changed_at': '2026-09-17T18:20:02.432Z',
+    });
+
+    final reconciled = snapshot.withLiveUpdates({
+      'fb_match_clasico': stale,
+    });
+    final match = reconciled.match('fb_match_clasico')!;
+
+    expect(match.status, 'VERIFIED');
+    expect(match.score, '2 - 1');
+    expect(match.json['liveRevision'], isNull);
+  });
+
   test('timeline orders stoppage time deterministically and exposes the latest event', () {
     final match = FootballMatch({
       'id': 'fb_match_test',
