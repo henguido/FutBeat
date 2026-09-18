@@ -134,7 +134,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                   ],
                   if (detail.pending) ...[
                     const SizedBox(height: 16),
-                    const _DetailPendingCard(),
+                    _DetailPendingCard(
+                      onRefresh: () =>
+                          ref.invalidate(matchDetailProvider(widget.id)),
+                    ),
                   ],
                   heading(context, 'Eventos del partido'),
                   if (match.events.isEmpty && detail.incidents.isEmpty)
@@ -360,24 +363,40 @@ String _statLabel(String value) {
 }
 
 class _DetailPendingCard extends StatelessWidget {
-  const _DetailPendingCard();
+  const _DetailPendingCard({required this.onRefresh});
+
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) => Card(
     child: Padding(
       padding: const EdgeInsets.all(14),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
+          Row(
+            children: [
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Solicitamos alineaciones y estadísticas a la fuente.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              'Actualizando alineaciones y estadísticas del partido…',
-              style: Theme.of(context).textTheme.bodySmall,
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Actualizar detalles'),
             ),
           ),
         ],
