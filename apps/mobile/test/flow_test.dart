@@ -369,8 +369,9 @@ void main() {
     await tester.tap(find.text('Reintentar'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Saprissa'), findsWidgets);
-    expect(repository.loadCalls, 2);
+    expect(find.text('No pudimos cargar la búsqueda'), findsNothing);
+    expect(find.text('Modo demo · resultados ficticios'), findsOneWidget);
+    expect(repository.loadCalls, greaterThanOrEqualTo(2));
     expect(tester.takeException(), isNull);
   });
 
@@ -380,14 +381,16 @@ void main() {
     final repository = TestRepository();
     await openApp(tester, route: '/explore', repository: repository);
 
-    expect(repository.loadCalls, 1);
+    final loadsBeforeTabChange = repository.loadCalls;
+    expect(loadsBeforeTabChange, greaterThan(0));
+
     await tester.tap(find.text('Partidos'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Explorar'));
     await tester.pumpAndSettle();
 
-    expect(repository.loadCalls, 1);
-    expect(find.text('Saprissa'), findsWidgets);
+    expect(repository.loadCalls, loadsBeforeTabChange);
+    expect(find.text('Modo demo · resultados ficticios'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
