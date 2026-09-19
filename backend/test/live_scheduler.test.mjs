@@ -217,7 +217,50 @@ test('Match Center detail is queued once, cached, and not refetched while fresh'
 });
 
 
-test('GOAL quota priority preserves LIVE before detail and catalog work',async()=>{
+test('historical Match Center detail queues recent finished matches once and keeps verified cache',async()=>{
+ const db=await openDatabase();
+ try {
+  const ids=await seedBetaMatch(db,{offsetMinutes:-(30*24*60),status:'VERIFIED'});
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','match','goal-history-1',$1)",
+   [ids.match],
+  );
+
+  const first=(await db.query(
+   'select public.futbeat_request_match_detail($1) value',[ids.match],
+  )).rows[0].value;
+  assert.equal(first.available,false);
+
+  const plan=(await db.query(
+   "select public.futbeat_reserve_match_detail_call('test') value",
+  )).rows[0].value;
+  assert.equal(plan.allowed,true);
+  assert.equal(plan.matchId,ids.match);
+
+  await db.query(
+   'select public.futbeat_store_match_detail($1,$2,$3,$4)',
+   [
+    ids.match,
+    'goal-history-1',
+    new Date().toISOString(),
+    JSON.stringify({
+     events:[{type:'Goal',time:'45+2',homeScorer:'Historic Goal'}],
+     cards:[{card:'Yellow Card',time:'51',homeFault:'Historic Card'}],
+     substitutions:[],
+    }),
+   ],
+  );
+
+  await db.query('select public.futbeat_request_match_detail($1)',[ids.match]);
+  const again=(await db.query(
+   "select public.futbeat_reserve_match_detail_call('test') value",
+  )).rows[0].value;
+  assert.equal(again.allowed,false);
+  assert.equal(again.reason,'no_detail_due');
+ } finally {await db.close();}
+});
+
+test('GOAL quota priority preserves LIVE while allowing bounded Match Center detail',async()=>{
  const db=await openDatabase();
  try {
   const ids=await seedBetaMatch(db,{offsetMinutes:-15,status:'LIVE'});
@@ -240,9 +283,18 @@ test('GOAL quota priority preserves LIVE before detail and catalog work',async()
   const detail=(await db.query(
    "select public.futbeat_reserve_match_detail_call('test') value"
   )).rows[0].value;
-  assert.equal(detail.allowed,false);
-  assert.equal(detail.reason,'provider_remaining_reserve');
-  assert.equal(detail.reserve,220);
+  assert.equal(detail.allowed,true);
+  assert.equal(detail.reserve,80);
+
+  await db.query(
+   "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining) values('goal_api','global-ingest','test',now(),now(),'SUCCEEDED',70)"
+  );
+  const protectedDetail=(await db.query(
+   "select public.futbeat_reserve_match_detail_call('test') value"
+  )).rows[0].value;
+  assert.equal(protectedDetail.allowed,false);
+  assert.equal(protectedDetail.reason,'provider_remaining_reserve');
+  assert.equal(protectedDetail.reserve,80);
 
   const live=(await db.query(
    "select public.futbeat_reserve_goal_live_call('test') value"
