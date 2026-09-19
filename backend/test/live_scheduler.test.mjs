@@ -459,7 +459,7 @@ test('Standings v2 plan is generic, prioritizes Costa Rica, and respects GOAL re
    await db.query("insert into futbeat_private.entities values($1,'match',$2)",[
     match,JSON.stringify({
      id:match,competitionId:competition,homeTeamId:teamA,awayTeamId:teamB,
-     startTime:now.toISOString(),status:'SCHEDULED',score:null,events:[],statistics:[],
+     startTime:new Date(Date.now()+6*60*60*1000).toISOString(),status:'SCHEDULED',score:null,events:[],statistics:[],
      provenance:{source:'GOAL API',receivedAt:now.toISOString()},
     }),
    ]);
