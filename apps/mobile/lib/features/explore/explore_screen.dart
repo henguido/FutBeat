@@ -54,7 +54,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   Widget build(BuildContext context) {
     final follows = ref.watch(followsProvider).asData?.value ?? <String>{};
     final preference = ref.watch(preferenceProvider).asData?.value;
-    final country = preference?.effectiveCountry;
+    final country =
+        preference?.effectiveCountry ?? ref.watch(detectedCountryProvider);
     final request = (query: requestQuery, country: country);
     final result = ref.watch(searchSnapshotProvider(request));
 
@@ -90,8 +91,14 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       icon: Icons.cloud_off,
                     ),
                     FilledButton(
-                      onPressed: () =>
-                          ref.invalidate(searchSnapshotProvider(request)),
+                      onPressed: () async {
+                        ref.invalidate(searchSnapshotProvider(request));
+                        try {
+                          await ref.read(searchSnapshotProvider(request).future);
+                        } catch (_) {
+                          // The error state will remain visible with retry enabled.
+                        }
+                      },
                       child: const Text('Reintentar'),
                     ),
                   ],
