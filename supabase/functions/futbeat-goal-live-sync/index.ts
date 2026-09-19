@@ -534,6 +534,15 @@ async function syncLive() {
 }
 
 async function syncOneMatchDetail() {
+  try {
+    await rpc("futbeat_enqueue_stale_live_detail");
+  } catch (error) {
+    console.warn(
+      "stale LIVE detail enqueue unavailable",
+      error instanceof Error ? error.message : "unknown",
+    );
+  }
+
   const plan = await rpc("futbeat_reserve_match_detail_call", {
     p_trigger_source: "supabase-cron",
   });
