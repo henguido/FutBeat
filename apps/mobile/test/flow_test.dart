@@ -357,6 +357,40 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Explore retry recovers after a transient load failure', (
+    tester,
+  ) async {
+    final repository = TestRepository(fail: true);
+    await openApp(tester, route: '/explore', repository: repository);
+
+    expect(find.text('No pudimos cargar la búsqueda'), findsOneWidget);
+    repository.fail = false;
+
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Saprissa'), findsWidgets);
+    expect(repository.loadCalls, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Explore keeps its loaded snapshot when changing tabs', (
+    tester,
+  ) async {
+    final repository = TestRepository();
+    await openApp(tester, route: '/explore', repository: repository);
+
+    expect(repository.loadCalls, 1);
+    await tester.tap(find.text('Partidos'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Explorar'));
+    await tester.pumpAndSettle();
+
+    expect(repository.loadCalls, 1);
+    expect(find.text('Saprissa'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('FB-US-041/042: alias search -> team page', (tester) async {
     await openApp(tester, route: '/explore');
     await tester.enterText(find.byType(TextField), 'LDA');
