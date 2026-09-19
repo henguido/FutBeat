@@ -128,6 +128,51 @@ Snapshot _snapshot({
   });
 }
 
+Snapshot _largeSnapshot(int matchCount) {
+  final today = costaRicaNow();
+  final startTime = DateTime.utc(
+    today.year,
+    today.month,
+    today.day,
+    18,
+  ).toIso8601String();
+
+  return Snapshot({
+    'schemaVersion': 1,
+    'demo': false,
+    'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    'coverage': {'partial': false},
+    'freshness': {'stale': false},
+    'competitions': [
+      {
+        'id': 'fb_comp_scale',
+        'name': 'Liga de escala',
+        'country': 'Costa Rica',
+      },
+    ],
+    'teams': [
+      {'id': 'fb_team_home', 'name': 'Local', 'country': 'Costa Rica'},
+      {'id': 'fb_team_away', 'name': 'Visita', 'country': 'Costa Rica'},
+    ],
+    'players': <dynamic>[],
+    'matches': [
+      for (var i = 0; i < matchCount; i++)
+        {
+          'id': 'fb_match_scale_$i',
+          'competitionId': 'fb_comp_scale',
+          'homeTeamId': 'fb_team_home',
+          'awayTeamId': 'fb_team_away',
+          'startTime': startTime,
+          'status': 'SCHEDULED',
+          'score': null,
+          'events': <dynamic>[],
+          'statistics': <dynamic>[],
+        },
+    ],
+    'standings': <dynamic>[],
+  });
+}
+
 List<String> _ids(
   Snapshot data, {
   Set<String> follows = const {},
@@ -206,6 +251,49 @@ void main() {
     ]);
     expect(data.onDate(today, 'Próximos'), isEmpty);
   });
+
+  testWidgets(
+    'large match catalogs build only visible cards while preserving all matches',
+    (tester) async {
+      final data = _largeSnapshot(250);
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            repositoryProvider.overrideWithValue(_Repository(data)),
+            liveMatchUpdatesProvider.overrideWith(
+              (ref) => Stream.value(const <String, LiveMatchUpdate>{}),
+            ),
+            preferenceProvider.overrideWith(
+              (ref) => Stream.value(
+                const CountryPreference(
+                  detectedCountry: 'CR',
+                  selectedCountry: null,
+                  bootstrapDismissed: true,
+                ),
+              ),
+            ),
+            followsProvider.overrideWith((ref) => Stream.value(<String>{})),
+            temporaryInterestsProvider.overrideWith(
+              (ref) => Stream.value(<String>{}),
+            ),
+          ],
+          child: const MaterialApp(home: MatchesScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(data.matches, hasLength(250));
+      final builtCards = find.byType(MatchCard).evaluate().length;
+      expect(builtCards, greaterThan(0));
+      expect(builtCards, lessThan(50));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'followed team matches appear first and the rest of the day stays visible',
