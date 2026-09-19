@@ -209,7 +209,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path=''
-as $
+as $event$
 declare
   m jsonb;
   ev jsonb;
@@ -285,7 +285,7 @@ begin
 
   return new;
 end
-$;
+$event$;
 
 drop trigger if exists futbeat_goal_from_score_change
   on futbeat_private.live_match_state;
