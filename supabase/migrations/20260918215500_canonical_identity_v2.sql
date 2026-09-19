@@ -3,6 +3,22 @@
 -- historical entity row. Old deep links remain resolvable while all new reads,
 -- follows, interests and provider mappings converge on the canonical id.
 
+-- Reconcile a production table that predates its migration history.
+-- Keeping this here makes fresh/PGlite databases match production exactly.
+create table if not exists futbeat_private.provider_media_cache (
+  provider text not null,
+  kind text not null,
+  external_id text not null,
+  canonical_id text not null,
+  url text not null,
+  received_at timestamptz not null default now(),
+  primary key(provider,kind,external_id)
+);
+
+alter table futbeat_private.provider_media_cache enable row level security;
+revoke all on futbeat_private.provider_media_cache from public,anon,authenticated;
+grant select on futbeat_private.provider_media_cache to service_role;
+
 create table if not exists futbeat_private.entity_redirects (
   alias_id text primary key references futbeat_private.entities(id) on delete cascade,
   canonical_id text not null references futbeat_private.entities(id),
