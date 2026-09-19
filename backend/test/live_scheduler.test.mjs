@@ -161,6 +161,67 @@ test('GOAL LIVE links an existing scheduled match by teams and kickoff without a
 });
 
 
+test('GOAL score increase creates a provisional canonical goal event without detail quota',async()=>{
+ const db=await openDatabase();
+ try {
+  const competition='fb_comp_goal_event',home='fb_team_goal_home',away='fb_team_goal_away',match='fb_match_goal_event';
+  const start=new Date().toISOString();
+  await db.query("insert into futbeat_private.entities values($1,'competition',$2)",[
+   competition,JSON.stringify({id:competition,name:'Liga Test',country:'Costa Rica'}),
+  ]);
+  for(const [id,name] of [[home,'Home'],[away,'Away']]) {
+   await db.query("insert into futbeat_private.entities values($1,'team',$2)",[
+    id,JSON.stringify({id,name,competitionId:competition}),
+   ]);
+  }
+  await db.query("insert into futbeat_private.entities values($1,'match',$2)",[
+   match,JSON.stringify({
+    id:match,competitionId:competition,homeTeamId:home,awayTeamId:away,startTime:start,
+    status:'SCHEDULED',score:null,events:[],statistics:[],
+    provenance:{source:'GOAL API',receivedAt:start},
+   }),
+  ]);
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','match','goal-event-1',$1)",
+   [match],
+  );
+
+  const record=async(homeScore,awayScore,minute,stamp)=>{
+   const observation={
+    externalMatchId:'goal-event-1',
+    payloadHash:createHash('sha256').update(JSON.stringify([homeScore,awayScore,minute,stamp])).digest('hex'),
+    status:'LIVE',
+    minute,
+    score:{home:homeScore,away:awayScore},
+    events:[],
+    rawPayload:{apiId:'goal-event-1'},
+   };
+   await db.query(
+    'select public.futbeat_record_live_batch($1,$2,$3)',
+    ['goal_api',stamp,JSON.stringify([observation])],
+   );
+  };
+
+  await record(0,0,5,new Date(Date.now()-1000).toISOString());
+  await record(1,0,12,new Date().toISOString());
+
+  const events=(await db.query(
+   "select payload from futbeat_private.canonical_events where match_id=$1 and event_type='GOAL'",
+   [match],
+  )).rows;
+  assert.equal(events.length,1);
+  assert.equal(events[0].payload.synthetic,true);
+  assert.equal(events[0].payload.teamId,home);
+  assert.equal(events[0].payload.score.home,1);
+
+  const published=(await db.query(
+   'select latest_events from public.live_match_updates where match_id=$1',
+   [match],
+  )).rows[0].latest_events;
+  assert.equal(published.some(event=>event.type==='GOAL'),true);
+ } finally {await db.close();}
+});
+
 test('Match Center detail is queued once, cached, and not refetched while fresh',async()=>{
  const db=await openDatabase();
  try {
