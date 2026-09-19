@@ -414,6 +414,59 @@ class Snapshot {
     return current;
   }
 
+  Snapshot forMatch(String id) {
+    final target = match(id);
+    if (target == null) return this;
+
+    final matchStandings = standings
+        .where((table) => table['competitionId'] == target.competitionId)
+        .toList();
+    final teamIds = <String>{target.homeId, target.awayId};
+    for (final table in matchStandings) {
+      for (final row in (table['rows'] as List? ?? const <dynamic>[])) {
+        if (row is! Map) continue;
+        final teamId = row['teamId']?.toString();
+        if (teamId != null && teamId.isNotEmpty) teamIds.add(teamId);
+      }
+    }
+
+    final playerIds = <String>{};
+    for (final event in target.events) {
+      final playerId = event['playerId']?.toString();
+      if (playerId != null && playerId.isNotEmpty) playerIds.add(playerId);
+    }
+
+    final contextTeams = [
+      for (final team in teams)
+        if (teamIds.contains(team.id)) team.json,
+    ];
+    final contextPlayers = [
+      for (final player in players)
+        if (playerIds.contains(player.id) ||
+            teamIds.contains(player.json['teamId']?.toString()))
+          player.json,
+    ];
+    final competitionEntity = competition(target.competitionId);
+
+    return Snapshot({
+      'schemaVersion': 1,
+      'demo': demo,
+      'coverage': coverage,
+      'freshness': {'stale': stale},
+      'updatedAt': updatedAt.toIso8601String(),
+      'entityRedirects': entityRedirects,
+      'teams': contextTeams,
+      'players': contextPlayers,
+      'competitions': [
+        if (competitionEntity != null) competitionEntity.json,
+      ],
+      'matches': [target.json],
+      'standings': matchStandings,
+      'news': const <dynamic>[],
+      'transfers': const <dynamic>[],
+    });
+  }
+
   Snapshot withLiveUpdates(Map<String, LiveMatchUpdate> updates) {
     if (demo || updates.isEmpty) return this;
     var changed = false;
