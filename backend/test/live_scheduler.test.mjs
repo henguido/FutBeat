@@ -496,3 +496,81 @@ test('Standings workflow is quota-safe and uses generic planned league identity'
  assert.match(workflow,/action = "standings-ingest"/);
  assert.doesNotMatch(workflow,/goal_league_cr|fb_comp_cr/);
 });
+
+
+test('Standings v2 collapses duplicate GOAL team ids into one canonical club',async()=>{
+ const db=await openDatabase();
+ try {
+  const competition='fb_comp_standings_dupe';
+  const canonical='fb_team_standings_same';
+  const other='fb_team_standings_other';
+
+  await db.query(
+   "insert into futbeat_private.entities values($1,'competition',$2)",
+   [competition,JSON.stringify({id:competition,name:'Liga Test',country:'Costa Rica'})],
+  );
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','competition','goal-league-dupe',$1)",
+   [competition],
+  );
+
+  for(const [id,name] of [[canonical,'Same Club'],[other,'Other Club']]) {
+   await db.query(
+    "insert into futbeat_private.entities values($1,'team',$2)",
+    [id,JSON.stringify({id,name,country:'Costa Rica',competitionId:competition})],
+   );
+  }
+
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','team','goal-same-old',$1)",
+   [canonical],
+  );
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','team','goal-same-new',$1)",
+   [canonical],
+  );
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','team','goal-other',$1)",
+   [other],
+  );
+
+  const rows=[
+   {
+    overallLeaguePosition:'8',overallLeaguePlayed:'3',overallLeagueW:'1',
+    overallLeagueD:'1',overallLeagueL:'1',overallLeagueGF:'4',
+    overallLeagueGA:'4',overallLeaguePTS:'4',
+    team:{id:'goal-same-old',name:'Same Club',country:{name:'Costa Rica'}},
+   },
+   {
+    overallLeaguePosition:'3',overallLeaguePlayed:'10',overallLeagueW:'6',
+    overallLeagueD:'2',overallLeagueL:'2',overallLeagueGF:'18',
+    overallLeagueGA:'10',overallLeaguePTS:'20',
+    team:{id:'goal-same-new',name:'Same Club',country:{name:'Costa Rica'}},
+   },
+   {
+    overallLeaguePosition:'1',overallLeaguePlayed:'10',overallLeagueW:'7',
+    overallLeagueD:'2',overallLeagueL:'1',overallLeagueGF:'20',
+    overallLeagueGA:'8',overallLeaguePTS:'23',
+    team:{id:'goal-other',name:'Other Club',country:{name:'Costa Rica'}},
+   },
+  ];
+
+  const stored=(await db.query(
+   'select public.futbeat_store_goal_standings($1,$2,$3,$4,$5) value',
+   [competition,'goal-league-dupe','2026-09-19T01:00:00Z','2026/2027',JSON.stringify(rows)],
+  )).rows[0].value;
+
+  assert.equal(stored.rawRows,3);
+  assert.equal(stored.rows,2);
+  assert.equal(stored.duplicatesCollapsed,1);
+
+  const table=(await db.query(
+   'select table_payload from futbeat_private.standings_cache where competition_id=$1',
+   [competition],
+  )).rows[0].table_payload;
+  const same=table.rows.find(row=>row.teamId===canonical);
+  assert.equal(same.played,10);
+  assert.equal(same.points,20);
+  assert.equal(table.rows.filter(row=>row.teamId===canonical).length,1);
+ } finally {await db.close();}
+});
