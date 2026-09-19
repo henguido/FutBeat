@@ -252,6 +252,7 @@ class FootballMatch {
       _ => 'Próximo',
     };
   }
+
   List<Json> get events {
     final items = (json['events'] as List).cast<Json>().toList();
     items.sort((a, b) {
@@ -263,9 +264,8 @@ class FootballMatch {
         b['extraMinute'] as int? ?? 0,
       );
       if (byExtra != 0) return byExtra;
-      final byType = _eventTypeOrder(
-        a['type'] as String? ?? '',
-      ).compareTo(_eventTypeOrder(b['type'] as String? ?? ''));
+      final byType = _eventTypeOrder(a['type'] as String? ?? '')
+          .compareTo(_eventTypeOrder(b['type'] as String? ?? ''));
       if (byType != 0) return byType;
       return (a['id'] as String? ?? '').compareTo(b['id'] as String? ?? '');
     });
@@ -280,10 +280,7 @@ class FootballMatch {
   List<Json> get statistics => (json['statistics'] as List).cast<Json>();
 }
 
-List<Json> mergedMatchTimeline(
-  FootballMatch match,
-  MatchDetail detail,
-) {
+List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
   final detailed = <Json>[
     for (var i = 0; i < detail.incidents.length; i++)
       {
@@ -314,11 +311,7 @@ List<Json> mergedMatchTimeline(
       if (!detailedMoments.contains(
             '${event['type']}|${event['minute'] ?? -1}|${event['extraMinute'] ?? 0}',
           ) ||
-          {
-            'KICKOFF',
-            'HALFTIME',
-            'FULL_TIME',
-          }.contains(event['type']))
+          {'KICKOFF', 'HALFTIME', 'FULL_TIME'}.contains(event['type']))
         event,
     ...detailed,
   ];
@@ -332,9 +325,8 @@ List<Json> mergedMatchTimeline(
       b['extraMinute'] as int? ?? 0,
     );
     if (byExtra != 0) return byExtra;
-    final byType = _eventTypeOrder(
-      a['type'] as String? ?? '',
-    ).compareTo(_eventTypeOrder(b['type'] as String? ?? ''));
+    final byType = _eventTypeOrder(a['type'] as String? ?? '')
+        .compareTo(_eventTypeOrder(b['type'] as String? ?? ''));
     if (byType != 0) return byType;
     return (a['id'] as String? ?? '').compareTo(b['id'] as String? ?? '');
   });
@@ -347,13 +339,9 @@ class Snapshot {
       coverage = json['coverage'] as Json?,
       stale = (json['freshness'] as Json?)?['stale'] == true,
       updatedAt = DateTime.parse(json['updatedAt'] as String),
-      entityRedirects = (json['entityRedirects'] as Map? ?? const {})
-          .map(
-            (key, value) => MapEntry(
-              key.toString(),
-              value.toString(),
-            ),
-          ),
+      entityRedirects = (json['entityRedirects'] as Map? ?? const {}).map(
+        (key, value) => MapEntry(key.toString(), value.toString()),
+      ),
       teams = (json['teams'] as List).map((e) => Entity(e as Json)).toList(),
       players = (json['players'] as List)
           .map((e) => Entity(e as Json))
@@ -373,9 +361,7 @@ class Snapshot {
 
     _teamsById = {for (final entity in teams) entity.id: entity};
     _playersById = {for (final entity in players) entity.id: entity};
-    _competitionsById = {
-      for (final entity in competitions) entity.id: entity,
-    };
+    _competitionsById = {for (final entity in competitions) entity.id: entity};
     _matchesById = {for (final match in matches) match.id: match};
 
     for (final match in matches) {
@@ -454,9 +440,7 @@ class Snapshot {
       'entityRedirects': entityRedirects,
       'teams': contextTeams,
       'players': contextPlayers,
-      'competitions': [
-        if (competitionEntity != null) competitionEntity.json,
-      ],
+      'competitions': [if (competitionEntity != null) competitionEntity.json],
       'matches': [target.json],
       'standings': matchStandings,
       'news': const <dynamic>[],

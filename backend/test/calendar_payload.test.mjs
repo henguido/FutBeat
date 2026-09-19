@@ -10,7 +10,7 @@ test('calendar transport keeps visible football data while stripping internal me
     const away = 'fb_team_calendar_away';
     const match = 'fb_match_calendar_compact';
     const startTime = '2026-09-19T20:00:00.000Z';
-    const receivedAt = '2026-09-19T14:00:00.000Z';
+    const receivedAt = new Date().toISOString();
 
     await db.query(
       "insert into futbeat_private.entities(id,kind,payload) values($1,'competition',$2)",

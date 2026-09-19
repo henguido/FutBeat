@@ -79,7 +79,10 @@ int competitionImportance(Entity competition) {
   if (country == 'portugal' && name.contains('primeira liga')) return 790;
   if (country == 'netherlands' && name.contains('eredivisie')) return 780;
   if (_containsAny(name, ['major league soccer', 'mls'])) return 770;
-  if (_containsAny(name, ['concacaf champions cup', 'concacaf champions league'])) {
+  if (_containsAny(name, [
+    'concacaf champions cup',
+    'concacaf champions league',
+  ])) {
     return 760;
   }
   if (_containsAny(name, ['copa del rey', 'fa cup'])) return 750;
@@ -105,7 +108,10 @@ int competitionFeedScore(
   String? userCountry,
 }) {
   var score = competitionImportance(competition) * 10;
-  if (entityMatchesCountry(competition, userCountry)) score += 800;
+  // Keep the groups strict: explicit follows, selected country, relevance.
+  // The largest relevance contribution is 10,000, so this bonus always makes
+  // the selected country visibly move without filtering any competition.
+  if (entityMatchesCountry(competition, userCountry)) score += 20000;
   if (temporaryInterests.contains('competition:${competition.id}')) {
     score += 90000;
   }
@@ -182,8 +188,9 @@ List<Entity> rankSearchEntities({
   scored.sort((left, right) {
     final byScore = right.$2.compareTo(left.$2);
     if (byScore != 0) return byScore;
-    final byName =
-        left.$1.name.toLowerCase().compareTo(right.$1.name.toLowerCase());
+    final byName = left.$1.name.toLowerCase().compareTo(
+      right.$1.name.toLowerCase(),
+    );
     return byName != 0 ? byName : left.$1.id.compareTo(right.$1.id);
   });
 

@@ -74,9 +74,7 @@ class RedirectRepository extends TestRepository {
     final json = jsonDecode(
       File('assets/demo.snapshot.json').readAsStringSync(),
     ) as Json;
-    json['entityRedirects'] = {
-      'fb_team_legacy_sap': 'fb_team_sap',
-    };
+    json['entityRedirects'] = {'fb_team_legacy_sap': 'fb_team_sap'};
     return Snapshot(json);
   }
 }

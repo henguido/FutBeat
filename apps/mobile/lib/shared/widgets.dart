@@ -188,7 +188,6 @@ class DataView extends ConsumerWidget {
       );
 }
 
-
 class CalendarDataView extends ConsumerWidget {
   const CalendarDataView({
     super.key,
@@ -326,10 +325,7 @@ class PlayerProfileFacts extends StatelessWidget {
             runSpacing: 8,
             children: [
               for (final value in chips)
-                Chip(
-                  label: Text(value),
-                  visualDensity: VisualDensity.compact,
-                ),
+                Chip(label: Text(value), visualDensity: VisualDensity.compact),
             ],
           ),
         if (birthdate.isNotEmpty) ...[
@@ -405,10 +401,7 @@ class NewsArticleCard extends StatelessWidget {
           children: [
             Text(
               title,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 15,
-              ),
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
             ),
             if (description.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -428,10 +421,7 @@ class NewsArticleCard extends StatelessWidget {
                       if (source.isNotEmpty) source,
                       if (date.isNotEmpty) date,
                     ].join(' · '),
-                    style: const TextStyle(
-                      color: muted,
-                      fontSize: 12,
-                    ),
+                    style: const TextStyle(color: muted, fontSize: 12),
                   ),
                 ),
                 if (url.startsWith('https://'))
@@ -465,16 +455,15 @@ class TransferEventCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final player = transfer['playerName']?.toString().trim() ?? 'Jugador';
-    final from = transfer['fromTeamName']?.toString().trim() ?? 'Equipo anterior';
+    final from =
+        transfer['fromTeamName']?.toString().trim() ?? 'Equipo anterior';
     final to = transfer['toTeamName']?.toString().trim() ?? 'Equipo actual';
     final source = transfer['source']?.toString().trim() ?? 'GOAL API';
     final date = _contentDateLabel(transfer['detectedAt']);
 
     return Card(
       child: ListTile(
-        leading: const CircleAvatar(
-          child: Icon(Icons.swap_horiz),
-        ),
+        leading: const CircleAvatar(child: Icon(Icons.swap_horiz)),
         title: Text(
           player,
           style: const TextStyle(fontWeight: FontWeight.w700),

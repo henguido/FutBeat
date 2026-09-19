@@ -25,14 +25,17 @@ void main() {
   test('formation rows fall back when provider formation is incomplete', () {
     final starters = [
       for (var i = 1; i <= 10; i++)
-        <String, dynamic>{
-          'name': 'Jugador $i',
-          'lineupPosition': i,
-        },
+        <String, dynamic>{'name': 'Jugador $i', 'lineupPosition': i},
     ];
 
     expect(formationPlayerRows('4-3-3', starters), isNull);
-    expect(formationPlayerRows(null, [...starters, {'name': '11'}]), isNull);
+    expect(
+      formationPlayerRows(null, [
+        ...starters,
+        {'name': '11'},
+      ]),
+      isNull,
+    );
   });
 
   test('stat numeric parser accepts numbers and percentages safely', () {
@@ -42,7 +45,9 @@ void main() {
     expect(statNumericValue(null), isNull);
   });
 
-  testWidgets('numeric match statistics render comparison bars', (tester) async {
+  testWidgets('numeric match statistics render comparison bars', (
+    tester,
+  ) async {
     final match = FootballMatch({
       'id': 'fb_match_stats',
       'competitionId': 'fb_comp_stats',
@@ -56,18 +61,11 @@ void main() {
         {'label': 'Possession', 'home': '60', 'away': '40', 'unit': '%'},
         {'label': 'Shots', 'home': 12, 'away': 8},
       ],
-      'provenance': {
-        'source': 'test',
-        'receivedAt': '2026-09-19T02:00:00Z',
-      },
+      'provenance': {'source': 'test', 'receivedAt': '2026-09-19T02:00:00Z'},
     });
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Statistics(match),
-        ),
-      ),
+      MaterialApp(home: Scaffold(body: Statistics(match))),
     );
 
     expect(find.text('60%'), findsOneWidget);

@@ -18,38 +18,39 @@ void main() {
     expect(value.notifyCards, isTrue);
   });
 
-  test('profile settings can clear the display name without losing toggles', () {
-    const initial = UserProfileSettings(
-      displayName: 'Henry',
-      notifyCards: false,
-      notifyTransfers: false,
-    );
+  test(
+    'profile settings can clear the display name without losing toggles',
+    () {
+      const initial = UserProfileSettings(
+        displayName: 'Henry',
+        notifyCards: false,
+        notifyTransfers: false,
+      );
 
-    final updated = initial.copyWith(
-      clearDisplayName: true,
-      notifyGoals: false,
-    );
+      final updated = initial.copyWith(
+        clearDisplayName: true,
+        notifyGoals: false,
+      );
 
-    expect(updated.displayName, isNull);
-    expect(updated.notifyGoals, isFalse);
-    expect(updated.notifyCards, isFalse);
-    expect(updated.notifyTransfers, isFalse);
-  });
+      expect(updated.displayName, isNull);
+      expect(updated.notifyGoals, isFalse);
+      expect(updated.notifyCards, isFalse);
+      expect(updated.notifyTransfers, isFalse);
+    },
+  );
 
-  test('hour format accepts supported values and rejects unknown cloud data', () {
-    final twentyFour = UserProfileSettings.fromJson({
-      'hourFormat': '24h',
-    });
-    final invalid = UserProfileSettings.fromJson({
-      'hourFormat': 'military-ish',
-    });
+  test(
+    'hour format accepts supported values and rejects unknown cloud data',
+    () {
+      final twentyFour = UserProfileSettings.fromJson({'hourFormat': '24h'});
+      final invalid = UserProfileSettings.fromJson({
+        'hourFormat': 'military-ish',
+      });
 
-    expect(twentyFour.hourFormat, '24h');
-    expect(twentyFour.toJson()['hourFormat'], '24h');
-    expect(invalid.hourFormat, 'system');
-    expect(
-      twentyFour.copyWith(hourFormat: '12h').hourFormat,
-      '12h',
-    );
-  });
+      expect(twentyFour.hourFormat, '24h');
+      expect(twentyFour.toJson()['hourFormat'], '24h');
+      expect(invalid.hourFormat, 'system');
+      expect(twentyFour.copyWith(hourFormat: '12h').hourFormat, '12h');
+    },
+  );
 }

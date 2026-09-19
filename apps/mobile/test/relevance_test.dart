@@ -7,56 +7,43 @@ Entity _entity(
   String name,
   String country, {
   String? competitionId,
-}) =>
-    Entity({
-      'id': id,
-      'name': name,
-      'country': country,
-      'competitionId': ?competitionId,
-      'aliases': <dynamic>[],
-    });
+}) => Entity({
+  'id': id,
+  'name': name,
+  'country': country,
+  'competitionId': ?competitionId,
+  'aliases': <dynamic>[],
+});
 
 Snapshot _snapshot() => Snapshot({
-      'schemaVersion': 1,
-      'demo': false,
-      'updatedAt': DateTime.now().toUtc().toIso8601String(),
-      'coverage': {'partial': false},
-      'freshness': {'stale': false},
-      'competitions': [
-        {
-          'id': 'fb_comp_eng',
-          'name': 'Premier League',
-          'country': 'England',
-        },
-        {
-          'id': 'fb_comp_cr',
-          'name': 'Liga Promerica',
-          'country': 'Costa Rica',
-        },
-        {
-          'id': 'fb_comp_pt',
-          'name': 'Primeira Liga',
-          'country': 'Portugal',
-        },
-      ],
-      'teams': [
-        {
-          'id': 'fb_team_sporting_cr',
-          'name': 'Sporting San José',
-          'country': 'Costa Rica',
-          'competitionId': 'fb_comp_cr',
-        },
-        {
-          'id': 'fb_team_sporting_pt',
-          'name': 'Sporting CP',
-          'country': 'Portugal',
-          'competitionId': 'fb_comp_pt',
-        },
-      ],
-      'players': <dynamic>[],
-      'matches': <dynamic>[],
-      'standings': <dynamic>[],
-    });
+  'schemaVersion': 1,
+  'demo': false,
+  'updatedAt': DateTime.now().toUtc().toIso8601String(),
+  'coverage': {'partial': false},
+  'freshness': {'stale': false},
+  'competitions': [
+    {'id': 'fb_comp_eng', 'name': 'Premier League', 'country': 'England'},
+    {'id': 'fb_comp_cr', 'name': 'Liga Promerica', 'country': 'Costa Rica'},
+    {'id': 'fb_comp_pt', 'name': 'Primeira Liga', 'country': 'Portugal'},
+  ],
+  'teams': [
+    {
+      'id': 'fb_team_sporting_cr',
+      'name': 'Sporting San José',
+      'country': 'Costa Rica',
+      'competitionId': 'fb_comp_cr',
+    },
+    {
+      'id': 'fb_team_sporting_pt',
+      'name': 'Sporting CP',
+      'country': 'Portugal',
+      'competitionId': 'fb_comp_pt',
+    },
+  ],
+  'players': <dynamic>[],
+  'matches': <dynamic>[],
+  'standings': <dynamic>[],
+});
 
 void main() {
   test('major leagues rank above alphabetically convenient weak leagues', () {
@@ -87,18 +74,21 @@ void main() {
     });
   });
 
-  test('favorites outrank recommendations without filtering other entities', () {
-    final data = _snapshot();
-    final ranked = rankSearchEntities(
-      data: data,
-      entities: data.competitions,
-      type: 'competition',
-      query: '',
-      follows: const {'competition:fb_comp_pt'},
-      userCountry: 'CR',
-    );
+  test(
+    'favorites outrank recommendations without filtering other entities',
+    () {
+      final data = _snapshot();
+      final ranked = rankSearchEntities(
+        data: data,
+        entities: data.competitions,
+        type: 'competition',
+        query: '',
+        follows: const {'competition:fb_comp_pt'},
+        userCountry: 'CR',
+      );
 
-    expect(ranked.first.id, 'fb_comp_pt');
-    expect(ranked.length, data.competitions.length);
-  });
+      expect(ranked.first.id, 'fb_comp_pt');
+      expect(ranked.length, data.competitions.length);
+    },
+  );
 }

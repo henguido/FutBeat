@@ -82,9 +82,7 @@ class CountryPreferencePanel extends ConsumerWidget {
                 DropdownButtonFormField<String?>(
                   isExpanded: true,
                   initialValue: value.selectedCountry,
-                  decoration: const InputDecoration(
-                    labelText: 'Cambiar país',
-                  ),
+                  decoration: const InputDecoration(labelText: 'Cambiar país'),
                   items: [
                     for (final code in supportedCountryChoices)
                       DropdownMenuItem(

@@ -29,24 +29,25 @@ final goal = <String, dynamic>{
 };
 
 void main() {
-  test('snapshot preserves canonical entity redirects across LIVE overlays', () {
-    final raw = jsonDecode(
-      File('assets/demo.snapshot.json').readAsStringSync(),
-    ) as Json;
-    raw['demo'] = false;
-    raw['entityRedirects'] = {
-      'fb_team_legacy_sap': 'fb_team_sap',
-    };
+  test(
+    'snapshot preserves canonical entity redirects across LIVE overlays',
+    () {
+      final raw = jsonDecode(
+        File('assets/demo.snapshot.json').readAsStringSync(),
+      ) as Json;
+      raw['demo'] = false;
+      raw['entityRedirects'] = {'fb_team_legacy_sap': 'fb_team_sap'};
 
-    final snapshot = Snapshot(raw);
-    expect(snapshot.resolveEntityId('fb_team_legacy_sap'), 'fb_team_sap');
-    expect(snapshot.resolveEntityId('fb_team_sap'), 'fb_team_sap');
+      final snapshot = Snapshot(raw);
+      expect(snapshot.resolveEntityId('fb_team_legacy_sap'), 'fb_team_sap');
+      expect(snapshot.resolveEntityId('fb_team_sap'), 'fb_team_sap');
 
-    final merged = snapshot.withLiveUpdates({
-      'fb_match_clasico': LiveMatchUpdate.fromJson(row(2, [goal])),
-    });
-    expect(merged.resolveEntityId('fb_team_legacy_sap'), 'fb_team_sap');
-  });
+      final merged = snapshot.withLiveUpdates({
+        'fb_match_clasico': LiveMatchUpdate.fromJson(row(2, [goal])),
+      });
+      expect(merged.resolveEntityId('fb_team_legacy_sap'), 'fb_team_sap');
+    },
+  );
 
   test('snapshot merge deduplicates canonical events and rejects unrelated fixture events', () {
     final raw = jsonDecode(
@@ -90,44 +91,47 @@ void main() {
       2,
     );
   });
-  test('newer canonical terminal state cannot be reopened by a stale LIVE overlay', () {
-    final raw = jsonDecode(
-      File('assets/demo.snapshot.json').readAsStringSync(),
-    ) as Json;
-    raw['demo'] = false;
-    final matches = raw['matches'] as List;
-    final canonical = Map<String, dynamic>.from(
-      matches.firstWhere((item) => item['id'] == 'fb_match_clasico') as Map,
-    )
-      ..['status'] = 'VERIFIED'
-      ..['minute'] = null
-      ..['score'] = {'home': 2, 'away': 1}
-      ..['provenance'] = {
-        'source': 'GOAL API',
-        'receivedAt': '2026-09-18T13:16:26.355Z',
-        'verificationStatus': 'PROVISIONAL',
-      };
-    matches[matches.indexWhere((item) => item['id'] == 'fb_match_clasico')] =
-        canonical;
+  test(
+    'newer canonical terminal state cannot be reopened by a stale LIVE overlay',
+    () {
+      final raw = jsonDecode(
+        File('assets/demo.snapshot.json').readAsStringSync(),
+      ) as Json;
+      raw['demo'] = false;
+      final matches = raw['matches'] as List;
+      final canonical =
+          Map<String, dynamic>.from(
+              matches.firstWhere((item) => item['id'] == 'fb_match_clasico')
+                  as Map,
+            )
+            ..['status'] = 'VERIFIED'
+            ..['minute'] = null
+            ..['score'] = {'home': 2, 'away': 1}
+            ..['provenance'] = {
+              'source': 'GOAL API',
+              'receivedAt': '2026-09-18T13:16:26.355Z',
+              'verificationStatus': 'PROVISIONAL',
+            };
+      matches[matches.indexWhere((item) => item['id'] == 'fb_match_clasico')] =
+          canonical;
 
-    final snapshot = Snapshot(raw);
-    final stale = LiveMatchUpdate.fromJson({
-      ...row(9, [goal]),
-      'minute': 55,
-      'home_score': 1,
-      'away_score': 0,
-      'changed_at': '2026-09-17T18:20:02.432Z',
-    });
+      final snapshot = Snapshot(raw);
+      final stale = LiveMatchUpdate.fromJson({
+        ...row(9, [goal]),
+        'minute': 55,
+        'home_score': 1,
+        'away_score': 0,
+        'changed_at': '2026-09-17T18:20:02.432Z',
+      });
 
-    final reconciled = snapshot.withLiveUpdates({
-      'fb_match_clasico': stale,
-    });
-    final match = reconciled.match('fb_match_clasico')!;
+      final reconciled = snapshot.withLiveUpdates({'fb_match_clasico': stale});
+      final match = reconciled.match('fb_match_clasico')!;
 
-    expect(match.status, 'VERIFIED');
-    expect(match.score, '2 - 1');
-    expect(match.json['liveRevision'], isNull);
-  });
+      expect(match.status, 'VERIFIED');
+      expect(match.score, '2 - 1');
+      expect(match.json['liveRevision'], isNull);
+    },
+  );
 
   test('stale LIVE data is visible instead of pretending to be current', () {
     final stale = FootballMatch({
@@ -168,27 +172,18 @@ void main() {
       'score': {'home': 1, 'away': 0},
       'minute': 45,
       'events': [
-        {
-          'id': 'fb_event_var',
-          'type': 'VAR',
-          'minute': 45,
-          'extraMinute': 2,
-        },
-        {
-          'id': 'fb_event_goal',
-          'type': 'GOAL',
-          'minute': 45,
-          'extraMinute': 1,
-        },
+        {'id': 'fb_event_var', 'type': 'VAR', 'minute': 45, 'extraMinute': 2},
+        {'id': 'fb_event_goal', 'type': 'GOAL', 'minute': 45, 'extraMinute': 1},
         {'id': 'fb_event_kickoff', 'type': 'KICKOFF', 'minute': 0},
       ],
       'statistics': [],
     });
 
-    expect(
-      match.events.map((event) => event['id']).toList(),
-      ['fb_event_kickoff', 'fb_event_goal', 'fb_event_var'],
-    );
+    expect(match.events.map((event) => event['id']).toList(), [
+      'fb_event_kickoff',
+      'fb_event_goal',
+      'fb_event_var',
+    ]);
     expect(eventMinuteLabel(match.events[1]), '45+1′');
     expect(eventMinuteLabel(match.events[2]), '45+2′');
     expect(match.latestEvent?['id'], 'fb_event_var');
@@ -292,18 +287,13 @@ void main() {
 
     final timeline = mergedMatchTimeline(match, detail);
 
-    expect(
-      timeline.map((event) => event['type']).toList(),
-      ['KICKOFF', 'YELLOW_CARD', 'GOAL'],
-    );
-    expect(
-      timeline.where((event) => event['type'] == 'GOAL').length,
-      1,
-    );
-    expect(
-      timeline.last['detail'],
-      contains('Goleador'),
-    );
+    expect(timeline.map((event) => event['type']).toList(), [
+      'KICKOFF',
+      'YELLOW_CARD',
+      'GOAL',
+    ]);
+    expect(timeline.where((event) => event['type'] == 'GOAL').length, 1);
+    expect(timeline.last['detail'], contains('Goleador'));
   });
 
   test('Realtime reconnect bootstraps missing events and ignores repeated/older revisions', () async {

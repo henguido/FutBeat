@@ -125,9 +125,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final service = ref.watch(pushServiceProvider);
-    final follows = ref.watch(followsProvider).asData?.value ?? const <String>{};
+    final follows =
+        ref.watch(followsProvider).asData?.value ?? const <String>{};
 
-    final teamCount = follows.where((value) => value.startsWith('team:')).length;
+    final teamCount = follows
+        .where((value) => value.startsWith('team:'))
+        .length;
     final competitionCount = follows
         .where((value) => value.startsWith('competition:'))
         .length;
@@ -333,14 +336,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               onPressed: busy
                   ? null
                   : service.enabled
-                  ? () => action(
-                      service.disable,
-                      'Notificaciones desactivadas.',
-                    )
-                  : () => action(
-                      service.enable,
-                      'Notificaciones activadas.',
-                    ),
+                  ? () =>
+                        action(service.disable, 'Notificaciones desactivadas.')
+                  : () => action(service.enable, 'Notificaciones activadas.'),
               icon: Icon(
                 service.enabled
                     ? Icons.notifications_off_outlined

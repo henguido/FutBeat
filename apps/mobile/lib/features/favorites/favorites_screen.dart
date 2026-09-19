@@ -29,7 +29,9 @@ class FavoritesScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final followState = ref.watch(followsProvider);
     final follows = followState.asData?.value;
-    final sortedKeys = follows == null ? <String>[] : (follows.toList()..sort());
+    final sortedKeys = follows == null
+        ? <String>[]
+        : (follows.toList()..sort());
     final encodedKeys = sortedKeys.join(',');
     final favorites = follows != null && follows.isNotEmpty
         ? ref.watch(favoritesSnapshotProvider(encodedKeys))
@@ -45,9 +47,7 @@ class FavoritesScreen extends ConsumerWidget {
         error: (_, stack) => Center(
           child: TextButton(
             onPressed: () => ref.invalidate(followsProvider),
-            child: const Text(
-              'No se pudo cargar el seguimiento · Reintentar',
-            ),
+            child: const Text('No se pudo cargar el seguimiento · Reintentar'),
           ),
         ),
         data: (currentFollows) {

@@ -19,8 +19,7 @@ FootballMatch _match({
     'status': status,
     'score': status == 'LIVE' ? {'home': 0, 'away': 0} : null,
     'minute': minute,
-    if (liveChangedAt != null)
-      'liveChangedAt': liveChangedAt.toIso8601String(),
+    if (liveChangedAt != null) 'liveChangedAt': liveChangedAt.toIso8601String(),
     'events': <dynamic>[],
     'statistics': <dynamic>[],
     'provenance': {
@@ -41,17 +40,21 @@ void main() {
     expect(match.statusLabel, isEmpty);
   });
 
-  test('stale live transport remains a football status, not a system warning', () {
-    final match = _match(
-      status: 'LIVE',
-      minute: 29,
-      liveChangedAt:
-          DateTime.now().toUtc().subtract(const Duration(hours: 1)),
-    );
+  test(
+    'stale live transport remains a football status, not a system warning',
+    () {
+      final match = _match(
+        status: 'LIVE',
+        minute: 29,
+        liveChangedAt: DateTime.now().toUtc().subtract(
+          const Duration(hours: 1),
+        ),
+      );
 
-    expect(match.statusLabel, "29′ · En vivo");
-    expect(match.statusLabel.toLowerCase(), isNot(contains('atrasad')));
-  });
+      expect(match.statusLabel, "29′ · En vivo");
+      expect(match.statusLabel.toLowerCase(), isNot(contains('atrasad')));
+    },
+  );
 
   test('pending verification is presented as a normal final state', () {
     final match = _match(status: 'FINISHED_PENDING_VERIFICATION');
@@ -59,8 +62,8 @@ void main() {
   });
 
   test('Match Center contains no synthetic provider-status legends', () {
-    final source =
-        File('lib/features/matches/match_screen.dart').readAsStringSync();
+    final source = File('lib/features/matches/match_screen.dart')
+        .readAsStringSync();
 
     for (final forbidden in [
       'Solicitamos alineaciones',
