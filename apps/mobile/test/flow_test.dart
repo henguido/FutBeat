@@ -17,8 +17,12 @@ class TestRepository implements FootballRepository {
   TestRepository({this.fail = false, this.real = false});
   bool fail;
   final bool real;
+  int loadCalls = 0;
+  int loadDateCalls = 0;
+
   @override
   Future<Snapshot> load() async {
+    loadCalls++;
     if (fail) throw const SocketException('Offline');
     final json = jsonDecode(
       File('assets/demo.snapshot.json').readAsStringSync(),
@@ -39,7 +43,26 @@ class TestRepository implements FootballRepository {
   }
 
   @override
-  Future<Snapshot> loadDate(DateTime date) => load();
+  Future<Snapshot> loadDate(DateTime date) async {
+    loadDateCalls++;
+    if (fail) throw const SocketException('Offline');
+    final json = jsonDecode(
+      File('assets/demo.snapshot.json').readAsStringSync(),
+    ) as Json;
+    if (real) {
+      json['demo'] = false;
+      json['coverage'] = {
+        'source': 'TheSportsDB',
+        'partial': true,
+        'live': false,
+      };
+      json['freshness'] = {'stale': true};
+      for (final match in json['matches'] as List) {
+        match['startTime'] = '2030-01-20T18:00:00Z';
+      }
+    }
+    return Snapshot(json);
+  }
 
   @override
   Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail.empty(id);
@@ -290,6 +313,24 @@ void main() {
     expect(find.text('Apertura 2026 · Demo'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'opening a listed match reuses calendar data without global snapshot load',
+    (tester) async {
+      final repository = TestRepository();
+      await openApp(tester, repository: repository);
+
+      expect(repository.loadDateCalls, greaterThan(0));
+      expect(repository.loadCalls, 0);
+
+      await tester.tap(find.text('2 - 1').first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Match Center'), findsOneWidget);
+      expect(repository.loadCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('FB-US-002: empty date and recovery', (tester) async {
     await openApp(tester);
     await tester.tap(find.text('MAÑANA'));
