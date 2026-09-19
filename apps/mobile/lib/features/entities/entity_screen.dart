@@ -211,10 +211,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                         ),
                         const SizedBox(height: 8),
                         if (type == 'player') ...[
-                          if ((entity.json['position']?.toString() ?? '').isNotEmpty)
-                            Center(
-                              child: Text(entity.json['position'].toString()),
-                            ),
+                          PlayerProfileFacts(entity),
                           heading(context, 'Equipo actual'),
                           if (team != null)
                             EntityTile(team, 'team')
