@@ -144,15 +144,6 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                 MatchTimeline(data, match, detail),
                 heading(context, 'Estadísticas clave'),
                 Statistics(match, detail: detail),
-                const SizedBox(height: 20),
-                Text(
-                  'Fuente: ${match.json['liveProvider'] ?? match.json['provenance']['source']}',
-                  style: const TextStyle(fontSize: 11, color: muted),
-                ),
-                Text(
-                  'Actualización: ${DateTime.parse((match.json['liveChangedAt'] ?? match.json['provenance']['receivedAt']) as String).toLocal()}',
-                  style: const TextStyle(fontSize: 11, color: muted),
-                ),
               ],
             ),
             ListView(
