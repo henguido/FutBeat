@@ -6,6 +6,40 @@ import 'package:dio/dio.dart';
 
 import 'models.dart';
 
+
+Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
+  Map<String, LiveMatchUpdate> current,
+  Iterable<Json> rows, {
+  Set<String>? keysBeforeRequest,
+}) {
+  final result = Map<String, LiveMatchUpdate>.of(current);
+  final before = keysBeforeRequest ?? current.keys.toSet();
+  final fetched = <String>{};
+
+  for (final row in rows) {
+    try {
+      final update = LiveMatchUpdate.fromJson(row);
+      if (!update.matchId.startsWith('fb_')) continue;
+      fetched.add(update.matchId);
+      final previous = result[update.matchId];
+      if (previous != null &&
+          (update.changedAt.isBefore(previous.changedAt) ||
+              (update.provider == previous.provider &&
+                  update.revision < previous.revision))) {
+        continue;
+      }
+      result[update.matchId] = update;
+    } catch (_) {
+      // A malformed REST row must not erase the last valid state.
+    }
+  }
+
+  result.removeWhere(
+    (matchId, _) => before.contains(matchId) && !fetched.contains(matchId),
+  );
+  return result;
+}
+
 class LiveRealtimeConfig {
   const LiveRealtimeConfig({
     required this.supabaseUrl,
@@ -105,6 +139,7 @@ class LiveRealtimeClient {
     }
 
     Future<void> bootstrap() async {
+      final before = state.keys.toSet();
       try {
         final response = await dio.getUri<dynamic>(
           config.restUri,
@@ -112,9 +147,18 @@ class LiveRealtimeClient {
         );
         if (disposed) return;
         if (response.data is List) {
-          for (final row in response.data as List) {
-            if (row is Map) accept(Map<String, dynamic>.from(row));
-          }
+          final rows = (response.data as List)
+              .whereType<Map>()
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList();
+          final reconciled = reconcileLiveBootstrapSnapshot(
+            state,
+            rows,
+            keysBeforeRequest: before,
+          );
+          state
+            ..clear()
+            ..addAll(reconciled);
         }
         emit();
       } catch (_) {

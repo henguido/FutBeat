@@ -215,8 +215,13 @@ class FootballMatch {
       ['LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'].contains(status);
   bool get isFinished =>
       ['FINISHED_PENDING_VERIFICATION', 'VERIFIED'].contains(status);
+  bool get isAwaitingUpdate =>
+      ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status) &&
+      costaRicaNow().isAfter(startTime.add(const Duration(minutes: 15)));
+
   bool get isUpcoming =>
-      ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status);
+      ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status) &&
+      !isAwaitingUpdate;
   String get score => json['score'] == null
       ? '—'
       : '${json['score']['home']} - ${json['score']['away']}';
@@ -230,21 +235,24 @@ class FootballMatch {
         const Duration(minutes: 15);
   }
 
-  String get statusLabel => switch (status) {
-    'LIVE' => liveDataStale
-        ? "${json['minute'] ?? '—'}′ · En vivo · datos atrasados"
-        : "${json['minute'] ?? '—'}′ · En vivo",
-    'HALFTIME' => 'Descanso',
-    'EXTRA_TIME' => 'Prórroga',
-    'PENALTIES' => 'Penales',
-    'VERIFIED' => 'Finalizado',
-    'FINISHED_PENDING_VERIFICATION' => 'Final · por verificar',
-    'POSTPONED' => 'Aplazado',
-    'SUSPENDED' => 'Suspendido',
-    'ABANDONED' => 'Abandonado',
-    'CANCELLED' => 'Cancelado',
-    _ => 'Próximo',
-  };
+  String get statusLabel {
+    if (isAwaitingUpdate) return 'Actualización pendiente';
+    return switch (status) {
+      'LIVE' => liveDataStale
+          ? "${json['minute'] ?? '—'}′ · En vivo · datos atrasados"
+          : "${json['minute'] ?? '—'}′ · En vivo",
+      'HALFTIME' => 'Descanso',
+      'EXTRA_TIME' => 'Prórroga',
+      'PENALTIES' => 'Penales',
+      'VERIFIED' => 'Finalizado',
+      'FINISHED_PENDING_VERIFICATION' => 'Final · por verificar',
+      'POSTPONED' => 'Aplazado',
+      'SUSPENDED' => 'Suspendido',
+      'ABANDONED' => 'Abandonado',
+      'CANCELLED' => 'Cancelado',
+      _ => 'Próximo',
+    };
+  }
   List<Json> get events {
     final items = (json['events'] as List).cast<Json>().toList();
     items.sort((a, b) {

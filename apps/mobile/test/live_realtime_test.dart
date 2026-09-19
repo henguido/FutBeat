@@ -58,6 +58,99 @@ void main() {
     expect(merged.stale, isFalse);
   });
 
+  test('REST bootstrap removes overlays deleted while the client was offline', () {
+    LiveMatchUpdate update(String id, int revision) => LiveMatchUpdate(
+      matchId: id,
+      provider: 'goal_api',
+      externalMatchId: 'ext-$id',
+      status: 'LIVE',
+      minute: 30,
+      homeScore: 1,
+      awayScore: 0,
+      revision: revision,
+      eventCount: 0,
+      changedAt: DateTime.utc(2026, 9, 19, 1),
+    );
+
+    final current = <String, LiveMatchUpdate>{
+      'fb_match_stale': update('fb_match_stale', 1),
+      'fb_match_keep': update('fb_match_keep', 1),
+    };
+
+    final reconciled = reconcileLiveBootstrapSnapshot(
+      current,
+      [
+        {
+          'match_id': 'fb_match_keep',
+          'provider': 'goal_api',
+          'external_match_id': 'ext-fb_match_keep',
+          'status': 'LIVE',
+          'minute': 35,
+          'home_score': 1,
+          'away_score': 0,
+          'revision': 2,
+          'event_count': 0,
+          'latest_events': <dynamic>[],
+          'changed_at': '2026-09-19T01:05:00Z',
+        },
+      ],
+      keysBeforeRequest: current.keys.toSet(),
+    );
+
+    expect(reconciled.containsKey('fb_match_stale'), isFalse);
+    expect(reconciled['fb_match_keep']?.revision, 2);
+    expect(reconciled['fb_match_keep']?.minute, 35);
+  });
+
+  test('REST bootstrap preserves a newer realtime row that arrived mid-request', () {
+    final current = <String, LiveMatchUpdate>{
+      'fb_match_new': LiveMatchUpdate(
+        matchId: 'fb_match_new',
+        provider: 'goal_api',
+        externalMatchId: 'new',
+        status: 'LIVE',
+        minute: 42,
+        homeScore: 2,
+        awayScore: 1,
+        revision: 3,
+        eventCount: 0,
+        changedAt: DateTime.utc(2026, 9, 19, 1, 10),
+      ),
+    };
+
+    final reconciled = reconcileLiveBootstrapSnapshot(
+      current,
+      const [],
+      keysBeforeRequest: const <String>{},
+    );
+
+    expect(reconciled.containsKey('fb_match_new'), isTrue);
+    expect(reconciled['fb_match_new']?.revision, 3);
+  });
+
+  test('overdue scheduled match is not presented as upcoming', () {
+    final now = costaRicaNow();
+    final match = FootballMatch({
+      'id': 'fb_match_overdue',
+      'competitionId': 'fb_comp_test',
+      'homeTeamId': 'fb_team_home',
+      'awayTeamId': 'fb_team_away',
+      'startTime': now
+          .subtract(const Duration(minutes: 30))
+          .toUtc()
+          .add(const Duration(hours: 6))
+          .toIso8601String(),
+      'status': 'SCHEDULED',
+      'score': null,
+      'events': <dynamic>[],
+      'statistics': <dynamic>[],
+    });
+
+    expect(match.isAwaitingUpdate, isTrue);
+    expect(match.isUpcoming, isFalse);
+    expect(match.statusLabel, 'Actualización pendiente');
+  });
+
   test(
     'Provider-only fixtures can never alter an unrelated canonical match',
     () {
