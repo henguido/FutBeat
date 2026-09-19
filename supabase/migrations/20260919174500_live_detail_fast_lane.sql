@@ -142,6 +142,135 @@ begin
 end
 $$;
 
+create or replace function futbeat_private.enqueue_stale_interested_match_detail()
+returns text
+language plpgsql
+security definer
+set search_path=''
+as $
+declare
+  v_match_id text;
+begin
+  -- Never compete with a detail explicitly requested from Match Center.
+  if exists(
+    select 1
+    from futbeat_private.match_detail_requests
+    where expires_at>now()
+  ) then
+    return null;
+  end if;
+
+  select e.id
+  into v_match_id
+  from futbeat_private.entities e
+  join futbeat_private.provider_entities pe
+    on pe.provider='goal_api'
+   and pe.kind='match'
+   and pe.canonical_id=e.id
+  left join futbeat_private.live_match_state l
+    on l.canonical_match_id=e.id
+   and l.provider='goal_api'
+  left join futbeat_private.match_detail_cache c
+    on c.match_id=e.id
+  left join futbeat_private.coverage_interests hi
+    on hi.subject_type='team'
+   and hi.subject_id=e.payload->>'homeTeamId'
+  left join futbeat_private.coverage_interests ai
+    on ai.subject_type='team'
+   and ai.subject_id=e.payload->>'awayTeamId'
+  left join futbeat_private.coverage_interests ci
+    on ci.subject_type='competition'
+   and ci.subject_id=e.payload->>'competitionId'
+  left join futbeat_private.coverage_interests mi
+    on mi.subject_type='match'
+   and mi.subject_id=e.id
+  where e.kind='match'
+    and nullif(e.payload->>'startTime','') is not null
+    and (e.payload->>'startTime')::timestamptz
+      between now()-interval '150 minutes' and now()+interval '10 minutes'
+    and coalesce(e.payload->>'status','') not in (
+      'FINISHED_PENDING_VERIFICATION','VERIFIED','CANCELLED',
+      'ABANDONED','POSTPONED'
+    )
+    and (
+      coalesce(hi.explicit_followers,0)
+      +coalesce(hi.temporary_users,0)
+      +coalesce(ai.explicit_followers,0)
+      +coalesce(ai.temporary_users,0)
+      +coalesce(ci.explicit_followers,0)
+      +coalesce(ci.temporary_users,0)
+      +coalesce(mi.explicit_followers,0)
+      +coalesce(mi.temporary_users,0)
+    )>0
+    and (
+      (
+        l.status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES')
+        and l.changed_at<now()-interval '8 minutes'
+      )
+      or (
+        l.canonical_match_id is null
+        and (e.payload->>'startTime')::timestamptz
+          < now()-interval '15 minutes'
+      )
+    )
+    and (
+      c.fetched_at is null
+      or c.fetched_at<now()-interval '8 minutes'
+    )
+  order by
+    case
+      when l.status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES') then 0
+      else 1
+    end,
+    (
+      coalesce(hi.explicit_followers,0)
+      +coalesce(ai.explicit_followers,0)
+      +coalesce(ci.explicit_followers,0)
+      +coalesce(mi.explicit_followers,0)
+    ) desc,
+    (
+      coalesce(hi.temporary_users,0)
+      +coalesce(ai.temporary_users,0)
+      +coalesce(ci.temporary_users,0)
+      +coalesce(mi.temporary_users,0)
+    ) desc,
+    coalesce(l.changed_at,'epoch'::timestamptz),
+    (e.payload->>'startTime')::timestamptz
+  limit 1;
+
+  if v_match_id is null then
+    return null;
+  end if;
+
+  insert into futbeat_private.match_detail_requests(
+    match_id,requested_at,expires_at,request_count
+  )
+  values(v_match_id,now(),now()+interval '10 minutes',1)
+  on conflict(match_id) do update
+    set requested_at=excluded.requested_at,
+        expires_at=excluded.expires_at,
+        request_count=
+          futbeat_private.match_detail_requests.request_count+1;
+
+  return v_match_id;
+end
+$;
+
+create or replace function public.futbeat_enqueue_stale_live_detail()
+returns text
+language sql
+security definer
+set search_path=''
+as $
+  select futbeat_private.enqueue_stale_interested_match_detail()
+$;
+
+revoke all on function public.futbeat_enqueue_stale_live_detail()
+from public,anon,authenticated;
+
+grant execute on function public.futbeat_enqueue_stale_live_detail()
+to service_role;
+
 do $outer$
 declare
   v_job_id bigint;
