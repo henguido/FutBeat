@@ -47,6 +47,8 @@ declare
   sorted_rows jsonb := '[]'::jsonb;
   table_json jsonb;
   row_count integer := 0;
+  v_stage text;
+  v_effective_season text := coalesce(p_season,'');
 begin
   if p_competition_id is null
      or p_external_league_id is null
@@ -66,7 +68,28 @@ begin
     raise exception 'Invalid GOAL standings payload';
   end if;
 
-  for item in select value from jsonb_array_elements(p_rows)
+  select stage_name
+  into v_stage
+  from (
+    select
+      value->>'stageName' as stage_name,
+      max(coalesce(
+        nullif(value->>'updatedAt','')::timestamptz,
+        nullif(value->>'createdAt','')::timestamptz,
+        'epoch'::timestamptz
+      )) as latest_update,
+      count(*) as rows_in_stage
+    from jsonb_array_elements(p_rows)
+    where nullif(value->>'stageName','') is not null
+    group by value->>'stageName'
+    order by latest_update desc,rows_in_stage desc,stage_name
+    limit 1
+  ) ranked_stage;
+
+  for item in
+    select value
+    from jsonb_array_elements(p_rows)
+    where v_stage is null or value->>'stageName'=v_stage
   loop
     external_team:=nullif(coalesce(
       item#>>'{team,id}',
@@ -87,6 +110,14 @@ begin
 
     if external_team is null or team_name is null then
       raise exception 'Invalid GOAL standings team';
+    end if;
+
+    if v_effective_season='' then
+      v_effective_season:=coalesce(
+        nullif(item#>>'{league,season}',''),
+        nullif(item->>'season',''),
+        ''
+      );
     end if;
 
     begin
@@ -196,7 +227,8 @@ begin
 
   table_json:=jsonb_build_object(
     'competitionId',p_competition_id,
-    'season',coalesce(p_season,''),
+    'season',v_effective_season,
+    'stage',coalesce(v_stage,''),
     'provisional',false,
     'source','GOAL API',
     'updatedAt',p_received_at,
@@ -208,7 +240,7 @@ begin
   )
   values(
     p_competition_id,'goal_api',p_external_league_id,
-    coalesce(p_season,''),table_json,p_received_at
+    v_effective_season,table_json,p_received_at
   )
   on conflict(competition_id) do update set
     provider=excluded.provider,
