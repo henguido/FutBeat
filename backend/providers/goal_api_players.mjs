@@ -88,6 +88,21 @@ function dateOrNull(value) {
   return Number.isFinite(parsed) ? result : null;
 }
 
+function decimalOrNull(value) {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function booleanOrNull(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'boolean') return value;
+  const normalized = clean(value).toLowerCase();
+  if (['1', 'true', 'yes', 'y'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n'].includes(normalized)) return false;
+  return null;
+}
+
 export async function normalizeGoalApiSquad(
   payload,
   teamId,
@@ -123,9 +138,22 @@ export async function normalizeGoalApiSquad(
     );
     const age = integerOrNull(player?.age ?? row?.age);
     const dateOfBirth = dateOrNull(
-      player?.dateOfBirth ?? player?.birthDate ?? player?.birthday ??
-        row?.dateOfBirth ?? row?.birthDate ?? row?.birthday,
+      player?.dateOfBirth ?? player?.birthDate ?? player?.birthdate ??
+        player?.birthday ?? row?.dateOfBirth ?? row?.birthDate ??
+        row?.birthdate ?? row?.birthday,
     );
+    const matchesPlayed = integerOrNull(
+      player?.matchPlayed ?? player?.matchesPlayed ??
+        row?.matchPlayed ?? row?.matchesPlayed,
+    );
+    const goals = integerOrNull(player?.goals ?? row?.goals);
+    const assists = integerOrNull(player?.assists ?? row?.assists);
+    const yellowCards = integerOrNull(
+      player?.yellowCards ?? row?.yellowCards,
+    );
+    const redCards = integerOrNull(player?.redCards ?? row?.redCards);
+    const rating = decimalOrNull(player?.rating ?? row?.rating);
+    const injured = booleanOrNull(player?.injured ?? row?.injured);
 
     players.set(id, {
       id,
@@ -137,6 +165,13 @@ export async function normalizeGoalApiSquad(
       shirtNumber,
       age,
       dateOfBirth,
+      matchesPlayed,
+      goals,
+      assists,
+      yellowCards,
+      redCards,
+      rating,
+      injured,
       aliases: [],
       media: photo,
       provenance: {

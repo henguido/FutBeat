@@ -23,7 +23,44 @@ void main() {
     );
 
     expect(find.text('Ana Gol'), findsOneWidget);
-    expect(find.text('#9 · Forward · Costa Rica'), findsOneWidget);
+    expect(find.text('#9 · Delantero · Costa Rica'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('player profile facts show squad statistics', (tester) async {
+    final player = Entity({
+      'id': 'fb_player_profile',
+      'name': 'Ana Gol',
+      'country': 'Costa Rica',
+      'position': 'Forwards',
+      'shirtNumber': 9,
+      'age': 24,
+      'dateOfBirth': '2002-05-14',
+      'matchesPlayed': 18,
+      'goals': 7,
+      'assists': 4,
+      'rating': 7.4,
+      'injured': true,
+      'aliases': <dynamic>[],
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PlayerProfileFacts(player),
+        ),
+      ),
+    );
+
+    expect(find.text('Delantero'), findsOneWidget);
+    expect(find.text('Dorsal #9'), findsOneWidget);
+    expect(find.text('24 años'), findsOneWidget);
+    expect(find.text('18 PJ'), findsOneWidget);
+    expect(find.text('7 goles'), findsOneWidget);
+    expect(find.text('4 asist.'), findsOneWidget);
+    expect(find.text('Rating 7.4'), findsOneWidget);
+    expect(find.text('Lesionado'), findsOneWidget);
+    expect(find.text('Nacimiento: 2002-05-14'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
