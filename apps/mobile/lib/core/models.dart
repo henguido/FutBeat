@@ -373,6 +373,14 @@ class Snapshot {
     if (json['schemaVersion'] != 1) {
       throw const FormatException('Versión de datos incompatible');
     }
+
+    _teamsById = {for (final entity in teams) entity.id: entity};
+    _playersById = {for (final entity in players) entity.id: entity};
+    _competitionsById = {
+      for (final entity in competitions) entity.id: entity,
+    };
+    _matchesById = {for (final match in matches) match.id: match};
+
     for (final match in matches) {
       if (team(match.homeId) == null ||
           team(match.awayId) == null ||
@@ -389,6 +397,11 @@ class Snapshot {
   final List<Entity> teams, players, competitions;
   final List<FootballMatch> matches;
   final List<Json> standings, news, transfers;
+
+  late final Map<String, Entity> _teamsById;
+  late final Map<String, Entity> _playersById;
+  late final Map<String, Entity> _competitionsById;
+  late final Map<String, FootballMatch> _matchesById;
 
   String resolveEntityId(String id) {
     var current = id;
@@ -429,12 +442,10 @@ class Snapshot {
     });
   }
 
-  Entity? team(String id) => teams.where((e) => e.id == id).firstOrNull;
-  Entity? player(String id) => players.where((e) => e.id == id).firstOrNull;
-  Entity? competition(String id) =>
-      competitions.where((e) => e.id == id).firstOrNull;
-  FootballMatch? match(String id) =>
-      matches.where((e) => e.id == id).firstOrNull;
+  Entity? team(String id) => _teamsById[id];
+  Entity? player(String id) => _playersById[id];
+  Entity? competition(String id) => _competitionsById[id];
+  FootballMatch? match(String id) => _matchesById[id];
   List<FootballMatch> onDate(DateTime date, String filter) =>
       matches
           .where(
