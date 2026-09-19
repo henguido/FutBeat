@@ -360,12 +360,16 @@ export default {
         return replyNoStore(400, { error: 'Partido inválido' });
       }
 
+      const shouldRequest =
+        requestUrl.searchParams.get('request') !== '0';
       const [
         { data: detail, error },
         { data: videos, error: videosError },
       ] = await Promise.all([
         ctx.supabaseAdmin.rpc(
-          'futbeat_request_match_detail',
+          shouldRequest
+            ? 'futbeat_request_match_detail'
+            : 'futbeat_read_match_detail',
           { p_match_id: id },
         ),
         ctx.supabaseAdmin.rpc(
