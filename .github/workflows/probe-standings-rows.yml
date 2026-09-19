@@ -27,5 +27,5 @@ jobs:
           $response = Invoke-RestMethod -Uri "https://api.goal-api.com/v1/standings/$leagueId" -Headers $headers -TimeoutSec 30
           if (-not $response.success) { throw "Probe failed" }
           foreach ($row in @($response.data)) {
-            Write-Output ("ROW position={0} team={1} stage={2} round={3} season={4}" -f $row.overallLeaguePosition,$row.teamName,$row.stageName,$row.leagueRound,$row.season)
+            Write-Output ("ROW position={0} team={1} stage={2} round={3} season={4} created={5} updated={6}" -f $row.overallLeaguePosition,$row.teamName,$row.stageName,$row.leagueRound,$row.season,$row.createdAt,$row.updatedAt)
           }
