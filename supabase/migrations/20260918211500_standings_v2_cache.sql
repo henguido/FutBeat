@@ -516,7 +516,7 @@ as $$
       || jsonb_build_object('standings',tables.value)
   end
   from base,tables
-$;
+$$;
 
 revoke all on function
   futbeat_private.futbeat_store_goal_standings(text,text,timestamptz,text,jsonb),
