@@ -34,6 +34,7 @@ test('GOAL worker reconciles detailed fixtures into global LIVE state', async ()
   assert.match(source, /p_observations: \[liveObservation\]/);
   assert.match(source, /futbeat_record_live_batch/);
   assert.match(source, /trigger === "detail-only"/);
+  assert.match(source, /futbeat_enqueue_stale_live_detail/);
 });
 
 test('Match API supports actual GOAL array payloads and read-only refresh', async () => {
@@ -62,4 +63,9 @@ test('detail fast lane runs every minute without replacing LIVE cadence', async 
   assert.match(source, /'\* \* \* \* \*'/);
   assert.match(source, /'detail-only'/);
   assert.match(source, /futbeat-goal-live-sync/);
+  assert.match(source, /enqueue_stale_interested_match_detail/);
+  assert.match(source, /coverage_interests/);
+  assert.match(source, /explicit_followers/);
+  assert.match(source, /temporary_users/);
+  assert.match(source, /interval '8 minutes'/);
 });
