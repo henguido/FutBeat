@@ -340,6 +340,13 @@ class Snapshot {
       coverage = json['coverage'] as Json?,
       stale = (json['freshness'] as Json?)?['stale'] == true,
       updatedAt = DateTime.parse(json['updatedAt'] as String),
+      entityRedirects = (json['entityRedirects'] as Map? ?? const {})
+          .map(
+            (key, value) => MapEntry(
+              key.toString(),
+              value.toString(),
+            ),
+          ),
       teams = (json['teams'] as List).map((e) => Entity(e as Json)).toList(),
       players = (json['players'] as List)
           .map((e) => Entity(e as Json))
@@ -366,9 +373,21 @@ class Snapshot {
   final Json? coverage;
   final bool stale;
   final DateTime updatedAt;
+  final Map<String, String> entityRedirects;
   final List<Entity> teams, players, competitions;
   final List<FootballMatch> matches;
   final List<Json> standings;
+
+  String resolveEntityId(String id) {
+    var current = id;
+    final seen = <String>{};
+    for (var i = 0; i < 8 && seen.add(current); i++) {
+      final next = entityRedirects[current];
+      if (next == null || next.isEmpty || next == current) break;
+      current = next;
+    }
+    return current;
+  }
 
   Snapshot withLiveUpdates(Map<String, LiveMatchUpdate> updates) {
     if (demo || updates.isEmpty) return this;
@@ -387,6 +406,7 @@ class Snapshot {
       'coverage': coverage,
       'freshness': {'stale': false},
       'updatedAt': updatedAt.toIso8601String(),
+      'entityRedirects': entityRedirects,
       'teams': teams.map((entity) => entity.json).toList(),
       'players': players.map((entity) => entity.json).toList(),
       'competitions': competitions.map((entity) => entity.json).toList(),
