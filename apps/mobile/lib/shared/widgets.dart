@@ -262,12 +262,27 @@ class EntityTile extends StatelessWidget {
   const EntityTile(this.entity, this.type, {super.key});
   final Entity entity;
   final String type;
+
+  String get _subtitle {
+    if (type != 'player') return entity.country;
+
+    final parts = <String>[];
+    final number = entity.json['shirtNumber'];
+    final position = entity.json['position']?.toString().trim() ?? '';
+    if (number is int) parts.add('#$number');
+    if (position.isNotEmpty) parts.add(position);
+    if (entity.country.isNotEmpty) parts.add(entity.country);
+    return parts.join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) => Card(
     child: ListTile(
       leading: EntityAvatar(entity),
       title: Text(entity.name),
-      subtitle: Text(entity.country, style: const TextStyle(color: muted)),
+      subtitle: _subtitle.isEmpty
+          ? null
+          : Text(_subtitle, style: const TextStyle(color: muted)),
       trailing: const Icon(Icons.chevron_right),
       onTap: () => context.push('/$type/${entity.id}'),
     ),

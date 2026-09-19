@@ -741,6 +741,74 @@ Deno.serve(async (request) => {
     }
   }
 
+  if (input.action === "squad-reserve") {
+    if (
+      typeof input.teamId !== "string" ||
+      !input.teamId.startsWith("fb_team_") ||
+      typeof input.externalTeamId !== "string" ||
+      input.externalTeamId.trim().length < 1
+    ) {
+      return Response.json({ error: "Invalid squad reservation" }, {
+        status: 400,
+      });
+    }
+
+    try {
+      const reservation = await rpc("futbeat_reserve_goal_squad_call", {
+        p_team_id: input.teamId,
+        p_external_team_id: input.externalTeamId,
+        p_trigger_source: "github-actions",
+      });
+      return Response.json({
+        status: reservation?.allowed ? "ok" : "skipped",
+        reservation,
+      });
+    } catch (error) {
+      console.error(
+        "squad reservation failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return Response.json({ error: "Squad reservation unavailable" }, {
+        status: 502,
+      });
+    }
+  }
+
+  if (input.action === "squad-fail") {
+    if (
+      !Number.isInteger(input.reservationId) ||
+      Number(input.reservationId) < 1
+    ) {
+      return Response.json({ error: "Invalid squad reservation" }, {
+        status: 400,
+      });
+    }
+
+    try {
+      await rpc("futbeat_complete_provider_call", {
+        p_reservation_id: input.reservationId,
+        p_status: "FAILED",
+        p_provider_remaining: input.providerRemaining ?? null,
+        p_http_status: input.httpStatus ?? null,
+        p_error_code: clean(
+          input.errorCode || "GOAL_SQUAD_FETCH_FAILED",
+        ).slice(0, 80),
+        p_metadata: {
+          mode: "team-squad",
+          stage: "provider-fetch",
+          teamId: input.teamId ?? null,
+          externalTeamId: input.externalTeamId ?? null,
+          transport: "github-actions-oidc",
+        },
+      });
+      return Response.json({ status: "ok" });
+    } catch {
+      return Response.json({ error: "Squad failure not recorded" }, {
+        status: 502,
+      });
+    }
+  }
+
   if (input.action === "squad-plan") {
     if (
       !Number.isInteger(input.limit) ||
@@ -788,18 +856,18 @@ Deno.serve(async (request) => {
       });
     }
 
-    const reservation = await rpc("futbeat_reserve_provider_call", {
-      p_provider: "goal_api",
-      p_call_kind: "team-squad-ingest",
-      p_trigger_source: "github-actions",
-      p_daily_limit: 16,
-      p_min_interval_seconds: 0,
-      p_force: true,
-    });
-    if (!reservation.allowed) {
-      return Response.json({ status: "skipped", reason: reservation.reason });
+    if (
+      !Number.isInteger(input.reservationId) ||
+      Number(input.reservationId) < 1
+    ) {
+      return Response.json({ error: "Missing squad reservation" }, {
+        status: 400,
+      });
     }
 
+    const reservation = {
+      reservationId: Number(input.reservationId),
+    };
     const receivedAt = new Date().toISOString();
     const started = performance.now();
     let stage = "resolve-players";
