@@ -467,6 +467,25 @@ class Snapshot {
     });
   }
 
+  Snapshot asStale() {
+    if (stale) return this;
+    return Snapshot({
+      'schemaVersion': 1,
+      'demo': demo,
+      'coverage': coverage,
+      'freshness': {'stale': true},
+      'updatedAt': updatedAt.toIso8601String(),
+      'entityRedirects': entityRedirects,
+      'teams': teams.map((entity) => entity.json).toList(),
+      'players': players.map((entity) => entity.json).toList(),
+      'competitions': competitions.map((entity) => entity.json).toList(),
+      'matches': matches.map((match) => match.json).toList(),
+      'standings': standings,
+      'news': news,
+      'transfers': transfers,
+    });
+  }
+
   Snapshot withLiveUpdates(Map<String, LiveMatchUpdate> updates) {
     if (demo || updates.isEmpty) return this;
     var changed = false;
