@@ -77,11 +77,10 @@ List<Entity> orderMatchCompetitions({
   String? selectedCountry,
   String? detectedCountry,
 }) {
+  final visibleCompetitionIds =
+      matches.map((match) => match.competitionId).toSet();
   final visible = data.competitions
-      .where(
-        (competition) =>
-            matches.any((match) => match.competitionId == competition.id),
-      )
+      .where((competition) => visibleCompetitionIds.contains(competition.id))
       .toList();
 
   if (data.demo) {
@@ -214,6 +213,14 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                 .toList()
               ..sort((a, b) => a.startTime.compareTo(b.startTime));
 
+            final remainingByCompetition =
+                <String, List<FootballMatch>>{};
+            for (final match in remainingGames) {
+              remainingByCompetition
+                  .putIfAbsent(match.competitionId, () => <FootballMatch>[])
+                  .add(match);
+            }
+
             final orderedCompetitions = orderMatchCompetitions(
               data: data,
               matches: remainingGames,
@@ -240,6 +247,175 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                 )
                 .toList();
 
+            final feedItems = <Widget Function()>[];
+
+            void addCompetition(Entity competition) {
+              final competitionMatches =
+                  remainingByCompetition[competition.id] ??
+                  const <FootballMatch>[];
+              if (competitionMatches.isEmpty) return;
+
+              feedItems.add(
+                () => Text(
+                  competition.country.toUpperCase(),
+                  style: const TextStyle(
+                    color: muted,
+                    letterSpacing: 2,
+                    fontSize: 11,
+                  ),
+                ),
+              );
+              feedItems.add(
+                () => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    competition.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  leading: EntityAvatar(competition, size: 34),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      context.push('/competition/${competition.id}'),
+                ),
+              );
+              for (final match in competitionMatches) {
+                feedItems.add(() => MatchCard(match, data));
+              }
+              feedItems.add(() => const SizedBox(height: 12));
+            }
+
+            feedItems
+              ..add(
+                () => const Text(
+                  'EL LATIDO DEL FÚTBOL',
+                  style: TextStyle(
+                    color: muted,
+                    fontSize: 10,
+                    letterSpacing: 3,
+                  ),
+                ),
+              )
+              ..add(() => const SizedBox(height: 20));
+
+            if (data.demo) {
+              feedItems.add(() => const DemoNotice());
+            } else {
+              feedItems
+                ..add(() => CountryPreferencePanel(compact: true, data: data))
+                ..add(() => const SizedBox(height: 16));
+            }
+
+            feedItems
+              ..add(
+                () => Row(
+                  children: [
+                    for (final offset in [-1, 0, 1])
+                      _centeredDateOption(offset, selected, anchor),
+                    SizedBox(
+                      width: 46,
+                      height: 64,
+                      child: IconButton.filledTonal(
+                        tooltip: 'Elegir otra fecha',
+                        onPressed: () => _pickDate(context, selected),
+                        icon: const Icon(Icons.calendar_month_outlined),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+              ..add(() => const SizedBox(height: 12))
+              ..add(
+                () => SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final value in [
+                        'Todos',
+                        'En vivo',
+                        'Próximos',
+                        'Finalizados',
+                      ])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ChoiceChip(
+                            label: Text(
+                              value,
+                              style: TextStyle(
+                                color: filter == value
+                                    ? const Color(0xFF0B1114)
+                                    : Colors.white,
+                              ),
+                            ),
+                            selected: filter == value,
+                            onSelected: (_) => setState(() => filter = value),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              )
+              ..add(() => const SizedBox(height: 16));
+
+            if (games.isEmpty) {
+              feedItems.add(
+                () => const EmptyState(
+                  'No hay partidos este día',
+                  'Prueba otra fecha o cambia el filtro.',
+                ),
+              );
+            }
+
+            if (followedGames.isNotEmpty) {
+              feedItems.add(
+                () => _FeedHeading(
+                  title: 'TUS EQUIPOS',
+                  subtitle: data.demo
+                      ? 'Solo esos partidos suben; la competición completa no se mueve.'
+                      : null,
+                ),
+              );
+              for (final match in followedGames) {
+                final competition = data.competition(match.competitionId)!;
+                feedItems
+                  ..add(
+                    () => _MatchCompetitionLabel(
+                      competition: competition,
+                    ),
+                  )
+                  ..add(() => MatchCard(match, data))
+                  ..add(() => const SizedBox(height: 10));
+              }
+              feedItems.add(() => const SizedBox(height: 8));
+            }
+
+            if (followedCompetitions.isNotEmpty) {
+              feedItems.add(
+                () => _FeedHeading(
+                  title: 'TUS COMPETICIONES',
+                  subtitle: data.demo
+                      ? 'Solo las competiciones que elegiste explícitamente.'
+                      : null,
+                ),
+              );
+              for (final competition in followedCompetitions) {
+                addCompetition(competition);
+              }
+            }
+
+            if (allOtherCompetitions.isNotEmpty) {
+              feedItems.add(
+                () => _FeedHeading(
+                  title: 'TODOS LOS PARTIDOS',
+                  subtitle: data.demo
+                      ? 'Todo lo demás que la fuente entregó para este día, sin ocultar ligas.'
+                      : null,
+                ),
+              );
+              for (final competition in allOtherCompetitions) {
+                addCompetition(competition);
+              }
+            }
+
             return RefreshIndicator(
               onRefresh: () async {
                 ref.invalidate(calendarSnapshotProvider(selected));
@@ -249,128 +425,18 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                   // CalendarDataView exposes the provider error and retry action.
                 }
               },
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+              child: CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: [
-                  const Text(
-                    'EL LATIDO DEL FÚTBOL',
-                    style: TextStyle(
-                      color: muted,
-                      fontSize: 10,
-                      letterSpacing: 3,
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) => feedItems[index](),
+                        childCount: feedItems.length,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  if (data.demo) const DemoNotice(),
-                  if (!data.demo)
-                    CountryPreferencePanel(compact: true, data: data),
-                  if (!data.demo) const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      for (final offset in [-1, 0, 1])
-                        _centeredDateOption(offset, selected, anchor),
-                      SizedBox(
-                        width: 46,
-                        height: 64,
-                        child: IconButton.filledTonal(
-                          tooltip: 'Elegir otra fecha',
-                          onPressed: () => _pickDate(context, selected),
-                          icon: const Icon(Icons.calendar_month_outlined),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final value in [
-                          'Todos',
-                          'En vivo',
-                          'Próximos',
-                          'Finalizados',
-                        ])
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(
-                                value,
-                                style: TextStyle(
-                                  color: filter == value
-                                      ? const Color(0xFF0B1114)
-                                      : Colors.white,
-                                ),
-                              ),
-                              selected: filter == value,
-                              onSelected: (_) =>
-                                  setState(() => filter = value),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  if (games.isEmpty)
-                    const EmptyState(
-                      'No hay partidos este día',
-                      'Prueba otra fecha o cambia el filtro.',
-                    ),
-                  if (followedGames.isNotEmpty) ...[
-                    _FeedHeading(
-                      title: 'TUS EQUIPOS',
-                      subtitle: data.demo
-                          ? 'Solo esos partidos suben; la competición completa no se mueve.'
-                          : null,
-                    ),
-                    for (final match in followedGames) ...[
-                      _MatchCompetitionLabel(
-                        competition: data.competition(match.competitionId)!,
-                      ),
-                      MatchCard(match, data),
-                      const SizedBox(height: 10),
-                    ],
-                    const SizedBox(height: 8),
-                  ],
-                  if (followedCompetitions.isNotEmpty) ...[
-                    _FeedHeading(
-                      title: 'TUS COMPETICIONES',
-                      subtitle: data.demo
-                          ? 'Solo las competiciones que elegiste explícitamente.'
-                          : null,
-                    ),
-                    for (final competition in followedCompetitions)
-                      _CompetitionBlock(
-                        competition: competition,
-                        matches: remainingGames
-                            .where(
-                              (match) =>
-                                  match.competitionId == competition.id,
-                            )
-                            .toList(),
-                        data: data,
-                      ),
-                  ],
-                  if (allOtherCompetitions.isNotEmpty) ...[
-                    _FeedHeading(
-                      title: 'TODOS LOS PARTIDOS',
-                      subtitle: data.demo
-                          ? 'Todo lo demás que la fuente entregó para este día, sin ocultar ligas.'
-                          : null,
-                    ),
-                    for (final competition in allOtherCompetitions)
-                      _CompetitionBlock(
-                        competition: competition,
-                        matches: remainingGames
-                            .where(
-                              (match) =>
-                                  match.competitionId == competition.id,
-                            )
-                            .toList(),
-                        data: data,
-                      ),
-                  ],
                 ],
               ),
             );
@@ -510,48 +576,6 @@ class _MatchCompetitionLabel extends StatelessWidget {
           ],
         ),
       );
-}
-
-class _CompetitionBlock extends StatelessWidget {
-  const _CompetitionBlock({
-    required this.competition,
-    required this.matches,
-    required this.data,
-  });
-
-  final Entity competition;
-  final List<FootballMatch> matches;
-  final Snapshot data;
-
-  @override
-  Widget build(BuildContext context) {
-    if (matches.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          competition.country.toUpperCase(),
-          style: const TextStyle(
-            color: muted,
-            letterSpacing: 2,
-            fontSize: 11,
-          ),
-        ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(
-            competition.name,
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          leading: EntityAvatar(competition, size: 34),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push('/competition/${competition.id}'),
-        ),
-        for (final match in matches) MatchCard(match, data),
-        const SizedBox(height: 12),
-      ],
-    );
-  }
 }
 
 class MatchCard extends StatelessWidget {
