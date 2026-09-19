@@ -1077,33 +1077,67 @@ as $fn$
 $fn$;
 
 -- Register only aliases with verified, unambiguous evidence.
-select futbeat_private.futbeat_register_entity_redirect(
-  'competition',
-  'fb_comp_cr',
-  'fb_competition_3e03182862764420947393642a407616',
-  'TheSportsDB Liga FPD legacy id maps to current Costa Rica Primera División'
-);
+-- Guarded existence checks keep fresh/test databases portable.
+do $redirects$
+begin
+  if exists(
+    select 1 from futbeat_private.entities
+    where id='fb_comp_cr' and kind='competition'
+  ) and exists(
+    select 1 from futbeat_private.entities
+    where id='fb_competition_3e03182862764420947393642a407616'
+      and kind='competition'
+  ) then
+    perform futbeat_private.futbeat_register_entity_redirect(
+      'competition',
+      'fb_comp_cr',
+      'fb_competition_3e03182862764420947393642a407616',
+      'TheSportsDB Liga FPD legacy id maps to current Costa Rica Primera División'
+    );
+  end if;
 
-select futbeat_private.futbeat_register_entity_redirect(
-  'competition',
-  'fb_competition_0c2ab7abd95d4c08923e66d3752bfe9f',
-  'fb_competition_3e03182862764420947393642a407616',
-  'Obsolete GOAL seed entity for Costa Rica Primera División'
-);
+  if exists(
+    select 1 from futbeat_private.entities
+    where id='fb_competition_0c2ab7abd95d4c08923e66d3752bfe9f'
+      and kind='competition'
+  ) and exists(
+    select 1 from futbeat_private.entities
+    where id='fb_competition_3e03182862764420947393642a407616'
+      and kind='competition'
+  ) then
+    perform futbeat_private.futbeat_register_entity_redirect(
+      'competition',
+      'fb_competition_0c2ab7abd95d4c08923e66d3752bfe9f',
+      'fb_competition_3e03182862764420947393642a407616',
+      'Obsolete GOAL seed entity for Costa Rica Primera División'
+    );
+  end if;
 
--- The synthetic seed external id is not a real GOAL league identity and must
--- not compete with the real provider league id in standings scheduling.
-delete from futbeat_private.provider_entities
-where provider='goal_api'
-  and kind='competition'
-  and external_id='goal_league_cr';
+  -- The synthetic seed external id is not a real GOAL league identity and must
+  -- not compete with the real provider league id in standings scheduling.
+  delete from futbeat_private.provider_entities
+  where provider='goal_api'
+    and kind='competition'
+    and external_id='goal_league_cr';
 
-select futbeat_private.futbeat_register_entity_redirect(
-  'team',
-  'fb_team_2735d91a74b1454d98a5835fd16791c3',
-  'fb_team_7b79bed52b934a9fa04bcb48a62c32cf',
-  'TheSportsDB Inter de San Carlos is the same club as GOAL Inter San Carlos'
-);
+  if exists(
+    select 1 from futbeat_private.entities
+    where id='fb_team_2735d91a74b1454d98a5835fd16791c3'
+      and kind='team'
+  ) and exists(
+    select 1 from futbeat_private.entities
+    where id='fb_team_7b79bed52b934a9fa04bcb48a62c32cf'
+      and kind='team'
+  ) then
+    perform futbeat_private.futbeat_register_entity_redirect(
+      'team',
+      'fb_team_2735d91a74b1454d98a5835fd16791c3',
+      'fb_team_7b79bed52b934a9fa04bcb48a62c32cf',
+      'TheSportsDB Inter de San Carlos is the same club as GOAL Inter San Carlos'
+    );
+  end if;
+end
+$redirects$;
 
 revoke all on function
   futbeat_private.futbeat_resolve_entity_id(text,text),
