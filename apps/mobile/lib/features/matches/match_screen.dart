@@ -58,8 +58,16 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                 icon: Icons.cloud_off,
               ),
               FilledButton(
-                onPressed: () =>
-                    ref.invalidate(matchContextSnapshotProvider(widget.id)),
+                onPressed: () async {
+                  ref.invalidate(matchContextSnapshotProvider(widget.id));
+                  try {
+                    await ref.read(
+                      matchContextSnapshotProvider(widget.id).future,
+                    );
+                  } catch (_) {
+                    // Keep the recoverable error state visible.
+                  }
+                },
                 child: const Text('Reintentar'),
               ),
             ],
