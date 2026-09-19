@@ -568,7 +568,7 @@ class MatchCard extends StatelessWidget {
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () => context.push('/match/${match.id}'),
+        onTap: () => context.push('/match/${match.id}', extra: data.forMatch(match.id)),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
           child: Column(
