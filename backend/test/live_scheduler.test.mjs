@@ -574,3 +574,118 @@ test('Standings v2 collapses duplicate GOAL team ids into one canonical club',as
   assert.equal(table.rows.filter(row=>row.teamId===canonical).length,1);
  } finally {await db.close();}
 });
+
+
+test('Standings LIVE overlay applies only matches newer than the official baseline',async()=>{
+ const db=await openDatabase();
+ try {
+  const competition='fb_comp_live_table';
+  const home='fb_team_live_table_home';
+  const away='fb_team_live_table_away';
+  const match='fb_match_live_table';
+  const now=Date.now();
+  const baselineAt=new Date(now-30*60*1000).toISOString();
+  const kickoff=new Date(now-10*60*1000).toISOString();
+
+  await db.query(
+   "insert into futbeat_private.entities values($1,'competition',$2)",
+   [competition,JSON.stringify({id:competition,name:'Liga Live',country:'Costa Rica'})],
+  );
+  for(const [id,name] of [[home,'Home Live'],[away,'Away Live']]) {
+   await db.query(
+    "insert into futbeat_private.entities values($1,'team',$2)",
+    [id,JSON.stringify({id,name,country:'Costa Rica',competitionId:competition})],
+   );
+  }
+  await db.query(
+   "insert into futbeat_private.entities values($1,'match',$2)",
+   [match,JSON.stringify({
+    id:match,competitionId:competition,homeTeamId:home,awayTeamId:away,
+    startTime:kickoff,status:'SCHEDULED',score:null,events:[],statistics:[],
+    provenance:{source:'GOAL API',receivedAt:kickoff},
+   })],
+  );
+
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','competition','goal-live-table',$1)",
+   [competition],
+  );
+  for(const [external,id] of [
+   ['goal-live-home',home],
+   ['goal-live-away',away],
+   ['goal-live-match',match],
+  ]) {
+   await db.query(
+    "insert into futbeat_private.provider_entities values('goal_api',$1,$2,$3)",
+    [external==='goal-live-match'?'match':'team',external,id],
+   );
+  }
+
+  const baselineRows=[
+   {
+    overallLeaguePosition:'1',overallLeaguePlayed:'10',overallLeagueW:'5',
+    overallLeagueD:'4',overallLeagueL:'1',overallLeagueGF:'15',
+    overallLeagueGA:'8',overallLeaguePTS:'19',
+    team:{id:'goal-live-home',name:'Home Live',country:{name:'Costa Rica'}},
+   },
+   {
+    overallLeaguePosition:'2',overallLeaguePlayed:'10',overallLeagueW:'5',
+    overallLeagueD:'3',overallLeagueL:'2',overallLeagueGF:'14',
+    overallLeagueGA:'9',overallLeaguePTS:'18',
+    team:{id:'goal-live-away',name:'Away Live',country:{name:'Costa Rica'}},
+   },
+  ];
+
+  await db.query(
+   'select public.futbeat_store_goal_standings($1,$2,$3,$4,$5)',
+   [competition,'goal-live-table',baselineAt,'2026/2027',JSON.stringify(baselineRows)],
+  );
+
+  const observation={
+   externalMatchId:'goal-live-match',
+   payloadHash:createHash('sha256').update('live-table-1-0').digest('hex'),
+   status:'LIVE',
+   minute:30,
+   score:{home:1,away:0},
+   events:[],
+   rawPayload:{apiId:'goal-live-match'},
+  };
+  await db.query(
+   'select public.futbeat_record_live_batch($1,$2,$3)',
+   ['goal_api',new Date().toISOString(),JSON.stringify([observation])],
+  );
+
+  const liveDetail=(await db.query(
+   "select public.futbeat_read_entity_detail('competition',$1) value",
+   [competition],
+  )).rows[0].value;
+  const liveTable=liveDetail.standings[0];
+  assert.equal(liveTable.provisional,true);
+  assert.equal(liveTable.provisionalMatches,1);
+  assert.equal(liveTable.activeMatches,1);
+
+  const homeRow=liveTable.rows.find(row=>row.teamId===home);
+  const awayRow=liveTable.rows.find(row=>row.teamId===away);
+  assert.equal(homeRow.played,11);
+  assert.equal(homeRow.won,6);
+  assert.equal(homeRow.gf,16);
+  assert.equal(homeRow.points,22);
+  assert.equal(awayRow.played,11);
+  assert.equal(awayRow.lost,3);
+  assert.equal(awayRow.ga,10);
+  assert.equal(awayRow.points,18);
+
+  await db.query(
+   'select public.futbeat_store_goal_standings($1,$2,$3,$4,$5)',
+   [competition,'goal-live-table',new Date(now+1000).toISOString(),'2026/2027',JSON.stringify(baselineRows)],
+  );
+
+  const refreshed=(await db.query(
+   "select public.futbeat_read_entity_detail('competition',$1) value",
+   [competition],
+  )).rows[0].value.standings[0];
+  assert.equal(refreshed.provisional,false);
+  assert.equal(refreshed.rows.find(row=>row.teamId===home).played,10);
+  assert.equal(refreshed.rows.find(row=>row.teamId===home).points,19);
+ } finally {await db.close();}
+});
