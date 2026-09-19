@@ -285,7 +285,6 @@ final matchDetailProvider =
           : const Duration(seconds: 30);
       for (var attempt = 0; attempt < 60; attempt++) {
         await Future<void>.delayed(delay);
-        if (!ref.mounted) return;
 
         try {
           current = await repository.readMatchDetail(id);
