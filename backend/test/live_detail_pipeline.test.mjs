@@ -128,10 +128,6 @@ test('calendar uses fresh cached detail when canonical state is behind', async (
       [match, JSON.stringify(canonical)],
     );
     await db.query(
-      "insert into futbeat_private.calendar_matches(match_id,start_time,source,updated_at) values($1,$2,'goal_api',now())",
-      [match, startTime],
-    );
-    await db.query(
       "insert into futbeat_private.match_detail_cache(match_id,provider,external_match_id,fetched_at,payload) values($1,'goal_api','cached-live-1',now(),$2)",
       [match, JSON.stringify({
         matchStatus: 'LIVE',
