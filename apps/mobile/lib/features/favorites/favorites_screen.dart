@@ -81,8 +81,16 @@ class FavoritesScreen extends ConsumerWidget {
                     icon: Icons.cloud_off,
                   ),
                   FilledButton(
-                    onPressed: () =>
-                        ref.invalidate(favoritesSnapshotProvider(encodedKeys)),
+                    onPressed: () async {
+                      ref.invalidate(favoritesSnapshotProvider(encodedKeys));
+                      try {
+                        await ref.read(
+                          favoritesSnapshotProvider(encodedKeys).future,
+                        );
+                      } catch (_) {
+                        // Keep the recoverable error state visible.
+                      }
+                    },
                     child: const Text('Reintentar'),
                   ),
                 ],
