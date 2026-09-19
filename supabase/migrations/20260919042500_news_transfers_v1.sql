@@ -528,6 +528,14 @@ begin
   on conflict(player_id,from_team_id,to_team_id,detected_period)
   do nothing;
 
+  -- A canonical player can belong to only one current GOAL squad. Remove the
+  -- previous membership immediately instead of waiting for that team's refresh.
+  delete from futbeat_private.team_squad_members sm
+  using jsonb_array_elements(p_players) p
+  where sm.player_id=p->>'id'
+    and sm.provider=p_provider
+    and sm.team_id<>p_team_id;
+
   insert into futbeat_private.entities as e(id,kind,payload)
   select p->>'id','player',p
   from jsonb_array_elements(p_players) p
@@ -677,7 +685,9 @@ as $$
       from base
       join futbeat_private.news_subjects ns
         on ns.subject_type=p_type
-       and ns.subject_id=base.resolved_id
+       and futbeat_private.futbeat_resolve_entity_id(
+         ns.subject_type,ns.subject_id
+       )=base.resolved_id
       join futbeat_private.news_articles a
         on a.id=ns.article_id
       where a.published_at>=now()-interval '30 days'
