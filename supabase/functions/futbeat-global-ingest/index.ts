@@ -42,7 +42,26 @@ const rpc = async (
   return text ? JSON.parse(text) : null;
 };
 
+async function secureEqual(left: string, right: string) {
+  if (!left || !right) return false;
+  const [a, b] = await Promise.all([sha256Hex(left), sha256Hex(right)]);
+  return a === b;
+}
+
 async function authorize(request: Request) {
+  const internalToken = String(
+    request.headers.get("x-futbeat-cron-token") ?? "",
+  ).trim();
+  if (internalToken) {
+    const expected = String(
+      await rpc("futbeat_read_goal_live_cron_token") ?? "",
+    ).trim();
+    if (await secureEqual(expected, internalToken)) {
+      return "supabase-cron";
+    }
+    throw new Error("Invalid Supabase internal token");
+  }
+
   const token = request.headers
     .get("authorization")
     ?.replace(/^Bearer\s+/i, "");
@@ -288,6 +307,13 @@ Deno.serve(async (request) => {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  if (
+    authorizedWorkflow === "supabase-cron" &&
+    input.action !== "squad-ingest"
+  ) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   if (input.action === "goal-live-secret-provision") {
     if (
       authorizedWorkflow !==
@@ -452,7 +478,9 @@ Deno.serve(async (request) => {
           insertedObservations: persistence?.insertedObservations ?? 0,
           duplicates: persistence?.duplicates ?? 0,
           durationMs: Math.round(performance.now() - started),
-          transport: "github-actions-oidc",
+          transport: authorizedWorkflow === "supabase-cron"
+            ? "supabase-cron"
+            : "github-actions-oidc",
           provider: "GOAL API",
         },
       });
@@ -482,7 +510,9 @@ Deno.serve(async (request) => {
             mode: "live",
             detail,
             durationMs: Math.round(performance.now() - started),
-            transport: "github-actions-oidc",
+            transport: authorizedWorkflow === "supabase-cron"
+              ? "supabase-cron"
+              : "github-actions-oidc",
           },
         });
       } catch {
@@ -941,7 +971,9 @@ Deno.serve(async (request) => {
           externalTeamId: input.externalTeamId,
           players: players.length,
           durationMs,
-          transport: "github-actions-oidc",
+          transport: authorizedWorkflow === "supabase-cron"
+            ? "supabase-cron"
+            : "github-actions-oidc",
           provider: "GOAL API",
         },
       });
@@ -970,7 +1002,9 @@ Deno.serve(async (request) => {
             teamId: input.teamId,
             externalTeamId: input.externalTeamId,
             durationMs: Math.round(performance.now() - started),
-            transport: "github-actions-oidc",
+            transport: authorizedWorkflow === "supabase-cron"
+              ? "supabase-cron"
+              : "github-actions-oidc",
           },
         });
       } catch {

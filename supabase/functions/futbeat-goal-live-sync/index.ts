@@ -104,6 +104,47 @@ async function readGoalKey() {
   return value;
 }
 
+async function readCronToken() {
+  const token = clean(await rpc("futbeat_read_goal_live_cron_token"));
+  if (token.length < 32) {
+    throw new Error("Supabase cron token is not provisioned");
+  }
+  return token;
+}
+
+async function callGlobalIngest(
+  token: string,
+  body: Record<string, unknown>,
+) {
+  const response = await fetch(
+    `${supabaseUrl}/functions/v1/futbeat-global-ingest`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-futbeat-cron-token": token,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30000),
+    },
+  );
+  const text = await response.text();
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(
+      `global ingest returned non-JSON HTTP ${response.status}`,
+    );
+  }
+  if (!response.ok || payload.status !== "ok") {
+    throw new Error(
+      `global ingest failed HTTP ${response.status}`,
+    );
+  }
+  return payload;
+}
+
 async function fetchGoal(
   key: string,
   path: string,
@@ -353,11 +394,87 @@ async function syncOneMatchDetail() {
   }
 }
 
+async function syncOneSquad() {
+  const plan = await rpc("futbeat_team_squad_plan", { p_limit: 1 });
+  if (!Array.isArray(plan) || plan.length === 0) {
+    return { status: "skipped", reason: "no_squad_due" };
+  }
+
+  const row = plan[0] as Record<string, unknown>;
+  const teamId = clean(row.teamId);
+  const externalTeamId = clean(row.externalTeamId);
+  if (!teamId.startsWith("fb_team_") || !externalTeamId) {
+    throw new Error("Invalid squad plan row");
+  }
+
+  const reservation = await rpc("futbeat_reserve_goal_squad_call", {
+    p_team_id: teamId,
+    p_external_team_id: externalTeamId,
+    p_trigger_source: "supabase-cron",
+  });
+  if (!reservation?.allowed) {
+    return {
+      status: "skipped",
+      reason: reservation?.reason ?? "unknown",
+      reservation,
+    };
+  }
+
+  const reservationId = Number(reservation.reservationId);
+  let remaining: number | null = null;
+
+  try {
+    const goalKey = await readGoalKey();
+    const response = await fetchGoal(
+      goalKey,
+      `/teams/${encodeURIComponent(externalTeamId)}/players`,
+    );
+    remaining = response.remaining;
+    if (
+      response.payload.data == null ||
+      typeof response.payload.data !== "object"
+    ) {
+      throw new Error("GOAL squad payload is invalid");
+    }
+
+    const cronToken = await readCronToken();
+    const ingested = await callGlobalIngest(cronToken, {
+      action: "squad-ingest",
+      reservationId,
+      teamId,
+      externalTeamId,
+      providerRemaining: remaining,
+      players: response.payload,
+    });
+
+    return {
+      status: "ok",
+      teamId,
+      externalTeamId,
+      players: Number(ingested.players ?? 0),
+      remaining,
+    };
+  } catch (error) {
+    await completeFailure(
+      reservationId,
+      "GOAL_SQUAD_FETCH_FAILED",
+      {
+        mode: "team-squad",
+        teamId,
+        externalTeamId,
+        detail: error instanceof Error ? error.message.slice(0, 300) : "unknown",
+      },
+      remaining,
+    );
+    throw error;
+  }
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
 
   try {
-    const expected = clean(await rpc("futbeat_read_goal_live_cron_token"));
+    const expected = await readCronToken();
     const supplied = clean(request.headers.get("x-futbeat-cron-token"));
     if (!(await secureEqual(expected, supplied))) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
@@ -365,6 +482,7 @@ Deno.serve(async (request) => {
 
     let live: unknown;
     let detail: unknown;
+    let squad: unknown;
 
     try {
       live = await syncLive();
@@ -386,7 +504,17 @@ Deno.serve(async (request) => {
       detail = { status: "failed" };
     }
 
-    return Response.json({ status: "ok", live, detail });
+    try {
+      squad = await syncOneSquad();
+    } catch (error) {
+      console.error(
+        "GOAL squad sync failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      squad = { status: "failed" };
+    }
+
+    return Response.json({ status: "ok", live, detail, squad });
   } catch (error) {
     console.error(
       "supabase GOAL live sync rejected",

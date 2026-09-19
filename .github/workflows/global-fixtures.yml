@@ -105,116 +105,6 @@ jobs:
             }
           }
 
-          function Invoke-TeamSquadHydration {
-            try {
-              $quotaPlan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-                action = "global-quota-plan"
-                reserve = 350
-              })
-              if ($quotaPlan.status -eq "skipped") {
-                Write-Output "SQUAD_HYDRATE_SKIPPED reason=$($quotaPlan.plan.reason) remaining=$($quotaPlan.plan.providerRemaining)"
-                return
-              }
-
-              $squadPlan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-                action = "squad-plan"
-                limit = 3
-              })
-              $teams = @($squadPlan.teams)
-            } catch {
-              Write-Warning "SQUAD_PLAN_SKIPPED $($_.Exception.Message)"
-              return
-            }
-
-            if ($teams.Count -eq 0) {
-              Write-Output "SQUAD_HYDRATE_OK teams=0 reason=coverage_fresh"
-              return
-            }
-
-            $squadReserve = 350
-            $hydrated = 0
-
-            foreach ($team in $teams) {
-              $teamId = [string]$team.teamId
-              $externalTeamId = [string]$team.externalTeamId
-              if ([string]::IsNullOrWhiteSpace($teamId) -or [string]::IsNullOrWhiteSpace($externalTeamId)) {
-                continue
-              }
-
-              $reservationId = $null
-              $remaining = $null
-              try {
-                $reserve = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-                  action = "squad-reserve"
-                  teamId = $teamId
-                  externalTeamId = $externalTeamId
-                })
-                if ($reserve.status -eq "skipped") {
-                  Write-Output "SQUAD_HYDRATE_STOP reason=$($reserve.reservation.reason) remaining=$($reserve.reservation.providerRemaining)"
-                  break
-                }
-
-                $reservationId = [int]$reserve.reservation.reservationId
-                $encodedTeamId = [uri]::EscapeDataString($externalTeamId)
-                $responseHeaders = $null
-                $response = Invoke-RestMethod -Uri "https://api.goal-api.com/v1/teams/$encodedTeamId/players" -Headers @{
-                  Authorization = "Bearer $env:GOAL_API_KEY"
-                  Accept = "application/json"
-                } -ResponseHeadersVariable responseHeaders -TimeoutSec 30
-
-                if ($null -ne $responseHeaders) {
-                  $rawRemaining = @($responseHeaders["X-RateLimit-Remaining"])[0]
-                  if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
-                    $remaining = [int]$rawRemaining
-                  }
-                }
-
-                if (-not $response.success -or -not ($response.PSObject.Properties.Name -contains "data")) {
-                  throw "GOAL API returned an invalid squad payload"
-                }
-
-                $result = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-                  action = "squad-ingest"
-                  reservationId = $reservationId
-                  teamId = $teamId
-                  externalTeamId = $externalTeamId
-                  providerRemaining = $remaining
-                  players = $response
-                })
-
-                if ($result.status -eq "ok") {
-                  $hydrated += 1
-                  Write-Output "SQUAD_INGEST_OK team=$teamId players=$($result.players) remaining=$remaining"
-                } else {
-                  Write-Warning "SQUAD_INGEST_SKIPPED team=$teamId status=$($result.status)"
-                }
-
-                if ($null -ne $remaining -and $remaining -le $squadReserve) {
-                  Write-Output "SQUAD_HYDRATE_STOP reason=quota_reserve reserve=$squadReserve"
-                  break
-                }
-              } catch {
-                if ($null -ne $reservationId) {
-                  try {
-                    Invoke-FutBeatGlobalEndpoint ([ordered]@{
-                      action = "squad-fail"
-                      reservationId = $reservationId
-                      teamId = $teamId
-                      externalTeamId = $externalTeamId
-                      providerRemaining = $remaining
-                      errorCode = "GOAL_SQUAD_FETCH_FAILED"
-                    }) | Out-Null
-                  } catch {
-                    Write-Warning "SQUAD_FAILURE_RECORD_FAILED team=$teamId"
-                  }
-                }
-                Write-Warning "SQUAD_HYDRATE_FAILED team=$teamId external=$externalTeamId $($_.Exception.Message)"
-              }
-            }
-
-            Write-Output "SQUAD_HYDRATE_OK planned=$($teams.Count) hydrated=$hydrated"
-          }
-
           $globalReserve = 350
           $globalQuota = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "global-quota-plan"
@@ -283,9 +173,6 @@ jobs:
           })
 
           Write-Output "GLOBAL_INGEST_OK provider=GOAL_API accepted=$($hotResult.accepted)"
-
-          # Reuse this same 3-hour Action for a small, quota-safe squad batch.
-          Invoke-TeamSquadHydration
 
           # Do not create another scheduled Action. Once per day, the existing
           # 09:17 UTC run also expands the cold calendar. Manual runs expand too.
