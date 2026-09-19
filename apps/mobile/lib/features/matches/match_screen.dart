@@ -402,7 +402,7 @@ class _StatisticComparison extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(999),
               child: LinearProgressIndicator(
-                value: ratio.clamp(0, 1),
+                value: ratio.clamp(0, 1).toDouble(),
                 minHeight: 5,
                 backgroundColor: Theme.of(context)
                     .colorScheme
@@ -619,7 +619,9 @@ class _TeamLineup extends StatelessWidget {
   final List<Json> substitutes;
 
   @override
-  Widget build(BuildContext context) => Card(
+  Widget build(BuildContext context) {
+    final pitchRows = formationPlayerRows(formation, starters);
+    return Card(
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -651,8 +653,8 @@ class _TeamLineup extends StatelessWidget {
             style: TextStyle(color: muted, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
-          if (formationPlayerRows(formation, starters) case final rows?)
-            _FormationPitch(rows)
+          if (pitchRows != null)
+            _FormationPitch(pitchRows)
           else
             for (final player in starters) _PlayerRow(player),
           if (substitutes.isNotEmpty) ...[
@@ -666,8 +668,8 @@ class _TeamLineup extends StatelessWidget {
           ],
         ],
       ),
-    ),
-  );
+    );
+  }
 }
 
 List<List<Json>>? formationPlayerRows(
