@@ -668,7 +668,8 @@ class _TeamLineup extends StatelessWidget {
           ],
         ],
       ),
-    );
+    ),
+  );
   }
 }
 
