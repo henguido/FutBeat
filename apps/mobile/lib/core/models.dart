@@ -261,6 +261,67 @@ class FootballMatch {
   List<Json> get statistics => (json['statistics'] as List).cast<Json>();
 }
 
+List<Json> mergedMatchTimeline(
+  FootballMatch match,
+  MatchDetail detail,
+) {
+  final detailed = <Json>[
+    for (var i = 0; i < detail.incidents.length; i++)
+      {
+        'id':
+            'detail_${detail.incidents[i]['type'] ?? 'OTHER'}_'
+            '${detail.incidents[i]['minute'] ?? 'na'}_$i',
+        'type': detail.incidents[i]['type'] ?? 'OTHER',
+        'minute': detail.incidents[i]['minute'],
+        if (detail.incidents[i]['extraMinute'] != null)
+          'extraMinute': detail.incidents[i]['extraMinute'],
+        if (detail.incidents[i]['label'] != null)
+          'label': detail.incidents[i]['label'],
+        if (detail.incidents[i]['detail'] != null)
+          'detail': detail.incidents[i]['detail'],
+        if (detail.incidents[i]['team'] != null)
+          'team': detail.incidents[i]['team'],
+        'detailSource': true,
+      },
+  ];
+
+  final detailedMoments = {
+    for (final event in detailed)
+      '${event['type']}|${event['minute'] ?? -1}|${event['extraMinute'] ?? 0}',
+  };
+
+  final merged = <Json>[
+    for (final event in match.events)
+      if (!detailedMoments.contains(
+            '${event['type']}|${event['minute'] ?? -1}|${event['extraMinute'] ?? 0}',
+          ) ||
+          {
+            'KICKOFF',
+            'HALFTIME',
+            'FULL_TIME',
+          }.contains(event['type']))
+        event,
+    ...detailed,
+  ];
+
+  merged.sort((a, b) {
+    final byMinute = (a['minute'] as int? ?? -1).compareTo(
+      b['minute'] as int? ?? -1,
+    );
+    if (byMinute != 0) return byMinute;
+    final byExtra = (a['extraMinute'] as int? ?? 0).compareTo(
+      b['extraMinute'] as int? ?? 0,
+    );
+    if (byExtra != 0) return byExtra;
+    final byType = _eventTypeOrder(
+      a['type'] as String? ?? '',
+    ).compareTo(_eventTypeOrder(b['type'] as String? ?? ''));
+    if (byType != 0) return byType;
+    return (a['id'] as String? ?? '').compareTo(b['id'] as String? ?? '');
+  });
+  return merged;
+}
+
 class Snapshot {
   Snapshot(Json json)
     : demo = json['demo'] as bool,

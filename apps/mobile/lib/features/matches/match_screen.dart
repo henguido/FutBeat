@@ -140,71 +140,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                     ),
                   ],
                   heading(context, 'Eventos del partido'),
-                  if (match.events.isEmpty && detail.incidents.isEmpty)
-                    const EmptyState(
-                      'Sin eventos disponibles',
-                      'Los eventos aparecerán cuando la fuente los publique.',
-                    ),
-                  if (match.events.isEmpty && detail.incidents.isNotEmpty)
-                    DetailIncidents(detail),
-                  if (match.events.isNotEmpty)
-                    Card(
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        children: [
-                          for (final event in match.events)
-                            Builder(
-                              builder: (context) {
-                                final type = event['type'] as String? ?? '';
-                                final team = data.team(
-                                  event['teamId'] as String? ?? '',
-                                );
-                                final player = data.player(
-                                  event['playerId'] as String? ?? '',
-                                );
-                                final detail = event['detail']?.toString();
-                                return ListTile(
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 3,
-                                  ),
-                                  leading: SizedBox(
-                                    width: 42,
-                                    child: Text(
-                                      eventMinuteLabel(event),
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        color: lime,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                  ),
-                                  title: Text(
-                                    player?.name ?? eventLabel(type),
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  subtitle: Text(
-                                    [
-                                      eventLabel(type),
-                                      if (team != null) team.name,
-                                      if (detail?.isNotEmpty == true) detail!,
-                                    ].join(' · '),
-                                  ),
-                                  trailing: EventBadge(type),
-                                  onTap: player == null
-                                      ? null
-                                      : () => context.push(
-                                          '/player/${event['playerId']}',
-                                        ),
-                                );
-                              },
-                            ),
-                        ],
-                      ),
-                    ),
+                  MatchTimeline(data, match, detail),
                   heading(context, 'Estadísticas clave'),
                   Statistics(match, detail: detail),
                   const SizedBox(height: 20),
@@ -405,37 +341,87 @@ class _DetailPendingCard extends StatelessWidget {
   );
 }
 
-class DetailIncidents extends StatelessWidget {
-  const DetailIncidents(this.detail, {super.key});
+class MatchTimeline extends StatelessWidget {
+  const MatchTimeline(this.data, this.match, this.detail, {super.key});
 
+  final Snapshot data;
+  final FootballMatch match;
   final MatchDetail detail;
 
   @override
-  Widget build(BuildContext context) => Card(
-    child: Column(
-      children: [
-        for (final incident in detail.incidents)
-          ListTile(
-            leading: SizedBox(
-              width: 42,
-              child: Text(
-                incident['minute'] == null ? '—' : "${incident['minute']}′",
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: lime,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
+  Widget build(BuildContext context) {
+    final timeline = mergedMatchTimeline(match, detail);
+    if (timeline.isEmpty) {
+      return const EmptyState(
+        'Sin eventos disponibles',
+        'Los eventos aparecerán cuando la fuente los publique.',
+      );
+    }
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (final event in timeline)
+            Builder(
+              builder: (context) {
+                final type = event['type']?.toString() ?? '';
+                final team = data.team(event['teamId']?.toString() ?? '');
+                final player = data.player(event['playerId']?.toString() ?? '');
+                final rawDetail = event['detail']?.toString().trim() ?? '';
+                final rawLabel = event['label']?.toString().trim() ?? '';
+                final rawTeam = event['team']?.toString().trim() ?? '';
+                final title = player?.name ??
+                    (rawDetail.isNotEmpty
+                        ? rawDetail
+                        : rawLabel.isNotEmpty
+                        ? rawLabel
+                        : eventLabel(type));
+                final subtitle = <String>[
+                  eventLabel(type),
+                  if (team != null)
+                    team.name
+                  else if (rawTeam.isNotEmpty)
+                    rawTeam,
+                  if (rawLabel.isNotEmpty &&
+                      rawLabel != title &&
+                      rawLabel != eventLabel(type))
+                    rawLabel,
+                ];
+
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 3,
+                  ),
+                  leading: SizedBox(
+                    width: 42,
+                    child: Text(
+                      eventMinuteLabel(event),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: lime,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  title: Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: Text(subtitle.join(' · ')),
+                  trailing: EventBadge(type),
+                  onTap: player == null
+                      ? null
+                      : () => context.push('/player/${event['playerId']}'),
+                );
+              },
             ),
-            title: Text(incident['detail']?.toString() ?? eventLabel(
-              incident['type']?.toString() ?? '',
-            )),
-            subtitle: Text(incident['label']?.toString() ?? ''),
-            trailing: EventBadge(incident['type']?.toString() ?? ''),
-          ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
 
 class Lineups extends StatelessWidget {
