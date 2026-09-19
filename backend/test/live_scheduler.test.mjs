@@ -75,11 +75,17 @@ test('existing canonical fixture transitions SCHEDULED to LIVE to FT without dup
 });
 
 
-test('GOAL LIVE pagination is not capped to the first 100 fixtures',async()=>{
- const workflow=await readFile(new URL('../../.github/workflows/live-fixtures.yml',import.meta.url),'utf8');
- assert.match(workflow,/fixtures\/live\?limit=100&offset=\$offset/);
- assert.match(workflow,/pagination\.hasMore/);
- assert.match(workflow,/providerRequests/);
+test('Supabase GOAL LIVE worker paginates beyond the first 100 fixtures and keeps detail hydration',async()=>{
+ const worker=await readFile(
+  new URL('../../supabase/functions/futbeat-goal-live-sync/index.ts',import.meta.url),
+  'utf8',
+ );
+ assert.match(worker,/fixtures\/live\?limit=100&offset=\$\{offset\}/);
+ assert.match(worker,/paginationRow\?\.hasMore/);
+ assert.match(worker,/providerRequests/);
+ assert.match(worker,/futbeat_reserve_match_detail_call/);
+ assert.match(worker,/futbeat_store_match_detail/);
+ assert.match(worker,/transport: "supabase-cron"/);
 });
 
 test('GOAL LIVE links an existing scheduled match by teams and kickoff without a preexisting external id',async()=>{
@@ -376,10 +382,25 @@ test('global catalog workflow uses only its three-hour schedule and low-priority
 });
 
 
-test('LIVE workflow avoids peak minute zero while keeping a five-minute cadence',async()=>{
- const workflow=await readFile(new URL('../../.github/workflows/live-fixtures.yml',import.meta.url),'utf8');
- assert.match(workflow,/cron: '2-57\/5 \* \* \* \*'/);
- assert.doesNotMatch(workflow,/cron: '\*\/5 \* \* \* \*'/);
+test('LIVE transport uses Supabase five-minute cron and GitHub only provisions the secret',async()=>{
+ const workflow=await readFile(
+  new URL('../../.github/workflows/live-fixtures.yml',import.meta.url),
+  'utf8',
+ );
+ const migration=await readFile(
+  new URL('../../supabase/migrations/20260919032750_move_goal_live_to_supabase_cron.sql',import.meta.url),
+  'utf8',
+ );
+
+ assert.doesNotMatch(workflow,/schedule:/);
+ assert.match(workflow,/goal-live-secret-provision/);
+ assert.match(workflow,/GOAL_LIVE_TRANSPORT_PROVISIONED/);
+ assert.doesNotMatch(workflow,/fixtures\/live/);
+
+ assert.match(migration,/futbeat-goal-live-cron/);
+ assert.match(migration,/'\*\/5 \* \* \* \*'/);
+ assert.match(migration,/futbeat-goal-live-sync/);
+ assert.match(migration,/x-futbeat-cron-token/);
 });
 
 
