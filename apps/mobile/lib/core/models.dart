@@ -220,8 +220,20 @@ class FootballMatch {
   String get score => json['score'] == null
       ? '—'
       : '${json['score']['home']} - ${json['score']['away']}';
+  DateTime? get liveChangedAt =>
+      DateTime.tryParse(json['liveChangedAt'] as String? ?? '');
+
+  bool get liveDataStale {
+    final changedAt = liveChangedAt;
+    if (!isLive || changedAt == null) return false;
+    return DateTime.now().toUtc().difference(changedAt.toUtc()) >
+        const Duration(minutes: 15);
+  }
+
   String get statusLabel => switch (status) {
-    'LIVE' => "${json['minute'] ?? '—'}′ · En vivo",
+    'LIVE' => liveDataStale
+        ? "${json['minute'] ?? '—'}′ · En vivo · datos atrasados"
+        : "${json['minute'] ?? '—'}′ · En vivo",
     'HALFTIME' => 'Descanso',
     'EXTRA_TIME' => 'Prórroga',
     'PENALTIES' => 'Penales',

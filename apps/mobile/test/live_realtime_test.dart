@@ -52,7 +52,7 @@ void main() {
 
     final live = merged.match(match.id)!;
     expect(live.status, 'LIVE');
-    expect(live.statusLabel, '73′ · En vivo');
+    expect(live.statusLabel, '73′ · En vivo · datos atrasados');
     expect(live.score, '2 - 1');
     expect(live.events.length, originalEvents);
     expect(merged.stale, isFalse);
