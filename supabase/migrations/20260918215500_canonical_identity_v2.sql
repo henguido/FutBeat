@@ -137,12 +137,24 @@ begin
           or exists(
             select 1
             from jsonb_array_elements_text(
-              coalesce(e.payload->'aliases','[]'::jsonb)
+              case
+              when jsonb_typeof(e.payload->'aliases')='array'
+                then e.payload->'aliases'
+              else '[]'::jsonb
+            end
             ) a(value)
             where lower(a.value)=lower(v_alias_name)
           )
-          then coalesce(e.payload->'aliases','[]'::jsonb)
-        else coalesce(e.payload->'aliases','[]'::jsonb)
+          then case
+              when jsonb_typeof(e.payload->'aliases')='array'
+                then e.payload->'aliases'
+              else '[]'::jsonb
+            end
+        else (case
+              when jsonb_typeof(e.payload->'aliases')='array'
+                then e.payload->'aliases'
+              else '[]'::jsonb
+            end)
           || jsonb_build_array(v_alias_name)
       end,
       true
@@ -721,7 +733,11 @@ begin
         or exists(
           select 1
           from jsonb_array_elements_text(
-            coalesce(e.payload->'aliases','[]'::jsonb)
+            case
+            when jsonb_typeof(e.payload->'aliases')='array'
+              then e.payload->'aliases'
+            else '[]'::jsonb
+          end
           ) a(value)
           where lower(a.value)=lower(p_name)
         )
