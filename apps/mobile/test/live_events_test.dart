@@ -110,6 +110,34 @@ void main() {
     expect(match.json['liveRevision'], isNull);
   });
 
+  test('stale LIVE data is visible instead of pretending to be current', () {
+    final stale = FootballMatch({
+      'id': 'fb_match_stale',
+      'competitionId': 'fb_comp_test',
+      'homeTeamId': 'fb_team_home',
+      'awayTeamId': 'fb_team_away',
+      'startTime': '2026-09-18T18:00:00Z',
+      'status': 'LIVE',
+      'score': {'home': 1, 'away': 0},
+      'minute': 55,
+      'liveChangedAt': DateTime.now()
+          .toUtc()
+          .subtract(const Duration(minutes: 20))
+          .toIso8601String(),
+      'events': <dynamic>[],
+      'statistics': <dynamic>[],
+    });
+    final fresh = FootballMatch({
+      ...stale.json,
+      'liveChangedAt': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    expect(stale.liveDataStale, isTrue);
+    expect(stale.statusLabel, contains('datos atrasados'));
+    expect(fresh.liveDataStale, isFalse);
+    expect(fresh.statusLabel, isNot(contains('datos atrasados')));
+  });
+
   test('timeline orders stoppage time deterministically and exposes the latest event', () {
     final match = FootballMatch({
       'id': 'fb_match_test',
