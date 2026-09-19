@@ -94,7 +94,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       onPressed: () async {
                         ref.invalidate(searchSnapshotProvider(request));
                         try {
-                          await ref.read(searchSnapshotProvider(request).future);
+                          await ref.read(
+                            searchSnapshotProvider(request).future,
+                          );
                         } catch (_) {
                           // The error state will remain visible with retry enabled.
                         }
@@ -133,12 +135,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                           .where((entity) => entity.matches(requestQuery))
                           .toList()
                     : hasQuery
-                    ? _prioritizeFollowed(
-                        data.players,
-                        follows,
-                        'player',
-                        50,
-                      )
+                    ? _prioritizeFollowed(data.players, follows, 'player', 50)
                     : <Entity>[];
 
                 return ListView(

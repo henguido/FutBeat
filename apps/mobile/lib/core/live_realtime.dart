@@ -6,7 +6,6 @@ import 'package:dio/dio.dart';
 
 import 'models.dart';
 
-
 Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
   Map<String, LiveMatchUpdate> current,
   Iterable<Json> rows, {

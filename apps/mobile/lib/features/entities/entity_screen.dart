@@ -70,8 +70,10 @@ List<Entity> competitionTeams(Snapshot data, String competitionId) {
   }
 
   final teams = ids.map(data.team).whereType<Entity>().toList()
-    ..sort((left, right) =>
-        left.name.toLowerCase().compareTo(right.name.toLowerCase()));
+    ..sort(
+      (left, right) =>
+          left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+    );
   return teams;
 }
 
@@ -230,7 +232,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                           for (final competition in teamCompetitions.take(3))
                             EntityTile(competition, 'competition'),
                         ] else ...[
-                          if ((entity.json['season']?.toString() ?? '').isNotEmpty)
+                          if ((entity.json['season']?.toString() ?? '')
+                              .isNotEmpty)
                             Center(
                               child: Text(
                                 entity.json['season'].toString(),
@@ -286,7 +289,9 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                           style: const TextStyle(color: muted),
                         ),
                         const SizedBox(height: 12),
-                        if (!data.players.any((p) => p.json['teamId'] == canonicalId))
+                        if (!data.players.any(
+                          (p) => p.json['teamId'] == canonicalId,
+                        ))
                           const EmptyState(
                             'Plantilla no disponible',
                             'No hay jugadores publicados para este equipo.',

@@ -88,7 +88,10 @@ void main() {
 
     expect(find.text('Jugador Uno'), findsOneWidget);
     expect(find.textContaining('Club A → Club B'), findsOneWidget);
-    expect(find.textContaining('Cambio detectado en plantilla'), findsOneWidget);
+    expect(
+      find.textContaining('Cambio detectado en plantilla'),
+      findsOneWidget,
+    );
     expect(find.textContaining('GOAL API'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

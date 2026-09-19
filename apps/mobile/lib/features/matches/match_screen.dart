@@ -11,11 +11,7 @@ import '../../shared/widgets.dart';
 import '../entities/standings.dart';
 
 class MatchScreen extends ConsumerStatefulWidget {
-  const MatchScreen({
-    super.key,
-    required this.id,
-    this.initialData,
-  });
+  const MatchScreen({super.key, required this.id, this.initialData});
 
   final String id;
   final Snapshot? initialData;
@@ -41,41 +37,43 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
       return _buildMatchCenter(initialData.withLiveUpdates(updates));
     }
 
-    return ref.watch(matchContextSnapshotProvider(widget.id)).when(
-      loading: () => Scaffold(
-        appBar: AppBar(title: const Text('Match Center')),
-        body: const Center(child: CircularProgressIndicator()),
-      ),
-      error: (_, stack) => Scaffold(
-        appBar: AppBar(title: const Text('Match Center')),
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const EmptyState(
-                'No pudimos cargar este partido',
-                'Revisa tu conexión e intenta nuevamente.',
-                icon: Icons.cloud_off,
-              ),
-              FilledButton(
-                onPressed: () async {
-                  ref.invalidate(matchContextSnapshotProvider(widget.id));
-                  try {
-                    await ref.read(
-                      matchContextSnapshotProvider(widget.id).future,
-                    );
-                  } catch (_) {
-                    // Keep the recoverable error state visible.
-                  }
-                },
-                child: const Text('Reintentar'),
-              ),
-            ],
+    return ref
+        .watch(matchContextSnapshotProvider(widget.id))
+        .when(
+          loading: () => Scaffold(
+            appBar: AppBar(title: const Text('Match Center')),
+            body: const Center(child: CircularProgressIndicator()),
           ),
-        ),
-      ),
-      data: (data) => _buildMatchCenter(data.withLiveUpdates(updates)),
-    );
+          error: (_, stack) => Scaffold(
+            appBar: AppBar(title: const Text('Match Center')),
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const EmptyState(
+                    'No pudimos cargar este partido',
+                    'Revisa tu conexión e intenta nuevamente.',
+                    icon: Icons.cloud_off,
+                  ),
+                  FilledButton(
+                    onPressed: () async {
+                      ref.invalidate(matchContextSnapshotProvider(widget.id));
+                      try {
+                        await ref.read(
+                          matchContextSnapshotProvider(widget.id).future,
+                        );
+                      } catch (_) {
+                        // Keep the recoverable error state visible.
+                      }
+                    },
+                    child: const Text('Reintentar'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          data: (data) => _buildMatchCenter(data.withLiveUpdates(updates)),
+        );
   }
 
   Widget _buildMatchCenter(Snapshot data) {
@@ -228,12 +226,8 @@ class MatchHero extends StatelessWidget {
         child: Column(
           children: [
             TextButton(
-              onPressed: () =>
-                  context.push('/competition/${competition.id}'),
-              child: Text(
-                competition.name,
-                textAlign: TextAlign.center,
-              ),
+              onPressed: () => context.push('/competition/${competition.id}'),
+              child: Text(competition.name, textAlign: TextAlign.center),
             ),
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -349,9 +343,7 @@ class PostMatchVideos extends StatelessWidget {
       for (final video in detail.videos)
         Card(
           child: ListTile(
-            leading: const CircleAvatar(
-              child: Icon(Icons.play_arrow_rounded),
-            ),
+            leading: const CircleAvatar(child: Icon(Icons.play_arrow_rounded)),
             title: Text(
               video['title']?.toString() ?? 'Resumen del partido',
               maxLines: 2,
@@ -402,10 +394,7 @@ class Statistics extends StatelessWidget {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(
-          child: Text(
-            'Sin estadísticas',
-            style: TextStyle(color: muted),
-          ),
+          child: Text('Sin estadísticas', style: TextStyle(color: muted)),
         ),
       );
     }
@@ -413,10 +402,7 @@ class Statistics extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          children: [
-            for (final stat in stats)
-              _StatisticComparison(stat),
-          ],
+          children: [for (final stat in stats) _StatisticComparison(stat)],
         ),
       ),
     );
@@ -501,9 +487,11 @@ String _statLabel(String value) {
   if (clean.isEmpty) return 'Estadística';
   return clean
       .split(RegExp(r'\\s+'))
-      .map((word) => word.isEmpty
-          ? word
-          : '${word[0].toUpperCase()}${word.substring(1)}')
+      .map(
+        (word) => word.isEmpty
+            ? word
+            : '${word[0].toUpperCase()}${word.substring(1)}',
+      )
       .join(' ');
 }
 
@@ -527,10 +515,7 @@ class MatchTimeline extends StatelessWidget {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(
-          child: Text(
-            'Sin eventos',
-            style: TextStyle(color: muted),
-          ),
+          child: Text('Sin eventos', style: TextStyle(color: muted)),
         ),
       );
     }
@@ -548,7 +533,8 @@ class MatchTimeline extends StatelessWidget {
                 final rawDetail = event['detail']?.toString().trim() ?? '';
                 final rawLabel = event['label']?.toString().trim() ?? '';
                 final rawTeam = event['team']?.toString().trim() ?? '';
-                final title = player?.name ??
+                final title =
+                    player?.name ??
                     (rawDetail.isNotEmpty
                         ? rawDetail
                         : rawLabel.isNotEmpty
@@ -622,10 +608,7 @@ class Lineups extends StatelessWidget {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(
-          child: Text(
-            'Sin alineaciones',
-            style: TextStyle(color: muted),
-          ),
+          child: Text('Sin alineaciones', style: TextStyle(color: muted)),
         ),
       );
     }
@@ -667,61 +650,58 @@ class _TeamLineup extends StatelessWidget {
   Widget build(BuildContext context) {
     final pitchRows = formationPlayerRows(formation, starters);
     return Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              EntityAvatar(team, size: 38),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  team.name,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-              if (formation != null)
-                Text(
-                  formation!,
-                  style: const TextStyle(
-                    color: lime,
-                    fontWeight: FontWeight.w700,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                EntityAvatar(team, size: 38),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    team.name,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          const Text(
-            'Titulares',
-            style: TextStyle(color: muted, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          if (pitchRows != null)
-            _FormationPitch(pitchRows)
-          else
-            for (final player in starters) _PlayerRow(player),
-          if (substitutes.isNotEmpty) ...[
-            const Divider(height: 28),
+                if (formation != null)
+                  Text(
+                    formation!,
+                    style: const TextStyle(
+                      color: lime,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 14),
             const Text(
-              'Suplentes',
+              'Titulares',
               style: TextStyle(color: muted, fontWeight: FontWeight.w700),
             ),
-            const SizedBox(height: 6),
-            for (final player in substitutes) _PlayerRow(player),
+            const SizedBox(height: 8),
+            if (pitchRows != null)
+              _FormationPitch(pitchRows)
+            else
+              for (final player in starters) _PlayerRow(player),
+            if (substitutes.isNotEmpty) ...[
+              const Divider(height: 28),
+              const Text(
+                'Suplentes',
+                style: TextStyle(color: muted, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              for (final player in substitutes) _PlayerRow(player),
+            ],
           ],
-        ],
+        ),
       ),
-    ),
-  );
+    );
   }
 }
 
-List<List<Json>>? formationPlayerRows(
-  String? formation,
-  List<Json> starters,
-) {
+List<List<Json>>? formationPlayerRows(String? formation, List<Json> starters) {
   if (formation == null || starters.length != 11) return null;
   final parts = formation
       .split('-')
@@ -735,8 +715,9 @@ List<List<Json>>? formationPlayerRows(
 
   final ordered = [...starters]
     ..sort(
-      (a, b) => (a['lineupPosition'] as num? ?? 999)
-          .compareTo(b['lineupPosition'] as num? ?? 999),
+      (a, b) => (a['lineupPosition'] as num? ?? 999).compareTo(
+        b['lineupPosition'] as num? ?? 999,
+      ),
     );
 
   var offset = 1;
@@ -775,8 +756,7 @@ class _FormationPitch extends StatelessWidget {
                 Expanded(child: _PitchPlayer(player)),
             ],
           ),
-          if (rowIndex != rows.length - 1)
-            const SizedBox(height: 18),
+          if (rowIndex != rows.length - 1) const SizedBox(height: 18),
         ],
       ],
     ),
@@ -800,10 +780,7 @@ class _PitchPlayer extends StatelessWidget {
           radius: 19,
           child: Text(
             player['number']?.toString() ?? '—',
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-            ),
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
           ),
         ),
         const SizedBox(height: 5),
@@ -838,10 +815,7 @@ class _PlayerRow extends StatelessWidget {
           child: Text(
             player['number']?.toString() ?? '—',
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: muted,
-              fontWeight: FontWeight.w700,
-            ),
+            style: const TextStyle(color: muted, fontWeight: FontWeight.w700),
           ),
         ),
         const SizedBox(width: 8),

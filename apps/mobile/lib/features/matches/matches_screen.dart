@@ -77,8 +77,9 @@ List<Entity> orderMatchCompetitions({
   String? selectedCountry,
   String? detectedCountry,
 }) {
-  final visibleCompetitionIds =
-      matches.map((match) => match.competitionId).toSet();
+  final visibleCompetitionIds = matches
+      .map((match) => match.competitionId)
+      .toSet();
   final visible = data.competitions
       .where((competition) => visibleCompetitionIds.contains(competition.id))
       .toList();
@@ -95,12 +96,16 @@ List<Entity> orderMatchCompetitions({
     return visible..sort((left, right) {
       final byPriority = priority(left).compareTo(priority(right));
       if (byPriority != 0) return byPriority;
-      final byName = left.name.toLowerCase().compareTo(right.name.toLowerCase());
+      final byName = left.name.toLowerCase().compareTo(
+        right.name.toLowerCase(),
+      );
       return byName != 0 ? byName : left.id.compareTo(right.id);
     });
   }
 
-  final userCountry = selectedCountry ?? detectedCountry;
+  // A manual choice is an explicit ordering command. Detection is useful for
+  // bootstrap defaults, but it must not silently overpower global relevance.
+  final userCountry = selectedCountry;
   return visible..sort((left, right) {
     final leftScore = competitionFeedScore(
       left,
@@ -142,14 +147,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
     if (picked != null && mounted) setState(() => date = picked);
   }
 
-  Widget _centeredDateOption(
-    int offset,
-    DateTime selected,
-    DateTime today,
-  ) {
-    final candidate = DateUtils.dateOnly(
-      selected.add(Duration(days: offset)),
-    );
+  Widget _centeredDateOption(int offset, DateTime selected, DateTime today) {
+    final candidate = DateUtils.dateOnly(selected.add(Duration(days: offset)));
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.only(right: 6),
@@ -168,281 +167,271 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
     final requestDate = DateUtils.dateOnly(date ?? costaRicaNow());
 
     return Scaffold(
-        appBar: AppBar(
-          title: const Row(
-            children: [
-              Icon(Icons.sports_soccer, color: lime),
-              SizedBox(width: 8),
-              Text('Fut', style: TextStyle(fontWeight: FontWeight.w900)),
-              Text(
-                'Beat',
-                style: TextStyle(fontWeight: FontWeight.w900, color: lime),
-              ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              tooltip: 'Buscar equipos y jugadores',
-              onPressed: () => context.go('/explore'),
-              icon: const Icon(Icons.search),
+      appBar: AppBar(
+        title: const Row(
+          children: [
+            Icon(Icons.sports_soccer, color: lime),
+            SizedBox(width: 8),
+            Text('Fut', style: TextStyle(fontWeight: FontWeight.w900)),
+            Text(
+              'Beat',
+              style: TextStyle(fontWeight: FontWeight.w900, color: lime),
             ),
           ],
         ),
-        body: CalendarDataView(
-          date: requestDate,
-          builder: (data) {
-            final anchor = data.demo
-                ? DateTime(2026, 9, 15)
-                : DateUtils.dateOnly(costaRicaNow());
-            final selected = DateUtils.dateOnly(date ?? anchor);
-            final follows =
-                ref.watch(followsProvider).asData?.value ?? <String>{};
-            final temporaryInterests =
-                ref.watch(temporaryInterestsProvider).asData?.value ??
-                    <String>{};
-            final preference = ref.watch(preferenceProvider).asData?.value;
-            final games = data.onDate(selected, filter);
+        actions: [
+          IconButton(
+            tooltip: 'Buscar equipos y jugadores',
+            onPressed: () => context.go('/explore'),
+            icon: const Icon(Icons.search),
+          ),
+        ],
+      ),
+      body: CalendarDataView(
+        date: requestDate,
+        builder: (data) {
+          final anchor = data.demo
+              ? DateTime(2026, 9, 15)
+              : DateUtils.dateOnly(costaRicaNow());
+          final selected = DateUtils.dateOnly(date ?? anchor);
+          final follows =
+              ref.watch(followsProvider).asData?.value ?? <String>{};
+          final temporaryInterests =
+              ref.watch(temporaryInterestsProvider).asData?.value ?? <String>{};
+          final preference = ref.watch(preferenceProvider).asData?.value;
+          final games = data.onDate(selected, filter);
 
-            final followedGames = games
-                .where((match) => _isFollowedTeamMatch(match, follows))
-                .toList()
-              ..sort((a, b) => a.startTime.compareTo(b.startTime));
-            final followedIds = followedGames.map((match) => match.id).toSet();
-            final remainingGames = games
-                .where((match) => !followedIds.contains(match.id))
-                .toList()
-              ..sort((a, b) => a.startTime.compareTo(b.startTime));
+          final followedGames =
+              games
+                  .where((match) => _isFollowedTeamMatch(match, follows))
+                  .toList()
+                ..sort((a, b) => a.startTime.compareTo(b.startTime));
+          final followedIds = followedGames.map((match) => match.id).toSet();
+          final remainingGames =
+              games.where((match) => !followedIds.contains(match.id)).toList()
+                ..sort((a, b) => a.startTime.compareTo(b.startTime));
 
-            final remainingByCompetition =
-                <String, List<FootballMatch>>{};
-            for (final match in remainingGames) {
-              remainingByCompetition
-                  .putIfAbsent(match.competitionId, () => <FootballMatch>[])
-                  .add(match);
-            }
+          final remainingByCompetition = <String, List<FootballMatch>>{};
+          for (final match in remainingGames) {
+            remainingByCompetition
+                .putIfAbsent(match.competitionId, () => <FootballMatch>[])
+                .add(match);
+          }
 
-            final orderedCompetitions = orderMatchCompetitions(
-              data: data,
-              matches: remainingGames,
-              follows: follows,
-              temporaryInterests: temporaryInterests,
-              selectedCountry: preference?.selectedCountry,
-              detectedCountry: preference?.detectedCountry,
+          final orderedCompetitions = orderMatchCompetitions(
+            data: data,
+            matches: remainingGames,
+            follows: follows,
+            temporaryInterests: temporaryInterests,
+            selectedCountry: preference?.selectedCountry,
+            detectedCountry: preference?.detectedCountry,
+          );
+          final followedCompetitions = orderedCompetitions
+              .where(
+                (competition) => _isFollowedCompetition(
+                  competition,
+                  follows,
+                  temporaryInterests,
+                ),
+              )
+              .toList();
+          final followedCompetitionIds = followedCompetitions
+              .map((competition) => competition.id)
+              .toSet();
+          final allOtherCompetitions = orderedCompetitions
+              .where(
+                (competition) =>
+                    !followedCompetitionIds.contains(competition.id),
+              )
+              .toList();
+
+          final feedItems = <Widget Function()>[];
+
+          void addCompetition(Entity competition) {
+            final competitionMatches =
+                remainingByCompetition[competition.id] ??
+                const <FootballMatch>[];
+            if (competitionMatches.isEmpty) return;
+
+            feedItems.add(
+              () => Text(
+                competition.country.toUpperCase(),
+                style: const TextStyle(
+                  color: muted,
+                  letterSpacing: 2,
+                  fontSize: 11,
+                ),
+              ),
             );
-            final followedCompetitions = orderedCompetitions
-                .where(
-                  (competition) => _isFollowedCompetition(
-                    competition,
-                    follows,
-                    temporaryInterests,
-                  ),
-                )
-                .toList();
-            final followedCompetitionIds =
-                followedCompetitions.map((competition) => competition.id).toSet();
-            final allOtherCompetitions = orderedCompetitions
-                .where(
-                  (competition) =>
-                      !followedCompetitionIds.contains(competition.id),
-                )
-                .toList();
-
-            final feedItems = <Widget Function()>[];
-
-            void addCompetition(Entity competition) {
-              final competitionMatches =
-                  remainingByCompetition[competition.id] ??
-                  const <FootballMatch>[];
-              if (competitionMatches.isEmpty) return;
-
-              feedItems.add(
-                () => Text(
-                  competition.country.toUpperCase(),
-                  style: const TextStyle(
-                    color: muted,
-                    letterSpacing: 2,
-                    fontSize: 11,
-                  ),
+            feedItems.add(
+              () => ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  competition.name,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-              );
-              feedItems.add(
-                () => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    competition.name,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  leading: EntityAvatar(competition, size: 34),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () =>
-                      context.push('/competition/${competition.id}'),
-                ),
-              );
-              for (final match in competitionMatches) {
-                feedItems.add(() => MatchCard(match, data));
-              }
-              feedItems.add(() => const SizedBox(height: 12));
+                leading: EntityAvatar(competition, size: 34),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/competition/${competition.id}'),
+              ),
+            );
+            for (final match in competitionMatches) {
+              feedItems.add(() => MatchCard(match, data));
             }
+            feedItems.add(() => const SizedBox(height: 12));
+          }
 
+          feedItems
+            ..add(
+              () => const Text(
+                'EL LATIDO DEL FÚTBOL',
+                style: TextStyle(color: muted, fontSize: 10, letterSpacing: 3),
+              ),
+            )
+            ..add(() => const SizedBox(height: 20));
+
+          if (data.demo) {
+            feedItems.add(() => const DemoNotice());
+          } else {
             feedItems
-              ..add(
-                () => const Text(
-                  'EL LATIDO DEL FÚTBOL',
-                  style: TextStyle(
-                    color: muted,
-                    fontSize: 10,
-                    letterSpacing: 3,
-                  ),
-                ),
-              )
-              ..add(() => const SizedBox(height: 20));
-
-            if (data.demo) {
-              feedItems.add(() => const DemoNotice());
-            } else {
-              feedItems
-                ..add(() => CountryPreferencePanel(compact: true, data: data))
-                ..add(() => const SizedBox(height: 16));
-            }
-
-            feedItems
-              ..add(
-                () => Row(
-                  children: [
-                    for (final offset in [-1, 0, 1])
-                      _centeredDateOption(offset, selected, anchor),
-                    SizedBox(
-                      width: 46,
-                      height: 64,
-                      child: IconButton.filledTonal(
-                        tooltip: 'Elegir otra fecha',
-                        onPressed: () => _pickDate(context, selected),
-                        icon: const Icon(Icons.calendar_month_outlined),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-              ..add(() => const SizedBox(height: 12))
-              ..add(
-                () => SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (final value in [
-                        'Todos',
-                        'En vivo',
-                        'Próximos',
-                        'Finalizados',
-                      ])
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ChoiceChip(
-                            label: Text(
-                              value,
-                              style: TextStyle(
-                                color: filter == value
-                                    ? const Color(0xFF0B1114)
-                                    : Colors.white,
-                              ),
-                            ),
-                            selected: filter == value,
-                            onSelected: (_) => setState(() => filter = value),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              )
+              ..add(() => CountryPreferencePanel(compact: true, data: data))
               ..add(() => const SizedBox(height: 16));
+          }
 
-            if (games.isEmpty) {
-              feedItems.add(
-                () => const EmptyState(
-                  'No hay partidos este día',
-                  'Prueba otra fecha o cambia el filtro.',
-                ),
-              );
-            }
-
-            if (followedGames.isNotEmpty) {
-              feedItems.add(
-                () => _FeedHeading(
-                  title: 'TUS EQUIPOS',
-                  subtitle: data.demo
-                      ? 'Solo esos partidos suben; la competición completa no se mueve.'
-                      : null,
-                ),
-              );
-              for (final match in followedGames) {
-                final competition = data.competition(match.competitionId)!;
-                feedItems
-                  ..add(
-                    () => _MatchCompetitionLabel(
-                      competition: competition,
-                    ),
-                  )
-                  ..add(() => MatchCard(match, data))
-                  ..add(() => const SizedBox(height: 10));
-              }
-              feedItems.add(() => const SizedBox(height: 8));
-            }
-
-            if (followedCompetitions.isNotEmpty) {
-              feedItems.add(
-                () => _FeedHeading(
-                  title: 'TUS COMPETICIONES',
-                  subtitle: data.demo
-                      ? 'Solo las competiciones que elegiste explícitamente.'
-                      : null,
-                ),
-              );
-              for (final competition in followedCompetitions) {
-                addCompetition(competition);
-              }
-            }
-
-            if (allOtherCompetitions.isNotEmpty) {
-              feedItems.add(
-                () => _FeedHeading(
-                  title: 'TODOS LOS PARTIDOS',
-                  subtitle: data.demo
-                      ? 'Todo lo demás que la fuente entregó para este día, sin ocultar ligas.'
-                      : null,
-                ),
-              );
-              for (final competition in allOtherCompetitions) {
-                addCompetition(competition);
-              }
-            }
-
-            return RefreshIndicator(
-              onRefresh: () async {
-                ref.invalidate(calendarSnapshotProvider(selected));
-                try {
-                  await ref.read(calendarSnapshotProvider(selected).future);
-                } catch (_) {
-                  // CalendarDataView exposes the provider error and retry action.
-                }
-              },
-              child: CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) => feedItems[index](),
-                        childCount: feedItems.length,
-                      ),
+          feedItems
+            ..add(
+              () => Row(
+                children: [
+                  for (final offset in [-1, 0, 1])
+                    _centeredDateOption(offset, selected, anchor),
+                  SizedBox(
+                    width: 46,
+                    height: 64,
+                    child: IconButton.filledTonal(
+                      tooltip: 'Elegir otra fecha',
+                      onPressed: () => _pickDate(context, selected),
+                      icon: const Icon(Icons.calendar_month_outlined),
                     ),
                   ),
                 ],
               ),
+            )
+            ..add(() => const SizedBox(height: 12))
+            ..add(
+              () => SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final value in [
+                      'Todos',
+                      'En vivo',
+                      'Próximos',
+                      'Finalizados',
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(
+                            value,
+                            style: TextStyle(
+                              color: filter == value
+                                  ? const Color(0xFF0B1114)
+                                  : Colors.white,
+                            ),
+                          ),
+                          selected: filter == value,
+                          onSelected: (_) => setState(() => filter = value),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            )
+            ..add(() => const SizedBox(height: 16));
+
+          if (games.isEmpty) {
+            feedItems.add(
+              () => const EmptyState(
+                'No hay partidos este día',
+                'Prueba otra fecha o cambia el filtro.',
+              ),
             );
-          },
-        ),
-      );
+          }
+
+          if (followedGames.isNotEmpty) {
+            feedItems.add(
+              () => _FeedHeading(
+                title: 'TUS EQUIPOS',
+                subtitle: data.demo
+                    ? 'Solo esos partidos suben; la competición completa no se mueve.'
+                    : null,
+              ),
+            );
+            for (final match in followedGames) {
+              final competition = data.competition(match.competitionId)!;
+              feedItems
+                ..add(() => _MatchCompetitionLabel(competition: competition))
+                ..add(() => MatchCard(match, data))
+                ..add(() => const SizedBox(height: 10));
+            }
+            feedItems.add(() => const SizedBox(height: 8));
+          }
+
+          if (followedCompetitions.isNotEmpty) {
+            feedItems.add(
+              () => _FeedHeading(
+                title: 'TUS COMPETICIONES',
+                subtitle: data.demo
+                    ? 'Solo las competiciones que elegiste explícitamente.'
+                    : null,
+              ),
+            );
+            for (final competition in followedCompetitions) {
+              addCompetition(competition);
+            }
+          }
+
+          if (allOtherCompetitions.isNotEmpty) {
+            feedItems.add(
+              () => _FeedHeading(
+                title: 'TODOS LOS PARTIDOS',
+                subtitle: data.demo
+                    ? 'Todo lo demás que la fuente entregó para este día, sin ocultar ligas.'
+                    : null,
+              ),
+            );
+            for (final competition in allOtherCompetitions) {
+              addCompetition(competition);
+            }
+          }
+
+          return RefreshIndicator(
+            onRefresh: () async {
+              ref.invalidate(calendarSnapshotProvider(selected));
+              try {
+                await ref.read(calendarSnapshotProvider(selected).future);
+              } catch (_) {
+                // CalendarDataView exposes the provider error and retry action.
+              }
+            },
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => feedItems[index](),
+                      childCount: feedItems.length,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 }
 
@@ -461,54 +450,52 @@ class _DateOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-        color: selected ? lime : const Color(0xFF151D20),
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          onTap: onTap,
+    color: selected ? lime : const Color(0xFF151D20),
+    borderRadius: BorderRadius.circular(16),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        height: 64,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          child: Container(
-            height: 64,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: selected
-                  ? null
-                  : Border.all(color: const Color(0xFF394246)),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: selected ? const Color(0xFF0B1114) : muted,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    _compactDate(date),
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: selected ? const Color(0xFF0B1114) : Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+          border: selected ? null : Border.all(color: const Color(0xFF394246)),
         ),
-      );
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  color: selected ? const Color(0xFF0B1114) : muted,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+            const SizedBox(height: 2),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                _compactDate(date),
+                maxLines: 1,
+                style: TextStyle(
+                  color: selected ? const Color(0xFF0B1114) : Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _FeedHeading extends StatelessWidget {
@@ -519,29 +506,26 @@ class _FeedHeading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 6, bottom: 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                color: lime,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.8,
-              ),
-            ),
-            if (subtitle != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                subtitle!,
-                style: const TextStyle(color: muted, fontSize: 11),
-              ),
-            ],
-          ],
+    padding: const EdgeInsets.only(top: 6, bottom: 14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            color: lime,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.8,
+          ),
         ),
-      );
+        if (subtitle != null) ...[
+          const SizedBox(height: 4),
+          Text(subtitle!, style: const TextStyle(color: muted, fontSize: 11)),
+        ],
+      ],
+    ),
+  );
 }
 
 class _MatchCompetitionLabel extends StatelessWidget {
@@ -551,31 +535,24 @@ class _MatchCompetitionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          children: [
-            EntityAvatar(competition, size: 24),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                competition.name,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-            Text(
-              competition.country.toUpperCase(),
-              style: const TextStyle(
-                color: muted,
-                fontSize: 9,
-                letterSpacing: 1.2,
-              ),
-            ),
-          ],
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      children: [
+        EntityAvatar(competition, size: 24),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            competition.name,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+          ),
         ),
-      );
+        Text(
+          competition.country.toUpperCase(),
+          style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2),
+        ),
+      ],
+    ),
+  );
 }
 
 class MatchCard extends StatelessWidget {
@@ -592,7 +569,8 @@ class MatchCard extends StatelessWidget {
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () => context.push('/match/${match.id}', extra: data.forMatch(match.id)),
+        onTap: () =>
+            context.push('/match/${match.id}', extra: data.forMatch(match.id)),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
           child: Column(
@@ -646,13 +624,8 @@ class MatchCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          match.isUpcoming
-                              ? 'Hora Costa Rica'
-                              : 'Ver partido',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: muted,
-                          ),
+                          match.isUpcoming ? 'Hora Costa Rica' : 'Ver partido',
+                          style: const TextStyle(fontSize: 10, color: muted),
                         ),
                       ],
                     ),

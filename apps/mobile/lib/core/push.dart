@@ -250,10 +250,8 @@ class PushService {
     }
   }
 
-  Future<void> _persistSession() => storage.write(
-    key: 'futbeat.push.session',
-    value: jsonEncode(session),
-  );
+  Future<void> _persistSession() =>
+      storage.write(key: 'futbeat.push.session', value: jsonEncode(session));
 
   Future<void> refreshSession() async {
     if (!authenticated || disposed) return;
@@ -350,9 +348,7 @@ class PushService {
       if (raw == null) return const UserProfileSettings();
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return const UserProfileSettings();
-      return UserProfileSettings.fromJson(
-        Map<String, dynamic>.from(decoded),
-      );
+      return UserProfileSettings.fromJson(Map<String, dynamic>.from(decoded));
     } catch (_) {
       return const UserProfileSettings();
     }
@@ -416,8 +412,7 @@ class PushService {
 
     final cloud = await _readCloudProfile();
     final cloudPreferences = cloud['preferences'];
-    final dirty =
-        await storage.read(key: 'futbeat.profile.dirty') == 'true';
+    final dirty = await storage.read(key: 'futbeat.profile.dirty') == 'true';
     final localProfile = await loadProfileSettings();
 
     if (!dirty && cloudPreferences is Map) {
@@ -447,10 +442,7 @@ class PushService {
         );
       }
       final effective = await database.watchPreference().first;
-      await syncCountries(
-        effective.detectedCountry,
-        effective.selectedCountry,
-      );
+      await syncCountries(effective.detectedCountry, effective.selectedCountry);
     }
 
     final local = await database.watchFollows().first;
@@ -578,7 +570,9 @@ final pushServiceProvider = Provider<PushService>((ref) {
   return service;
 });
 
-final profileSettingsProvider = FutureProvider<UserProfileSettings>((ref) async {
+final profileSettingsProvider = FutureProvider<UserProfileSettings>((
+  ref,
+) async {
   final service = ref.watch(pushServiceProvider);
   await service.restore();
   return service.loadProfileSettings();

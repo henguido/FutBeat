@@ -123,8 +123,7 @@ class ApiRepository implements FootballRepository {
   }
 
   @override
-  Future<Snapshot> load() =>
-      _loadSnapshot('snapshot', '/v1/snapshot');
+  Future<Snapshot> load() => _loadSnapshot('snapshot', '/v1/snapshot');
 
   @override
   Future<Snapshot> loadDate(DateTime date) {
@@ -132,10 +131,7 @@ class ApiRepository implements FootballRepository {
     return _loadSnapshot(
       'calendar:$value',
       '/v1/calendar',
-      queryParameters: {
-        'date': value,
-        'timezone': 'America/Costa_Rica',
-      },
+      queryParameters: {'date': value, 'timezone': 'America/Costa_Rica'},
     );
   }
 
@@ -175,10 +171,7 @@ class ApiRepository implements FootballRepository {
 
   @override
   Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail(
-    await _getJson(
-      '/v1/match-detail',
-      queryParameters: {'id': id},
-    ),
+    await _getJson('/v1/match-detail', queryParameters: {'id': id}),
   );
 
   Future<MatchDetail> readMatchDetail(String id) async => MatchDetail(
@@ -221,54 +214,59 @@ final calendarSnapshotProvider = FutureProvider.family<Snapshot, DateTime>(
   (ref, date) => ref.watch(repositoryProvider).loadDate(date),
 );
 
-
 final entitySnapshotProvider =
-    FutureProvider.family<Snapshot, ({String type, String id})>(
-      (ref, request) async {
-        final repository = ref.watch(repositoryProvider);
-        if (repository is ApiRepository) {
-          return repository.loadEntity(request.type, request.id);
-        }
-        return repository.load();
-      },
-    );
+    FutureProvider.family<Snapshot, ({String type, String id})>((
+      ref,
+      request,
+    ) async {
+      final repository = ref.watch(repositoryProvider);
+      if (repository is ApiRepository) {
+        return repository.loadEntity(request.type, request.id);
+      }
+      return repository.load();
+    });
 
-final searchSnapshotProvider = FutureProvider.family<
-    Snapshot,
-    ({String query, String? country})
->((ref, request) async {
+final searchSnapshotProvider =
+    FutureProvider.family<Snapshot, ({String query, String? country})>((
+      ref,
+      request,
+    ) async {
+      final repository = ref.watch(repositoryProvider);
+      if (repository is ApiRepository) {
+        return repository.searchCatalog(request.query, request.country);
+      }
+      return repository.load();
+    });
+
+final favoritesSnapshotProvider = FutureProvider.family<Snapshot, String>((
+  ref,
+  encodedKeys,
+) async {
   final repository = ref.watch(repositoryProvider);
   if (repository is ApiRepository) {
-    return repository.searchCatalog(request.query, request.country);
+    final keys = encodedKeys
+        .split(',')
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList();
+    return repository.loadFavorites(keys);
   }
   return repository.load();
 });
 
-final favoritesSnapshotProvider =
-    FutureProvider.family<Snapshot, String>((ref, encodedKeys) async {
-      final repository = ref.watch(repositoryProvider);
-      if (repository is ApiRepository) {
-        final keys = encodedKeys
-            .split(',')
-            .map((value) => value.trim())
-            .where((value) => value.isNotEmpty)
-            .toList();
-        return repository.loadFavorites(keys);
-      }
-      return repository.load();
-    });
+final matchContextSnapshotProvider = FutureProvider.family<Snapshot, String>((
+  ref,
+  id,
+) async {
+  final repository = ref.watch(repositoryProvider);
+  if (repository is ApiRepository) {
+    return repository.loadMatchContext(id);
+  }
+  return repository.load();
+});
 
-final matchContextSnapshotProvider =
-    FutureProvider.family<Snapshot, String>((ref, id) async {
-      final repository = ref.watch(repositoryProvider);
-      if (repository is ApiRepository) {
-        return repository.loadMatchContext(id);
-      }
-      return repository.load();
-    });
-
-final matchDetailProvider =
-    StreamProvider.autoDispose.family<MatchDetail, String>((ref, id) async* {
+final matchDetailProvider = StreamProvider.autoDispose
+    .family<MatchDetail, String>((ref, id) async* {
       final repository = ref.watch(repositoryProvider);
       MatchDetail current;
       try {

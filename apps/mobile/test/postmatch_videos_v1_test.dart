@@ -29,10 +29,7 @@ void main() {
 
     expect(detail.videos, hasLength(1));
     expect(detail.videos.first['videoId'], 'abcDEF12345');
-    expect(
-      detail.videos.first['verificationStatus'],
-      'VERIFIED_CHANNEL',
-    );
+    expect(detail.videos.first['verificationStatus'], 'VERIFIED_CHANNEL');
   });
 
   testWidgets('post-match video card shows verified source and copy action', (
@@ -61,25 +58,15 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: PostMatchVideos(detail),
-        ),
-      ),
+      MaterialApp(home: Scaffold(body: PostMatchVideos(detail))),
     );
 
-    expect(
-      find.text('Saprissa vs Alajuelense | Resumen'),
-      findsOneWidget,
-    );
+    expect(find.text('Saprissa vs Alajuelense | Resumen'), findsOneWidget);
     expect(
       find.text('Canal oficial · YouTube · canal oficial'),
       findsOneWidget,
     );
-    expect(
-      find.byTooltip('Copiar enlace de YouTube'),
-      findsOneWidget,
-    );
+    expect(find.byTooltip('Copiar enlace de YouTube'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

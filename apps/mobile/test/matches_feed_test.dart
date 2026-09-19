@@ -28,11 +28,11 @@ Snapshot _snapshot({
 }) {
   final today = costaRicaNow();
   String startAt(int hour) => DateTime.utc(
-        today.year,
-        today.month,
-        today.day,
-        hour + 6,
-      ).toIso8601String();
+    today.year,
+    today.month,
+    today.day,
+    hour + 6,
+  ).toIso8601String();
   Map<String, dynamic> match(
     String id,
     String competitionId,
@@ -40,19 +40,18 @@ Snapshot _snapshot({
     String awayId,
     String status,
     int hour,
-  ) =>
-      {
-        'id': id,
-        'competitionId': competitionId,
-        'homeTeamId': homeId,
-        'awayTeamId': awayId,
-        'startTime': startAt(hour),
-        'status': status,
-        'minute': status == 'LIVE' ? 63 : null,
-        'score': status == 'SCHEDULED' ? null : {'home': 1, 'away': 0},
-        'events': <dynamic>[],
-        'statistics': <dynamic>[],
-      };
+  ) => {
+    'id': id,
+    'competitionId': competitionId,
+    'homeTeamId': homeId,
+    'awayTeamId': awayId,
+    'startTime': startAt(hour),
+    'status': status,
+    'minute': status == 'LIVE' ? 63 : null,
+    'score': status == 'SCHEDULED' ? null : {'home': 1, 'away': 0},
+    'events': <dynamic>[],
+    'statistics': <dynamic>[],
+  };
 
   return Snapshot({
     'schemaVersion': 1,
@@ -61,11 +60,7 @@ Snapshot _snapshot({
     'coverage': {'partial': false},
     'freshness': {'stale': false},
     'competitions': [
-      {
-        'id': 'fb_comp_cr',
-        'name': 'Liga Promerica',
-        'country': 'Costa Rica',
-      },
+      {'id': 'fb_comp_cr', 'name': 'Liga Promerica', 'country': 'Costa Rica'},
       {'id': 'fb_comp_laliga', 'name': 'LaLiga', 'country': 'Spain'},
       if (includeCup)
         {
@@ -179,15 +174,14 @@ List<String> _ids(
   Set<String> temporary = const {},
   String? selected,
   String? detected = 'CR',
-}) =>
-    orderMatchCompetitions(
-      data: data,
-      matches: data.matches,
-      follows: follows,
-      temporaryInterests: temporary,
-      selectedCountry: selected,
-      detectedCountry: detected,
-    ).map((competition) => competition.id).toList();
+}) => orderMatchCompetitions(
+  data: data,
+  matches: data.matches,
+  follows: follows,
+  temporaryInterests: temporary,
+  selectedCountry: selected,
+  detectedCountry: detected,
+).map((competition) => competition.id).toList();
 
 void main() {
   test('without follows every competition stays visible', () {
@@ -210,38 +204,40 @@ void main() {
 
   test('following a team never promotes its whole competition', () {
     final data = _snapshot(includeCup: true);
-    expect(
-      _ids(data, follows: {'team:fb_team_lda'}),
-      ['fb_comp_laliga', 'fb_comp_cr', 'fb_comp_cac'],
-    );
+    expect(_ids(data, follows: {'team:fb_team_lda'}), [
+      'fb_comp_laliga',
+      'fb_comp_cac',
+      'fb_comp_cr',
+    ]);
   });
 
   test('country preference is a ranking signal without hiding the catalog', () {
-    expect(_ids(_snapshot(), selected: 'ES'), [
-      'fb_comp_laliga',
-      'fb_comp_cr',
-    ]);
-    expect(_ids(_snapshot(), detected: 'CR'), [
-      'fb_comp_laliga',
-      'fb_comp_cr',
-    ]);
+    expect(_ids(_snapshot(), selected: 'ES'), ['fb_comp_laliga', 'fb_comp_cr']);
+    expect(_ids(_snapshot(), detected: 'CR'), ['fb_comp_laliga', 'fb_comp_cr']);
+    expect(_ids(_snapshot(), selected: 'CR'), ['fb_comp_cr', 'fb_comp_laliga']);
   });
 
-  test('temporary competition interest can be promoted without hiding others', () {
-    expect(
-      _ids(
-        _snapshot(),
-        temporary: {'competition:fb_comp_cr'},
-      ),
-      ['fb_comp_cr', 'fb_comp_laliga'],
-    );
+  test('switching selected countries reorders but preserves every match', () {
+    final data = _snapshot();
+    final before = data.matches.map((match) => match.id).toSet();
+
+    expect(_ids(data, selected: 'CR'), ['fb_comp_cr', 'fb_comp_laliga']);
+    expect(_ids(data, selected: 'ES'), ['fb_comp_laliga', 'fb_comp_cr']);
+    expect(data.matches.map((match) => match.id).toSet(), before);
   });
+
+  test(
+    'temporary competition interest can be promoted without hiding others',
+    () {
+      expect(_ids(_snapshot(), temporary: {'competition:fb_comp_cr'}), [
+        'fb_comp_cr',
+        'fb_comp_laliga',
+      ]);
+    },
+  );
 
   test('status filters still select live, upcoming, and finished games', () {
-    final data = _snapshot(
-      costaRicaStatus: 'LIVE',
-      laLigaStatus: 'VERIFIED',
-    );
+    final data = _snapshot(costaRicaStatus: 'LIVE', laLigaStatus: 'VERIFIED');
     final today = costaRicaNow();
     expect(data.onDate(today, 'En vivo').map((match) => match.id), [
       'fb_match_cr',
@@ -371,9 +367,7 @@ void main() {
               ),
             ),
           ),
-          followsProvider.overrideWith(
-            (ref) => Stream.value(<String>{}),
-          ),
+          followsProvider.overrideWith((ref) => Stream.value(<String>{})),
           temporaryInterestsProvider.overrideWith(
             (ref) => Stream.value(<String>{}),
           ),
@@ -386,8 +380,18 @@ void main() {
     final today = DateUtils.dateOnly(costaRicaNow());
     String compact(DateTime value) {
       const months = [
-        'ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN',
-        'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC',
+        'ENE',
+        'FEB',
+        'MAR',
+        'ABR',
+        'MAY',
+        'JUN',
+        'JUL',
+        'AGO',
+        'SEP',
+        'OCT',
+        'NOV',
+        'DIC',
       ];
       return '${value.day} ${months[value.month - 1]}';
     }

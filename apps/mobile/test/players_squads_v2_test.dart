@@ -4,7 +4,9 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/shared/widgets.dart';
 
 void main() {
-  testWidgets('squad player tile shows number position and country', (tester) async {
+  testWidgets('squad player tile shows number position and country', (
+    tester,
+  ) async {
     final player = Entity({
       'id': 'fb_player_test',
       'name': 'Ana Gol',
@@ -15,11 +17,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: EntityTile(player, 'player'),
-        ),
-      ),
+      MaterialApp(home: Scaffold(body: EntityTile(player, 'player'))),
     );
 
     expect(find.text('Ana Gol'), findsOneWidget);
@@ -45,11 +43,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: PlayerProfileFacts(player),
-        ),
-      ),
+      MaterialApp(home: Scaffold(body: PlayerProfileFacts(player))),
     );
 
     expect(find.text('Delantero'), findsOneWidget);
@@ -64,7 +58,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('non-player entity tile keeps normal country subtitle', (tester) async {
+  testWidgets('non-player entity tile keeps normal country subtitle', (
+    tester,
+  ) async {
     final team = Entity({
       'id': 'fb_team_test',
       'name': 'Equipo Test',
@@ -73,11 +69,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: EntityTile(team, 'team'),
-        ),
-      ),
+      MaterialApp(home: Scaffold(body: EntityTile(team, 'team'))),
     );
 
     expect(find.text('Costa Rica'), findsOneWidget);

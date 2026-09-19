@@ -152,3 +152,98 @@ test('calendar uses fresh cached detail when canonical state is behind', async (
     await db.close();
   }
 });
+
+test('calendar reconciliation expires stale LIVE and never reopens a terminal match', async () => {
+  const db = await openDatabase();
+  try {
+    const day = (await db.query(
+      "select ((now() at time zone 'America/Costa_Rica')::date)::text value",
+    )).rows[0].value;
+    const start = (await db.query("select (now()-interval '1 hour')::text value")).rows[0].value;
+    const competition = 'fb_comp_reconcile';
+    const home = 'fb_team_reconcile_home';
+    const away = 'fb_team_reconcile_away';
+
+    await db.query(
+      "insert into futbeat_private.entities values($1,'competition',$2)",
+      [competition, JSON.stringify({ id: competition, name: 'Liga', country: 'Spain' })],
+    );
+    for (const [id, name] of [[home, 'Home'], [away, 'Away']]) {
+      await db.query("insert into futbeat_private.entities values($1,'team',$2)", [
+        id, JSON.stringify({ id, name, country: 'Spain', competitionId: competition }),
+      ]);
+    }
+
+    const addMatch = async (id, status, score = null, receivedAt = new Date().toISOString()) => {
+      const payload = {
+        id, competitionId: competition, homeTeamId: home, awayTeamId: away,
+        startTime: start, status, score, events: [], statistics: [],
+        provenance: { source: 'GOAL API', receivedAt },
+      };
+      await db.query("insert into futbeat_private.entities values($1,'match',$2)", [id, JSON.stringify(payload)]);
+    };
+
+    await addMatch('fb_match_recent_live', 'SCHEDULED');
+    await addMatch('fb_match_stale_live', 'SCHEDULED');
+    await addMatch(
+      'fb_match_stale_canonical_live',
+      'LIVE',
+      { home: 4, away: 4 },
+      new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    );
+    await addMatch('fb_match_terminal', 'VERIFIED', { home: 3, away: 1 });
+    const hash = 'a'.repeat(64);
+    for (const [external, id, seen, score] of [
+      ['recent', 'fb_match_recent_live', 'now()', [1, 0]],
+      ['stale', 'fb_match_stale_live', "now()-interval '20 minutes'", [2, 2]],
+      ['terminal-old-live', 'fb_match_terminal', 'now()', [0, 0]],
+    ]) {
+      await db.query(`insert into futbeat_private.live_match_state(
+        provider,external_match_id,canonical_match_id,status,minute,home_score,
+        away_score,last_payload_hash,first_seen_at,last_seen_at,changed_at
+      ) values($1,$2,$3,'LIVE',63,$4,$5,$6,${seen},${seen},${seen})`,
+      ['goal_api', external, id, score[0], score[1], hash]);
+    }
+
+    const snapshot = (await db.query(
+      "select public.futbeat_read_calendar_range($1::date,$1::date,'America/Costa_Rica') value",
+      [day],
+    )).rows[0].value;
+    const match = (id) => snapshot.matches.find((item) => item.id === id);
+
+    assert.equal(match('fb_match_recent_live').status, 'LIVE');
+    assert.deepEqual(match('fb_match_recent_live').score, { home: 1, away: 0 });
+    assert.equal(match('fb_match_stale_live').status, 'SCHEDULED');
+    assert.equal(match('fb_match_stale_live').score ?? null, null);
+    assert.equal(match('fb_match_stale_canonical_live').status, 'SCHEDULED');
+    assert.equal(match('fb_match_stale_canonical_live').score ?? null, null);
+    assert.equal(match('fb_match_terminal').status, 'VERIFIED');
+    assert.deepEqual(match('fb_match_terminal').score, { home: 3, away: 1 });
+  } finally {
+    await db.close();
+  }
+});
+
+test('newer terminal detail wins over an older LIVE observation with its real score', async () => {
+  const db = await openDatabase();
+  try {
+    const day = (await db.query(
+      "select ((now() at time zone 'America/Costa_Rica')::date)::text value",
+    )).rows[0].value;
+    const start = (await db.query("select (now()-interval '2 hours')::text value")).rows[0].value;
+    const ids = ['fb_comp_detail_terminal', 'fb_team_detail_home', 'fb_team_detail_away'];
+    await db.query("insert into futbeat_private.entities values($1,'competition',$2)", [ids[0], JSON.stringify({ id: ids[0], name: 'Liga', country: 'England' })]);
+    for (const id of ids.slice(1)) await db.query("insert into futbeat_private.entities values($1,'team',$2)", [id, JSON.stringify({ id, name: id, country: 'England', competitionId: ids[0] })]);
+    const id = 'fb_match_detail_terminal';
+    await db.query("insert into futbeat_private.entities values($1,'match',$2)", [id, JSON.stringify({ id, competitionId: ids[0], homeTeamId: ids[1], awayTeamId: ids[2], startTime: start, status: 'SCHEDULED', score: null, events: [], statistics: [] })]);
+    await db.query("insert into futbeat_private.live_match_state(provider,external_match_id,canonical_match_id,status,minute,home_score,away_score,last_payload_hash,first_seen_at,last_seen_at,changed_at) values('goal_api','older-live',$1,'LIVE',89,1,1,$2,now()-interval '5 minutes',now()-interval '5 minutes',now()-interval '5 minutes')", [id, 'b'.repeat(64)]);
+    await db.query("insert into futbeat_private.match_detail_cache values($1,'goal_api','older-live',now(),$2)", [id, JSON.stringify({ matchStatus: 'FINISHED', homeTeamScore: '2', awayTeamScore: '1' })]);
+
+    const snapshot = (await db.query("select public.futbeat_read_calendar_range($1::date,$1::date,'America/Costa_Rica') value", [day])).rows[0].value;
+    const visible = snapshot.matches.find((item) => item.id === id);
+    assert.equal(visible.status, 'FINISHED_PENDING_VERIFICATION');
+    assert.deepEqual(visible.score, { home: 2, away: 1 });
+  } finally {
+    await db.close();
+  }
+});

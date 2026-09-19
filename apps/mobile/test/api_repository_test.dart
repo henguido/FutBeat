@@ -68,33 +68,34 @@ void main() {
       }
     },
   );
-  test('calendar day is loaded from FutBeat instead of an external provider', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    Uri? requested;
-    server.listen((request) async {
-      requested = request.uri;
-      request.response.headers.contentType = ContentType.json;
-      final body = File('assets/demo.snapshot.json')
-          .readAsStringSync()
-          .replaceFirst('"demo": true', '"demo": false');
-      request.response.write(body);
-      await request.response.close();
-    });
-    final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
-    try {
-      final snapshot = await ApiRepository(dio).loadDate(DateTime(2026, 9, 18));
-      expect(snapshot.demo, isFalse);
-      expect(requested?.path, '/v1/calendar');
-      expect(requested?.queryParameters['date'], '2026-09-18');
-      expect(
-        requested?.queryParameters['timezone'],
-        'America/Costa_Rica',
-      );
-    } finally {
-      dio.close(force: true);
-      await server.close(force: true);
-    }
-  });
+  test(
+    'calendar day is loaded from FutBeat instead of an external provider',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      Uri? requested;
+      server.listen((request) async {
+        requested = request.uri;
+        request.response.headers.contentType = ContentType.json;
+        final body = File('assets/demo.snapshot.json')
+            .readAsStringSync()
+            .replaceFirst('"demo": true', '"demo": false');
+        request.response.write(body);
+        await request.response.close();
+      });
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      try {
+        final snapshot = await ApiRepository(dio)
+            .loadDate(DateTime(2026, 9, 18));
+        expect(snapshot.demo, isFalse);
+        expect(requested?.path, '/v1/calendar');
+        expect(requested?.queryParameters['date'], '2026-09-18');
+        expect(requested?.queryParameters['timezone'], 'America/Costa_Rica');
+      } finally {
+        dio.close(force: true);
+        await server.close(force: true);
+      }
+    },
+  );
 
   test('entity detail is loaded from the FutBeat canonical endpoint', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -111,10 +112,8 @@ void main() {
 
     final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
     try {
-      final snapshot = await ApiRepository(dio).loadEntity(
-        'team',
-        'fb_team_sap',
-      );
+      final snapshot = await ApiRepository(dio)
+          .loadEntity('team', 'fb_team_sap');
       expect(snapshot.demo, isFalse);
       expect(requested?.path, '/v1/entity');
       expect(requested?.queryParameters['type'], 'team');
