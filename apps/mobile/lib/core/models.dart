@@ -365,7 +365,9 @@ class Snapshot {
       matches = (json['matches'] as List)
           .map((e) => FootballMatch(e as Json))
           .toList(),
-      standings = (json['standings'] as List).cast<Json>() {
+      standings = (json['standings'] as List).cast<Json>(),
+      news = (json['news'] as List? ?? const []).cast<Json>(),
+      transfers = (json['transfers'] as List? ?? const []).cast<Json>() {
     if (json['schemaVersion'] != 1) {
       throw const FormatException('Versión de datos incompatible');
     }
@@ -384,7 +386,7 @@ class Snapshot {
   final Map<String, String> entityRedirects;
   final List<Entity> teams, players, competitions;
   final List<FootballMatch> matches;
-  final List<Json> standings;
+  final List<Json> standings, news, transfers;
 
   String resolveEntityId(String id) {
     var current = id;
@@ -420,6 +422,8 @@ class Snapshot {
       'competitions': competitions.map((entity) => entity.json).toList(),
       'matches': mergedMatches,
       'standings': standings,
+      'news': news,
+      'transfers': transfers,
     });
   }
 
