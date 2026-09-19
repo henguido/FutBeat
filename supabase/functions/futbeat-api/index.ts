@@ -277,6 +277,30 @@ export default {
       return reply(200, snapshot);
     }
 
+    if (path.endsWith('/futbeat-api/v1/match-context')) {
+      const id = requestUrl.searchParams.get('id');
+      if (!validEntityId(id) || !id?.startsWith('fb_match_')) {
+        return reply(400, { error: 'Partido inválido' });
+      }
+
+      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_read_match_context',
+        { p_match_id: id },
+      );
+
+      if (error) {
+        return reply(503, { error: 'Partido temporalmente no disponible' });
+      }
+      if (!snapshot) {
+        return reply(404, { error: 'Partido no encontrado' });
+      }
+      if (snapshot.schemaVersion !== 1 || snapshot.demo !== false) {
+        return reply(503, { error: 'Partido temporalmente no disponible' });
+      }
+
+      return reply(200, snapshot);
+    }
+
     if (path.endsWith('/futbeat-api/v1/match-detail')) {
       const id = requestUrl.searchParams.get('id');
       if (!validEntityId(id) || !id?.startsWith('fb_match_')) {
