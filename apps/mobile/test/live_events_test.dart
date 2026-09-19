@@ -203,6 +203,62 @@ void main() {
     expect(detail.referee, 'Ref Test');
   });
 
+  test('unified timeline keeps synthetic phases and prefers richer detail incidents', () {
+    final match = FootballMatch({
+      'id': 'fb_match_test',
+      'competitionId': 'fb_comp_test',
+      'homeTeamId': 'fb_team_home',
+      'awayTeamId': 'fb_team_away',
+      'startTime': '2026-09-18T18:00:00Z',
+      'status': 'LIVE',
+      'score': {'home': 1, 'away': 0},
+      'minute': 63,
+      'events': [
+        {'id': 'kickoff', 'type': 'KICKOFF', 'minute': 0},
+        {'id': 'goal-live', 'type': 'GOAL', 'minute': 63},
+      ],
+      'statistics': [],
+    });
+    final detail = MatchDetail({
+      'matchId': 'fb_match_test',
+      'available': true,
+      'pending': false,
+      'detailLevel': 'full',
+      'home': <String, dynamic>{},
+      'away': <String, dynamic>{},
+      'statistics': <dynamic>[],
+      'incidents': [
+        {
+          'type': 'YELLOW_CARD',
+          'minute': 44,
+          'label': 'Tarjeta amarilla',
+          'detail': 'Jugador local',
+        },
+        {
+          'type': 'GOAL',
+          'minute': 63,
+          'label': 'Gol',
+          'detail': 'Goleador · Asistencia: Compañero · 1-0',
+        },
+      ],
+    });
+
+    final timeline = mergedMatchTimeline(match, detail);
+
+    expect(
+      timeline.map((event) => event['type']).toList(),
+      ['KICKOFF', 'YELLOW_CARD', 'GOAL'],
+    );
+    expect(
+      timeline.where((event) => event['type'] == 'GOAL').length,
+      1,
+    );
+    expect(
+      timeline.last['detail'],
+      contains('Goleador'),
+    );
+  });
+
   test('Realtime reconnect bootstraps missing events and ignores repeated/older revisions', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var revision = 1, connections = 0;
