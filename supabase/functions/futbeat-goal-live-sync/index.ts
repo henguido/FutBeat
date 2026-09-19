@@ -173,7 +173,6 @@ async function syncLive() {
   }
 
   const reservationId = Number(plan.reservationId);
-  const goalKey = await readGoalKey();
   const fixtures: Record<string, unknown>[] = [];
   const seen = new Set<string>();
   let offset = 0;
@@ -182,6 +181,7 @@ async function syncLive() {
   let remaining: number | null = null;
 
   try {
+    const goalKey = await readGoalKey();
     for (let page = 0; page < 10; page += 1) {
       const response = await fetchGoal(
         goalKey,
@@ -292,12 +292,12 @@ async function syncOneMatchDetail() {
   }
 
   const reservationId = Number(plan.reservationId);
-  const goalKey = await readGoalKey();
   const matchId = clean(plan.matchId);
   const externalMatchId = clean(plan.externalMatchId);
   let remaining: number | null = null;
 
   try {
+    const goalKey = await readGoalKey();
     const response = await fetchGoal(
       goalKey,
       `/fixtures/${encodeURIComponent(externalMatchId)}`,
