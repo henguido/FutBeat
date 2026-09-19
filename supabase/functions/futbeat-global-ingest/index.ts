@@ -73,6 +73,7 @@ async function authorize(request: Request) {
   if (!allowedWorkflows.has(workflow)) {
     throw new Error("Unexpected GitHub workflow");
   }
+  return workflow;
 }
 
 function clean(value: unknown) {
@@ -241,8 +242,9 @@ async function resolveIdentityItems(
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
 
+  let authorizedWorkflow = "";
   try {
-    await authorize(request);
+    authorizedWorkflow = await authorize(request);
   } catch (error) {
     console.error(
       "global ingest authorization rejected",
@@ -278,11 +280,43 @@ Deno.serve(async (request) => {
     externalLeagueId?: string;
     season?: string;
     rows?: unknown;
+    goalApiKey?: string;
   };
   try {
     input = await request.json();
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (input.action === "goal-live-secret-provision") {
+    if (
+      authorizedWorkflow !==
+        "henguido/FutBeat/.github/workflows/live-fixtures.yml@refs/heads/main"
+    ) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const secret = typeof input.goalApiKey === "string"
+      ? input.goalApiKey.trim()
+      : "";
+    if (secret.length < 16 || secret.length > 1024) {
+      return Response.json({ error: "Invalid GOAL API key" }, { status: 400 });
+    }
+
+    try {
+      const status = await rpc("futbeat_store_goal_live_secret", {
+        p_secret: secret,
+      });
+      return Response.json({ status: "ok", transport: status });
+    } catch (error) {
+      console.error(
+        "GOAL live secret provisioning failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      return Response.json({ error: "GOAL live provisioning failed" }, {
+        status: 502,
+      });
+    }
   }
 
   if (input.action === "global-quota-plan") {
