@@ -152,9 +152,9 @@ void main() {
     });
 
     expect(stale.liveDataStale, isTrue);
-    expect(stale.statusLabel, contains('datos atrasados'));
+    expect(stale.statusLabel, '55′ · En vivo');
     expect(fresh.liveDataStale, isFalse);
-    expect(fresh.statusLabel, isNot(contains('datos atrasados')));
+    expect(fresh.statusLabel, '55′ · En vivo');
   });
 
   test('timeline orders stoppage time deterministically and exposes the latest event', () {

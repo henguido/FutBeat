@@ -54,6 +54,111 @@ function nonNegativeInteger(value: unknown) {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function eventMinute(value: unknown) {
+  const match = clean(value).match(/^(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+function asRows(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> =>
+      item != null && typeof item === "object" && !Array.isArray(item)
+    )
+    : [];
+}
+
+function normalizeFixtureEvents(fixture: Record<string, unknown>) {
+  const homeTeam = fixture.homeTeam && typeof fixture.homeTeam === "object"
+    ? fixture.homeTeam as Record<string, unknown>
+    : {};
+  const awayTeam = fixture.awayTeam && typeof fixture.awayTeam === "object"
+    ? fixture.awayTeam as Record<string, unknown>
+    : {};
+  const homeTeamId = clean(homeTeam.id ?? fixture.homeTeamId);
+  const awayTeamId = clean(awayTeam.id ?? fixture.awayTeamId);
+  const events: Array<Record<string, unknown>> = [];
+
+  for (const row of asRows(fixture.events)) {
+    const providerType = clean(row.type).toUpperCase();
+    const type = providerType.includes("MISSED") && providerType.includes("PENAL")
+      ? "MISSED_PENALTY"
+      : providerType.includes("VAR")
+      ? "VAR"
+      : providerType.includes("GOAL")
+      ? "GOAL"
+      : "OTHER";
+    if (type === "OTHER") continue;
+
+    const homePlayer = clean(row.homeScorerId);
+    const awayPlayer = clean(row.awayScorerId);
+    const teamExternalId = homePlayer ? homeTeamId : awayPlayer ? awayTeamId : "";
+    const playerExternalId = homePlayer || awayPlayer;
+    const assistExternalId = clean(row.homeAssistId ?? row.awayAssistId);
+    const minute = eventMinute(row.time);
+    const eventKey = clean(row.id) ||
+      [type, minute ?? "na", teamExternalId, playerExternalId].join(":");
+
+    events.push({
+      eventKey,
+      type,
+      minute,
+      teamExternalId: teamExternalId || null,
+      playerExternalId: playerExternalId || null,
+      assistExternalId: assistExternalId || null,
+      payload: row,
+    });
+  }
+
+  for (const row of asRows(fixture.cards)) {
+    const card = clean(row.card).toLowerCase();
+    const type = card.includes("red") ? "RED_CARD" : "YELLOW_CARD";
+    const homePlayer = clean(row.homePlayerId);
+    const awayPlayer = clean(row.awayPlayerId);
+    const teamExternalId = homePlayer ? homeTeamId : awayPlayer ? awayTeamId : "";
+    const playerExternalId = homePlayer || awayPlayer;
+    const minute = eventMinute(row.time);
+    const eventKey = clean(row.id) ||
+      [type, minute ?? "na", teamExternalId, playerExternalId].join(":");
+
+    events.push({
+      eventKey,
+      type,
+      minute,
+      teamExternalId: teamExternalId || null,
+      playerExternalId: playerExternalId || null,
+      payload: row,
+    });
+  }
+
+  for (const row of asRows(fixture.substitutions)) {
+    const side = clean(row.team).toLowerCase();
+    const ids = clean(row.substitutionPlayerId)
+      .split("|")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const teamExternalId = side === "home"
+      ? homeTeamId
+      : side === "away"
+      ? awayTeamId
+      : "";
+    const minute = eventMinute(row.time);
+    const eventKey = clean(row.id) ||
+      ["SUBSTITUTION", minute ?? "na", teamExternalId, ...ids].join(":");
+
+    events.push({
+      eventKey,
+      type: "SUBSTITUTION",
+      minute,
+      teamExternalId: teamExternalId || null,
+      playerExternalId: ids[0] || null,
+      assistExternalId: ids[1] || null,
+      payload: row,
+    });
+  }
+
+  return events;
+}
+
 async function sha256Hex(value: string) {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -78,12 +183,14 @@ async function normalizeLiveFixture(fixture: Record<string, unknown>) {
   const minute = nonNegativeInteger(fixture.matchElapsed);
   const home = nonNegativeInteger(fixture.homeTeamScore);
   const away = nonNegativeInteger(fixture.awayTeamScore);
+  const events = normalizeFixtureEvents(fixture);
   const payloadHash = await sha256Hex(JSON.stringify([
     externalMatchId,
     status,
     minute,
     home,
     away,
+    events.map((event) => event.eventKey),
   ]));
 
   return {
@@ -92,7 +199,7 @@ async function normalizeLiveFixture(fixture: Record<string, unknown>) {
     status,
     minute,
     score: { home, away },
-    events: [],
+    events,
     rawPayload: fixture,
   };
 }
@@ -427,6 +534,15 @@ async function syncLive() {
 }
 
 async function syncOneMatchDetail() {
+  try {
+    await rpc("futbeat_enqueue_stale_live_detail");
+  } catch (error) {
+    console.warn(
+      "stale LIVE detail enqueue unavailable",
+      error instanceof Error ? error.message : "unknown",
+    );
+  }
+
   const plan = await rpc("futbeat_reserve_match_detail_call", {
     p_trigger_source: "supabase-cron",
   });
@@ -455,12 +571,34 @@ async function syncOneMatchDetail() {
       throw new Error("GOAL match detail payload is invalid");
     }
 
+    const fetchedAt = new Date().toISOString();
     const stored = await rpc("futbeat_store_match_detail", {
       p_match_id: matchId,
       p_external_match_id: externalMatchId,
-      p_fetched_at: new Date().toISOString(),
+      p_fetched_at: fetchedAt,
       p_payload: detail,
     }, 30000);
+
+    const liveObservation = await normalizeLiveFixture(
+      detail as Record<string, unknown>,
+    );
+    if ([
+      "LIVE",
+      "HALFTIME",
+      "EXTRA_TIME",
+      "PENALTIES",
+      "FINISHED_PENDING_VERIFICATION",
+      "POSTPONED",
+      "CANCELLED",
+      "SUSPENDED",
+      "ABANDONED",
+    ].includes(liveObservation.status)) {
+      await rpc("futbeat_record_live_batch", {
+        p_provider: "goal_api",
+        p_received_at: fetchedAt,
+        p_observations: [liveObservation],
+      }, 30000);
+    }
 
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservationId,
@@ -855,6 +993,21 @@ Deno.serve(async (request) => {
     const supplied = clean(request.headers.get("x-futbeat-cron-token"));
     if (!(await secureEqual(expected, supplied))) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const trigger = clean(body.trigger).toLowerCase();
+    if (trigger === "detail-only") {
+      try {
+        const detail = await syncOneMatchDetail();
+        return Response.json({ status: "ok", detail });
+      } catch (error) {
+        console.error(
+          "GOAL detail-only sync failed",
+          error instanceof Error ? error.message : "unknown",
+        );
+        return Response.json({ status: "ok", detail: { status: "failed" } });
+      }
     }
 
     let live: unknown;

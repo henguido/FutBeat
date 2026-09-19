@@ -180,6 +180,13 @@ class ApiRepository implements FootballRepository {
       queryParameters: {'id': id},
     ),
   );
+
+  Future<MatchDetail> readMatchDetail(String id) async => MatchDetail(
+    await _getJson(
+      '/v1/match-detail',
+      queryParameters: {'id': id, 'request': '0'},
+    ),
+  );
 }
 
 final repositoryProvider = Provider<FootballRepository>((ref) {
@@ -261,12 +268,36 @@ final matchContextSnapshotProvider =
     });
 
 final matchDetailProvider =
-    FutureProvider.autoDispose.family<MatchDetail, String>((ref, id) async {
+    StreamProvider.autoDispose.family<MatchDetail, String>((ref, id) async* {
       final repository = ref.watch(repositoryProvider);
+      MatchDetail current;
       try {
-        return await repository.loadMatchDetail(id);
+        current = await repository.loadMatchDetail(id);
       } catch (_) {
-        return MatchDetail.empty(id);
+        current = MatchDetail.empty(id);
+      }
+      yield current;
+
+      if (repository is! ApiRepository) return;
+
+      var delay = current.pending
+          ? const Duration(seconds: 5)
+          : const Duration(seconds: 30);
+      for (var attempt = 0; attempt < 60; attempt++) {
+        await Future<void>.delayed(delay);
+
+        try {
+          current = await repository.readMatchDetail(id);
+          yield current;
+        } catch (_) {
+          // Keep the last known detail visible and retry on the next interval.
+        }
+
+        if (current.pending) {
+          delay = const Duration(seconds: 5);
+        } else {
+          delay = const Duration(seconds: 30);
+        }
       }
     });
 
