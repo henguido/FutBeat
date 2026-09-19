@@ -381,3 +381,120 @@ test('LIVE workflow avoids peak minute zero while keeping a five-minute cadence'
  assert.match(workflow,/cron: '2-57\/5 \* \* \* \*'/);
  assert.doesNotMatch(workflow,/cron: '\*\/5 \* \* \* \*'/);
 });
+
+
+test('Standings v2 stores canonical GOAL rows and exposes them in competition detail',async()=>{
+ const db=await openDatabase();
+ try {
+  const competition='fb_comp_standings_v2';
+  await db.query(
+   "insert into futbeat_private.entities values($1,'competition',$2)",
+   [competition,JSON.stringify({id:competition,name:'Primera División',country:'Costa Rica'})],
+  );
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','competition','goal-league-cr',$1)",
+   [competition],
+  );
+
+  const rows=[
+   {
+    overallLeaguePosition:'2',overallLeaguePlayed:'8',overallLeagueW:'5',
+    overallLeagueD:'2',overallLeagueL:'1',overallLeagueGF:'16',
+    overallLeagueGA:'7',overallLeaguePTS:'17',
+    team:{id:'goal-team-a',name:'Club A',country:{name:'Costa Rica'}},
+   },
+   {
+    overallLeaguePosition:'1',overallLeaguePlayed:'8',overallLeagueW:'6',
+    overallLeagueD:'1',overallLeagueL:'1',overallLeagueGF:'18',
+    overallLeagueGA:'5',overallLeaguePTS:'19',
+    team:{id:'goal-team-b',name:'Club B',country:{name:'Costa Rica'}},
+   },
+  ];
+
+  const stored=(await db.query(
+   'select public.futbeat_store_goal_standings($1,$2,$3,$4,$5) value',
+   [competition,'goal-league-cr','2026-09-18T20:00:00Z','2026/2027',JSON.stringify(rows)],
+  )).rows[0].value;
+  assert.equal(stored.rows,2);
+
+  const cache=(await db.query(
+   'select table_payload from futbeat_private.standings_cache where competition_id=$1',
+   [competition],
+  )).rows[0].table_payload;
+  assert.equal(cache.provisional,false);
+  assert.equal(cache.source,'GOAL API');
+  assert.equal(cache.stage,'Apertura');
+  assert.equal(cache.rows.length,2);
+  assert.equal(cache.rows[0].points,19);
+  assert.equal(cache.rows[1].points,17);
+
+  const detail=(await db.query(
+   "select public.futbeat_read_entity_detail('competition',$1) value",
+   [competition],
+  )).rows[0].value;
+  assert.equal(detail.standings.length,1);
+  assert.equal(detail.standings[0].competitionId,competition);
+  assert.equal(detail.standings[0].rows.length,2);
+ } finally {await db.close();}
+});
+
+test('Standings v2 plan is generic, Costa Rica first, and respects GOAL reserve',async()=>{
+ const db=await openDatabase();
+ try {
+  const now=new Date();
+  for(const [competition,external,name,country,teamA,teamB,match] of [
+   ['fb_comp_cr_v2','goal-cr','Primera División','Costa Rica','fb_team_cr_a','fb_team_cr_b','fb_match_cr_v2'],
+   ['fb_comp_es_v2','goal-es','La Liga','Spain','fb_team_es_a','fb_team_es_b','fb_match_es_v2'],
+  ]) {
+   await db.query("insert into futbeat_private.entities values($1,'competition',$2)",[
+    competition,JSON.stringify({id:competition,name,country}),
+   ]);
+   await db.query("insert into futbeat_private.provider_entities values('goal_api','competition',$1,$2)",[
+    external,competition,
+   ]);
+   for(const [id,label] of [[teamA,'A'],[teamB,'B']]) {
+    await db.query("insert into futbeat_private.entities values($1,'team',$2)",[
+     id,JSON.stringify({id,name:`${name} ${label}`,country,competitionId:competition}),
+    ]);
+   }
+   await db.query("insert into futbeat_private.entities values($1,'match',$2)",[
+    match,JSON.stringify({
+     id:match,competitionId:competition,homeTeamId:teamA,awayTeamId:teamB,
+     startTime:now.toISOString(),status:'SCHEDULED',score:null,events:[],statistics:[],
+     provenance:{source:'GOAL API',receivedAt:now.toISOString()},
+    }),
+   ]);
+  }
+
+  await db.query(
+   "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining) values('goal_api','live-goal','test',now()-interval '10 minutes',now()-interval '10 minutes','SUCCEEDED',500)"
+  );
+
+  const plan=(await db.query(
+   "select public.futbeat_reserve_goal_standings_call('test') value"
+  )).rows[0].value;
+  assert.equal(plan.allowed,true);
+  assert.equal(plan.competitionId,'fb_comp_cr_v2');
+  assert.equal(plan.externalLeagueId,'goal-cr');
+
+  await db.query("delete from futbeat_private.provider_call_ledger");
+  await db.query(
+   "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining) values('goal_api','live-goal','test',now()-interval '10 minutes',now()-interval '10 minutes','SUCCEEDED',300)"
+  );
+  const blocked=(await db.query(
+   "select public.futbeat_reserve_goal_standings_call('test') value"
+  )).rows[0].value;
+  assert.equal(blocked.allowed,false);
+  assert.equal(blocked.reason,'provider_remaining_reserve');
+  assert.equal(blocked.reserve,350);
+ } finally {await db.close();}
+});
+
+test('Standings workflow is quota-safe and uses generic planned league identity',async()=>{
+ const workflow=await readFile(new URL('../../.github/workflows/standings.yml',import.meta.url),'utf8');
+ assert.match(workflow,/action = "standings-plan"/);
+ assert.match(workflow,/standings\/\$externalLeagueId/);
+ assert.match(workflow,/action = "standings-ingest"/);
+ assert.match(workflow,/for \(\$iteration = 1; \$iteration -le 3; \$iteration\+\+\)/);
+ assert.doesNotMatch(workflow,/goal_league_cr|fb_comp_cr/);
+});
