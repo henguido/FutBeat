@@ -80,6 +80,29 @@ class ApiRepository implements FootballRepository {
     ).data!,
   );
 
+  Future<Snapshot> searchCatalog(String query, String? country) async =>
+      _canonical(
+        (
+          await dio.get<Json>(
+            '/v1/search',
+            queryParameters: {
+              'q': query,
+              if (country != null && country.trim().isNotEmpty)
+                'country': country.trim(),
+            },
+          )
+        ).data!,
+      );
+
+  Future<Snapshot> loadFavorites(List<String> keys) async => _canonical(
+    (
+      await dio.get<Json>(
+        '/v1/favorites',
+        queryParameters: {'keys': keys.join(',')},
+      )
+    ).data!,
+  );
+
   @override
   Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail(
     (
@@ -134,6 +157,31 @@ final entitySnapshotProvider =
         return repository.load();
       },
     );
+
+final searchSnapshotProvider = FutureProvider.autoDispose.family<
+    Snapshot,
+    ({String query, String? country})
+>((ref, request) async {
+  final repository = ref.watch(repositoryProvider);
+  if (repository is ApiRepository) {
+    return repository.searchCatalog(request.query, request.country);
+  }
+  return repository.load();
+});
+
+final favoritesSnapshotProvider =
+    FutureProvider.autoDispose.family<Snapshot, String>((ref, encodedKeys) async {
+      final repository = ref.watch(repositoryProvider);
+      if (repository is ApiRepository) {
+        final keys = encodedKeys
+            .split(',')
+            .map((value) => value.trim())
+            .where((value) => value.isNotEmpty)
+            .toList();
+        return repository.loadFavorites(keys);
+      }
+      return repository.load();
+    });
 
 final matchContextSnapshotProvider =
     FutureProvider.autoDispose.family<Snapshot, String>((ref, id) async {
