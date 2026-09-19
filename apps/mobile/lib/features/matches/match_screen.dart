@@ -745,7 +745,6 @@ class _PitchPlayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final image = player['image']?.toString() ?? '';
     final name = player['name']?.toString() ?? 'Jugador';
     final words = name.trim().split(RegExp(r'\s+'));
     final shortName = words.length > 1 ? words.last : name;
@@ -754,18 +753,13 @@ class _PitchPlayer extends StatelessWidget {
       children: [
         CircleAvatar(
           radius: 19,
-          backgroundImage: image.startsWith('https://')
-              ? NetworkImage(image)
-              : null,
-          child: image.startsWith('https://')
-              ? null
-              : Text(
-                  player['number']?.toString() ?? '—',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+          child: Text(
+            player['number']?.toString() ?? '—',
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ),
         const SizedBox(height: 5),
         Text(
