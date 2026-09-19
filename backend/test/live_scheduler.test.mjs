@@ -689,3 +689,41 @@ test('Standings LIVE overlay applies only matches newer than the official baseli
   assert.equal(refreshed.rows.find(row=>row.teamId===home).points,19);
  } finally {await db.close();}
 });
+
+
+test('stale public LIVE overlays are pruned without deleting canonical matches',async()=>{
+ const db=await openDatabase();
+ try {
+  const ids=await seedBetaMatch(db,{offsetMinutes:-90,status:'SCHEDULED'});
+  await db.query(
+   `insert into public.live_match_updates(
+      match_id,provider,external_match_id,status,minute,
+      home_score,away_score,revision,event_count,latest_events,
+      changed_at,updated_at
+    ) values($1,'goal_api','goal-stale-test','LIVE',71,2,1,1,0,'[]',
+      now()-interval '30 minutes',now()-interval '30 minutes')`,
+   [ids.match],
+  );
+
+  const result=(await db.query(
+   "select futbeat_private.futbeat_prune_stale_live_updates(interval '15 minutes') value"
+  )).rows[0].value;
+
+  assert.equal(result.deleted,1);
+  assert.deepEqual(result.matchIds,[ids.match]);
+  assert.equal(
+   (await db.query(
+    'select count(*)::int count from public.live_match_updates where match_id=$1',
+    [ids.match],
+   )).rows[0].count,
+   0,
+  );
+  assert.equal(
+   (await db.query(
+    "select count(*)::int count from futbeat_private.entities where id=$1 and kind='match'",
+    [ids.match],
+   )).rows[0].count,
+   1,
+  );
+ } finally {await db.close();}
+});
