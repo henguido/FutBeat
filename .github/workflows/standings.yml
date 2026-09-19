@@ -1,0 +1,134 @@
+name: FutBeat standings
+
+on:
+  schedule:
+    - cron: '47 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/standings.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: futbeat-standings
+  cancel-in-progress: false
+
+jobs:
+  standings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
+    steps:
+      - name: Refresh one due league table
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:GOAL_API_KEY)) {
+            throw "GOAL_API_KEY repository secret is required"
+          }
+          Write-Output "::add-mask::$env:GOAL_API_KEY"
+
+          function Get-GitHubOidcToken {
+            $oidcUrl = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=futbeat-global-ingest"
+            $oidc = Invoke-RestMethod -Uri $oidcUrl -Headers @{
+              Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+            } -TimeoutSec 15
+            $token = [string]$oidc.value
+            if ([string]::IsNullOrWhiteSpace($token)) {
+              throw "GitHub OIDC token was not issued"
+            }
+            Write-Host "::add-mask::$token"
+            return $token
+          }
+
+          function Invoke-FutBeatEndpoint([object]$payload) {
+            $token = Get-GitHubOidcToken
+            $body = $payload | ConvertTo-Json -Depth 100 -Compress
+            return Invoke-RestMethod -Uri "https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-global-ingest" `
+              -Method Post `
+              -Headers @{ Authorization = "Bearer $token" } `
+              -ContentType "application/json" `
+              -Body $body `
+              -TimeoutSec 60
+          }
+
+          $plan = Invoke-FutBeatEndpoint ([ordered]@{
+            action = "standings-plan"
+          })
+
+          if ($plan.status -eq "skipped") {
+            Write-Output "STANDINGS_SKIPPED reason=$($plan.reservation.reason) remaining=$($plan.reservation.providerRemaining)"
+            exit 0
+          }
+
+          $reservationId = [int]$plan.reservation.reservationId
+          $competitionId = [string]$plan.reservation.competitionId
+          $externalLeagueId = [string]$plan.reservation.externalLeagueId
+          $remaining = $null
+
+          try {
+            $responseHeaders = $null
+            $uri = "https://api.goal-api.com/v1/standings/$externalLeagueId"
+            $response = Invoke-RestMethod -Uri $uri `
+              -Headers @{
+                Authorization = "Bearer $env:GOAL_API_KEY"
+                Accept = "application/json"
+              } `
+              -ResponseHeadersVariable responseHeaders `
+              -TimeoutSec 30
+
+            if (-not $response.success -or -not ($response.data -is [System.Array])) {
+              throw "GOAL API returned an invalid standings payload"
+            }
+
+            if ($null -ne $responseHeaders) {
+              $rawRemaining = @($responseHeaders["X-RateLimit-Remaining"])[0]
+              if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
+                $remaining = [int]$rawRemaining
+              }
+            }
+
+            $season = ""
+            if (@($response.data).Count -gt 0) {
+              $first = @($response.data)[0]
+              foreach ($field in @("season","leagueSeason","overallLeagueSeason")) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$first.$field)) {
+                  $season = [string]$first.$field
+                  break
+                }
+              }
+            }
+
+            $result = Invoke-FutBeatEndpoint ([ordered]@{
+              action = "standings-ingest"
+              reservationId = $reservationId
+              competitionId = $competitionId
+              externalLeagueId = $externalLeagueId
+              season = $season
+              providerRemaining = $remaining
+              rows = @($response.data)
+            })
+
+            Write-Output "STANDINGS_OK competition=$competitionId rows=$($result.rows) remaining=$remaining"
+          } catch {
+            try {
+              Invoke-FutBeatEndpoint ([ordered]@{
+                action = "standings-fail"
+                reservationId = $reservationId
+                competitionId = $competitionId
+                externalLeagueId = $externalLeagueId
+                providerRemaining = $remaining
+                errorCode = "GOAL_STANDINGS_FETCH_FAILED"
+                httpStatus = $null
+              }) | Out-Null
+            } catch {
+              Write-Warning "STANDINGS_FAILURE_RECORD_FAILED"
+            }
+            throw
+          }
