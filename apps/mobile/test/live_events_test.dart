@@ -29,6 +29,25 @@ final goal = <String, dynamic>{
 };
 
 void main() {
+  test('snapshot preserves canonical entity redirects across LIVE overlays', () {
+    final raw = jsonDecode(
+      File('assets/demo.snapshot.json').readAsStringSync(),
+    ) as Json;
+    raw['demo'] = false;
+    raw['entityRedirects'] = {
+      'fb_team_legacy_sap': 'fb_team_sap',
+    };
+
+    final snapshot = Snapshot(raw);
+    expect(snapshot.resolveEntityId('fb_team_legacy_sap'), 'fb_team_sap');
+    expect(snapshot.resolveEntityId('fb_team_sap'), 'fb_team_sap');
+
+    final merged = snapshot.withLiveUpdates({
+      'fb_match_clasico': LiveMatchUpdate.fromJson(row(2, [goal])),
+    });
+    expect(merged.resolveEntityId('fb_team_legacy_sap'), 'fb_team_sap');
+  });
+
   test('snapshot merge deduplicates canonical events and rejects unrelated fixture events', () {
     final raw = jsonDecode(
       File('assets/demo.snapshot.json').readAsStringSync(),

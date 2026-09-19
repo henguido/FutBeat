@@ -45,6 +45,19 @@ class TestRepository implements FootballRepository {
   Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail.empty(id);
 }
 
+class RedirectRepository extends TestRepository {
+  @override
+  Future<Snapshot> load() async {
+    final json = jsonDecode(
+      File('assets/demo.snapshot.json').readAsStringSync(),
+    ) as Json;
+    json['entityRedirects'] = {
+      'fb_team_legacy_sap': 'fb_team_sap',
+    };
+    return Snapshot(json);
+  }
+}
+
 Future<void> openApp(
   WidgetTester tester, {
   String route = '/matches',
@@ -289,6 +302,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('2 - 1'), findsOneWidget);
   });
+  testWidgets('legacy entity deep link resolves to the canonical profile', (
+    tester,
+  ) async {
+    await openApp(
+      tester,
+      route: '/team/fb_team_legacy_sap',
+      repository: RedirectRepository(),
+    );
+    expect(find.text('Saprissa'), findsWidgets);
+    expect(find.text('Partidos destacados'), findsOneWidget);
+    expect(find.text('Perfil no encontrado'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('FB-US-041/042: alias search -> team page', (tester) async {
     await openApp(tester, route: '/explore');
     await tester.enterText(find.byType(TextField), 'LDA');

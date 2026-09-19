@@ -123,10 +123,11 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
         ),
       ),
       data: (data) {
+        final canonicalId = data.resolveEntityId(id);
         final entity = switch (type) {
-          'team' => data.team(id),
-          'player' => data.player(id),
-          _ => data.competition(id),
+          'team' => data.team(canonicalId),
+          'player' => data.player(canonicalId),
+          _ => data.competition(canonicalId),
         };
         if (entity == null) {
           return Scaffold(
@@ -139,7 +140,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
         }
         final teamId = switch (type) {
           'player' => entity.json['teamId']?.toString(),
-          'team' => id,
+          'team' => canonicalId,
           _ => null,
         };
         final team = teamId == null ? null : data.team(teamId);
@@ -147,7 +148,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             data.matches
                 .where(
                   (m) => type == 'competition'
-                      ? m.competitionId == id
+                      ? m.competitionId == canonicalId
                       : teamId != null &&
                             (m.homeId == teamId || m.awayId == teamId),
                 )
@@ -157,7 +158,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ? const <Entity>[]
             : orderedTeamCompetitions(data, teamId);
         final competitionId = type == 'competition'
-            ? id
+            ? canonicalId
             : type == 'team'
             ? teamCompetitions.firstOrNull?.id
             : null;
@@ -176,7 +177,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
           child: Scaffold(
             appBar: AppBar(
               title: Text(entity.name),
-              actions: [FollowButton(type, id)],
+              actions: [FollowButton(type, canonicalId)],
               bottom: TabBar(
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
@@ -288,17 +289,17 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                           style: const TextStyle(color: muted),
                         ),
                         const SizedBox(height: 12),
-                        if (!data.players.any((p) => p.json['teamId'] == id))
+                        if (!data.players.any((p) => p.json['teamId'] == canonicalId))
                           const EmptyState(
                             'Plantilla no disponible',
                             'No hay jugadores publicados para este equipo.',
                           ),
                         for (final player in data.players.where(
-                          (p) => p.json['teamId'] == id,
+                          (p) => p.json['teamId'] == canonicalId,
                         ))
                           EntityTile(player, 'player'),
                       ] else if (tab == 'Equipos') ...[
-                        for (final team in competitionTeams(data, id))
+                        for (final team in competitionTeams(data, canonicalId))
                           EntityTile(team, 'team'),
                       ] else if (tab == 'Noticias')
                         const EmptyState(
