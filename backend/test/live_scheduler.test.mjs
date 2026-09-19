@@ -374,3 +374,10 @@ test('global catalog workflow uses only its three-hour schedule and low-priority
  assert.match(workflow,/\$squadReserve = 350/);
  assert.match(workflow,/\$calendarRequestBudget = 180/);
 });
+
+
+test('LIVE workflow avoids peak minute zero while keeping a five-minute cadence',async()=>{
+ const workflow=await readFile(new URL('../../.github/workflows/live-fixtures.yml',import.meta.url),'utf8');
+ assert.match(workflow,/cron: '2-57\/5 \* \* \* \*'/);
+ assert.doesNotMatch(workflow,/cron: '\*\/5 \* \* \* \*'/);
+});
