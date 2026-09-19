@@ -33,15 +33,41 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final initialData = widget.initialData;
-    if (initialData == null) {
-      return DataView(builder: _buildMatchCenter);
-    }
-
     final updates =
         ref.watch(liveMatchUpdatesProvider).asData?.value ??
         const <String, LiveMatchUpdate>{};
-    return _buildMatchCenter(initialData.withLiveUpdates(updates));
+    final initialData = widget.initialData;
+    if (initialData != null) {
+      return _buildMatchCenter(initialData.withLiveUpdates(updates));
+    }
+
+    return ref.watch(matchContextSnapshotProvider(widget.id)).when(
+      loading: () => Scaffold(
+        appBar: AppBar(title: const Text('Match Center')),
+        body: const Center(child: CircularProgressIndicator()),
+      ),
+      error: (_, stack) => Scaffold(
+        appBar: AppBar(title: const Text('Match Center')),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const EmptyState(
+                'No pudimos cargar este partido',
+                'Revisa tu conexión e intenta nuevamente.',
+                icon: Icons.cloud_off,
+              ),
+              FilledButton(
+                onPressed: () =>
+                    ref.invalidate(matchContextSnapshotProvider(widget.id)),
+                child: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      data: (data) => _buildMatchCenter(data.withLiveUpdates(updates)),
+    );
   }
 
   Widget _buildMatchCenter(Snapshot data) {

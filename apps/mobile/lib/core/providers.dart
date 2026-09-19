@@ -71,6 +71,15 @@ class ApiRepository implements FootballRepository {
     ).data!,
   );
 
+  Future<Snapshot> loadMatchContext(String id) async => _canonical(
+    (
+      await dio.get<Json>(
+        '/v1/match-context',
+        queryParameters: {'id': id},
+      )
+    ).data!,
+  );
+
   @override
   Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail(
     (
@@ -125,6 +134,15 @@ final entitySnapshotProvider =
         return repository.load();
       },
     );
+
+final matchContextSnapshotProvider =
+    FutureProvider.autoDispose.family<Snapshot, String>((ref, id) async {
+      final repository = ref.watch(repositoryProvider);
+      if (repository is ApiRepository) {
+        return repository.loadMatchContext(id);
+      }
+      return repository.load();
+    });
 
 final matchDetailProvider =
     FutureProvider.autoDispose.family<MatchDetail, String>((ref, id) async {
