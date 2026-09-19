@@ -115,3 +115,74 @@ test('Supabase LIVE worker hydrates one quota-safe squad and GitHub no longer fe
   /mode: "team-squad"[\s\S]*transport: authorizedWorkflow === "supabase-cron"/,
  );
 });
+
+
+test('main snapshot publishes only recently hydrated visible players',async()=>{
+ const db=await openDatabase();
+ try {
+  const competition='fb_comp_player_catalog';
+  const recentTeam='fb_team_player_catalog_recent';
+  const oldTeam='fb_team_player_catalog_old';
+  const recentPlayer='fb_player_catalog_recent';
+  const oldPlayer='fb_player_catalog_old';
+
+  for(const [id,kind,payload] of [
+   [competition,'competition',{id:competition,name:'Liga Catalog',country:'Costa Rica'}],
+   [recentTeam,'team',{id:recentTeam,name:'Recent FC',country:'Costa Rica',competitionId:competition}],
+   [oldTeam,'team',{id:oldTeam,name:'Old FC',country:'Costa Rica',competitionId:competition}],
+   [recentPlayer,'player',{id:recentPlayer,name:'Recent Player',country:'Costa Rica',teamId:recentTeam}],
+   [oldPlayer,'player',{id:oldPlayer,name:'Old Player',country:'Costa Rica',teamId:oldTeam}],
+  ]) {
+   await db.query(
+    'insert into futbeat_private.entities(id,kind,payload) values($1,$2,$3)',
+    [id,kind,JSON.stringify(payload)],
+   );
+  }
+
+  await db.query(
+   "insert into futbeat_private.team_squad_members(team_id,player_id,provider,updated_at) values($1,$2,'goal_api',now()),($3,$4,'goal_api',now()-interval '20 days')",
+   [recentTeam,recentPlayer,oldTeam,oldPlayer],
+  );
+  await db.query(
+   "insert into futbeat_private.team_detail_coverage(team_id,provider,fetched_at,player_count) values($1,'goal_api',now(),1),($2,'goal_api',now()-interval '20 days',1)",
+   [recentTeam,oldTeam],
+  );
+
+  const snapshot={
+   schemaVersion:1,
+   demo:false,
+   updatedAt:new Date().toISOString(),
+   coverage:{},
+   teams:[
+    {id:recentTeam,name:'Recent FC',country:'Costa Rica',competitionId:competition},
+    {id:oldTeam,name:'Old FC',country:'Costa Rica',competitionId:competition},
+   ],
+   players:[],
+   competitions:[{id:competition,name:'Liga Catalog',country:'Costa Rica'}],
+   matches:[],
+   standings:[],
+   news:[],
+   transfers:[],
+  };
+
+  await db.query(
+   'insert into futbeat_private.imports(job_id,received_at,raw_payload,snapshot) values($1,now(),$2,$3)',
+   ['player-catalog-test',JSON.stringify({}),JSON.stringify(snapshot)],
+  );
+
+  const published=(await db.query(
+   'select public.futbeat_read_snapshot() value'
+  )).rows[0].value;
+
+  assert.equal(
+   published.players.filter(player=>player.id===recentPlayer).length,
+   1,
+  );
+  assert.equal(
+   published.players.some(player=>player.id===oldPlayer),
+   false,
+  );
+ } finally {
+  await db.close();
+ }
+});
