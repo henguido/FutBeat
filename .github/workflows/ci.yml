@@ -72,7 +72,7 @@ jobs:
         run: |
           changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD)"
           printf '%s\n' "$changed"
-          if printf '%s\n' "$changed" | grep -Eq '^(apps/mobile/|packages/)'; then
+          if printf '%s\n' "$changed" | grep -Eq '^(apps/mobile/|packages/|\.github/workflows/ci\.yml$)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -132,3 +132,24 @@ jobs:
           name: flutter-golden-failures
           path: apps/mobile/test/failures/
           if-no-files-found: ignore
+
+      - name: Create connected build configuration
+        if: steps.changes.outputs.run == 'true'
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/futbeat-cloud-build.json" <<'JSON'
+          {"FUTBEAT_API_URL":"https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-api","FUTBEAT_API_PUBLIC_TOKEN":"sb_publishable_iSH4S3fKou_EEkdG3W_Azg_9E4HXzWE"}
+          JSON
+
+      - name: Build connected debug APK
+        if: steps.changes.outputs.run == 'true'
+        shell: bash
+        run: flutter build apk --debug --dart-define-from-file="$RUNNER_TEMP/futbeat-cloud-build.json"
+
+      - name: Upload FutBeat debug APK
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: futbeat-android-debug-performance
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
