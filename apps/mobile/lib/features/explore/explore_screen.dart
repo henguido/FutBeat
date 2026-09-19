@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/interests.dart';
+import '../../core/models.dart';
 import '../../core/providers.dart';
-import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
@@ -20,6 +20,20 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   String query = '';
   String requestQuery = '';
   Timer? debounce;
+
+  List<Entity> _prioritizeFollowed(
+    Iterable<Entity> entities,
+    Set<String> follows,
+    String type,
+    int limit,
+  ) {
+    final followed = <Entity>[];
+    final rest = <Entity>[];
+    for (final entity in entities) {
+      (follows.contains('$type:${entity.id}') ? followed : rest).add(entity);
+    }
+    return [...followed, ...rest].take(limit).toList();
+  }
 
   @override
   void dispose() {
@@ -91,43 +105,34 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     ? data.competitions
                           .where((entity) => entity.matches(requestQuery))
                           .toList()
-                    : rankSearchEntities(
-                        data: data,
-                        entities: data.competitions,
-                        type: 'competition',
-                        query: requestQuery,
-                        follows: follows,
-                        userCountry: country,
-                        limit: hasQuery ? 40 : 12,
+                    : _prioritizeFollowed(
+                        data.competitions,
+                        follows,
+                        'competition',
+                        hasQuery ? 40 : 12,
                       );
                 final teams = data.demo
                     ? data.teams
                           .where((entity) => entity.matches(requestQuery))
                           .toList()
-                    : rankSearchEntities(
-                        data: data,
-                        entities: data.teams,
-                        type: 'team',
-                        query: requestQuery,
-                        follows: follows,
-                        userCountry: country,
-                        limit: hasQuery ? 50 : 12,
+                    : _prioritizeFollowed(
+                        data.teams,
+                        follows,
+                        'team',
+                        hasQuery ? 50 : 12,
                       );
                 final players = data.demo
                     ? data.players
                           .where((entity) => entity.matches(requestQuery))
                           .toList()
                     : hasQuery
-                    ? rankSearchEntities(
-                        data: data,
-                        entities: data.players,
-                        type: 'player',
-                        query: requestQuery,
-                        follows: follows,
-                        userCountry: country,
-                        limit: 50,
+                    ? _prioritizeFollowed(
+                        data.players,
+                        follows,
+                        'player',
+                        50,
                       )
-                    : <dynamic>[];
+                    : <Entity>[];
 
                 return ListView(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
