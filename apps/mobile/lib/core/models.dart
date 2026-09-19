@@ -373,6 +373,14 @@ class Snapshot {
     if (json['schemaVersion'] != 1) {
       throw const FormatException('Versión de datos incompatible');
     }
+
+    _teamsById = {for (final entity in teams) entity.id: entity};
+    _playersById = {for (final entity in players) entity.id: entity};
+    _competitionsById = {
+      for (final entity in competitions) entity.id: entity,
+    };
+    _matchesById = {for (final match in matches) match.id: match};
+
     for (final match in matches) {
       if (team(match.homeId) == null ||
           team(match.awayId) == null ||
@@ -390,6 +398,11 @@ class Snapshot {
   final List<FootballMatch> matches;
   final List<Json> standings, news, transfers;
 
+  late final Map<String, Entity> _teamsById;
+  late final Map<String, Entity> _playersById;
+  late final Map<String, Entity> _competitionsById;
+  late final Map<String, FootballMatch> _matchesById;
+
   String resolveEntityId(String id) {
     var current = id;
     final seen = <String>{};
@@ -399,6 +412,59 @@ class Snapshot {
       current = next;
     }
     return current;
+  }
+
+  Snapshot forMatch(String id) {
+    final target = match(id);
+    if (target == null) return this;
+
+    final matchStandings = standings
+        .where((table) => table['competitionId'] == target.competitionId)
+        .toList();
+    final teamIds = <String>{target.homeId, target.awayId};
+    for (final table in matchStandings) {
+      for (final row in (table['rows'] as List? ?? const <dynamic>[])) {
+        if (row is! Map) continue;
+        final teamId = row['teamId']?.toString();
+        if (teamId != null && teamId.isNotEmpty) teamIds.add(teamId);
+      }
+    }
+
+    final playerIds = <String>{};
+    for (final event in target.events) {
+      final playerId = event['playerId']?.toString();
+      if (playerId != null && playerId.isNotEmpty) playerIds.add(playerId);
+    }
+
+    final contextTeams = [
+      for (final team in teams)
+        if (teamIds.contains(team.id)) team.json,
+    ];
+    final contextPlayers = [
+      for (final player in players)
+        if (playerIds.contains(player.id) ||
+            teamIds.contains(player.json['teamId']?.toString()))
+          player.json,
+    ];
+    final competitionEntity = competition(target.competitionId);
+
+    return Snapshot({
+      'schemaVersion': 1,
+      'demo': demo,
+      'coverage': coverage,
+      'freshness': {'stale': stale},
+      'updatedAt': updatedAt.toIso8601String(),
+      'entityRedirects': entityRedirects,
+      'teams': contextTeams,
+      'players': contextPlayers,
+      'competitions': [
+        if (competitionEntity != null) competitionEntity.json,
+      ],
+      'matches': [target.json],
+      'standings': matchStandings,
+      'news': const <dynamic>[],
+      'transfers': const <dynamic>[],
+    });
   }
 
   Snapshot withLiveUpdates(Map<String, LiveMatchUpdate> updates) {
@@ -429,12 +495,10 @@ class Snapshot {
     });
   }
 
-  Entity? team(String id) => teams.where((e) => e.id == id).firstOrNull;
-  Entity? player(String id) => players.where((e) => e.id == id).firstOrNull;
-  Entity? competition(String id) =>
-      competitions.where((e) => e.id == id).firstOrNull;
-  FootballMatch? match(String id) =>
-      matches.where((e) => e.id == id).firstOrNull;
+  Entity? team(String id) => _teamsById[id];
+  Entity? player(String id) => _playersById[id];
+  Entity? competition(String id) => _competitionsById[id];
+  FootballMatch? match(String id) => _matchesById[id];
   List<FootballMatch> onDate(DateTime date, String filter) =>
       matches
           .where(

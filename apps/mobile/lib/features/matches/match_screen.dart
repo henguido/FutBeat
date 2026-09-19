@@ -11,8 +11,15 @@ import '../../shared/widgets.dart';
 import '../entities/standings.dart';
 
 class MatchScreen extends ConsumerStatefulWidget {
-  const MatchScreen({super.key, required this.id});
+  const MatchScreen({
+    super.key,
+    required this.id,
+    this.initialData,
+  });
+
   final String id;
+  final Snapshot? initialData;
+
   @override
   ConsumerState<MatchScreen> createState() => _MatchScreenState();
 }
@@ -25,111 +32,132 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => DataView(
-    builder: (data) {
-      final match = data.match(widget.id);
-      if (match == null) {
-        return Scaffold(
-          appBar: AppBar(title: const Text('Partido')),
-          body: const EmptyState(
-            'Partido no encontrado',
-            'Vuelve a Partidos para consultar los encuentros disponibles.',
-          ),
-        );
-      }
-      final competition = data.competition(match.competitionId)!;
-      final detail =
-          ref.watch(matchDetailProvider(widget.id)).asData?.value ??
-          MatchDetail.empty(widget.id);
-      final venue =
-          detail.stadium ?? match.json['venue']?.toString() ?? '';
-      return DefaultTabController(
-        length: 4,
-        child: Scaffold(
-          appBar: AppBar(
-            title: const Text('Match Center'),
-            actions: [FollowButton('match', widget.id)],
-            bottom: const TabBar(
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              tabs: [
-                Tab(text: 'Resumen'),
-                Tab(text: 'Estadísticas'),
-                Tab(text: 'Alineaciones'),
-                Tab(text: 'Tabla'),
-              ],
-            ),
-          ),
-          body: TabBarView(
-            children: [
-              ListView(
-                padding: const EdgeInsets.all(20),
-                children: [
-                  if (data.demo) const DemoNotice(),
-                  MatchHero(
-                    data: data,
-                    match: match,
-                    competition: competition,
-                    detail: detail,
-                    venue: venue,
-                  ),
-                  if (detail.pending) ...[
-                    const SizedBox(height: 16),
-                    _DetailPendingCard(
-                      onRefresh: () =>
-                          ref.invalidate(matchDetailProvider(widget.id)),
-                    ),
-                  ],
-                  if (detail.videos.isNotEmpty) ...[
-                    heading(context, 'Resumen oficial'),
-                    PostMatchVideos(detail),
-                  ],
-                  heading(context, 'Eventos del partido'),
-                  MatchTimeline(data, match, detail),
-                  heading(context, 'Estadísticas clave'),
-                  Statistics(match, detail: detail),
-                  const SizedBox(height: 20),
-                  Text(
-                    'Fuente: ${match.json['liveProvider'] ?? match.json['provenance']['source']}',
-                    style: const TextStyle(fontSize: 11, color: muted),
-                  ),
-                  Text(
-                    'Actualización: ${DateTime.parse((match.json['liveChangedAt'] ?? match.json['provenance']['receivedAt']) as String).toLocal()}',
-                    style: const TextStyle(fontSize: 11, color: muted),
-                  ),
-                ],
-              ),
-              ListView(
-                padding: const EdgeInsets.all(20),
-                children: [
-                  if (data.demo) const DemoNotice(),
-                  Text(
-                    '${data.team(match.homeId)!.name} / ${data.team(match.awayId)!.name}',
-                  ),
-                  const SizedBox(height: 20),
-                  Statistics(match, detail: detail),
-                ],
-              ),
-              ListView(
-                padding: const EdgeInsets.all(20),
-                children: [
-                  if (data.demo) const DemoNotice(),
-                  Lineups(data, match, detail),
-                ],
-              ),
-              ListView(
-                padding: const EdgeInsets.all(20),
-                children: [
-                  if (data.demo) const DemoNotice(),
-                  Standings(data, match.competitionId),
-                ],
-              ),
+  Widget build(BuildContext context) {
+    final initialData = widget.initialData;
+    if (initialData == null) {
+      return DataView(builder: _buildMatchCenter);
+    }
+
+    final updates =
+        ref.watch(liveMatchUpdatesProvider).asData?.value ??
+        const <String, LiveMatchUpdate>{};
+    return _buildMatchCenter(initialData.withLiveUpdates(updates));
+  }
+
+  Widget _buildMatchCenter(Snapshot data) {
+    final match = data.match(widget.id);
+    if (match == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Partido')),
+        body: const EmptyState(
+          'Partido no encontrado',
+          'Vuelve a Partidos para consultar los encuentros disponibles.',
+        ),
+      );
+    }
+
+    final competition = data.competition(match.competitionId);
+    if (competition == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Partido')),
+        body: const EmptyState(
+          'Competición no disponible',
+          'Vuelve a Partidos e intenta nuevamente.',
+        ),
+      );
+    }
+
+    final detail =
+        ref.watch(matchDetailProvider(widget.id)).asData?.value ??
+        MatchDetail.empty(widget.id);
+    final venue = detail.stadium ?? match.json['venue']?.toString() ?? '';
+
+    return DefaultTabController(
+      length: 4,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Match Center'),
+          actions: [FollowButton('match', widget.id)],
+          bottom: const TabBar(
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            tabs: [
+              Tab(text: 'Resumen'),
+              Tab(text: 'Estadísticas'),
+              Tab(text: 'Alineaciones'),
+              Tab(text: 'Tabla'),
             ],
           ),
         ),
-      );
-    },
-  );
+        body: TabBarView(
+          children: [
+            ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                if (data.demo) const DemoNotice(),
+                MatchHero(
+                  data: data,
+                  match: match,
+                  competition: competition,
+                  detail: detail,
+                  venue: venue,
+                ),
+                if (detail.pending) ...[
+                  const SizedBox(height: 16),
+                  _DetailPendingCard(
+                    onRefresh: () =>
+                        ref.invalidate(matchDetailProvider(widget.id)),
+                  ),
+                ],
+                if (detail.videos.isNotEmpty) ...[
+                  heading(context, 'Resumen oficial'),
+                  PostMatchVideos(detail),
+                ],
+                heading(context, 'Eventos del partido'),
+                MatchTimeline(data, match, detail),
+                heading(context, 'Estadísticas clave'),
+                Statistics(match, detail: detail),
+                const SizedBox(height: 20),
+                Text(
+                  'Fuente: ${match.json['liveProvider'] ?? match.json['provenance']['source']}',
+                  style: const TextStyle(fontSize: 11, color: muted),
+                ),
+                Text(
+                  'Actualización: ${DateTime.parse((match.json['liveChangedAt'] ?? match.json['provenance']['receivedAt']) as String).toLocal()}',
+                  style: const TextStyle(fontSize: 11, color: muted),
+                ),
+              ],
+            ),
+            ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                if (data.demo) const DemoNotice(),
+                Text(
+                  '${data.team(match.homeId)!.name} / ${data.team(match.awayId)!.name}',
+                ),
+                const SizedBox(height: 20),
+                Statistics(match, detail: detail),
+              ],
+            ),
+            ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                if (data.demo) const DemoNotice(),
+                Lineups(data, match, detail),
+              ],
+            ),
+            ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                if (data.demo) const DemoNotice(),
+                Standings(data, match.competitionId),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class MatchHero extends StatelessWidget {
