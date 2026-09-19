@@ -485,14 +485,30 @@ as $$
     select p_id where p_type='competition'
   ),
   tables as (
-    select coalesce(
-      jsonb_agg(sc.table_payload order by sc.competition_id),
-      '[]'::jsonb
-    ) as value
-    from futbeat_private.standings_cache sc
-    where sc.competition_id in (
-      select id from competition_ids where id is not null
-    )
+    select coalesce(jsonb_agg(item),'[]'::jsonb) as value
+    from (
+      select legacy.value as item
+      from base
+      cross join lateral jsonb_array_elements(
+        coalesce(base.snapshot->'standings','[]'::jsonb)
+      ) legacy
+      where legacy.value->>'competitionId' in (
+        select id from competition_ids where id is not null
+      )
+      and not exists(
+        select 1
+        from futbeat_private.standings_cache sc
+        where sc.competition_id=legacy.value->>'competitionId'
+      )
+
+      union all
+
+      select sc.table_payload
+      from futbeat_private.standings_cache sc
+      where sc.competition_id in (
+        select id from competition_ids where id is not null
+      )
+    ) selected_tables
   )
   select case
     when base.snapshot is null then null
@@ -500,7 +516,7 @@ as $$
       || jsonb_build_object('standings',tables.value)
   end
   from base,tables
-$$;
+$;
 
 revoke all on function
   futbeat_private.futbeat_store_goal_standings(text,text,timestamptz,text,jsonb),
