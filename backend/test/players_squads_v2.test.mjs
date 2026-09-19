@@ -73,41 +73,45 @@ test('Players v2 plans each canonical team once and reserves squad quota indepen
  }
 });
 
-test('global workflow hydrates a small squad batch on regular cycles and reserves before fetch',async()=>{
+test('Supabase LIVE worker hydrates one quota-safe squad and GitHub no longer fetches squads',async()=>{
  const workflow=await readFile(
   new URL('../../.github/workflows/global-fixtures.yml',import.meta.url),
   'utf8',
  );
-
- assert.match(workflow,/action = "squad-plan"\s+limit = 3/);
-
- const declarations=[
-  ...workflow.matchAll(/Invoke-TeamSquadHydration/g),
- ];
- assert.equal(
-  declarations.length,
-  2,
-  'one function declaration plus one runtime invocation',
+ const worker=await readFile(
+  new URL('../../supabase/functions/futbeat-goal-live-sync/index.ts',import.meta.url),
+  'utf8',
+ );
+ const ingest=await readFile(
+  new URL('../../supabase/functions/futbeat-global-ingest/index.ts',import.meta.url),
+  'utf8',
  );
 
- const hot=workflow.indexOf(
-  'GLOBAL_INGEST_OK provider=GOAL_API',
- );
- const hydrate=workflow.indexOf(
-  'Invoke-TeamSquadHydration',
-  workflow.indexOf('GLOBAL_INGEST_OK provider=GOAL_API'),
- );
- const dailyExit=workflow.indexOf(
-  'CALENDAR_EXPAND_SKIPPED reason=not_daily_window',
- );
- assert.ok(hot>=0 && hydrate>hot && dailyExit>hydrate);
+ assert.doesNotMatch(workflow,/Invoke-TeamSquadHydration/);
+ assert.doesNotMatch(workflow,/teams\/\$encodedTeamId\/players/);
+ assert.doesNotMatch(workflow,/action = "squad-reserve"/);
 
- const reserve=workflow.indexOf('action = "squad-reserve"');
- const provider=workflow.indexOf(
-  'https://api.goal-api.com/v1/teams/$encodedTeamId/players',
+ assert.match(worker,/futbeat_team_squad_plan/);
+ assert.match(worker,/p_limit: 1/);
+ assert.match(worker,/futbeat_reserve_goal_squad_call/);
+ assert.match(
+  worker,
+  /teams\/\$\{encodeURIComponent\(externalTeamId\)\}\/players/,
  );
- const ingest=workflow.indexOf('action = "squad-ingest"');
- assert.ok(reserve>=0 && provider>reserve && ingest>provider);
- assert.match(workflow,/action = "squad-ingest"[\s\S]*reservationId = \$reservationId/);
- assert.match(workflow,/action = "squad-fail"/);
+ assert.match(worker,/action: "squad-ingest"/);
+ assert.match(worker,/p_trigger_source: "supabase-cron"/);
+
+ const detail=worker.indexOf('detail = await syncOneMatchDetail()');
+ const squad=worker.indexOf('squad = await syncOneSquad()');
+ assert.ok(detail>=0 && squad>detail);
+
+ assert.match(ingest,/x-futbeat-cron-token/);
+ assert.match(
+  ingest,
+  /authorizedWorkflow === "supabase-cron"[\s\S]*input\.action !== "squad-ingest"/,
+ );
+ assert.match(
+  ingest,
+  /mode: "team-squad"[\s\S]*transport: authorizedWorkflow === "supabase-cron"/,
+ );
 });
