@@ -99,6 +99,17 @@ test('squad refresh records one provider roster change when a player changes clu
   assert.equal(rows[0].status,'ROSTER_CHANGE');
   assert.match(rows[0].source_label,/GOAL API/);
 
+  const oldMembership=(await db.query(
+   'select count(*)::int count from futbeat_private.team_squad_members where team_id=$1 and player_id=$2',
+   [from,player],
+  )).rows[0].count;
+  const newMembership=(await db.query(
+   'select count(*)::int count from futbeat_private.team_squad_members where team_id=$1 and player_id=$2',
+   [to,player],
+  )).rows[0].count;
+  assert.equal(oldMembership,0);
+  assert.equal(newMembership,1);
+
   const detail=(await db.query(
    "select public.futbeat_read_entity_detail('player',$1) value",
    [player],
