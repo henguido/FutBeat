@@ -238,16 +238,13 @@ class FootballMatch {
   }
 
   String get statusLabel {
-    if (isAwaitingUpdate) return 'Actualización pendiente';
+    if (isAwaitingUpdate) return '';
     return switch (status) {
-      'LIVE' => liveDataStale
-          ? "${json['minute'] ?? '—'}′ · En vivo · datos atrasados"
-          : "${json['minute'] ?? '—'}′ · En vivo",
+      'LIVE' => "${json['minute'] ?? '—'}′ · En vivo",
       'HALFTIME' => 'Descanso',
       'EXTRA_TIME' => 'Prórroga',
       'PENALTIES' => 'Penales',
-      'VERIFIED' => 'Finalizado',
-      'FINISHED_PENDING_VERIFICATION' => 'Final · por verificar',
+      'VERIFIED' || 'FINISHED_PENDING_VERIFICATION' => 'Finalizado',
       'POSTPONED' => 'Aplazado',
       'SUSPENDED' => 'Suspendido',
       'ABANDONED' => 'Abandonado',
