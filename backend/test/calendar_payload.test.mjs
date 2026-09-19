@@ -95,15 +95,6 @@ test('calendar transport keeps visible football data while stripping internal me
       ],
     );
 
-    await db.query(
-      'insert into futbeat_private.calendar_matches(match_id,start_time,source,updated_at) values($1,$2,$3,$4)',
-      [match, startTime, 'goal_api', receivedAt],
-    );
-    await db.query(
-      "insert into futbeat_private.calendar_coverage(provider,provider_date,fetched_at,fixture_count) values('goal_api','2026-09-19',$1,1)",
-      [receivedAt],
-    );
-
     const compact = (await db.query(
       "select public.futbeat_read_calendar_range('2026-09-19','2026-09-19','America/Costa_Rica') value",
     )).rows[0].value;
