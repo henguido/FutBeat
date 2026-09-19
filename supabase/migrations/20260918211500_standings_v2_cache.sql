@@ -436,6 +436,14 @@ as $$
 
       select sc.table_payload
       from futbeat_private.standings_cache sc
+      where exists(
+        select 1
+        from latest
+        cross join lateral jsonb_array_elements(
+          coalesce(latest.snapshot->'competitions','[]'::jsonb)
+        ) competition
+        where competition.value->>'id'=sc.competition_id
+      )
     ) all_tables
   )
   select
