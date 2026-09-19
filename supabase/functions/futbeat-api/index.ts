@@ -46,10 +46,16 @@ const safeImage = (value: unknown) => {
   }
 };
 
-const minuteValue = (value: unknown) => {
-  const match = cleanText(value).match(/\d+/);
-  return match ? Number(match[0]) : null;
+const minuteParts = (value: unknown) => {
+  const match = cleanText(value).match(/(\d+)(?:\s*\+\s*(\d+))?/);
+  return {
+    minute: match ? Number(match[1]) : null,
+    extraMinute: match?.[2] ? Number(match[2]) : null,
+  };
 };
+
+const minuteValue = (value: unknown) => minuteParts(value).minute;
+const extraMinuteValue = (value: unknown) => minuteParts(value).extraMinute;
 
 function normalizeLineupPlayer(value: unknown) {
   const row = asRecord(value);
@@ -129,6 +135,7 @@ function normalizeMatchDetail(raw: unknown) {
       return {
         type,
         minute: minuteValue(row.time),
+        extraMinute: extraMinuteValue(row.time),
         label: type === 'GOAL'
           ? 'Gol'
           : type === 'VAR'
@@ -150,6 +157,7 @@ function normalizeMatchDetail(raw: unknown) {
       return {
         type: card.toLowerCase().includes('red') ? 'RED_CARD' : 'YELLOW_CARD',
         minute: minuteValue(row.time),
+        extraMinute: extraMinuteValue(row.time),
         label: card || 'Tarjeta',
         detail:
           cleanText(row.homeFault) ||
@@ -163,6 +171,7 @@ function normalizeMatchDetail(raw: unknown) {
       return {
         type: 'SUBSTITUTION',
         minute: minuteValue(row.time),
+        extraMinute: extraMinuteValue(row.time),
         label: 'Sustitución',
         detail: cleanText(row.substitution) || null,
         team: cleanText(row.team) || null,
