@@ -277,6 +277,59 @@ export default {
       return reply(200, snapshot);
     }
 
+    if (path.endsWith('/futbeat-api/v1/search')) {
+      const query = (requestUrl.searchParams.get('q') ?? '').trim();
+      const country = (requestUrl.searchParams.get('country') ?? '').trim();
+      if (query.length > 80 || country.length > 8) {
+        return reply(400, { error: 'Búsqueda inválida' });
+      }
+
+      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_search_catalog',
+        {
+          p_query: query,
+          p_country: country || null,
+          p_limit: 50,
+        },
+      );
+      if (
+        error ||
+        !snapshot ||
+        snapshot.schemaVersion !== 1 ||
+        snapshot.demo !== false
+      ) {
+        return reply(503, { error: 'Búsqueda temporalmente no disponible' });
+      }
+      return reply(200, snapshot);
+    }
+
+    if (path.endsWith('/futbeat-api/v1/favorites')) {
+      const rawKeys = (requestUrl.searchParams.get('keys') ?? '').trim();
+      const keys = rawKeys.length === 0 ? [] : rawKeys.split(',');
+      if (
+        keys.length > 50 ||
+        keys.some((key) =>
+          !/^(team|player|competition|match):fb_[A-Za-z0-9_-]{3,120}$/.test(key)
+        )
+      ) {
+        return reply(400, { error: 'Favoritos inválidos' });
+      }
+
+      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_read_favorites',
+        { p_keys: keys },
+      );
+      if (
+        error ||
+        !snapshot ||
+        snapshot.schemaVersion !== 1 ||
+        snapshot.demo !== false
+      ) {
+        return reply(503, { error: 'Favoritos temporalmente no disponibles' });
+      }
+      return reply(200, snapshot);
+    }
+
     if (path.endsWith('/futbeat-api/v1/match-context')) {
       const id = requestUrl.searchParams.get('id');
       if (!validEntityId(id) || !id?.startsWith('fb_match_')) {
