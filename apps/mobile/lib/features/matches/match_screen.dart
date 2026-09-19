@@ -136,13 +136,6 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                   detail: detail,
                   venue: venue,
                 ),
-                if (detail.pending) ...[
-                  const SizedBox(height: 16),
-                  _DetailPendingCard(
-                    onRefresh: () =>
-                        ref.invalidate(matchDetailProvider(widget.id)),
-                  ),
-                ],
                 if (detail.videos.isNotEmpty) ...[
                   heading(context, 'Resumen oficial'),
                   PostMatchVideos(detail),
@@ -319,34 +312,39 @@ class _MatchStatePill extends StatelessWidget {
   final FootballMatch match;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-    decoration: BoxDecoration(
-      color: (match.isLive ? lime : muted).withValues(alpha: .12),
-      borderRadius: BorderRadius.circular(999),
-      border: Border.all(
-        color: (match.isLive ? lime : muted).withValues(alpha: .35),
-      ),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (match.isLive) ...[
-          const Icon(Icons.circle, size: 8, color: lime),
-          const SizedBox(width: 7),
-        ],
-        Text(
-          match.statusLabel.toUpperCase(),
-          style: TextStyle(
-            color: match.isLive ? lime : muted,
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            letterSpacing: .8,
-          ),
+  Widget build(BuildContext context) {
+    final label = match.statusLabel;
+    if (label.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: (match.isLive ? lime : muted).withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: (match.isLive ? lime : muted).withValues(alpha: .35),
         ),
-      ],
-    ),
-  );
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (match.isLive) ...[
+            const Icon(Icons.circle, size: 8, color: lime),
+            const SizedBox(width: 7),
+          ],
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              color: match.isLive ? lime : muted,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: .8,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class PostMatchVideos extends StatelessWidget {
@@ -404,9 +402,20 @@ class Statistics extends StatelessWidget {
         ? detail!.statistics
         : match.statistics;
     if (stats.isEmpty) {
-      return const EmptyState(
-        'Sin estadísticas disponibles',
-        'Mostraremos únicamente los datos publicados por la fuente.',
+      if (detail?.pending == true) {
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 28),
+          child: Center(child: CircularProgressIndicator()),
+        );
+      }
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text(
+            'Sin estadísticas',
+            style: TextStyle(color: muted),
+          ),
+        ),
       );
     }
     return Card(
@@ -507,49 +516,6 @@ String _statLabel(String value) {
       .join(' ');
 }
 
-class _DetailPendingCard extends StatelessWidget {
-  const _DetailPendingCard({required this.onRefresh});
-
-  final VoidCallback onRefresh;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.cloud_sync_outlined,
-                size: 20,
-                color: muted,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Solicitamos alineaciones y estadísticas a la fuente.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: onRefresh,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Actualizar detalles'),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
 class MatchTimeline extends StatelessWidget {
   const MatchTimeline(this.data, this.match, this.detail, {super.key});
 
@@ -561,9 +527,20 @@ class MatchTimeline extends StatelessWidget {
   Widget build(BuildContext context) {
     final timeline = mergedMatchTimeline(match, detail);
     if (timeline.isEmpty) {
-      return const EmptyState(
-        'Sin eventos disponibles',
-        'Los eventos aparecerán cuando la fuente los publique.',
+      if (detail.pending) {
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 28),
+          child: Center(child: CircularProgressIndicator()),
+        );
+      }
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text(
+            'Sin eventos',
+            style: TextStyle(color: muted),
+          ),
+        ),
       );
     }
 
@@ -645,11 +622,20 @@ class Lineups extends StatelessWidget {
     final hasPlayers =
         detail.homeStarters.isNotEmpty || detail.awayStarters.isNotEmpty;
     if (!hasPlayers) {
-      return EmptyState(
-        'Alineaciones no disponibles',
-        detail.pending
-            ? 'Ya solicitamos el detalle. Se actualizará automáticamente cuando esté disponible.'
-            : 'La fuente todavía no publicó una alineación para este encuentro.',
+      if (detail.pending) {
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 28),
+          child: Center(child: CircularProgressIndicator()),
+        );
+      }
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text(
+            'Sin alineaciones',
+            style: TextStyle(color: muted),
+          ),
+        ),
       );
     }
 
