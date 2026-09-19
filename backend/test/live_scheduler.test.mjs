@@ -423,6 +423,7 @@ test('Standings v2 stores canonical GOAL rows and exposes them in competition de
   )).rows[0].table_payload;
   assert.equal(cache.provisional,false);
   assert.equal(cache.source,'GOAL API');
+  assert.equal(cache.stage,'Apertura');
   assert.equal(cache.rows.length,2);
   assert.equal(cache.rows[0].points,19);
   assert.equal(cache.rows[1].points,17);
@@ -494,5 +495,6 @@ test('Standings workflow is quota-safe and uses generic planned league identity'
  assert.match(workflow,/action = "standings-plan"/);
  assert.match(workflow,/standings\/\$externalLeagueId/);
  assert.match(workflow,/action = "standings-ingest"/);
+ assert.match(workflow,/for \(\$iteration = 1; \$iteration -le 3; \$iteration\+\+\)/);
  assert.doesNotMatch(workflow,/goal_league_cr|fb_comp_cr/);
 });
