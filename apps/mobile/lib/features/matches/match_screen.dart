@@ -66,73 +66,13 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                 padding: const EdgeInsets.all(20),
                 children: [
                   if (data.demo) const DemoNotice(),
-                  Center(
-                    child: TextButton(
-                      onPressed: () =>
-                          context.push('/competition/${competition.id}'),
-                      child: Text(competition.name),
-                    ),
+                  MatchHero(
+                    data: data,
+                    match: match,
+                    competition: competition,
+                    detail: detail,
+                    venue: venue,
                   ),
-                  Row(
-                    children: [
-                      for (final teamId in [match.homeId, match.awayId])
-                        Expanded(
-                          child: InkWell(
-                            onTap: () => context.push('/team/$teamId'),
-                            child: Column(
-                              children: [
-                                EntityAvatar(data.team(teamId)!, size: 64),
-                                const SizedBox(height: 12),
-                                Text(
-                                  data.team(teamId)!.name,
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  Center(
-                    child: Text(
-                      match.score,
-                      style: const TextStyle(
-                        fontSize: 44,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  Center(child: _MatchStatePill(match)),
-
-                  const SizedBox(height: 12),
-                  Center(
-                    child: Text(
-                      '${match.startTime.day}/${match.startTime.month} · ${localTime(context, match.startTime)} · Hora local',
-                      style: const TextStyle(color: muted),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (venue.trim().isNotEmpty)
-                    Center(
-                      child: Text(
-                        venue,
-                        style: const TextStyle(color: muted, fontSize: 12),
-                      ),
-                    ),
-                  if (detail.referee != null || detail.round != null) ...[
-                    const SizedBox(height: 8),
-                    Center(
-                      child: Text(
-                        [
-                          if (detail.round != null) 'Jornada ${detail.round}',
-                          if (detail.referee != null) 'Árbitro: ${detail.referee}',
-                        ].join(' · '),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: muted, fontSize: 12),
-                      ),
-                    ),
-                  ],
                   if (detail.pending) ...[
                     const SizedBox(height: 16),
                     _DetailPendingCard(
@@ -190,6 +130,119 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
       );
     },
   );
+}
+
+class MatchHero extends StatelessWidget {
+  const MatchHero({
+    required this.data,
+    required this.match,
+    required this.competition,
+    required this.detail,
+    required this.venue,
+    super.key,
+  });
+
+  final Snapshot data;
+  final FootballMatch match;
+  final Entity competition;
+  final MatchDetail detail;
+  final String venue;
+
+  @override
+  Widget build(BuildContext context) {
+    final home = data.team(match.homeId)!;
+    final away = data.team(match.awayId)!;
+
+    Widget team(Entity entity) => Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => context.push('/team/${entity.id}'),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+          child: Column(
+            children: [
+              EntityAvatar(entity, size: 58),
+              const SizedBox(height: 8),
+              Text(
+                entity.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
+        child: Column(
+          children: [
+            TextButton(
+              onPressed: () =>
+                  context.push('/competition/${competition.id}'),
+              child: Text(
+                competition.name,
+                textAlign: TextAlign.center,
+              ),
+            ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                team(home),
+                SizedBox(
+                  width: 112,
+                  child: Column(
+                    children: [
+                      Text(
+                        match.score,
+                        style: const TextStyle(
+                          fontSize: 34,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _MatchStatePill(match),
+                    ],
+                  ),
+                ),
+                team(away),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '${match.startTime.day}/${match.startTime.month} · '
+              '${localTime(context, match.startTime)} · Hora local',
+              style: const TextStyle(color: muted, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+            if (venue.trim().isNotEmpty) ...[
+              const SizedBox(height: 5),
+              Text(
+                venue,
+                style: const TextStyle(color: muted, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+            ],
+            if (detail.referee != null || detail.round != null) ...[
+              const SizedBox(height: 5),
+              Text(
+                [
+                  if (detail.round != null) 'Jornada ${detail.round}',
+                  if (detail.referee != null) 'Árbitro: ${detail.referee}',
+                ].join(' · '),
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: muted, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _MatchStatePill extends StatelessWidget {
@@ -294,40 +347,79 @@ class Statistics extends StatelessWidget {
         child: Column(
           children: [
             for (final stat in stats)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 64,
-                      child: Text(
-                        _statValue(stat['home'], stat['unit']),
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        _statLabel(stat['label']?.toString() ?? ''),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: muted),
-                      ),
-                    ),
-                    SizedBox(
-                      width: 64,
-                      child: Text(
-                        _statValue(stat['away'], stat['unit']),
-                        textAlign: TextAlign.end,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _StatisticComparison(stat),
           ],
         ),
       ),
     );
   }
+}
+
+class _StatisticComparison extends StatelessWidget {
+  const _StatisticComparison(this.stat);
+
+  final Json stat;
+
+  @override
+  Widget build(BuildContext context) {
+    final home = statNumericValue(stat['home']);
+    final away = statNumericValue(stat['away']);
+    final total = (home ?? 0) + (away ?? 0);
+    final ratio = total > 0 ? (home ?? 0) / total : null;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 64,
+                child: Text(
+                  _statValue(stat['home'], stat['unit']),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  _statLabel(stat['label']?.toString() ?? ''),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: muted),
+                ),
+              ),
+              SizedBox(
+                width: 64,
+                child: Text(
+                  _statValue(stat['away'], stat['unit']),
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          if (ratio != null) ...[
+            const SizedBox(height: 7),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: ratio.clamp(0, 1),
+                minHeight: 5,
+                backgroundColor: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+double? statNumericValue(dynamic value) {
+  if (value is num) return value.toDouble();
+  final raw = value?.toString().trim().replaceAll('%', '') ?? '';
+  return double.tryParse(raw);
 }
 
 String _statValue(dynamic value, dynamic unit) {
@@ -558,8 +650,11 @@ class _TeamLineup extends StatelessWidget {
             'Titulares',
             style: TextStyle(color: muted, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(height: 6),
-          for (final player in starters) _PlayerRow(player),
+          const SizedBox(height: 8),
+          if (formationPlayerRows(formation, starters) case final rows?)
+            _FormationPitch(rows)
+          else
+            for (final player in starters) _PlayerRow(player),
           if (substitutes.isNotEmpty) ...[
             const Divider(height: 28),
             const Text(
@@ -573,6 +668,118 @@ class _TeamLineup extends StatelessWidget {
       ),
     ),
   );
+}
+
+List<List<Json>>? formationPlayerRows(
+  String? formation,
+  List<Json> starters,
+) {
+  if (formation == null || starters.length != 11) return null;
+  final parts = formation
+      .split('-')
+      .map(int.tryParse)
+      .whereType<int>()
+      .where((value) => value > 0)
+      .toList();
+  if (parts.isEmpty || parts.fold<int>(1, (sum, value) => sum + value) != 11) {
+    return null;
+  }
+
+  final ordered = [...starters]
+    ..sort(
+      (a, b) => (a['lineupPosition'] as num? ?? 999)
+          .compareTo(b['lineupPosition'] as num? ?? 999),
+    );
+
+  var offset = 1;
+  final rows = <List<Json>>[
+    [ordered.first],
+  ];
+  for (final size in parts) {
+    rows.add(ordered.sublist(offset, offset + size));
+    offset += size;
+  }
+  return rows.reversed.toList();
+}
+
+class _FormationPitch extends StatelessWidget {
+  const _FormationPitch(this.rows);
+
+  final List<List<Json>> rows;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 18),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: Theme.of(context).dividerColor.withValues(alpha: .35),
+      ),
+    ),
+    child: Column(
+      children: [
+        for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) ...[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final player in rows[rowIndex])
+                Expanded(child: _PitchPlayer(player)),
+            ],
+          ),
+          if (rowIndex != rows.length - 1)
+            const SizedBox(height: 18),
+        ],
+      ],
+    ),
+  );
+}
+
+class _PitchPlayer extends StatelessWidget {
+  const _PitchPlayer(this.player);
+
+  final Json player;
+
+  @override
+  Widget build(BuildContext context) {
+    final image = player['image']?.toString() ?? '';
+    final name = player['name']?.toString() ?? 'Jugador';
+    final words = name.trim().split(RegExp(r'\s+'));
+    final shortName = words.length > 1 ? words.last : name;
+
+    return Column(
+      children: [
+        CircleAvatar(
+          radius: 19,
+          backgroundImage: image.startsWith('https://')
+              ? NetworkImage(image)
+              : null,
+          child: image.startsWith('https://')
+              ? null
+              : Text(
+                  player['number']?.toString() ?? '—',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          shortName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+        ),
+        if (player['number'] != null)
+          Text(
+            '#${player['number']}',
+            style: const TextStyle(fontSize: 10, color: muted),
+          ),
+      ],
+    );
+  }
 }
 
 class _PlayerRow extends StatelessWidget {
