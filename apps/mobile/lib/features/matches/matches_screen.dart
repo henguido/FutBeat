@@ -600,14 +600,16 @@ class MatchCard extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      match.statusLabel.toUpperCase(),
-                      style: TextStyle(
-                        color: match.isLive ? lime : muted,
-                        fontSize: 10,
-                        letterSpacing: 1,
-                      ),
-                    ),
+                    child: match.statusLabel.isEmpty
+                        ? const SizedBox.shrink()
+                        : Text(
+                            match.statusLabel.toUpperCase(),
+                            style: TextStyle(
+                              color: match.isLive ? lime : muted,
+                              fontSize: 10,
+                              letterSpacing: 1,
+                            ),
+                          ),
                   ),
                   FollowButton('match', match.id),
                 ],
