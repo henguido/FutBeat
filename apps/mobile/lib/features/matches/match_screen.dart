@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -139,6 +140,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                           ref.invalidate(matchDetailProvider(widget.id)),
                     ),
                   ],
+                  if (detail.videos.isNotEmpty) ...[
+                    heading(context, 'Resumen oficial'),
+                    PostMatchVideos(detail),
+                  ],
                   heading(context, 'Eventos del partido'),
                   MatchTimeline(data, match, detail),
                   heading(context, 'Estadísticas clave'),
@@ -220,6 +225,50 @@ class _MatchStatePill extends StatelessWidget {
         ),
       ],
     ),
+  );
+}
+
+class PostMatchVideos extends StatelessWidget {
+  const PostMatchVideos(this.detail, {super.key});
+
+  final MatchDetail detail;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      for (final video in detail.videos)
+        Card(
+          child: ListTile(
+            leading: const CircleAvatar(
+              child: Icon(Icons.play_arrow_rounded),
+            ),
+            title: Text(
+              video['title']?.toString() ?? 'Resumen del partido',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              [
+                video['channelName']?.toString() ?? '',
+                video['source']?.toString() ?? '',
+              ].where((value) => value.trim().isNotEmpty).join(' · '),
+            ),
+            trailing: IconButton(
+              tooltip: 'Copiar enlace de YouTube',
+              icon: const Icon(Icons.link),
+              onPressed: () async {
+                final url = video['url']?.toString() ?? '';
+                if (!url.startsWith('https://www.youtube.com/watch?v=')) return;
+                await Clipboard.setData(ClipboardData(text: url));
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Enlace de YouTube copiado')),
+                );
+              },
+            ),
+          ),
+        ),
+    ],
   );
 }
 

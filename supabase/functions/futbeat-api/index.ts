@@ -96,8 +96,27 @@ function normalizeLineupSide(lineups: Record<string, unknown>, side: 'home' | 'a
   };
 }
 
-function normalizeMatchDetail(raw: unknown) {
+function normalizeMatchDetail(raw: unknown, rawVideos: unknown = []) {
   const envelope = asRecord(raw);
+  const videos = asList(rawVideos)
+    .map(asRecord)
+    .filter((row) => {
+      const videoId = cleanText(row.videoId);
+      const url = cleanText(row.url);
+      return /^[A-Za-z0-9_-]{11}$/.test(videoId) &&
+        url === `https://www.youtube.com/watch?v=${videoId}` &&
+        cleanText(row.verificationStatus) === 'VERIFIED_CHANNEL';
+    })
+    .map((row) => ({
+      videoId: cleanText(row.videoId),
+      title: cleanText(row.title),
+      url: cleanText(row.url),
+      channelId: cleanText(row.channelId),
+      channelName: cleanText(row.channelName),
+      publishedAt: row.publishedAt ?? null,
+      source: cleanText(row.source) || 'YouTube · canal oficial',
+      verificationStatus: 'VERIFIED_CHANNEL',
+    }));
   const payload = asRecord(envelope.payload);
   const lineups = asRecord(payload.lineups);
   const statistics = asRecord(payload.statistics);
@@ -200,6 +219,7 @@ function normalizeMatchDetail(raw: unknown) {
     away,
     statistics: fullTime,
     incidents,
+    videos,
   };
 }
 
@@ -263,10 +283,23 @@ export default {
         return replyNoStore(400, { error: 'Partido inválido' });
       }
 
-      const { data: detail, error } = await ctx.supabaseAdmin.rpc(
-        'futbeat_request_match_detail',
-        { p_match_id: id },
-      );
+      const [
+        { data: detail, error },
+        { data: videos, error: videosError },
+      ] = await Promise.all([
+        ctx.supabaseAdmin.rpc(
+          'futbeat_request_match_detail',
+          { p_match_id: id },
+        ),
+        ctx.supabaseAdmin.rpc(
+          'futbeat_read_match_videos',
+          { p_match_id: id },
+        ),
+      ]);
+
+      if (videosError) {
+        console.warn('match videos unavailable', String(videosError.message ?? ''));
+      }
 
       if (error) {
         const message = String(error.message ?? '');
@@ -280,7 +313,10 @@ export default {
         return replyNoStore(404, { error: 'Partido no encontrado' });
       }
 
-      return replyNoStore(200, normalizeMatchDetail(detail));
+      return replyNoStore(
+        200,
+        normalizeMatchDetail(detail, videosError ? [] : videos),
+      );
     }
 
     if (path.endsWith('/futbeat-api/v1/calendar')) {

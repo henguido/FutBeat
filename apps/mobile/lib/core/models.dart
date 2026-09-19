@@ -159,6 +159,7 @@ class MatchDetail {
     'away': <String, dynamic>{},
     'statistics': <dynamic>[],
     'incidents': <dynamic>[],
+    'videos': <dynamic>[],
   });
 
   final Json json;
@@ -184,6 +185,7 @@ class MatchDetail {
   List<Json> get awaySubstitutes => _maps(away['substitutes']);
   List<Json> get statistics => _maps(json['statistics']);
   List<Json> get incidents => _maps(json['incidents']);
+  List<Json> get videos => _maps(json['videos']);
 
   static String? _optional(dynamic value) {
     final result = value?.toString().trim() ?? '';
