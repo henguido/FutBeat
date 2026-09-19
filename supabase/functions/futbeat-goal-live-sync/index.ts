@@ -120,6 +120,51 @@ async function readNewsDataKey() {
   }
 }
 
+
+async function readYoutubeKey() {
+  try {
+    return clean(await rpc("futbeat_read_youtube_api_key"));
+  } catch {
+    return "";
+  }
+}
+
+function normalizeSearchText(value: unknown) {
+  return clean(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function significantTeamTokens(value: unknown) {
+  const stop = new Set([
+    "club", "de", "del", "la", "el", "fc", "cf", "cd", "sc",
+    "futbol", "football", "deportivo", "deportiva",
+  ]);
+  return normalizeSearchText(value)
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !stop.has(token));
+}
+
+function titleMentionsTeam(title: string, team: unknown) {
+  const normalized = normalizeSearchText(title);
+  const tokens = significantTeamTokens(team);
+  if (tokens.length === 0) return false;
+  return tokens.some((token) => normalized.includes(token));
+}
+
+function cleanYoutubeTitle(value: unknown) {
+  return clean(value)
+    .replaceAll("&amp;", "&")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .slice(0, 500);
+}
+
 function newsPublishedAt(value: unknown, timezone: unknown) {
   const raw = clean(value);
   if (!raw) return "";
@@ -640,6 +685,168 @@ async function syncOneNews() {
   }
 }
 
+async function syncOnePostMatchVideo() {
+  const youtubeKey = await readYoutubeKey();
+  if (youtubeKey.length < 20) {
+    return { status: "skipped", reason: "youtube_provider_not_configured" };
+  }
+
+  const plan = await rpc("futbeat_video_plan", { p_limit: 1 });
+  if (!Array.isArray(plan) || plan.length === 0) {
+    return { status: "skipped", reason: "no_video_due" };
+  }
+
+  const row = plan[0] as Record<string, unknown>;
+  const matchId = clean(row.matchId);
+  const channelId = clean(row.channelId);
+  const channelName = clean(row.channelName);
+  const query = clean(row.query);
+  const homeName = clean(row.homeName);
+  const awayName = clean(row.awayName);
+  const publishedAfter = clean(row.publishedAfter);
+  const publishedBefore = clean(row.publishedBefore);
+
+  if (
+    !matchId.startsWith("fb_match_") ||
+    !/^UC[A-Za-z0-9_-]{22}$/.test(channelId) ||
+    !query ||
+    !homeName ||
+    !awayName ||
+    !publishedAfter ||
+    !publishedBefore
+  ) {
+    throw new Error("Invalid post-match video plan");
+  }
+
+  const reservation = await rpc("futbeat_reserve_youtube_search_call", {
+    p_match_id: matchId,
+    p_channel_id: channelId,
+    p_trigger_source: "supabase-cron",
+  });
+  if (!reservation?.allowed) {
+    return {
+      status: "skipped",
+      reason: reservation?.reason ?? "unknown",
+      reservation,
+    };
+  }
+
+  const reservationId = Number(reservation.reservationId);
+  let httpStatus: number | null = null;
+
+  try {
+    const url = new URL("https://www.googleapis.com/youtube/v3/search");
+    url.searchParams.set("part", "snippet");
+    url.searchParams.set("type", "video");
+    url.searchParams.set("maxResults", "10");
+    url.searchParams.set("order", "date");
+    url.searchParams.set("channelId", channelId);
+    url.searchParams.set("q", query);
+    url.searchParams.set("publishedAfter", publishedAfter);
+    url.searchParams.set("publishedBefore", publishedBefore);
+    url.searchParams.set("safeSearch", "strict");
+    url.searchParams.set("videoEmbeddable", "true");
+    url.searchParams.set("key", youtubeKey);
+
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(20000),
+    });
+    httpStatus = response.status;
+    const payload = await response.json().catch(() => null) as
+      | Record<string, unknown>
+      | null;
+
+    if (!response.ok || payload == null) {
+      throw new Error(`YouTube search HTTP ${response.status}`);
+    }
+
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    let selected: Record<string, unknown> | null = null;
+
+    for (const raw of items) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const item = raw as Record<string, unknown>;
+      const id = item.id && typeof item.id === "object"
+        ? item.id as Record<string, unknown>
+        : {};
+      const snippet = item.snippet && typeof item.snippet === "object"
+        ? item.snippet as Record<string, unknown>
+        : {};
+      const videoId = clean(id.videoId);
+      const itemChannelId = clean(snippet.channelId);
+      const title = cleanYoutubeTitle(snippet.title);
+      const publishedAt = clean(snippet.publishedAt);
+
+      if (
+        !/^[A-Za-z0-9_-]{11}$/.test(videoId) ||
+        itemChannelId !== channelId ||
+        !title ||
+        !publishedAt ||
+        !titleMentionsTeam(title, homeName) ||
+        !titleMentionsTeam(title, awayName)
+      ) {
+        continue;
+      }
+
+      selected = {
+        videoId,
+        channelId,
+        channelName: clean(snippet.channelTitle) || channelName,
+        title,
+        publishedAt,
+      };
+      break;
+    }
+
+    const stored = await rpc("futbeat_store_youtube_search_result", {
+      p_match_id: matchId,
+      p_channel_id: channelId,
+      p_fetched_at: new Date().toISOString(),
+      p_video: selected,
+    });
+
+    await rpc("futbeat_complete_provider_call", {
+      p_reservation_id: reservationId,
+      p_status: "SUCCEEDED",
+      p_provider_remaining: null,
+      p_http_status: httpStatus,
+      p_error_code: null,
+      p_metadata: {
+        mode: "post-match-video",
+        provider: "YouTube Data API",
+        matchId,
+        channelId,
+        channelName,
+        stored: selected == null ? 0 : 1,
+        transport: "supabase-cron",
+      },
+    });
+
+    return {
+      status: "ok",
+      matchId,
+      channelId,
+      stored: selected == null ? 0 : 1,
+      result: stored,
+    };
+  } catch (error) {
+    await completeFailure(
+      reservationId,
+      "YOUTUBE_VIDEO_SEARCH_FAILED",
+      {
+        mode: "post-match-video",
+        matchId,
+        channelId,
+        detail: error instanceof Error ? error.message.slice(0, 240) : "unknown",
+      },
+      null,
+      httpStatus,
+    );
+    throw error;
+  }
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
 
@@ -654,6 +861,7 @@ Deno.serve(async (request) => {
     let detail: unknown;
     let squad: unknown;
     let news: unknown;
+    let video: unknown;
 
     try {
       live = await syncLive();
@@ -695,7 +903,17 @@ Deno.serve(async (request) => {
       news = { status: "failed" };
     }
 
-    return Response.json({ status: "ok", live, detail, squad, news });
+    try {
+      video = await syncOnePostMatchVideo();
+    } catch (error) {
+      console.error(
+        "YouTube post-match video sync failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      video = { status: "failed" };
+    }
+
+    return Response.json({ status: "ok", live, detail, squad, news, video });
   } catch (error) {
     console.error(
       "supabase GOAL live sync rejected",
