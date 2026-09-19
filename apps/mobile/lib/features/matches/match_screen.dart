@@ -197,15 +197,21 @@ class MatchHero extends StatelessWidget {
                   width: 112,
                   child: Column(
                     children: [
-                      Text(
-                        match.score,
-                        style: const TextStyle(
-                          fontSize: 34,
-                          fontWeight: FontWeight.w900,
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          match.score,
+                          style: const TextStyle(
+                            fontSize: 34,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 8),
-                      _MatchStatePill(match),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: _MatchStatePill(match),
+                      ),
                     ],
                   ),
                 ),
