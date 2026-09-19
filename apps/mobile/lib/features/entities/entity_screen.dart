@@ -298,18 +298,25 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                       ] else if (tab == 'Equipos') ...[
                         for (final team in competitionTeams(data, canonicalId))
                           EntityTile(team, 'team'),
-                      ] else if (tab == 'Noticias')
-                        const EmptyState(
-                          'Sin noticias disponibles',
-                          'Aquí encontrarás contenido relacionado con este perfil.',
-                          icon: Icons.article_outlined,
-                        )
-                      else
-                        const EmptyState(
-                          'Sin transferencias disponibles',
-                          'Los movimientos incluirán su fuente y se distinguirán los rumores de las confirmaciones.',
-                          icon: Icons.swap_horiz,
-                        ),
+                      ] else if (tab == 'Noticias') ...[
+                        if (data.news.isEmpty)
+                          const EmptyState(
+                            'Sin noticias disponibles',
+                            'Aquí encontrarás contenido relacionado con este perfil.',
+                            icon: Icons.article_outlined,
+                          ),
+                        for (final article in data.news)
+                          NewsArticleCard(article),
+                      ] else ...[
+                        if (data.transfers.isEmpty)
+                          const EmptyState(
+                            'Sin cambios de plantilla disponibles',
+                            'Los movimientos aparecerán cuando una fuente de plantilla confirme un cambio de club.',
+                            icon: Icons.swap_horiz,
+                          ),
+                        for (final transfer in data.transfers)
+                          TransferEventCard(transfer),
+                      ],
                     ],
                   ),
               ],

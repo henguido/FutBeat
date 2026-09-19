@@ -112,6 +112,67 @@ async function readCronToken() {
   return token;
 }
 
+async function readNewsDataKey() {
+  try {
+    return clean(await rpc("futbeat_read_newsdata_secret"));
+  } catch {
+    return "";
+  }
+}
+
+function newsPublishedAt(value: unknown, timezone: unknown) {
+  const raw = clean(value);
+  if (!raw) return "";
+  const normalized =
+    clean(timezone).toUpperCase() === "UTC" &&
+      !/[zZ]|[+-]\d\d:?\d\d$/.test(raw)
+      ? raw.replace(" ", "T") + "Z"
+      : raw.replace(" ", "T");
+  const parsed = new Date(normalized);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : "";
+}
+
+function normalizeNewsData(payload: Record<string, unknown>) {
+  const rows = Array.isArray(payload.results) ? payload.results : [];
+  const articles: Array<Record<string, unknown>> = [];
+
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const row = raw as Record<string, unknown>;
+    if (row.duplicate === true) continue;
+
+    const id = clean(row.article_id);
+    const title = clean(row.title);
+    const url = clean(row.link);
+    const sourceName = clean(row.source_name ?? row.source_id);
+    const publishedAt = newsPublishedAt(row.pubDate, row.pubDateTZ);
+
+    if (
+      !id ||
+      !title ||
+      !url.startsWith("https://") ||
+      !sourceName ||
+      !publishedAt
+    ) {
+      continue;
+    }
+
+    const sourceUrl = clean(row.source_url);
+    articles.push({
+      id,
+      title,
+      description: clean(row.description).slice(0, 2000),
+      url,
+      sourceName,
+      sourceUrl: sourceUrl.startsWith("https://") ? sourceUrl : "",
+      publishedAt,
+      language: clean(row.language),
+    });
+  }
+
+  return articles;
+}
+
 async function callGlobalIngest(
   token: string,
   body: Record<string, unknown>,
@@ -470,6 +531,115 @@ async function syncOneSquad() {
   }
 }
 
+async function syncOneNews() {
+  const newsKey = await readNewsDataKey();
+  if (newsKey.length < 10) {
+    return { status: "skipped", reason: "news_provider_not_configured" };
+  }
+
+  const plan = await rpc("futbeat_news_plan", { p_limit: 1 });
+  if (!Array.isArray(plan) || plan.length === 0) {
+    return { status: "skipped", reason: "no_news_due" };
+  }
+
+  const row = plan[0] as Record<string, unknown>;
+  const subjectType = clean(row.subjectType);
+  const subjectId = clean(row.subjectId);
+  const query = clean(row.query).slice(0, 100);
+  if (
+    !["team", "player", "competition"].includes(subjectType) ||
+    !subjectId.startsWith("fb_") ||
+    !query
+  ) {
+    throw new Error("Invalid news plan row");
+  }
+
+  const reservation = await rpc("futbeat_reserve_newsdata_call", {
+    p_subject_type: subjectType,
+    p_subject_id: subjectId,
+    p_query: query,
+    p_trigger_source: "supabase-cron",
+  });
+  if (!reservation?.allowed) {
+    return {
+      status: "skipped",
+      reason: reservation?.reason ?? "unknown",
+      reservation,
+    };
+  }
+
+  const reservationId = Number(reservation.reservationId);
+  try {
+    const url = new URL("https://newsdata.io/api/1/latest");
+    url.searchParams.set("apikey", newsKey);
+    url.searchParams.set("q", `"${query}"`);
+    url.searchParams.set("category", "sports");
+    url.searchParams.set("language", "es,en");
+
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(30000),
+    });
+    const text = await response.text();
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`NewsData returned non-JSON HTTP ${response.status}`);
+    }
+
+    if (!response.ok || clean(payload.status).toLowerCase() !== "success") {
+      throw new Error(`NewsData HTTP ${response.status}`);
+    }
+
+    const articles = normalizeNewsData(payload);
+    const stored = await rpc("futbeat_store_news_batch", {
+      p_subject_type: subjectType,
+      p_subject_id: subjectId,
+      p_received_at: new Date().toISOString(),
+      p_query: query,
+      p_articles: articles,
+    }, 30000);
+
+    await rpc("futbeat_complete_provider_call", {
+      p_reservation_id: reservationId,
+      p_status: "SUCCEEDED",
+      p_provider_remaining: null,
+      p_http_status: 200,
+      p_error_code: null,
+      p_metadata: {
+        mode: "news",
+        subjectType,
+        subjectId,
+        query,
+        articles: Number(stored?.articles ?? articles.length),
+        transport: "supabase-cron",
+        provider: "NewsData.io",
+      },
+    });
+
+    return {
+      status: "ok",
+      subjectType,
+      subjectId,
+      articles: Number(stored?.articles ?? articles.length),
+    };
+  } catch (error) {
+    await completeFailure(
+      reservationId,
+      "NEWSDATA_FETCH_FAILED",
+      {
+        mode: "news",
+        subjectType,
+        subjectId,
+        detail: error instanceof Error ? error.message.slice(0, 240) : "unknown",
+      },
+      null,
+    );
+    throw error;
+  }
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
 
@@ -483,6 +653,7 @@ Deno.serve(async (request) => {
     let live: unknown;
     let detail: unknown;
     let squad: unknown;
+    let news: unknown;
 
     try {
       live = await syncLive();
@@ -514,7 +685,17 @@ Deno.serve(async (request) => {
       squad = { status: "failed" };
     }
 
-    return Response.json({ status: "ok", live, detail, squad });
+    try {
+      news = await syncOneNews();
+    } catch (error) {
+      console.error(
+        "NewsData sync failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      news = { status: "failed" };
+    }
+
+    return Response.json({ status: "ok", live, detail, squad, news });
   } catch (error) {
     console.error(
       "supabase GOAL live sync rejected",

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -360,6 +361,120 @@ class EntityTile extends StatelessWidget {
       onTap: () => context.push('/$type/${entity.id}'),
     ),
   );
+}
+
+String _contentDateLabel(Object? value) {
+  final date = DateTime.tryParse(value?.toString() ?? '');
+  if (date == null) return '';
+  final local = date.toLocal();
+  return '${local.day}/${local.month}/${local.year}';
+}
+
+class NewsArticleCard extends StatelessWidget {
+  const NewsArticleCard(this.article, {super.key});
+
+  final Json article;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = article['title']?.toString().trim() ?? '';
+    final description = article['description']?.toString().trim() ?? '';
+    final source = article['sourceName']?.toString().trim() ?? '';
+    final url = article['url']?.toString().trim() ?? '';
+    final date = _contentDateLabel(article['publishedAt']);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 15,
+              ),
+            ),
+            if (description.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                description,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: muted),
+              ),
+            ],
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    [
+                      if (source.isNotEmpty) source,
+                      if (date.isNotEmpty) date,
+                    ].join(' · '),
+                    style: const TextStyle(
+                      color: muted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                if (url.startsWith('https://'))
+                  TextButton.icon(
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: url));
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Enlace de la noticia copiado'),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.link, size: 17),
+                    label: const Text('Copiar enlace'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class TransferEventCard extends StatelessWidget {
+  const TransferEventCard(this.transfer, {super.key});
+
+  final Json transfer;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = transfer['playerName']?.toString().trim() ?? 'Jugador';
+    final from = transfer['fromTeamName']?.toString().trim() ?? 'Equipo anterior';
+    final to = transfer['toTeamName']?.toString().trim() ?? 'Equipo actual';
+    final source = transfer['source']?.toString().trim() ?? 'GOAL API';
+    final date = _contentDateLabel(transfer['detectedAt']);
+
+    return Card(
+      child: ListTile(
+        leading: const CircleAvatar(
+          child: Icon(Icons.swap_horiz),
+        ),
+        title: Text(
+          player,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          '$from → $to\n'
+          'Cambio detectado en plantilla'
+          '${date.isEmpty ? '' : ' · $date'}'
+          '${source.isEmpty ? '' : ' · $source'}',
+        ),
+        isThreeLine: true,
+      ),
+    );
+  }
 }
 
 Widget heading(BuildContext context, String title) => Padding(
