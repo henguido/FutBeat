@@ -99,7 +99,7 @@ Future<void> openApp(
       overrides: [
         repositoryProvider.overrideWithValue(repository ?? TestRepository()),
         matchDetailProvider.overrideWith(
-          (ref, id) async => MatchDetail.empty(id),
+          (ref, id) => Stream.value(MatchDetail.empty(id)),
         ),
         databaseProvider.overrideWithValue(database),
         preferenceProvider.overrideWith(
