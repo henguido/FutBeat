@@ -79,8 +79,29 @@ function normalizeLineupPlayer(value: unknown) {
   };
 }
 
-function normalizeLineupSide(lineups: Record<string, unknown>, side: 'home' | 'away') {
-  const data = asRecord(lineups[side]);
+function normalizeLineupSide(lineups: unknown, side: 'home' | 'away') {
+  if (Array.isArray(lineups)) {
+    const rows = lineups
+      .map(asRecord)
+      .filter((row) => cleanText(row.team).toLowerCase() === side);
+    const players = (types: string[]) =>
+      rows
+        .filter((row) => types.includes(cleanText(row.type).toLowerCase()))
+        .map(normalizeLineupPlayer)
+        .filter((item): item is NonNullable<ReturnType<typeof normalizeLineupPlayer>> => item !== null)
+        .sort((left, right) =>
+          (left.lineupPosition ?? 999) - (right.lineupPosition ?? 999)
+        );
+    return {
+      formation: null,
+      starters: players(['starting_lineups', 'startinglineups', 'starter']),
+      substitutes: players(['substitutes', 'substitute']),
+      missing: players(['missing_players', 'missingplayers', 'missing']),
+    };
+  }
+
+  const root = asRecord(lineups);
+  const data = asRecord(root[side]);
   const players = (key: string) =>
     asList(data[key])
       .map(normalizeLineupPlayer)
@@ -89,11 +110,45 @@ function normalizeLineupSide(lineups: Record<string, unknown>, side: 'home' | 'a
         (left.lineupPosition ?? 999) - (right.lineupPosition ?? 999)
       );
   return {
-    formation: cleanText(lineups[side === 'home' ? 'homeFormation' : 'awayFormation']) || null,
+    formation: cleanText(root[side === 'home' ? 'homeFormation' : 'awayFormation']) || null,
     starters: players('startingLineups'),
     substitutes: players('substitutes'),
     missing: players('missingPlayers'),
   };
+}
+
+function normalizeStatistics(value: unknown) {
+  if (Array.isArray(value)) {
+    const rows = value.map(asRecord);
+    const fullRows = rows.filter((row) =>
+      ['full', 'full_time', 'fulltime'].includes(
+        cleanText(row.half).toLowerCase(),
+      )
+    );
+    const selected = fullRows.length > 0 ? fullRows : rows;
+    const byType = new Map<string, Record<string, unknown>>();
+    for (const row of selected) {
+      const type = cleanText(row.type);
+      if (!type) continue;
+      byType.set(type.toLowerCase(), row);
+    }
+    return [...byType.values()].map((row) => ({
+      label: cleanText(row.type),
+      home: row.home ?? '—',
+      away: row.away ?? '—',
+    }));
+  }
+
+  const statistics = asRecord(value);
+  const matchStats = asRecord(statistics.match);
+  return asList(matchStats.fullTime)
+    .map(asRecord)
+    .filter((row) => cleanText(row.type))
+    .map((row) => ({
+      label: cleanText(row.type),
+      home: row.home ?? '—',
+      away: row.away ?? '—',
+    }));
 }
 
 function normalizeMatchDetail(raw: unknown, rawVideos: unknown = []) {
@@ -118,17 +173,8 @@ function normalizeMatchDetail(raw: unknown, rawVideos: unknown = []) {
       verificationStatus: 'VERIFIED_CHANNEL',
     }));
   const payload = asRecord(envelope.payload);
-  const lineups = asRecord(payload.lineups);
-  const statistics = asRecord(payload.statistics);
-  const matchStats = asRecord(statistics.match);
-  const fullTime = asList(matchStats.fullTime)
-    .map(asRecord)
-    .filter((row) => cleanText(row.type))
-    .map((row) => ({
-      label: cleanText(row.type),
-      home: row.home ?? '—',
-      away: row.away ?? '—',
-    }));
+  const lineups = payload.lineups;
+  const fullTime = normalizeStatistics(payload.statistics);
 
   const incidents = [
     ...asList(payload.events).map((value) => {
