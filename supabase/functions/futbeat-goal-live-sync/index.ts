@@ -160,7 +160,7 @@ async function completeFailure(
   }
 }
 
-async function syncLive(goalKey: string) {
+async function syncLive() {
   const plan = await rpc("futbeat_reserve_goal_live_call", {
     p_trigger_source: "supabase-cron",
   });
@@ -173,6 +173,7 @@ async function syncLive(goalKey: string) {
   }
 
   const reservationId = Number(plan.reservationId);
+  const goalKey = await readGoalKey();
   const fixtures: Record<string, unknown>[] = [];
   const seen = new Set<string>();
   let offset = 0;
@@ -278,7 +279,7 @@ async function syncLive(goalKey: string) {
   }
 }
 
-async function syncOneMatchDetail(goalKey: string) {
+async function syncOneMatchDetail() {
   const plan = await rpc("futbeat_reserve_match_detail_call", {
     p_trigger_source: "supabase-cron",
   });
@@ -291,6 +292,7 @@ async function syncOneMatchDetail(goalKey: string) {
   }
 
   const reservationId = Number(plan.reservationId);
+  const goalKey = await readGoalKey();
   const matchId = clean(plan.matchId);
   const externalMatchId = clean(plan.externalMatchId);
   let remaining: number | null = null;
@@ -361,76 +363,27 @@ Deno.serve(async (request) => {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const livePlan = await rpc("futbeat_reserve_goal_live_call", {
-      p_trigger_source: "supabase-cron-peek",
-    });
-    const detailPlan = await rpc("futbeat_reserve_match_detail_call", {
-      p_trigger_source: "supabase-cron-peek",
-    });
+    let live: unknown;
+    let detail: unknown;
 
-    // Peek reservations must not consume quota. They are immediately completed
-    // only when they reserved real work; actual sync below takes a fresh reservation.
-    if (livePlan?.allowed && Number.isInteger(Number(livePlan.reservationId))) {
-      await rpc("futbeat_complete_provider_call", {
-        p_reservation_id: Number(livePlan.reservationId),
-        p_status: "FAILED",
-        p_provider_remaining: livePlan.providerRemaining ?? null,
-        p_http_status: null,
-        p_error_code: "PEEK_RELEASE",
-        p_metadata: { mode: "live", transport: "supabase-cron-peek" },
-      });
-    }
-    if (detailPlan?.allowed && Number.isInteger(Number(detailPlan.reservationId))) {
-      await rpc("futbeat_complete_provider_call", {
-        p_reservation_id: Number(detailPlan.reservationId),
-        p_status: "FAILED",
-        p_provider_remaining: detailPlan.providerRemaining ?? null,
-        p_http_status: null,
-        p_error_code: "PEEK_RELEASE",
-        p_metadata: { mode: "match-detail", transport: "supabase-cron-peek" },
-      });
+    try {
+      live = await syncLive();
+    } catch (error) {
+      console.error(
+        "GOAL live sync failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      live = { status: "failed" };
     }
 
-    if (!livePlan?.allowed && !detailPlan?.allowed) {
-      return Response.json({
-        status: "skipped",
-        liveReason: livePlan?.reason ?? "unknown",
-        detailReason: detailPlan?.reason ?? "unknown",
-      });
-    }
-
-    const goalKey = await readGoalKey();
-    let live: unknown = {
-      status: "skipped",
-      reason: livePlan?.reason ?? "unknown",
-    };
-    let detail: unknown = {
-      status: "skipped",
-      reason: detailPlan?.reason ?? "unknown",
-    };
-
-    if (livePlan?.allowed) {
-      try {
-        live = await syncLive(goalKey);
-      } catch (error) {
-        console.error(
-          "GOAL live sync failed",
-          error instanceof Error ? error.message : "unknown",
-        );
-        live = { status: "failed" };
-      }
-    }
-
-    if (detailPlan?.allowed) {
-      try {
-        detail = await syncOneMatchDetail(goalKey);
-      } catch (error) {
-        console.error(
-          "GOAL match detail sync failed",
-          error instanceof Error ? error.message : "unknown",
-        );
-        detail = { status: "failed" };
-      }
+    try {
+      detail = await syncOneMatchDetail();
+    } catch (error) {
+      console.error(
+        "GOAL match detail sync failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      detail = { status: "failed" };
     }
 
     return Response.json({ status: "ok", live, detail });
