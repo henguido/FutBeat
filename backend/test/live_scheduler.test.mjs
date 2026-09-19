@@ -377,7 +377,7 @@ test('global catalog workflow uses only its three-hour schedule and low-priority
  assert.doesNotMatch(workflow,/cron: '\*\/5 \* \* \*'/);
  assert.match(workflow,/action = "global-quota-plan"/);
  assert.match(workflow,/\$quotaReserve = 350/);
- assert.match(workflow,/\$squadReserve = 350/);
+ assert.doesNotMatch(workflow,/Invoke-TeamSquadHydration|squad-reserve|\/teams\/.*\/players/);
  assert.match(workflow,/\$calendarRequestBudget = 180/);
 });
 
