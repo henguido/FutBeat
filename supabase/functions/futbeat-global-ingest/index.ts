@@ -971,7 +971,9 @@ Deno.serve(async (request) => {
           externalTeamId: input.externalTeamId,
           players: players.length,
           durationMs,
-          transport: "github-actions-oidc",
+          transport: authorizedWorkflow === "supabase-cron"
+            ? "supabase-cron"
+            : "github-actions-oidc",
           provider: "GOAL API",
         },
       });
@@ -1000,7 +1002,9 @@ Deno.serve(async (request) => {
             teamId: input.teamId,
             externalTeamId: input.externalTeamId,
             durationMs: Math.round(performance.now() - started),
-            transport: "github-actions-oidc",
+            transport: authorizedWorkflow === "supabase-cron"
+              ? "supabase-cron"
+              : "github-actions-oidc",
           },
         });
       } catch {
