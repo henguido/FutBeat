@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/models.dart';
 import 'core/theme.dart';
 import 'core/push.dart';
 import 'features/profile/profile_screen.dart';
@@ -51,7 +52,13 @@ GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
         GoRoute(path: '/profile', builder: (_, state) => const ProfileScreen()),
         GoRoute(
           path: '/match/:id',
-          builder: (_, state) => MatchScreen(id: state.pathParameters['id']!),
+          builder: (_, state) {
+            final extra = state.extra;
+            return MatchScreen(
+              id: state.pathParameters['id']!,
+              initialData: extra is Snapshot ? extra : null,
+            );
+          },
         ),
         for (final type in ['team', 'player', 'competition'])
           GoRoute(
