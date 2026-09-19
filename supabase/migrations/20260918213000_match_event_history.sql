@@ -199,4 +199,104 @@ begin
 end
 $$;
 
+
+-- GOAL live snapshots do not carry scorer/card/substitution arrays. Preserve a
+-- useful realtime timeline anyway by deriving a provisional GOAL event whenever
+-- the authoritative score increases. Rich Match Center detail supersedes this
+-- provisional event in the mobile merged timeline.
+create or replace function futbeat_private.synthesize_goal_from_score_change()
+returns trigger
+language plpgsql
+security definer
+set search_path=''
+as $
+declare
+  m jsonb;
+  ev jsonb;
+  baseline boolean;
+begin
+  if new.provider<>'goal_api'
+     or new.canonical_match_id is null
+     or (
+       coalesce(new.home_score,0)<=coalesce(old.home_score,0)
+       and coalesce(new.away_score,0)<=coalesce(old.away_score,0)
+     )
+  then
+    return new;
+  end if;
+
+  select payload into m
+  from futbeat_private.entities
+  where id=new.canonical_match_id and kind='match';
+
+  if m is null then
+    return new;
+  end if;
+
+  select exists(
+    select 1
+    from futbeat_private.event_baselines
+    where match_id=new.canonical_match_id
+  ) into baseline;
+
+  if coalesce(new.home_score,0)>coalesce(old.home_score,0) then
+    ev:=jsonb_build_object(
+      'id','fb_event_'||md5(concat_ws(
+        '|',new.canonical_match_id,'goal_api','GOAL','home',
+        new.revision,new.minute,new.home_score,new.away_score
+      )),
+      'matchId',new.canonical_match_id,
+      'type','GOAL',
+      'minute',new.minute,
+      'teamId',m->>'homeTeamId',
+      'score',jsonb_build_object(
+        'home',new.home_score,
+        'away',new.away_score
+      ),
+      'detail','Marcador actualizado',
+      'synthetic',true
+    );
+    perform futbeat_private.store_canonical_event(
+      ev,'goal_api',baseline,new.changed_at,m
+    );
+  end if;
+
+  if coalesce(new.away_score,0)>coalesce(old.away_score,0) then
+    ev:=jsonb_build_object(
+      'id','fb_event_'||md5(concat_ws(
+        '|',new.canonical_match_id,'goal_api','GOAL','away',
+        new.revision,new.minute,new.home_score,new.away_score
+      )),
+      'matchId',new.canonical_match_id,
+      'type','GOAL',
+      'minute',new.minute,
+      'teamId',m->>'awayTeamId',
+      'score',jsonb_build_object(
+        'home',new.home_score,
+        'away',new.away_score
+      ),
+      'detail','Marcador actualizado',
+      'synthetic',true
+    );
+    perform futbeat_private.store_canonical_event(
+      ev,'goal_api',baseline,new.changed_at,m
+    );
+  end if;
+
+  return new;
+end
+$;
+
+drop trigger if exists futbeat_goal_from_score_change
+  on futbeat_private.live_match_state;
+create trigger futbeat_goal_from_score_change
+after update of home_score,away_score
+on futbeat_private.live_match_state
+for each row
+execute function futbeat_private.synthesize_goal_from_score_change();
+
+revoke all on function
+  futbeat_private.synthesize_goal_from_score_change()
+from public,anon,authenticated;
+
 notify pgrst,'reload schema';
