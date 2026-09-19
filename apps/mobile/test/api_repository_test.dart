@@ -53,7 +53,15 @@ void main() {
         final snapshot = await repository.load();
         expect(snapshot.match('fb_match_clasico')!.score, '2 - 1');
         failed = true;
-        await expectLater(repository.load(), throwsA(isA<DioException>()));
+
+        final cached = await repository.load();
+        expect(cached.match('fb_match_clasico')!.score, '2 - 1');
+        expect(cached.stale, isTrue);
+
+        await expectLater(
+          ApiRepository(dio).load(),
+          throwsA(isA<DioException>()),
+        );
       } finally {
         dio.close(force: true);
         await server.close(force: true);
