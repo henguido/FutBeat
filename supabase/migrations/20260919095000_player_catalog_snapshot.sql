@@ -28,6 +28,14 @@ as $$
       on ci.subject_type='team'
      and ci.subject_id=cov.team_id
     where cov.fetched_at>=now()-interval '8 days'
+      and exists(
+        select 1
+        from latest
+        cross join lateral jsonb_array_elements(
+          coalesce(latest.snapshot->'teams','[]'::jsonb)
+        ) visible_team
+        where visible_team.value->>'id'=cov.team_id
+      )
       and (
         lower(coalesce(t.payload->>'country','')) in ('costa rica','cr')
         or coalesce(ci.explicit_followers,0)>0
