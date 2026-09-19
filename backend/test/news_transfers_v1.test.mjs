@@ -122,53 +122,91 @@ test('squad refresh records one provider roster change when a player changes clu
  }
 });
 
-test('NewsData planning is bounded and Supabase worker is optional without a key',async()=>{
+test('GOAL-native news planning is bounded and worker needs no second news secret',async()=>{
  const db=await openDatabase();
  try {
-  const competition='fb_comp_news_plan';
-  const team='fb_team_news_plan';
+  const competition='fb_comp_goal_news_plan';
+  const team='fb_team_goal_news_plan';
 
   await db.query("insert into futbeat_private.entities values($1,'competition',$2)",[
-   competition,JSON.stringify({id:competition,name:'Primera News',country:'Costa Rica'}),
+   competition,JSON.stringify({id:competition,name:'Primera GOAL News',country:'Costa Rica'}),
   ]);
   await db.query("insert into futbeat_private.entities values($1,'team',$2)",[
-   team,JSON.stringify({id:team,name:'Plan News FC',country:'Costa Rica',competitionId:competition,aliases:[]}),
+   team,JSON.stringify({id:team,name:'GOAL News FC',country:'Costa Rica',competitionId:competition,aliases:[]}),
   ]);
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','competition','goal-news-league',$1)",
+   [competition],
+  );
+  await db.query(
+   "insert into futbeat_private.provider_entities values('goal_api','team','goal-news-team',$1)",
+   [team],
+  );
+  await db.query(
+   "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining) values('goal_api','live-goal','test',now(),now(),'SUCCEEDED',900)"
+  );
 
   const plan=(await db.query(
-   'select public.futbeat_news_plan(5) value'
+   'select public.futbeat_goal_news_plan(5) value'
   )).rows[0].value;
 
   assert.ok(plan.length>=1);
   assert.ok(plan.length<=5);
-  assert.equal(new Set(plan.map(row=>row.subjectType+'|'+row.subjectId)).size,plan.length);
-  assert.ok(plan.every(row=>row.query.length<=100));
+  assert.equal(
+   new Set(plan.map(row=>row.subjectType+'|'+row.subjectId)).size,
+   plan.length,
+  );
+  assert.ok(plan.every(row=>row.externalId));
 
-  const first=plan[0];
+  const first=plan.find(row=>row.subjectId===team) ?? plan[0];
   const reservation=(await db.query(
-   "select public.futbeat_reserve_newsdata_call($1,$2,$3,'test') value",
-   [first.subjectType,first.subjectId,first.query],
+   "select public.futbeat_reserve_goal_news_call($1,$2,$3,'test') value",
+   [first.subjectType,first.subjectId,first.externalId],
   )).rows[0].value;
   assert.equal(reservation.allowed,true);
-  assert.equal(reservation.limit,120);
+  assert.equal(reservation.limit,24);
+  assert.equal(reservation.reserve,350);
 
   const second=(await db.query(
-   "select public.futbeat_reserve_newsdata_call($1,$2,$3,'test') value",
-   [first.subjectType,first.subjectId,first.query],
+   "select public.futbeat_reserve_goal_news_call($1,$2,$3,'test') value",
+   [first.subjectType,first.subjectId,first.externalId],
   )).rows[0].value;
   assert.equal(second.allowed,false);
   assert.equal(second.reason,'min_interval');
+
+  const stored=(await db.query(
+   'select public.futbeat_store_goal_news_batch($1,$2,$3,$4,$5) value',
+   [
+    first.subjectType,
+    first.subjectId,
+    '2026-09-19T10:00:00Z',
+    first.externalId,
+    JSON.stringify([{
+     id:'goal-news-v2-a1',
+     title:'GOAL News FC prepara su próximo partido',
+     description:'Resumen corto del artículo.',
+     url:'https://example.com/goal-news-v2-a1',
+     sourceName:'Medio Ejemplo',
+     sourceUrl:'https://example.com',
+     publishedAt:'2026-09-19T09:30:00Z',
+     language:'es',
+    }]),
+   ],
+  )).rows[0].value;
+  assert.equal(stored.articles,1);
 
   const worker=await readFile(
    new URL('../../supabase/functions/futbeat-goal-live-sync/index.ts',import.meta.url),
    'utf8',
   );
-  assert.match(worker,/news_provider_not_configured/);
-  assert.match(worker,/https:\/\/newsdata\.io\/api\/1\/latest/);
-  assert.match(worker,/futbeat_reserve_newsdata_call/);
-  assert.match(worker,/futbeat_store_news_batch/);
-  assert.match(worker,/category\", \"sports/);
-  assert.doesNotMatch(worker,/image_url|imageUrl/);
+  assert.match(worker,/futbeat_goal_news_plan/);
+  assert.match(worker,/futbeat_reserve_goal_news_call/);
+  assert.match(worker,/futbeat_store_goal_news_batch/);
+  assert.match(worker,/\/news\/team\//);
+  assert.match(worker,/\/news\/league\//);
+  assert.match(worker,/provider: "GOAL API"/);
+  assert.doesNotMatch(worker,/newsdata\.io/);
+  assert.doesNotMatch(worker,/news_provider_not_configured/);
  } finally {
   await db.close();
  }
