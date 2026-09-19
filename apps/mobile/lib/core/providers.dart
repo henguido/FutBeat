@@ -32,6 +32,8 @@ class ApiRepository implements FootballRepository {
   ApiRepository(this.dio);
   final Dio dio;
 
+  final Map<String, Snapshot> _snapshotCache = <String, Snapshot>{};
+
   static String _dateParam(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'
       '${date.month.toString().padLeft(2, '0')}-'
@@ -45,72 +47,138 @@ class ApiRepository implements FootballRepository {
     return snapshot;
   }
 
-  @override
-  Future<Snapshot> load() async =>
-      _canonical((await dio.get<Json>('/v1/snapshot')).data!);
+  bool _retryable(Object error) {
+    if (error is! DioException) return false;
+    final status = error.response?.statusCode;
+    if (status == 502 || status == 503 || status == 504) return true;
+    return switch (error.type) {
+      DioExceptionType.connectionTimeout ||
+      DioExceptionType.sendTimeout ||
+      DioExceptionType.receiveTimeout ||
+      DioExceptionType.connectionError ||
+      DioExceptionType.unknown => true,
+      _ => false,
+    };
+  }
 
-  @override
-  Future<Snapshot> loadDate(DateTime date) async => _canonical(
-    (
-      await dio.get<Json>(
-        '/v1/calendar',
-        queryParameters: {
-          'date': _dateParam(date),
-          'timezone': 'America/Costa_Rica',
-        },
-      )
-    ).data!,
-  );
+  Future<Json> _getJson(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+  }) async {
+    Object? lastError;
+    StackTrace? lastStack;
 
-  Future<Snapshot> loadEntity(String type, String id) async => _canonical(
-    (
-      await dio.get<Json>(
-        '/v1/entity',
-        queryParameters: {'type': type, 'id': id},
-      )
-    ).data!,
-  );
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await dio.get<Json>(
+          path,
+          queryParameters: queryParameters,
+          options: Options(
+            headers: attempt == 0 ? null : const {'X-Retry-Count': '1'},
+          ),
+        );
+        final data = response.data;
+        if (data == null) {
+          throw const FormatException('Cloud endpoint returned no data');
+        }
+        return data;
+      } catch (error, stack) {
+        lastError = error;
+        lastStack = stack;
+        if (attempt == 0 && _retryable(error)) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          continue;
+        }
+        break;
+      }
+    }
 
-  Future<Snapshot> loadMatchContext(String id) async => _canonical(
-    (
-      await dio.get<Json>(
-        '/v1/match-context',
-        queryParameters: {'id': id},
-      )
-    ).data!,
-  );
+    Error.throwWithStackTrace(lastError!, lastStack!);
+  }
 
-  Future<Snapshot> searchCatalog(String query, String? country) async =>
-      _canonical(
-        (
-          await dio.get<Json>(
-            '/v1/search',
-            queryParameters: {
-              'q': query,
-              if (country != null && country.trim().isNotEmpty)
-                'country': country.trim(),
-            },
-          )
-        ).data!,
+  void _remember(String key, Snapshot snapshot) {
+    _snapshotCache.remove(key);
+    _snapshotCache[key] = snapshot;
+    while (_snapshotCache.length > 64) {
+      _snapshotCache.remove(_snapshotCache.keys.first);
+    }
+  }
+
+  Future<Snapshot> _loadSnapshot(
+    String key,
+    String path, {
+    Map<String, dynamic>? queryParameters,
+  }) async {
+    try {
+      final snapshot = _canonical(
+        await _getJson(path, queryParameters: queryParameters),
       );
+      _remember(key, snapshot);
+      return snapshot;
+    } catch (error, stack) {
+      final cached = _snapshotCache[key];
+      if (cached != null) return cached.asStale();
+      Error.throwWithStackTrace(error, stack);
+    }
+  }
 
-  Future<Snapshot> loadFavorites(List<String> keys) async => _canonical(
-    (
-      await dio.get<Json>(
-        '/v1/favorites',
-        queryParameters: {'keys': keys.join(',')},
-      )
-    ).data!,
+  @override
+  Future<Snapshot> load() =>
+      _loadSnapshot('snapshot', '/v1/snapshot');
+
+  @override
+  Future<Snapshot> loadDate(DateTime date) {
+    final value = _dateParam(date);
+    return _loadSnapshot(
+      'calendar:$value',
+      '/v1/calendar',
+      queryParameters: {
+        'date': value,
+        'timezone': 'America/Costa_Rica',
+      },
+    );
+  }
+
+  Future<Snapshot> loadEntity(String type, String id) => _loadSnapshot(
+    'entity:$type:$id',
+    '/v1/entity',
+    queryParameters: {'type': type, 'id': id},
   );
+
+  Future<Snapshot> loadMatchContext(String id) => _loadSnapshot(
+    'match-context:$id',
+    '/v1/match-context',
+    queryParameters: {'id': id},
+  );
+
+  Future<Snapshot> searchCatalog(String query, String? country) {
+    final normalizedQuery = query.trim().toLowerCase();
+    final normalizedCountry = country?.trim().toUpperCase() ?? '';
+    return _loadSnapshot(
+      'search:$normalizedCountry:$normalizedQuery',
+      '/v1/search',
+      queryParameters: {
+        'q': query,
+        if (normalizedCountry.isNotEmpty) 'country': normalizedCountry,
+      },
+    );
+  }
+
+  Future<Snapshot> loadFavorites(List<String> keys) {
+    final normalizedKeys = [...keys]..sort();
+    return _loadSnapshot(
+      'favorites:${normalizedKeys.join(',')}',
+      '/v1/favorites',
+      queryParameters: {'keys': normalizedKeys.join(',')},
+    );
+  }
 
   @override
   Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail(
-    (
-      await dio.get<Json>(
-        '/v1/match-detail',
-        queryParameters: {'id': id},
-      )
-    ).data!,
+    await _getJson(
+      '/v1/match-detail',
+      queryParameters: {'id': id},
+    ),
   );
 }
 
@@ -129,8 +197,8 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
       headers: publicToken.isEmpty
           ? null
           : {'Authorization': 'Bearer $publicToken'},
-      connectTimeout: const Duration(seconds: 8),
-      receiveTimeout: const Duration(seconds: 8),
+      connectTimeout: const Duration(seconds: 6),
+      receiveTimeout: const Duration(seconds: 15),
     ),
   );
 
@@ -158,7 +226,7 @@ final entitySnapshotProvider =
       },
     );
 
-final searchSnapshotProvider = FutureProvider.autoDispose.family<
+final searchSnapshotProvider = FutureProvider.family<
     Snapshot,
     ({String query, String? country})
 >((ref, request) async {
@@ -170,7 +238,7 @@ final searchSnapshotProvider = FutureProvider.autoDispose.family<
 });
 
 final favoritesSnapshotProvider =
-    FutureProvider.autoDispose.family<Snapshot, String>((ref, encodedKeys) async {
+    FutureProvider.family<Snapshot, String>((ref, encodedKeys) async {
       final repository = ref.watch(repositoryProvider);
       if (repository is ApiRepository) {
         final keys = encodedKeys
@@ -184,7 +252,7 @@ final favoritesSnapshotProvider =
     });
 
 final matchContextSnapshotProvider =
-    FutureProvider.autoDispose.family<Snapshot, String>((ref, id) async {
+    FutureProvider.family<Snapshot, String>((ref, id) async {
       final repository = ref.watch(repositoryProvider);
       if (repository is ApiRepository) {
         return repository.loadMatchContext(id);

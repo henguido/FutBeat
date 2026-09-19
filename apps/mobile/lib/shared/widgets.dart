@@ -154,7 +154,14 @@ class DataView extends ConsumerWidget {
                 icon: Icons.cloud_off,
               ),
               FilledButton(
-                onPressed: () => ref.invalidate(snapshotProvider),
+                onPressed: () async {
+                  ref.invalidate(snapshotProvider);
+                  try {
+                    await ref.read(snapshotProvider.future);
+                  } catch (_) {
+                    // Keep the recoverable error state visible.
+                  }
+                },
                 child: const Text('Reintentar'),
               ),
             ],
@@ -207,7 +214,14 @@ class CalendarDataView extends ConsumerWidget {
                 icon: Icons.cloud_off,
               ),
               FilledButton(
-                onPressed: () => ref.invalidate(calendarSnapshotProvider(date)),
+                onPressed: () async {
+                  ref.invalidate(calendarSnapshotProvider(date));
+                  try {
+                    await ref.read(calendarSnapshotProvider(date).future);
+                  } catch (_) {
+                    // Keep the recoverable error state visible.
+                  }
+                },
                 child: const Text('Reintentar'),
               ),
             ],
