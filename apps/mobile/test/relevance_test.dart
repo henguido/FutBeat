@@ -7,11 +7,13 @@ Entity _entity(
   String name,
   String country, {
   String? competitionId,
+  int? relevanceScore,
 }) => Entity({
   'id': id,
   'name': name,
   'country': country,
   'competitionId': ?competitionId,
+  'relevanceScore': ?relevanceScore,
   'aliases': <dynamic>[],
 });
 
@@ -22,9 +24,24 @@ Snapshot _snapshot() => Snapshot({
   'coverage': {'partial': false},
   'freshness': {'stale': false},
   'competitions': [
-    {'id': 'fb_comp_eng', 'name': 'Premier League', 'country': 'England'},
-    {'id': 'fb_comp_cr', 'name': 'Liga Promerica', 'country': 'Costa Rica'},
-    {'id': 'fb_comp_pt', 'name': 'Primeira Liga', 'country': 'Portugal'},
+    {
+      'id': 'fb_comp_eng',
+      'name': 'Premier League',
+      'country': 'England',
+      'relevanceScore': 930,
+    },
+    {
+      'id': 'fb_comp_cr',
+      'name': 'Liga Promerica',
+      'country': 'Costa Rica',
+      'relevanceScore': 660,
+    },
+    {
+      'id': 'fb_comp_pt',
+      'name': 'Primeira Liga',
+      'country': 'Portugal',
+      'relevanceScore': 790,
+    },
   ],
   'teams': [
     {
@@ -46,9 +63,19 @@ Snapshot _snapshot() => Snapshot({
 });
 
 void main() {
-  test('major leagues rank above alphabetically convenient weak leagues', () {
-    final premier = _entity('fb_comp_premier', 'Premier League', 'England');
-    final weak = _entity('fb_comp_weak', 'A Regional League', 'England');
+  test('canonical relevance ranks competitions without a mobile catalogue', () {
+    final premier = _entity(
+      'fb_comp_premier',
+      'Premier League',
+      'England',
+      relevanceScore: 930,
+    );
+    final weak = _entity(
+      'fb_comp_weak',
+      'A Regional League',
+      'England',
+      relevanceScore: 100,
+    );
 
     expect(
       competitionImportance(premier),

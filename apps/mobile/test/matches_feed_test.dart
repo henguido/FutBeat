@@ -60,13 +60,24 @@ Snapshot _snapshot({
     'coverage': {'partial': false},
     'freshness': {'stale': false},
     'competitions': [
-      {'id': 'fb_comp_cr', 'name': 'Liga Promerica', 'country': 'Costa Rica'},
-      {'id': 'fb_comp_laliga', 'name': 'LaLiga', 'country': 'Spain'},
+      {
+        'id': 'fb_comp_cr',
+        'name': 'Liga Promerica',
+        'country': 'Costa Rica',
+        'relevanceScore': 660,
+      },
+      {
+        'id': 'fb_comp_laliga',
+        'name': 'LaLiga',
+        'country': 'Spain',
+        'relevanceScore': 920,
+      },
       if (includeCup)
         {
           'id': 'fb_comp_cac',
           'name': 'CONCACAF Central American Cup',
           'country': 'CONCACAF',
+          'relevanceScore': 700,
         },
     ],
     'teams': [

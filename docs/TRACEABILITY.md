@@ -106,3 +106,18 @@ Rutas de `lib/` y `test/` relativas a `apps/mobile/`. La referencia completa y l
 2. Completar reconciliación de resultados (FB-US-014/018) y reglas por temporada (017); luego tabla LIVE (009/016), con todos los partidos simultáneos.
 3. Escudos/fotos con procedencia y derechos (055–061), noticias y sus relaciones (044–047), estados de fichajes (048–050).
 4. Preferencias detalladas de notificación y descubrimiento de highlights.
+
+## Ciclo global de datos y medios de jugadores
+
+| Historia/capacidad | Cambio verificable | Evidencia |
+|---|---|---|
+| FB-US-001/002/012/014/018 | Cobertura separada para fixtures y resultados; cierre histórico agrupado por fecha; transición a estado terminal con marcador y eventos reales | `global_results_lifecycle.sql`, pruebas de cierre, respuesta parcial y estados terminales |
+| FB-US-004/043/071 | El resultado se aplica solo al partido canónico `fb_*`; una reprogramación mueve el mismo ID entre días y conserva procedencia/eventos | Prueba de reprogramación sin duplicado y calendario canónico |
+| Favorites-first | La prioridad editorial vive en la competición canónica; Flutter combina favorito, país elegido y esa puntuación sin catálogo duplicado | `relevance.dart`, pruebas de orden y conservación del conjunto completo |
+| FB-US-055/056/057 | Fotos verificadas se reutilizan; la ausencia confirmada queda en caché negativa privada y con fecha de reintento | `player_media_coverage`, trigger de conservación y prueba de permisos |
+
+El worker de GOAL consulta resultados mediante `/results/date/{date}` con
+paginación acotada. Una reserva durable protege la cuota global, evita trabajo
+cuando el día ya está completo y nunca realiza reintentos automáticos. El cron
+elige una fecha incompleta por ejecución, por lo que el costo crece por días de
+cobertura y no por cantidad de partidos.
