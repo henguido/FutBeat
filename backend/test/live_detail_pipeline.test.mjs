@@ -287,9 +287,11 @@ test('calendar reconciliation expires stale LIVE and never reopens a terminal ma
     assert.equal(match('fb_match_recent_live').status, 'LIVE');
     assert.deepEqual(match('fb_match_recent_live').score, { home: 1, away: 0 });
     assert.equal(match('fb_match_stale_live').status, 'SCHEDULED');
-    assert.equal(match('fb_match_stale_live').score ?? null, null);
+    assert.deepEqual(match('fb_match_stale_live').score, { home: 2, away: 2 });
+    assert.equal(match('fb_match_stale_live').hasPlayedEvidence, true);
     assert.equal(match('fb_match_stale_canonical_live').status, 'SCHEDULED');
-    assert.equal(match('fb_match_stale_canonical_live').score ?? null, null);
+    assert.deepEqual(match('fb_match_stale_canonical_live').score, { home: 4, away: 4 });
+    assert.equal(match('fb_match_stale_canonical_live').hasPlayedEvidence, true);
     assert.equal(match('fb_match_terminal').status, 'VERIFIED');
     assert.deepEqual(match('fb_match_terminal').score, { home: 3, away: 1 });
   } finally {

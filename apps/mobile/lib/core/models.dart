@@ -150,6 +150,9 @@ class LiveMatchUpdate {
 class MatchDetail {
   MatchDetail(this.json);
 
+  factory MatchDetail.waiting(String matchId) =>
+      MatchDetail({...MatchDetail.empty(matchId).json, 'pending': true});
+
   factory MatchDetail.empty(String matchId) => MatchDetail({
     'matchId': matchId,
     'available': false,
@@ -229,6 +232,12 @@ class FootballMatch {
   bool get isScheduled =>
       ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status);
   bool get isUpcoming => isScheduled && !isAwaitingUpdate;
+  bool get hasPlayedEvidence =>
+      json['hasPlayedEvidence'] == true ||
+      json['score'] != null ||
+      events.isNotEmpty;
+  bool get showKickoff =>
+      isScheduled && !(isAwaitingUpdate && hasPlayedEvidence);
   String get score => json['score'] == null
       ? '—'
       : '${json['score']['home']} - ${json['score']['away']}';
@@ -243,6 +252,9 @@ class FootballMatch {
   }
 
   String get statusLabel {
+    if (isAwaitingUpdate && hasPlayedEvidence) {
+      return json['score'] != null ? 'Marcador parcial' : '';
+    }
     return switch (status) {
       'LIVE' => "${json['minute'] ?? '—'}′ · En vivo",
       'HALFTIME' => 'Descanso',
@@ -259,7 +271,7 @@ class FootballMatch {
   }
 
   List<Json> get events {
-    final items = (json['events'] as List).cast<Json>().toList();
+    final items = (json['events'] as List? ?? const []).cast<Json>().toList();
     items.sort((a, b) {
       final byMinute = (a['minute'] as int? ?? -1).compareTo(
         b['minute'] as int? ?? -1,
@@ -278,11 +290,15 @@ class FootballMatch {
   }
 
   Json? get latestEvent {
+    if (json['latestEvent'] is Map) {
+      return Map<String, dynamic>.from(json['latestEvent'] as Map);
+    }
     final timeline = events;
     return timeline.isEmpty ? null : timeline.last;
   }
 
-  List<Json> get statistics => (json['statistics'] as List).cast<Json>();
+  List<Json> get statistics =>
+      (json['statistics'] as List? ?? const []).cast<Json>();
 }
 
 List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {

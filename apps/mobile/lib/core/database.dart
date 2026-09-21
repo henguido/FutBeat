@@ -170,6 +170,10 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  Future<CalendarSnapshot?> readCalendarEntry(String date) => (select(
+    calendarSnapshots,
+  )..where((row) => row.calendarDate.equals(date))).getSingleOrNull();
+
   Future<String?> readCalendarSnapshot(String date) async => (await (select(
     calendarSnapshots,
   )..where((row) => row.calendarDate.equals(date))).getSingleOrNull())?.payload;

@@ -20,12 +20,33 @@ class MatchScreen extends ConsumerStatefulWidget {
   ConsumerState<MatchScreen> createState() => _MatchScreenState();
 }
 
-class _MatchScreenState extends ConsumerState<MatchScreen> {
+class _MatchScreenState extends ConsumerState<MatchScreen>
+    with TickerProviderStateMixin {
   final Set<String> _recordedTeamInterests = {};
+  late TabController _tabs;
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: 3, vsync: this);
     Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
+  }
+
+  void _syncTabs(bool hasTable) {
+    final length = hasTable ? 4 : 3;
+    if (_tabs.length == length) return;
+    final previous = _tabs;
+    _tabs = TabController(
+      length: length,
+      vsync: this,
+      initialIndex: previous.index.clamp(0, length - 1),
+    );
+    previous.dispose();
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
   }
 
   @override
@@ -33,7 +54,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
     final updates =
         ref.watch(liveMatchUpdatesProvider).asData?.value ??
         const <String, LiveMatchUpdate>{};
-    final initialData = widget.initialData;
+    final refreshed =
+        ref.watch(repositoryProvider) is ApiRepository ||
+            widget.initialData == null
+        ? ref.watch(matchContextSnapshotProvider(widget.id)).asData?.value
+        : null;
+    final initialData = refreshed ?? widget.initialData;
     if (initialData != null) {
       return _buildMatchCenter(initialData.withLiveUpdates(updates));
     }
@@ -108,67 +134,72 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
 
     final detail =
         ref.watch(matchDetailProvider(widget.id)).asData?.value ??
-        MatchDetail.empty(widget.id);
+        MatchDetail.waiting(widget.id);
     final venue = detail.stadium ?? match.json['venue']?.toString() ?? '';
 
-    return DefaultTabController(
-      length: 4,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Match Center'),
-          actions: [FollowButton('match', widget.id)],
-          bottom: const TabBar(
-            isScrollable: true,
-            tabAlignment: TabAlignment.start,
-            tabs: [
-              Tab(text: 'Resumen'),
-              Tab(text: 'Estadísticas'),
-              Tab(text: 'Alineaciones'),
-              Tab(text: 'Tabla'),
+    final hasTable = data.standings.any(
+      (row) => row['competitionId'] == match.competitionId,
+    );
+    _syncTabs(hasTable);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Match Center'),
+        actions: [FollowButton('match', widget.id)],
+        bottom: TabBar(
+          controller: _tabs,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          tabs: [
+            Tab(text: 'Resumen'),
+            Tab(text: 'Estadísticas'),
+            Tab(text: 'Alineaciones'),
+            if (hasTable) const Tab(text: 'Tabla'),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabs,
+        children: [
+          ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              if (data.demo) const DemoNotice(),
+              MatchHero(
+                data: data,
+                match: match,
+                competition: competition,
+                detail: detail,
+                venue: venue,
+              ),
+              if (detail.videos.isNotEmpty) ...[
+                heading(context, 'Resumen oficial'),
+                PostMatchVideos(detail),
+              ],
+              heading(context, 'Eventos del partido'),
+              MatchTimeline(data, match, detail),
+              heading(context, 'Estadísticas clave'),
+              Statistics(match, detail: detail),
             ],
           ),
-        ),
-        body: TabBarView(
-          children: [
-            ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                if (data.demo) const DemoNotice(),
-                MatchHero(
-                  data: data,
-                  match: match,
-                  competition: competition,
-                  detail: detail,
-                  venue: venue,
-                ),
-                if (detail.videos.isNotEmpty) ...[
-                  heading(context, 'Resumen oficial'),
-                  PostMatchVideos(detail),
-                ],
-                heading(context, 'Eventos del partido'),
-                MatchTimeline(data, match, detail),
-                heading(context, 'Estadísticas clave'),
-                Statistics(match, detail: detail),
-              ],
-            ),
-            ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                if (data.demo) const DemoNotice(),
-                Text(
-                  '${data.team(match.homeId)!.name} / ${data.team(match.awayId)!.name}',
-                ),
-                const SizedBox(height: 20),
-                Statistics(match, detail: detail),
-              ],
-            ),
-            ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                if (data.demo) const DemoNotice(),
-                Lineups(data, match, detail),
-              ],
-            ),
+          ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              if (data.demo) const DemoNotice(),
+              Text(
+                '${data.team(match.homeId)!.name} / ${data.team(match.awayId)!.name}',
+              ),
+              const SizedBox(height: 20),
+              Statistics(match, detail: detail),
+            ],
+          ),
+          ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              if (data.demo) const DemoNotice(),
+              Lineups(data, match, detail),
+            ],
+          ),
+          if (hasTable)
             ListView(
               padding: const EdgeInsets.all(20),
               children: [
@@ -176,8 +207,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
                 Standings(data, match.competitionId),
               ],
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

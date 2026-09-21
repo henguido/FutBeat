@@ -866,7 +866,7 @@ test('event minutes are typed at canonical, entity, detail, and calendar boundar
       assert.deepEqual(stored.map(e=>[e.minute,e.extraMinute]), expected);
     }
     await db.query('select public.futbeat_reconcile_goal_results_local($1)', [date]);
-    const snapshot=(await db.query("select public.futbeat_read_calendar_range($1,$1,'UTC') v", [date])).rows[0].v;
+    const snapshot=(await db.query("select public.futbeat_read_match_context($1) v", [match])).rows[0].v;
     assert.ok(snapshot.matches[0].events.every(e=>e.minute===null||Number.isInteger(e.minute)));
     assert.ok(snapshot.matches[0].events.every(e=>e.extraMinute===null||Number.isInteger(e.extraMinute)));
     const once=(await db.query('select public.futbeat_reconcile_goal_results_local($1) v',[date])).rows[0].v;

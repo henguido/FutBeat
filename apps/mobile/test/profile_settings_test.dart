@@ -64,6 +64,9 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(globalLoads, 0);
+        expect(find.text('Mi país primero'), findsNothing);
+        expect(find.text('Grandes ligas primero'), findsNothing);
+        expect(find.text('Tu país'), findsNothing);
         expect(requestedKeys, followed ? ['competition:fb_comp_cr'] : isEmpty);
         if (followed) expect(find.text('Liga Promerica'), findsOneWidget);
         expect(tester.takeException(), isNull);

@@ -131,7 +131,8 @@ void main() {
         ).watchDate(DateTime(2026, 8, 20)).toList();
         expect(values, hasLength(1));
         expect(values.single.demo, isFalse);
-        expect(values.single.stale, isTrue);
+        // A recently saved historical day is fresh; no network is needed.
+        expect(values.single.stale, isFalse);
       } finally {
         await database.close();
         dio.close(force: true);
