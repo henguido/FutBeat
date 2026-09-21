@@ -55,6 +55,72 @@ test('Match API supports actual GOAL array payloads and read-only refresh', asyn
   assert.match(source, /inPlayerId/);
   assert.match(source, /playerRating/);
   assert.match(source, /row\.type\)\.toLowerCase\(\) === 'coach'/);
+  assert.match(source, /row\.playerId\).*row\.playerKey/);
+  assert.match(source, /futbeat_read_lineup_player_media/);
+  assert.match(source, /safeImage\(canonical\.image\)/);
+});
+
+test('detail ingestion resolves lineup playerKey identities without names as keys', async () => {
+  const source = await readFile(
+    new URL('../../supabase/functions/futbeat-goal-live-sync/index.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /clean\(row\.playerId\) \|\| clean\(row\.playerKey\)/);
+  assert.match(source, /futbeat_resolve_global_entities/);
+  assert.match(source, /type\.startsWith\("start"\) \|\| type\.startsWith\("sub"\)/);
+});
+
+test('newer partial detail preserves richer lineups and canonical verified media', async () => {
+  const db = await openDatabase();
+  try {
+    const match = 'fb_match_rich_detail';
+    const player = 'fb_player_rich_detail';
+    await db.query("insert into futbeat_private.entities values($1,'match',$2),($3,'player',$4)", [
+      match, JSON.stringify({ id: match }), player,
+      JSON.stringify({ id: player, name: 'Jugador real', media: {
+        url: 'https://media.goal-api.com/players/real.png', verificationStatus: 'VERIFIED',
+      } }),
+    ]);
+    await db.query("insert into futbeat_private.provider_entities values('goal_api','match','detail-1',$1),('goal_api','player','player-key-1',$2)", [match, player]);
+    const rich = { lineups: [
+      { type: 'starting_lineups', team: 'home', playerKey: 'player-key-1', lineupPlayer: 'Jugador real' },
+      { type: 'substitutes', team: 'home', playerKey: 'player-key-2', lineupPlayer: 'Suplente real' },
+    ], statistics: [{ type: 'Shots', home: 4, away: 2 }], homeTeamScore: '1', awayTeamScore: '0' };
+    await db.query("select futbeat_private.store_match_detail($1,'detail-1',now()-interval '1 minute',$2)", [match, JSON.stringify(rich)]);
+    await db.query("select futbeat_private.store_match_detail($1,'detail-1',now(),$2)", [match, JSON.stringify({ lineups: [{ type: 'coach', team: 'home', lineupPlayer: 'Coach' }], statistics: [] })]);
+
+    const cached = (await db.query('select payload from futbeat_private.match_detail_cache where match_id=$1', [match])).rows[0].payload;
+    assert.equal(cached.lineups.length, 2);
+    assert.equal(cached.statistics.length, 1);
+    assert.equal(cached.homeTeamScore, '1');
+    const media = (await db.query("select public.futbeat_read_lineup_player_media('goal_api',array['player-key-1','missing']) value")).rows[0].value;
+    assert.equal(media['player-key-1'].canonicalId, player);
+    assert.equal(media['player-key-1'].image, 'https://media.goal-api.com/players/real.png');
+    assert.equal(media.missing, undefined);
+  } finally {
+    await db.close();
+  }
+});
+
+test('calendar field merge keeps a valid canonical score beside newer status data', async () => {
+  const db = await openDatabase();
+  try {
+    const day = (await db.query("select ((now() at time zone 'America/Costa_Rica')::date)::text value")).rows[0].value;
+    const ids = ['fb_comp_field_merge','fb_team_field_home','fb_team_field_away'];
+    await db.query("insert into futbeat_private.entities values($1,'competition',$2)", [ids[0], JSON.stringify({ id: ids[0], name: 'Liga', country: 'Costa Rica' })]);
+    for (const id of ids.slice(1)) await db.query("insert into futbeat_private.entities values($1,'team',$2)", [id, JSON.stringify({ id, name: id, competitionId: ids[0] })]);
+    const match = 'fb_match_field_merge';
+    const start = (await db.query("select (now()-interval '30 minutes')::text value")).rows[0].value;
+    await db.query("insert into futbeat_private.entities values($1,'match',$2)", [match, JSON.stringify({ id: match, competitionId: ids[0], homeTeamId: ids[1], awayTeamId: ids[2], startTime: start, status: 'SCHEDULED', score: { home: 2, away: 1 }, events: [], statistics: [] })]);
+    await db.query("insert into futbeat_private.live_match_state(provider,external_match_id,canonical_match_id,status,minute,last_payload_hash,first_seen_at,last_seen_at,changed_at) values('goal_api','field-merge',$1,'LIVE',70,$2,now(),now(),now())", [match, 'c'.repeat(64)]);
+    const snapshot = (await db.query("select public.futbeat_read_calendar_range($1::date,$1::date,'America/Costa_Rica') value", [day])).rows[0].value;
+    const visible = snapshot.matches.find((item) => item.id === match);
+    assert.equal(visible.status, 'LIVE');
+    assert.deepEqual(visible.score, { home: 2, away: 1 });
+    assert.equal(visible.startTime, start);
+  } finally {
+    await db.close();
+  }
 });
 
 test('detail fast lane runs every minute without replacing LIVE cadence', async () => {

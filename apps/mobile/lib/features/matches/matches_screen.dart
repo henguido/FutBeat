@@ -609,17 +609,17 @@ class MatchCard extends StatelessWidget {
                     child: Column(
                       children: [
                         Text(
-                          match.isUpcoming
+                          match.isScheduled
                               ? localTime(context, match.startTime)
                               : match.score,
                           style: TextStyle(
-                            fontSize: match.isUpcoming ? 21 : 30,
+                            fontSize: match.isScheduled ? 21 : 30,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          match.isUpcoming ? 'Hora Costa Rica' : 'Ver partido',
+                          match.isScheduled ? 'Hora Costa Rica' : 'Ver partido',
                           style: const TextStyle(fontSize: 10, color: muted),
                         ),
                       ],

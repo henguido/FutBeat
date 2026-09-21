@@ -37,7 +37,9 @@ void main() {
     );
 
     expect(match.isAwaitingUpdate, isTrue);
-    expect(match.statusLabel, isEmpty);
+    expect(match.isScheduled, isTrue);
+    expect(match.isUpcoming, isFalse);
+    expect(match.statusLabel, 'Programado');
   });
 
   test(
