@@ -64,20 +64,29 @@ Snapshot _snapshot({
         'id': 'fb_comp_cr',
         'name': 'Liga Promerica',
         'country': 'Costa Rica',
+        'countryCode': 'CR',
         'relevanceScore': 660,
+        'competitionClass': 'domestic_league',
+        'domesticTier': 1,
+        'isPrimaryDomestic': true,
       },
       {
         'id': 'fb_comp_laliga',
         'name': 'LaLiga',
         'country': 'Spain',
+        'countryCode': 'ES',
         'relevanceScore': 920,
+        'isGlobalRelevant': true,
       },
       if (includeCup)
         {
           'id': 'fb_comp_cac',
           'name': 'CONCACAF Central American Cup',
           'country': 'CONCACAF',
+          'countryCode': 'CAMERICA',
           'relevanceScore': 700,
+          'competitionClass': 'international_club',
+          'isGlobalRelevant': true,
         },
     ],
     'teams': [
@@ -154,6 +163,7 @@ Snapshot _largeSnapshot(int matchCount) {
         'id': 'fb_comp_scale',
         'name': 'Liga de escala',
         'country': 'Costa Rica',
+        'countryCode': 'CR',
       },
     ],
     'teams': [
@@ -182,22 +192,164 @@ Snapshot _largeSnapshot(int matchCount) {
 List<String> _ids(
   Snapshot data, {
   Set<String> follows = const {},
-  Set<String> temporary = const {},
   String? selected,
   String? detected = 'CR',
+  String mode = CompetitionOrderMode.automatic,
+  String preference = CompetitionOrderPreference.countryFirst,
+  List<String> pinned = const [],
 }) => orderMatchCompetitions(
   data: data,
   matches: data.matches,
   follows: follows,
-  temporaryInterests: temporary,
   selectedCountry: selected,
   detectedCountry: detected,
+  orderMode: mode,
+  orderPreference: preference,
+  pinnedCompetitionIds: pinned,
 ).map((competition) => competition.id).toList();
 
 void main() {
+  test('120 competitions and 1200 matches retain every group across ordering modes', () {
+    final competitions = [
+      for (var i = 0; i < 120; i++)
+        {
+          'id': 'scale_$i',
+          'name': 'Competition $i',
+          'countryCode': switch (i % 6) {
+            0 || 3 => 'CR',
+            1 || 4 => 'JP',
+            _ => 'ES',
+          },
+          'competitionClass': i % 6 == 2
+              ? 'international_club'
+              : 'domestic_league',
+          'isPrimaryDomestic': i % 6 < 2,
+          'domesticTier': i % 6 < 2 ? 1 : 2,
+          'isGlobalRelevant': i % 6 == 2,
+          'relevanceScore': 1000 - i,
+        },
+    ];
+    final data = Snapshot({
+      'schemaVersion': 1,
+      'demo': false,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      'competitions': competitions,
+      'teams': [
+        {'id': 'home', 'name': 'Home'},
+        {'id': 'away', 'name': 'Away'},
+      ],
+      'players': <dynamic>[],
+      'standings': <dynamic>[],
+      'matches': [
+        for (var i = 0; i < 1200; i++)
+          {
+            'id': 'match_$i',
+            'competitionId': 'scale_${i ~/ 10}',
+            'homeTeamId': 'home',
+            'awayTeamId': 'away',
+            'startTime': '2026-09-21T18:00:00Z',
+            'status': 'SCHEDULED',
+            'events': <dynamic>[],
+            'statistics': <dynamic>[],
+          },
+      ],
+    });
+    const follows = {'competition:scale_118', 'competition:scale_119'};
+    final before = data.matches.map((match) => match.id).toSet();
+    List<String> expected(
+      String country, {
+      bool globalFirst = false,
+      bool custom = false,
+    }) {
+      final primary = country == 'CR' ? 0 : 1;
+      final secondary = country == 'CR' ? 3 : 4;
+      List<String> group(bool Function(int) predicate) => [
+        for (var i = 0; i < 118; i++)
+          if (predicate(i % 6)) 'scale_$i',
+      ];
+      return [
+        if (custom) ...[
+          'scale_119',
+          'scale_118',
+        ] else ...[
+          'scale_118',
+          'scale_119',
+        ],
+        if (globalFirst) ...group((r) => r == 2),
+        ...group((r) => r == primary),
+        if (!globalFirst) ...group((r) => r == 2),
+        ...group((r) => r == secondary),
+        ...group((r) => r != primary && r != secondary && r != 2),
+      ];
+    }
+
+    final timer = Stopwatch()..start();
+    for (var iteration = 0; iteration < 20; iteration++) {
+      for (final country in ['CR', 'JP']) {
+        for (final custom in [false, true]) {
+          final ids = _ids(
+            data,
+            follows: follows,
+            selected: country,
+            mode: custom
+                ? CompetitionOrderMode.personalized
+                : CompetitionOrderMode.automatic,
+            preference: CompetitionOrderPreference.globalFirst,
+            pinned: ['scale_119', 'scale_118'],
+          );
+          expect(ids, expected(country, globalFirst: custom, custom: custom));
+          expect(ids.toSet(), competitions.map((c) => c['id']).toSet());
+          final displayed = data.matches.where(
+            (m) => ids.contains(m.competitionId),
+          );
+          expect(displayed.length, 1200);
+          expect(displayed.map((m) => m.id).toSet(), before);
+        }
+      }
+    }
+    timer.stop();
+    expect(timer.elapsed, lessThan(const Duration(seconds: 5)));
+    expect(data.matches.length, 1200);
+  });
+
+  test('supranational scope and high score do not imply global relevance', () {
+    final base = _snapshot();
+    final data = Snapshot({
+      'demo': false,
+      'schemaVersion': 1,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      'teams': base.teams.map((t) => t.json).toList(),
+      'players': <dynamic>[],
+      'standings': <dynamic>[],
+      'competitions': [
+        ...base.competitions.map((c) => c.json),
+        {
+          'id': 'friendly',
+          'name': 'Club Friendlies',
+          'countryCode': 'WORLD',
+          'competitionClass': 'international_club',
+          'relevanceScore': 1000,
+        },
+      ],
+      'matches': [
+        ...base.matches.map((m) => m.json),
+        {
+          ...base.matches.first.json,
+          'id': 'friendly_match',
+          'competitionId': 'friendly',
+        },
+      ],
+    });
+    expect(_ids(data, selected: 'CR'), [
+      'fb_comp_cr',
+      'fb_comp_laliga',
+      'friendly',
+    ]);
+  });
+
   test('without follows every competition stays visible', () {
     final data = _snapshot();
-    expect(_ids(data), ['fb_comp_laliga', 'fb_comp_cr']);
+    expect(_ids(data), ['fb_comp_cr', 'fb_comp_laliga']);
     expect(data.matches.map((match) => match.id).toSet(), {
       'fb_match_cr',
       'fb_match_es',
@@ -216,15 +368,15 @@ void main() {
   test('following a team never promotes its whole competition', () {
     final data = _snapshot(includeCup: true);
     expect(_ids(data, follows: {'team:fb_team_lda'}), [
+      'fb_comp_cr',
       'fb_comp_laliga',
       'fb_comp_cac',
-      'fb_comp_cr',
     ]);
   });
 
   test('country preference is a ranking signal without hiding the catalog', () {
     expect(_ids(_snapshot(), selected: 'ES'), ['fb_comp_laliga', 'fb_comp_cr']);
-    expect(_ids(_snapshot(), detected: 'CR'), ['fb_comp_laliga', 'fb_comp_cr']);
+    expect(_ids(_snapshot(), detected: 'CR'), ['fb_comp_cr', 'fb_comp_laliga']);
     expect(_ids(_snapshot(), selected: 'CR'), ['fb_comp_cr', 'fb_comp_laliga']);
   });
 
@@ -237,15 +389,91 @@ void main() {
     expect(data.matches.map((match) => match.id).toSet(), before);
   });
 
-  test(
-    'temporary competition interest can be promoted without hiding others',
-    () {
-      expect(_ids(_snapshot(), temporary: {'competition:fb_comp_cr'}), [
-        'fb_comp_cr',
-        'fb_comp_laliga',
-      ]);
-    },
-  );
+  test('primary domestic precedes globals and domestic secondary follows', () {
+    final base = _snapshot();
+    final raw = <String, dynamic>{
+      'schemaVersion': 1,
+      'demo': false,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      'coverage': {'partial': false},
+      'freshness': {'stale': false},
+      'competitions': [
+        ...base.competitions.map((item) => item.json),
+        {
+          'id': 'fb_comp_cr_second',
+          'name': 'Segunda CR',
+          'country': 'Costa Rica',
+          'countryCode': 'CR',
+          'relevanceScore': 220,
+          'competitionClass': 'domestic_league',
+          'domesticTier': 2,
+        },
+        {
+          'id': 'fb_comp_other',
+          'name': 'Other',
+          'country': 'Other',
+          'relevanceScore': 300,
+        },
+      ],
+      'teams': base.teams.map((item) => item.json).toList(),
+      'players': <dynamic>[],
+      'matches': [
+        ...base.matches.map((item) => item.json),
+        for (final entry in [
+          ('second', 'fb_comp_cr_second'),
+          ('other', 'fb_comp_other'),
+        ])
+          {
+            'id': 'fb_match_${entry.$1}',
+            'competitionId': entry.$2,
+            'homeTeamId': 'fb_team_sap',
+            'awayTeamId': 'fb_team_lda',
+            'startTime': base.matches.first.json['startTime'],
+            'status': 'SCHEDULED',
+            'score': null,
+            'events': <dynamic>[],
+            'statistics': <dynamic>[],
+          },
+      ],
+      'standings': <dynamic>[],
+    };
+    final data = Snapshot(raw);
+    expect(_ids(data, selected: 'CR'), [
+      'fb_comp_cr',
+      'fb_comp_laliga',
+      'fb_comp_cr_second',
+      'fb_comp_other',
+    ]);
+  });
+
+  test('personalized pinned order persists above category preference', () {
+    final data = _snapshot();
+    expect(
+      _ids(
+        data,
+        selected: 'CR',
+        follows: {'competition:fb_comp_cr', 'competition:fb_comp_laliga'},
+        mode: CompetitionOrderMode.personalized,
+        preference: CompetitionOrderPreference.globalFirst,
+        pinned: ['fb_comp_laliga', 'fb_comp_cr'],
+      ),
+      ['fb_comp_laliga', 'fb_comp_cr'],
+    );
+  });
+
+  test('automatic mode ignores stale personalized pinned order', () {
+    final data = _snapshot();
+    expect(
+      _ids(
+        data,
+        selected: 'CR',
+        follows: {'competition:fb_comp_cr', 'competition:fb_comp_laliga'},
+        mode: CompetitionOrderMode.automatic,
+        pinned: ['fb_comp_cr', 'fb_comp_laliga'],
+      ),
+      ['fb_comp_laliga', 'fb_comp_cr'],
+    );
+  });
 
   test('status filters still select live, upcoming, and finished games', () {
     final data = _snapshot(costaRicaStatus: 'LIVE', laLigaStatus: 'VERIFIED');

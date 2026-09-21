@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { nextResultsOffset } from "../_shared/results_pagination.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -591,14 +592,17 @@ async function syncOneResultsDate() {
       const total = nonNegativeInteger(row.total);
       if (total != null) providerTotal = total;
       // GOAL documents pagination on list endpoints, but older cached
-      // responses can omit the envelope. A full 500-row results page is the
-      // only safe signal to probe the next offset. Stop if the provider
-      // ignores offset and repeats the same page.
-      const pageLimit = Math.max(nonNegativeInteger(row.limit) ?? 500, 1);
-      const hasMore = row.hasMore === true ||
-        (pagination == null && data.length === 500);
-      if (!hasMore || added === 0) break;
-      offset += pageLimit;
+      // responses can omit or empty the envelope. A full page at the effective
+      // limit probes the next offset. Stop if the provider ignores the offset
+      // and repeats the same page; explicit end and the five-page cap win.
+      const nextOffset = nextResultsOffset({
+        pagination: pagination as Record<string, unknown> | null | undefined,
+        rowCount: data.length,
+        added,
+        currentOffset: offset,
+      });
+      if (nextOffset == null) break;
+      offset = nextOffset;
       if (page === 4) throw new Error("GOAL results pagination exceeded safety limit");
     }
 
@@ -615,6 +619,13 @@ async function syncOneResultsDate() {
       p_provider_date: providerDate,
       p_received_at: receivedAt,
     }, 30000);
+    const unmatchedCount = Number(linkResult?.unmappedCount ?? 0);
+    await rpc("futbeat_complete_results_date_attempt", {
+      p_provider_date: providerDate,
+      p_outcome: finalized?.resultsComplete === true ? "SUCCEEDED" : "PARTIAL",
+      p_result_count: observations.length,
+      p_unmatched_count: Number.isFinite(unmatchedCount) ? unmatchedCount : 0,
+    });
 
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservationId,
@@ -649,6 +660,18 @@ async function syncOneResultsDate() {
       finalized,
     };
   } catch (error) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(providerDate)) {
+      try {
+        await rpc("futbeat_complete_results_date_attempt", {
+          p_provider_date: providerDate,
+          p_outcome: "FAILED",
+          p_result_count: fixtures.length,
+          p_unmatched_count: 0,
+        });
+      } catch (_) {
+        // Provider-call failure remains primary; attempt bookkeeping retries later.
+      }
+    }
     await completeFailure(
       reservationId,
       "GOAL_RESULTS_DATE_FETCH_FAILED",

@@ -11,36 +11,15 @@ String _fold(String value) => value
     .replaceAll('ü', 'u')
     .replaceAll('ñ', 'n');
 
-const _countryAliases = <String, List<String>>{
-  'CR': ['costa rica'],
-  'MX': ['mexico'],
-  'AR': ['argentina'],
-  'BR': ['brazil', 'brasil'],
-  'ES': ['spain', 'espana'],
-  'US': ['united states', 'usa', 'estados unidos'],
-  'GB': [
-    'england',
-    'scotland',
-    'wales',
-    'northern ireland',
-    'united kingdom',
-    'great britain',
-  ],
-  'DE': ['germany', 'alemania'],
-  'IT': ['italy', 'italia'],
-  'FR': ['france', 'francia'],
-  'PT': ['portugal'],
-  'NL': ['netherlands', 'holanda'],
-};
-
 bool entityMatchesCountry(Entity entity, String? countryCode) {
   final code = countryCode?.trim().toUpperCase();
   if (code == null || code.isEmpty) return false;
-  final country = _fold(entity.country);
-  if (country == _fold(code)) return true;
-  return (_countryAliases[code] ?? const <String>[])
-      .map(_fold)
-      .contains(country);
+  final canonicalCode = entity.json['countryCode']?.toString().toUpperCase();
+  if (canonicalCode != null && canonicalCode.isNotEmpty) {
+    return canonicalCode == code ||
+        (code == 'GB' && canonicalCode.startsWith('GB-'));
+  }
+  return entity.country.trim().toUpperCase() == code;
 }
 
 int competitionImportance(Entity competition) {
@@ -53,22 +32,35 @@ int competitionImportance(Entity competition) {
   return 100;
 }
 
-int competitionFeedScore(
+enum CompetitionFeedCategory {
+  pinned,
+  domesticPrimary,
+  globalRelevance,
+  domesticSecondary,
+  other,
+}
+
+bool isPrimaryDomesticCompetition(Entity competition) =>
+    competition.json['isPrimaryDomestic'] == true ||
+    competition.json['domesticTier'] == 1;
+
+CompetitionFeedCategory competitionFeedCategory(
   Entity competition, {
   required Set<String> follows,
-  required Set<String> temporaryInterests,
   String? userCountry,
 }) {
-  var score = competitionImportance(competition) * 10;
-  // Keep the groups strict: explicit follows, selected country, relevance.
-  // The largest relevance contribution is 10,000, so this bonus always makes
-  // the selected country visibly move without filtering any competition.
-  if (entityMatchesCountry(competition, userCountry)) score += 20000;
-  if (temporaryInterests.contains('competition:${competition.id}')) {
-    score += 90000;
+  if (follows.contains('competition:${competition.id}')) {
+    return CompetitionFeedCategory.pinned;
   }
-  if (follows.contains('competition:${competition.id}')) score += 100000;
-  return score;
+  final domestic = entityMatchesCountry(competition, userCountry);
+  if (domestic && isPrimaryDomesticCompetition(competition)) {
+    return CompetitionFeedCategory.domesticPrimary;
+  }
+  if (competition.json['isGlobalRelevant'] == true) {
+    return CompetitionFeedCategory.globalRelevance;
+  }
+  if (domestic) return CompetitionFeedCategory.domesticSecondary;
+  return CompetitionFeedCategory.other;
 }
 
 int _queryScore(Entity entity, String query) {

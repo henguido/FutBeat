@@ -273,12 +273,63 @@ class $PreferencesTable extends Preferences
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _competitionOrderModeMeta =
+      const VerificationMeta('competitionOrderMode');
+  @override
+  late final GeneratedColumn<String> competitionOrderMode =
+      GeneratedColumn<String>(
+        'competition_order_mode',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        defaultValue: const Constant('automatic'),
+      );
+  static const VerificationMeta _competitionOrderPreferenceMeta =
+      const VerificationMeta('competitionOrderPreference');
+  @override
+  late final GeneratedColumn<String> competitionOrderPreference =
+      GeneratedColumn<String>(
+        'competition_order_preference',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        defaultValue: const Constant('country_first'),
+      );
+  static const VerificationMeta _pinnedCompetitionIdsMeta =
+      const VerificationMeta('pinnedCompetitionIds');
+  @override
+  late final GeneratedColumn<String> pinnedCompetitionIds =
+      GeneratedColumn<String>(
+        'pinned_competition_ids',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        defaultValue: const Constant('[]'),
+      );
+  static const VerificationMeta _competitionOrderUpdatedAtMeta =
+      const VerificationMeta('competitionOrderUpdatedAt');
+  @override
+  late final GeneratedColumn<DateTime> competitionOrderUpdatedAt =
+      GeneratedColumn<DateTime>(
+        'competition_order_updated_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
   @override
   List<GeneratedColumn> get $columns => [
     id,
     detectedCountry,
     selectedCountry,
     bootstrapDismissed,
+    competitionOrderMode,
+    competitionOrderPreference,
+    pinnedCompetitionIds,
+    competitionOrderUpdatedAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -322,6 +373,42 @@ class $PreferencesTable extends Preferences
         ),
       );
     }
+    if (data.containsKey('competition_order_mode')) {
+      context.handle(
+        _competitionOrderModeMeta,
+        competitionOrderMode.isAcceptableOrUnknown(
+          data['competition_order_mode']!,
+          _competitionOrderModeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('competition_order_preference')) {
+      context.handle(
+        _competitionOrderPreferenceMeta,
+        competitionOrderPreference.isAcceptableOrUnknown(
+          data['competition_order_preference']!,
+          _competitionOrderPreferenceMeta,
+        ),
+      );
+    }
+    if (data.containsKey('pinned_competition_ids')) {
+      context.handle(
+        _pinnedCompetitionIdsMeta,
+        pinnedCompetitionIds.isAcceptableOrUnknown(
+          data['pinned_competition_ids']!,
+          _pinnedCompetitionIdsMeta,
+        ),
+      );
+    }
+    if (data.containsKey('competition_order_updated_at')) {
+      context.handle(
+        _competitionOrderUpdatedAtMeta,
+        competitionOrderUpdatedAt.isAcceptableOrUnknown(
+          data['competition_order_updated_at']!,
+          _competitionOrderUpdatedAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -347,6 +434,22 @@ class $PreferencesTable extends Preferences
         DriftSqlType.bool,
         data['${effectivePrefix}bootstrap_dismissed'],
       )!,
+      competitionOrderMode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}competition_order_mode'],
+      )!,
+      competitionOrderPreference: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}competition_order_preference'],
+      )!,
+      pinnedCompetitionIds: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}pinned_competition_ids'],
+      )!,
+      competitionOrderUpdatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}competition_order_updated_at'],
+      ),
     );
   }
 
@@ -361,11 +464,19 @@ class Preference extends DataClass implements Insertable<Preference> {
   final String? detectedCountry;
   final String? selectedCountry;
   final bool bootstrapDismissed;
+  final String competitionOrderMode;
+  final String competitionOrderPreference;
+  final String pinnedCompetitionIds;
+  final DateTime? competitionOrderUpdatedAt;
   const Preference({
     required this.id,
     this.detectedCountry,
     this.selectedCountry,
     required this.bootstrapDismissed,
+    required this.competitionOrderMode,
+    required this.competitionOrderPreference,
+    required this.pinnedCompetitionIds,
+    this.competitionOrderUpdatedAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -378,6 +489,16 @@ class Preference extends DataClass implements Insertable<Preference> {
       map['selected_country'] = Variable<String>(selectedCountry);
     }
     map['bootstrap_dismissed'] = Variable<bool>(bootstrapDismissed);
+    map['competition_order_mode'] = Variable<String>(competitionOrderMode);
+    map['competition_order_preference'] = Variable<String>(
+      competitionOrderPreference,
+    );
+    map['pinned_competition_ids'] = Variable<String>(pinnedCompetitionIds);
+    if (!nullToAbsent || competitionOrderUpdatedAt != null) {
+      map['competition_order_updated_at'] = Variable<DateTime>(
+        competitionOrderUpdatedAt,
+      );
+    }
     return map;
   }
 
@@ -391,6 +512,13 @@ class Preference extends DataClass implements Insertable<Preference> {
           ? const Value.absent()
           : Value(selectedCountry),
       bootstrapDismissed: Value(bootstrapDismissed),
+      competitionOrderMode: Value(competitionOrderMode),
+      competitionOrderPreference: Value(competitionOrderPreference),
+      pinnedCompetitionIds: Value(pinnedCompetitionIds),
+      competitionOrderUpdatedAt:
+          competitionOrderUpdatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(competitionOrderUpdatedAt),
     );
   }
 
@@ -404,6 +532,18 @@ class Preference extends DataClass implements Insertable<Preference> {
       detectedCountry: serializer.fromJson<String?>(json['detectedCountry']),
       selectedCountry: serializer.fromJson<String?>(json['selectedCountry']),
       bootstrapDismissed: serializer.fromJson<bool>(json['bootstrapDismissed']),
+      competitionOrderMode: serializer.fromJson<String>(
+        json['competitionOrderMode'],
+      ),
+      competitionOrderPreference: serializer.fromJson<String>(
+        json['competitionOrderPreference'],
+      ),
+      pinnedCompetitionIds: serializer.fromJson<String>(
+        json['pinnedCompetitionIds'],
+      ),
+      competitionOrderUpdatedAt: serializer.fromJson<DateTime?>(
+        json['competitionOrderUpdatedAt'],
+      ),
     );
   }
   @override
@@ -414,6 +554,14 @@ class Preference extends DataClass implements Insertable<Preference> {
       'detectedCountry': serializer.toJson<String?>(detectedCountry),
       'selectedCountry': serializer.toJson<String?>(selectedCountry),
       'bootstrapDismissed': serializer.toJson<bool>(bootstrapDismissed),
+      'competitionOrderMode': serializer.toJson<String>(competitionOrderMode),
+      'competitionOrderPreference': serializer.toJson<String>(
+        competitionOrderPreference,
+      ),
+      'pinnedCompetitionIds': serializer.toJson<String>(pinnedCompetitionIds),
+      'competitionOrderUpdatedAt': serializer.toJson<DateTime?>(
+        competitionOrderUpdatedAt,
+      ),
     };
   }
 
@@ -422,6 +570,10 @@ class Preference extends DataClass implements Insertable<Preference> {
     Value<String?> detectedCountry = const Value.absent(),
     Value<String?> selectedCountry = const Value.absent(),
     bool? bootstrapDismissed,
+    String? competitionOrderMode,
+    String? competitionOrderPreference,
+    String? pinnedCompetitionIds,
+    Value<DateTime?> competitionOrderUpdatedAt = const Value.absent(),
   }) => Preference(
     id: id ?? this.id,
     detectedCountry: detectedCountry.present
@@ -431,6 +583,13 @@ class Preference extends DataClass implements Insertable<Preference> {
         ? selectedCountry.value
         : this.selectedCountry,
     bootstrapDismissed: bootstrapDismissed ?? this.bootstrapDismissed,
+    competitionOrderMode: competitionOrderMode ?? this.competitionOrderMode,
+    competitionOrderPreference:
+        competitionOrderPreference ?? this.competitionOrderPreference,
+    pinnedCompetitionIds: pinnedCompetitionIds ?? this.pinnedCompetitionIds,
+    competitionOrderUpdatedAt: competitionOrderUpdatedAt.present
+        ? competitionOrderUpdatedAt.value
+        : this.competitionOrderUpdatedAt,
   );
   Preference copyWithCompanion(PreferencesCompanion data) {
     return Preference(
@@ -444,6 +603,18 @@ class Preference extends DataClass implements Insertable<Preference> {
       bootstrapDismissed: data.bootstrapDismissed.present
           ? data.bootstrapDismissed.value
           : this.bootstrapDismissed,
+      competitionOrderMode: data.competitionOrderMode.present
+          ? data.competitionOrderMode.value
+          : this.competitionOrderMode,
+      competitionOrderPreference: data.competitionOrderPreference.present
+          ? data.competitionOrderPreference.value
+          : this.competitionOrderPreference,
+      pinnedCompetitionIds: data.pinnedCompetitionIds.present
+          ? data.pinnedCompetitionIds.value
+          : this.pinnedCompetitionIds,
+      competitionOrderUpdatedAt: data.competitionOrderUpdatedAt.present
+          ? data.competitionOrderUpdatedAt.value
+          : this.competitionOrderUpdatedAt,
     );
   }
 
@@ -453,14 +624,26 @@ class Preference extends DataClass implements Insertable<Preference> {
           ..write('id: $id, ')
           ..write('detectedCountry: $detectedCountry, ')
           ..write('selectedCountry: $selectedCountry, ')
-          ..write('bootstrapDismissed: $bootstrapDismissed')
+          ..write('bootstrapDismissed: $bootstrapDismissed, ')
+          ..write('competitionOrderMode: $competitionOrderMode, ')
+          ..write('competitionOrderPreference: $competitionOrderPreference, ')
+          ..write('pinnedCompetitionIds: $pinnedCompetitionIds, ')
+          ..write('competitionOrderUpdatedAt: $competitionOrderUpdatedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, detectedCountry, selectedCountry, bootstrapDismissed);
+  int get hashCode => Object.hash(
+    id,
+    detectedCountry,
+    selectedCountry,
+    bootstrapDismissed,
+    competitionOrderMode,
+    competitionOrderPreference,
+    pinnedCompetitionIds,
+    competitionOrderUpdatedAt,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -468,7 +651,11 @@ class Preference extends DataClass implements Insertable<Preference> {
           other.id == this.id &&
           other.detectedCountry == this.detectedCountry &&
           other.selectedCountry == this.selectedCountry &&
-          other.bootstrapDismissed == this.bootstrapDismissed);
+          other.bootstrapDismissed == this.bootstrapDismissed &&
+          other.competitionOrderMode == this.competitionOrderMode &&
+          other.competitionOrderPreference == this.competitionOrderPreference &&
+          other.pinnedCompetitionIds == this.pinnedCompetitionIds &&
+          other.competitionOrderUpdatedAt == this.competitionOrderUpdatedAt);
 }
 
 class PreferencesCompanion extends UpdateCompanion<Preference> {
@@ -476,29 +663,53 @@ class PreferencesCompanion extends UpdateCompanion<Preference> {
   final Value<String?> detectedCountry;
   final Value<String?> selectedCountry;
   final Value<bool> bootstrapDismissed;
+  final Value<String> competitionOrderMode;
+  final Value<String> competitionOrderPreference;
+  final Value<String> pinnedCompetitionIds;
+  final Value<DateTime?> competitionOrderUpdatedAt;
   const PreferencesCompanion({
     this.id = const Value.absent(),
     this.detectedCountry = const Value.absent(),
     this.selectedCountry = const Value.absent(),
     this.bootstrapDismissed = const Value.absent(),
+    this.competitionOrderMode = const Value.absent(),
+    this.competitionOrderPreference = const Value.absent(),
+    this.pinnedCompetitionIds = const Value.absent(),
+    this.competitionOrderUpdatedAt = const Value.absent(),
   });
   PreferencesCompanion.insert({
     this.id = const Value.absent(),
     this.detectedCountry = const Value.absent(),
     this.selectedCountry = const Value.absent(),
     this.bootstrapDismissed = const Value.absent(),
+    this.competitionOrderMode = const Value.absent(),
+    this.competitionOrderPreference = const Value.absent(),
+    this.pinnedCompetitionIds = const Value.absent(),
+    this.competitionOrderUpdatedAt = const Value.absent(),
   });
   static Insertable<Preference> custom({
     Expression<int>? id,
     Expression<String>? detectedCountry,
     Expression<String>? selectedCountry,
     Expression<bool>? bootstrapDismissed,
+    Expression<String>? competitionOrderMode,
+    Expression<String>? competitionOrderPreference,
+    Expression<String>? pinnedCompetitionIds,
+    Expression<DateTime>? competitionOrderUpdatedAt,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (detectedCountry != null) 'detected_country': detectedCountry,
       if (selectedCountry != null) 'selected_country': selectedCountry,
       if (bootstrapDismissed != null) 'bootstrap_dismissed': bootstrapDismissed,
+      if (competitionOrderMode != null)
+        'competition_order_mode': competitionOrderMode,
+      if (competitionOrderPreference != null)
+        'competition_order_preference': competitionOrderPreference,
+      if (pinnedCompetitionIds != null)
+        'pinned_competition_ids': pinnedCompetitionIds,
+      if (competitionOrderUpdatedAt != null)
+        'competition_order_updated_at': competitionOrderUpdatedAt,
     });
   }
 
@@ -507,12 +718,22 @@ class PreferencesCompanion extends UpdateCompanion<Preference> {
     Value<String?>? detectedCountry,
     Value<String?>? selectedCountry,
     Value<bool>? bootstrapDismissed,
+    Value<String>? competitionOrderMode,
+    Value<String>? competitionOrderPreference,
+    Value<String>? pinnedCompetitionIds,
+    Value<DateTime?>? competitionOrderUpdatedAt,
   }) {
     return PreferencesCompanion(
       id: id ?? this.id,
       detectedCountry: detectedCountry ?? this.detectedCountry,
       selectedCountry: selectedCountry ?? this.selectedCountry,
       bootstrapDismissed: bootstrapDismissed ?? this.bootstrapDismissed,
+      competitionOrderMode: competitionOrderMode ?? this.competitionOrderMode,
+      competitionOrderPreference:
+          competitionOrderPreference ?? this.competitionOrderPreference,
+      pinnedCompetitionIds: pinnedCompetitionIds ?? this.pinnedCompetitionIds,
+      competitionOrderUpdatedAt:
+          competitionOrderUpdatedAt ?? this.competitionOrderUpdatedAt,
     );
   }
 
@@ -531,6 +752,26 @@ class PreferencesCompanion extends UpdateCompanion<Preference> {
     if (bootstrapDismissed.present) {
       map['bootstrap_dismissed'] = Variable<bool>(bootstrapDismissed.value);
     }
+    if (competitionOrderMode.present) {
+      map['competition_order_mode'] = Variable<String>(
+        competitionOrderMode.value,
+      );
+    }
+    if (competitionOrderPreference.present) {
+      map['competition_order_preference'] = Variable<String>(
+        competitionOrderPreference.value,
+      );
+    }
+    if (pinnedCompetitionIds.present) {
+      map['pinned_competition_ids'] = Variable<String>(
+        pinnedCompetitionIds.value,
+      );
+    }
+    if (competitionOrderUpdatedAt.present) {
+      map['competition_order_updated_at'] = Variable<DateTime>(
+        competitionOrderUpdatedAt.value,
+      );
+    }
     return map;
   }
 
@@ -540,7 +781,11 @@ class PreferencesCompanion extends UpdateCompanion<Preference> {
           ..write('id: $id, ')
           ..write('detectedCountry: $detectedCountry, ')
           ..write('selectedCountry: $selectedCountry, ')
-          ..write('bootstrapDismissed: $bootstrapDismissed')
+          ..write('bootstrapDismissed: $bootstrapDismissed, ')
+          ..write('competitionOrderMode: $competitionOrderMode, ')
+          ..write('competitionOrderPreference: $competitionOrderPreference, ')
+          ..write('pinnedCompetitionIds: $pinnedCompetitionIds, ')
+          ..write('competitionOrderUpdatedAt: $competitionOrderUpdatedAt')
           ..write(')'))
         .toString();
   }
@@ -1266,6 +1511,10 @@ typedef $$PreferencesTableCreateCompanionBuilder =
       Value<String?> detectedCountry,
       Value<String?> selectedCountry,
       Value<bool> bootstrapDismissed,
+      Value<String> competitionOrderMode,
+      Value<String> competitionOrderPreference,
+      Value<String> pinnedCompetitionIds,
+      Value<DateTime?> competitionOrderUpdatedAt,
     });
 typedef $$PreferencesTableUpdateCompanionBuilder =
     PreferencesCompanion Function({
@@ -1273,6 +1522,10 @@ typedef $$PreferencesTableUpdateCompanionBuilder =
       Value<String?> detectedCountry,
       Value<String?> selectedCountry,
       Value<bool> bootstrapDismissed,
+      Value<String> competitionOrderMode,
+      Value<String> competitionOrderPreference,
+      Value<String> pinnedCompetitionIds,
+      Value<DateTime?> competitionOrderUpdatedAt,
     });
 
 class $$PreferencesTableFilterComposer
@@ -1301,6 +1554,26 @@ class $$PreferencesTableFilterComposer
 
   ColumnFilters<bool> get bootstrapDismissed => $composableBuilder(
     column: $table.bootstrapDismissed,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get competitionOrderMode => $composableBuilder(
+    column: $table.competitionOrderMode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get competitionOrderPreference => $composableBuilder(
+    column: $table.competitionOrderPreference,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get pinnedCompetitionIds => $composableBuilder(
+    column: $table.pinnedCompetitionIds,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get competitionOrderUpdatedAt => $composableBuilder(
+    column: $table.competitionOrderUpdatedAt,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1333,6 +1606,26 @@ class $$PreferencesTableOrderingComposer
     column: $table.bootstrapDismissed,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get competitionOrderMode => $composableBuilder(
+    column: $table.competitionOrderMode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get competitionOrderPreference => $composableBuilder(
+    column: $table.competitionOrderPreference,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get pinnedCompetitionIds => $composableBuilder(
+    column: $table.pinnedCompetitionIds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get competitionOrderUpdatedAt => $composableBuilder(
+    column: $table.competitionOrderUpdatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$PreferencesTableAnnotationComposer
@@ -1359,6 +1652,26 @@ class $$PreferencesTableAnnotationComposer
 
   GeneratedColumn<bool> get bootstrapDismissed => $composableBuilder(
     column: $table.bootstrapDismissed,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get competitionOrderMode => $composableBuilder(
+    column: $table.competitionOrderMode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get competitionOrderPreference => $composableBuilder(
+    column: $table.competitionOrderPreference,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get pinnedCompetitionIds => $composableBuilder(
+    column: $table.pinnedCompetitionIds,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get competitionOrderUpdatedAt => $composableBuilder(
+    column: $table.competitionOrderUpdatedAt,
     builder: (column) => column,
   );
 }
@@ -1398,11 +1711,20 @@ class $$PreferencesTableTableManager
                 Value<String?> detectedCountry = const Value.absent(),
                 Value<String?> selectedCountry = const Value.absent(),
                 Value<bool> bootstrapDismissed = const Value.absent(),
+                Value<String> competitionOrderMode = const Value.absent(),
+                Value<String> competitionOrderPreference = const Value.absent(),
+                Value<String> pinnedCompetitionIds = const Value.absent(),
+                Value<DateTime?> competitionOrderUpdatedAt =
+                    const Value.absent(),
               }) => PreferencesCompanion(
                 id: id,
                 detectedCountry: detectedCountry,
                 selectedCountry: selectedCountry,
                 bootstrapDismissed: bootstrapDismissed,
+                competitionOrderMode: competitionOrderMode,
+                competitionOrderPreference: competitionOrderPreference,
+                pinnedCompetitionIds: pinnedCompetitionIds,
+                competitionOrderUpdatedAt: competitionOrderUpdatedAt,
               ),
           createCompanionCallback:
               ({
@@ -1410,11 +1732,20 @@ class $$PreferencesTableTableManager
                 Value<String?> detectedCountry = const Value.absent(),
                 Value<String?> selectedCountry = const Value.absent(),
                 Value<bool> bootstrapDismissed = const Value.absent(),
+                Value<String> competitionOrderMode = const Value.absent(),
+                Value<String> competitionOrderPreference = const Value.absent(),
+                Value<String> pinnedCompetitionIds = const Value.absent(),
+                Value<DateTime?> competitionOrderUpdatedAt =
+                    const Value.absent(),
               }) => PreferencesCompanion.insert(
                 id: id,
                 detectedCountry: detectedCountry,
                 selectedCountry: selectedCountry,
                 bootstrapDismissed: bootstrapDismissed,
+                competitionOrderMode: competitionOrderMode,
+                competitionOrderPreference: competitionOrderPreference,
+                pinnedCompetitionIds: pinnedCompetitionIds,
+                competitionOrderUpdatedAt: competitionOrderUpdatedAt,
               ),
           withReferenceMapper: (p0) => p0
               .map(

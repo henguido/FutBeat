@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/interests.dart';
+import '../../core/database.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../core/relevance.dart';
@@ -27,13 +28,8 @@ String _feedEventLabel(String type) => switch (type) {
   _ => 'Evento',
 };
 
-bool _isFollowedCompetition(
-  Entity competition,
-  Set<String> follows,
-  Set<String> temporaryInterests,
-) =>
-    follows.contains('competition:${competition.id}') ||
-    temporaryInterests.contains('competition:${competition.id}');
+bool _isFollowedCompetition(Entity competition, Set<String> follows) =>
+    follows.contains('competition:${competition.id}');
 
 String _compactDate(DateTime value) {
   const months = [
@@ -73,9 +69,11 @@ List<Entity> orderMatchCompetitions({
   required Snapshot data,
   required List<FootballMatch> matches,
   required Set<String> follows,
-  required Set<String> temporaryInterests,
   String? selectedCountry,
   String? detectedCountry,
+  String orderMode = CompetitionOrderMode.automatic,
+  String orderPreference = CompetitionOrderPreference.countryFirst,
+  List<String> pinnedCompetitionIds = const <String>[],
 }) {
   final visibleCompetitionIds = matches
       .map((match) => match.competitionId)
@@ -87,10 +85,7 @@ List<Entity> orderMatchCompetitions({
   if (data.demo) {
     int priority(Entity competition) {
       if (follows.contains('competition:${competition.id}')) return 0;
-      if (temporaryInterests.contains('competition:${competition.id}')) {
-        return 1;
-      }
-      return 2;
+      return 1;
     }
 
     return visible..sort((left, right) {
@@ -103,27 +98,67 @@ List<Entity> orderMatchCompetitions({
     });
   }
 
-  // A manual choice is an explicit ordering command. Detection is useful for
-  // bootstrap defaults, but it must not silently overpower global relevance.
-  final userCountry = selectedCountry;
-  return visible..sort((left, right) {
-    final leftScore = competitionFeedScore(
-      left,
+  final userCountry = selectedCountry ?? detectedCountry;
+  final pinnedOrder = <String, int>{
+    for (var index = 0; index < pinnedCompetitionIds.length; index++)
+      pinnedCompetitionIds[index]: index,
+  };
+  final customOrder = orderMode == CompetitionOrderMode.personalized;
+  int categoryRank(CompetitionFeedCategory category) {
+    if (category == CompetitionFeedCategory.pinned) return 0;
+    final globalFirst =
+        orderMode == CompetitionOrderMode.personalized &&
+        orderPreference == CompetitionOrderPreference.globalFirst;
+    if (globalFirst) {
+      return switch (category) {
+        CompetitionFeedCategory.globalRelevance => 1,
+        CompetitionFeedCategory.domesticPrimary => 2,
+        CompetitionFeedCategory.domesticSecondary => 3,
+        CompetitionFeedCategory.other => 4,
+        CompetitionFeedCategory.pinned => 0,
+      };
+    }
+    return switch (category) {
+      CompetitionFeedCategory.domesticPrimary => 1,
+      CompetitionFeedCategory.globalRelevance => 2,
+      CompetitionFeedCategory.domesticSecondary => 3,
+      CompetitionFeedCategory.other => 4,
+      CompetitionFeedCategory.pinned => 0,
+    };
+  }
+
+  final decorated = visible.map((competition) {
+    final category = competitionFeedCategory(
+      competition,
       follows: follows,
-      temporaryInterests: temporaryInterests,
       userCountry: userCountry,
     );
-    final rightScore = competitionFeedScore(
-      right,
-      follows: follows,
-      temporaryInterests: temporaryInterests,
-      userCountry: userCountry,
+    return (
+      competition: competition,
+      category: category,
+      categoryRank: categoryRank(category),
+      relevance: competitionImportance(competition),
+      pinnedIndex: customOrder ? pinnedOrder[competition.id] : null,
+      normalizedName: competition.name.toLowerCase(),
     );
-    final byScore = rightScore.compareTo(leftScore);
-    if (byScore != 0) return byScore;
-    final byName = left.name.toLowerCase().compareTo(right.name.toLowerCase());
-    return byName != 0 ? byName : left.id.compareTo(right.id);
+  }).toList();
+  decorated.sort((left, right) {
+    final byCategory = left.categoryRank.compareTo(right.categoryRank);
+    if (byCategory != 0) return byCategory;
+    if (customOrder && left.category == CompetitionFeedCategory.pinned) {
+      final byPinnedOrder = (left.pinnedIndex ?? 1 << 20).compareTo(
+        right.pinnedIndex ?? 1 << 20,
+      );
+      if (byPinnedOrder != 0) return byPinnedOrder;
+    }
+    final byRelevance = right.relevance.compareTo(left.relevance);
+    if (byRelevance != 0) return byRelevance;
+    final byName = left.normalizedName.compareTo(right.normalizedName);
+    return byName != 0
+        ? byName
+        : left.competition.id.compareTo(right.competition.id);
   });
+  return decorated.map((item) => item.competition).toList();
 }
 
 class MatchesScreen extends ConsumerStatefulWidget {
@@ -196,8 +231,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           final selected = DateUtils.dateOnly(date ?? anchor);
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
-          final temporaryInterests =
-              ref.watch(temporaryInterestsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
           final games = data.onDate(selected, filter);
 
@@ -222,17 +255,20 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             data: data,
             matches: remainingGames,
             follows: follows,
-            temporaryInterests: temporaryInterests,
             selectedCountry: preference?.selectedCountry,
             detectedCountry: preference?.detectedCountry,
+            orderMode:
+                preference?.competitionOrderMode ??
+                CompetitionOrderMode.automatic,
+            orderPreference:
+                preference?.competitionOrderPreference ??
+                CompetitionOrderPreference.countryFirst,
+            pinnedCompetitionIds:
+                preference?.pinnedCompetitionIds ?? const <String>[],
           );
           final followedCompetitions = orderedCompetitions
               .where(
-                (competition) => _isFollowedCompetition(
-                  competition,
-                  follows,
-                  temporaryInterests,
-                ),
+                (competition) => _isFollowedCompetition(competition, follows),
               )
               .toList();
           final followedCompetitionIds = followedCompetitions
