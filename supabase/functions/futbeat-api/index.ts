@@ -1,4 +1,5 @@
 import { withSupabase } from 'npm:@supabase/server';
+import { calendarCacheControl } from '../_shared/calendar_cache.ts';
 
 const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -569,7 +570,11 @@ export default {
         }
       }
 
-      return reply(200, snapshot);
+      return new Response(JSON.stringify(snapshot), {
+        status: 200,
+        headers: { ...jsonHeaders, 'Cache-Control': calendarCacheControl(
+          date!, timezone, snapshot.coverage?.partial === true) },
+      });
     }
 
     return reply(404, { error: 'Not found' });

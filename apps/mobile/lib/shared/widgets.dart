@@ -198,55 +198,37 @@ class CalendarDataView extends ConsumerWidget {
   });
 
   final DateTime date;
-  final Widget Function(Snapshot) builder;
+  final Widget Function(Snapshot, bool loading, bool failed) builder;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => ref
-      .watch(effectiveCalendarSnapshotProvider(date))
-      .when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (_, stack) => Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const EmptyState(
-                'No pudimos cargar esta fecha',
-                'Revisa tu conexión e intenta nuevamente.',
-                icon: Icons.cloud_off,
-              ),
-              FilledButton(
-                onPressed: () async {
-                  ref.invalidate(calendarSnapshotProvider(date));
-                  try {
-                    await ref.read(calendarSnapshotProvider(date).future);
-                  } catch (_) {
-                    // Keep the recoverable error state visible.
-                  }
-                },
-                child: const Text('Reintentar'),
-              ),
-            ],
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(effectiveCalendarSnapshotProvider(date));
+    final data =
+        state.asData?.value ??
+        Snapshot({
+          'schemaVersion': 1,
+          'demo': false,
+          'updatedAt': DateTime.now().toUtc().toIso8601String(),
+          'competitions': [],
+          'teams': [],
+          'players': [],
+          'matches': [],
+          'standings': [],
+        });
+    // Render the same date controls even on a cold cache miss or error.
+    return Column(
+      children: [
+        if (data.stale)
+          const Padding(
+            padding: EdgeInsets.all(8),
+            child: Text(
+              'Los datos pueden estar desactualizados. Desliza para actualizar.',
+            ),
           ),
-        ),
-        data: (data) => Column(
-          children: [
-            if (!data.demo && data.stale)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 10,
-                ),
-                color: lime.withValues(alpha: .08),
-                child: const Text(
-                  'Los datos pueden estar desactualizados. Desliza para actualizar.',
-                  style: TextStyle(color: lime, fontSize: 12),
-                ),
-              ),
-            Expanded(child: builder(data)),
-          ],
-        ),
-      );
+        Expanded(child: builder(data, state.isLoading, state.hasError)),
+      ],
+    );
+  }
 }
 
 class DemoNotice extends StatelessWidget {

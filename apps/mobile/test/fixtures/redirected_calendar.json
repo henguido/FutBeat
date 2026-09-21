@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "demo": false,
+  "updatedAt": "2026-08-20T06:00:00-06:00",
+  "teams": [
+    {"id":"fb_team_away_0","name":"Team away 0","media":{"url":"https://example.com/away_0.png","verificationStatus":"VERIFIED"}},
+    {"id":"fb_team_home_0","name":"Team home 0","media":{"url":"https://example.com/home_0.png","verificationStatus":"VERIFIED"}}
+  ],
+  "matches": [{"id":"fb_match_perf_0","status":"SCHEDULED","startTime":"2026-08-20T18:00:00Z","awayTeamId":"fb_team_away_0","homeTeamId":"fb_team_home_0","competitionId":"fb_comp_perf","hasPlayedEvidence":false}],
+  "players": [],
+  "coverage": {"live":false,"source":"FutBeat","partial":true,"sources":["GOAL API"],"calendar":{"to":"2026-08-20","from":"2026-08-20","complete":false,"timezone":"UTC"},"developmentOnly":false},
+  "freshness": {"stale":false},
+  "standings": [],
+  "competitions": [{"id":"fb_comp_perf","name":"Competition","country":"Costa Rica","countryCode":"CR","domesticTier":null,"audienceClass":"unknown","relevanceScore":100,"relevanceSource":"derived","competitionClass":"other","isGlobalRelevant":false,"isPrimaryDomestic":false}]
+}

@@ -9,7 +9,6 @@ import '../../core/providers.dart';
 import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
-import '../profile/country_preferences.dart';
 
 bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
     follows.contains('team:${match.homeId}') ||
@@ -63,8 +62,7 @@ String _dateContextLabel(DateTime value, DateTime today) {
 /// Orders visible competitions without ever filtering the daily catalog.
 ///
 /// Explicit follows stay first. The remaining competitions are ranked by
-/// football relevance with a modest country signal, so major competitions rise
-/// naturally while every available fixture remains visible.
+/// editorial relevance only. Legacy country preferences never affect this feed.
 List<Entity> orderMatchCompetitions({
   required Snapshot data,
   required List<FootballMatch> matches,
@@ -82,83 +80,27 @@ List<Entity> orderMatchCompetitions({
       .where((competition) => visibleCompetitionIds.contains(competition.id))
       .toList();
 
-  if (data.demo) {
-    int priority(Entity competition) {
-      if (follows.contains('competition:${competition.id}')) return 0;
-      return 1;
-    }
-
-    return visible..sort((left, right) {
-      final byPriority = priority(left).compareTo(priority(right));
-      if (byPriority != 0) return byPriority;
-      final byName = left.name.toLowerCase().compareTo(
-        right.name.toLowerCase(),
-      );
-      return byName != 0 ? byName : left.id.compareTo(right.id);
-    });
-  }
-
-  final userCountry = selectedCountry ?? detectedCountry;
-  final pinnedOrder = <String, int>{
-    for (var index = 0; index < pinnedCompetitionIds.length; index++)
-      pinnedCompetitionIds[index]: index,
+  // Legacy country/preference arguments are intentionally ignored.
+  final pins = {
+    for (var i = 0; i < pinnedCompetitionIds.length; i++)
+      if (follows.contains('competition:${pinnedCompetitionIds[i]}'))
+        pinnedCompetitionIds[i]: i,
   };
-  final customOrder = orderMode == CompetitionOrderMode.personalized;
-  int categoryRank(CompetitionFeedCategory category) {
-    if (category == CompetitionFeedCategory.pinned) return 0;
-    final globalFirst =
-        orderMode == CompetitionOrderMode.personalized &&
-        orderPreference == CompetitionOrderPreference.globalFirst;
-    if (globalFirst) {
-      return switch (category) {
-        CompetitionFeedCategory.globalRelevance => 1,
-        CompetitionFeedCategory.domesticPrimary => 2,
-        CompetitionFeedCategory.domesticSecondary => 3,
-        CompetitionFeedCategory.other => 4,
-        CompetitionFeedCategory.pinned => 0,
-      };
-    }
-    return switch (category) {
-      CompetitionFeedCategory.domesticPrimary => 1,
-      CompetitionFeedCategory.globalRelevance => 2,
-      CompetitionFeedCategory.domesticSecondary => 3,
-      CompetitionFeedCategory.other => 4,
-      CompetitionFeedCategory.pinned => 0,
-    };
-  }
-
-  final decorated = visible.map((competition) {
-    final category = competitionFeedCategory(
-      competition,
-      follows: follows,
-      userCountry: userCountry,
-    );
-    return (
-      competition: competition,
-      category: category,
-      categoryRank: categoryRank(category),
-      relevance: competitionImportance(competition),
-      pinnedIndex: customOrder ? pinnedOrder[competition.id] : null,
-      normalizedName: competition.name.toLowerCase(),
-    );
-  }).toList();
-  decorated.sort((left, right) {
-    final byCategory = left.categoryRank.compareTo(right.categoryRank);
-    if (byCategory != 0) return byCategory;
-    if (customOrder && left.category == CompetitionFeedCategory.pinned) {
-      final byPinnedOrder = (left.pinnedIndex ?? 1 << 20).compareTo(
-        right.pinnedIndex ?? 1 << 20,
-      );
-      if (byPinnedOrder != 0) return byPinnedOrder;
-    }
-    final byRelevance = right.relevance.compareTo(left.relevance);
-    if (byRelevance != 0) return byRelevance;
-    final byName = left.normalizedName.compareTo(right.normalizedName);
-    return byName != 0
-        ? byName
-        : left.competition.id.compareTo(right.competition.id);
+  final custom = orderMode == CompetitionOrderMode.personalized;
+  int group(Entity c) => custom && pins.containsKey(c.id)
+      ? 0
+      : follows.contains('competition:${c.id}')
+      ? 1
+      : 2;
+  return visible..sort((a, b) {
+    final category = group(a).compareTo(group(b));
+    if (category != 0) return category;
+    if (custom && group(a) == 0) return pins[a.id]!.compareTo(pins[b.id]!);
+    final score = competitionImportance(b).compareTo(competitionImportance(a));
+    if (score != 0) return score;
+    final name = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    return name != 0 ? name : a.id.compareTo(b.id);
   });
-  return decorated.map((item) => item.competition).toList();
 }
 
 class MatchesScreen extends ConsumerStatefulWidget {
@@ -224,7 +166,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
       ),
       body: CalendarDataView(
         date: requestDate,
-        builder: (data) {
+        builder: (data, loading, failed) {
           final anchor = data.demo
               ? DateTime(2026, 9, 15)
               : DateUtils.dateOnly(costaRicaNow());
@@ -255,14 +197,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             data: data,
             matches: remainingGames,
             follows: follows,
-            selectedCountry: preference?.selectedCountry,
-            detectedCountry: preference?.detectedCountry,
             orderMode:
                 preference?.competitionOrderMode ??
                 CompetitionOrderMode.automatic,
-            orderPreference:
-                preference?.competitionOrderPreference ??
-                CompetitionOrderPreference.countryFirst,
             pinnedCompetitionIds:
                 preference?.pinnedCompetitionIds ?? const <String>[],
           );
@@ -328,10 +265,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
 
           if (data.demo) {
             feedItems.add(() => const DemoNotice());
-          } else {
-            feedItems
-              ..add(() => CountryPreferencePanel(compact: true, data: data))
-              ..add(() => const SizedBox(height: 16));
           }
 
           feedItems
@@ -385,7 +318,18 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             )
             ..add(() => const SizedBox(height: 16));
 
-          if (games.isEmpty) {
+          if (loading) {
+            feedItems.add(() => const LinearProgressIndicator());
+          } else if (failed) {
+            feedItems.add(() => const Text('No pudimos cargar esta fecha'));
+            feedItems.add(
+              () => TextButton(
+                onPressed: () =>
+                    ref.invalidate(calendarSnapshotProvider(requestDate)),
+                child: const Text('Reintentar'),
+              ),
+            );
+          } else if (games.isEmpty) {
             feedItems.add(() => const EmptyState('Sin partidos', ''));
           }
 
@@ -438,6 +382,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
 
           return RefreshIndicator(
             onRefresh: () async {
+              final repository = ref.read(repositoryProvider);
+              if (repository is ApiRepository) repository.refreshDate(selected);
               ref.invalidate(calendarSnapshotProvider(selected));
               try {
                 await ref.read(calendarSnapshotProvider(selected).future);
@@ -645,17 +591,17 @@ class MatchCard extends StatelessWidget {
                     child: Column(
                       children: [
                         Text(
-                          match.isScheduled
+                          match.showKickoff
                               ? localTime(context, match.startTime)
                               : match.score,
                           style: TextStyle(
-                            fontSize: match.isScheduled ? 21 : 30,
+                            fontSize: match.showKickoff ? 21 : 30,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          match.isScheduled ? 'Hora Costa Rica' : 'Ver partido',
+                          match.showKickoff ? 'Hora Costa Rica' : 'Ver partido',
                           style: const TextStyle(fontSize: 10, color: muted),
                         ),
                       ],

@@ -12,7 +12,6 @@ class CompetitionOrderPanel extends ConsumerWidget {
     WidgetRef ref,
     CountryPreference current, {
     String? mode,
-    String? preference,
     List<String>? pinnedIds,
   }) async {
     await ref
@@ -22,8 +21,7 @@ class CompetitionOrderPanel extends ConsumerWidget {
           selectedCountry: current.selectedCountry,
           bootstrapDismissed: current.bootstrapDismissed,
           competitionOrderMode: mode ?? current.competitionOrderMode,
-          competitionOrderPreference:
-              preference ?? current.competitionOrderPreference,
+          competitionOrderPreference: current.competitionOrderPreference,
           pinnedCompetitionIds: pinnedIds ?? current.pinnedCompetitionIds,
         );
   }
@@ -80,28 +78,6 @@ class CompetitionOrderPanel extends ConsumerWidget {
             if (current.competitionOrderMode ==
                 CompetitionOrderMode.personalized) ...[
               const SizedBox(height: 12),
-              RadioGroup<String>(
-                groupValue: current.competitionOrderPreference,
-                onChanged: (value) {
-                  if (value != null) {
-                    _save(ref, current, preference: value);
-                  }
-                },
-                child: const Column(
-                  children: [
-                    RadioListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: CompetitionOrderPreference.globalFirst,
-                      title: Text('Grandes ligas primero'),
-                    ),
-                    RadioListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: CompetitionOrderPreference.countryFirst,
-                      title: Text('Mi país primero'),
-                    ),
-                  ],
-                ),
-              ),
               if (orderedIds.isNotEmpty) ...[
                 const Divider(),
                 const Text(

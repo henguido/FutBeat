@@ -110,11 +110,12 @@ test('calendar transport keeps visible football data while stripping internal me
     assert.equal(compact.matches[0].id, match);
     assert.equal(compact.matches[0].status, 'LIVE');
     assert.deepEqual(compact.matches[0].score, { home: 1, away: 0 });
-    assert.equal(compact.matches[0].events.length, 1);
-    assert.equal(compact.matches[0].statistics.length, 1);
-    assert.equal(compact.matches[0].provenance.source, 'GOAL API');
-    assert.equal(compact.matches[0].provenance.receivedAt, receivedAt);
-    assert.equal(compact.matches[0].provenance.externalId, undefined);
+    assert.equal(compact.matches[0].latestEvent.type, 'GOAL');
+    assert.equal(compact.matches[0].events, undefined);
+    assert.equal(compact.matches[0].statistics, undefined);
+    assert.equal(compact.matches[0].provenance, undefined);
+    assert.deepEqual(compact.players, []);
+    assert.deepEqual(compact.standings, []);
 
     const compactHome = compact.teams.find((item) => item.id === home);
     assert.equal(compactHome.name, 'Local Compacto');

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -209,6 +211,86 @@ List<String> _ids(
 ).map((competition) => competition.id).toList();
 
 void main() {
+  testWidgets(
+    'unfollow removes your competitions block but keeps its matches despite stale pin',
+    (tester) async {
+      final follows = StreamController<Set<String>>();
+      final data = _snapshot();
+      tester.view.physicalSize = const Size(390, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            repositoryProvider.overrideWithValue(_Repository(data)),
+            liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
+            preferenceProvider.overrideWith(
+              (ref) => Stream.value(
+                const CountryPreference(
+                  detectedCountry: null,
+                  selectedCountry: null,
+                  bootstrapDismissed: true,
+                  competitionOrderMode: CompetitionOrderMode.personalized,
+                  pinnedCompetitionIds: ['fb_comp_cr'],
+                ),
+              ),
+            ),
+            followsProvider.overrideWith((ref) => follows.stream),
+            temporaryInterestsProvider.overrideWith(
+              (ref) => Stream.value(<String>{}),
+            ),
+          ],
+          child: const MaterialApp(home: MatchesScreen()),
+        ),
+      );
+      follows.add({'competition:fb_comp_cr'});
+      await tester.pumpAndSettle();
+      expect(find.text('TUS COMPETICIONES'), findsOneWidget);
+      follows.add({});
+      await tester.pumpAndSettle();
+      expect(find.text('TUS COMPETICIONES'), findsNothing);
+      expect(find.text('Saprissa'), findsOneWidget);
+      expect(find.text('Alajuelense'), findsOneWidget);
+      expect(find.text('Real Betis'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('LaLiga')).dy,
+        lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
+      );
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(follows.close);
+    },
+  );
+
+  test('legacy country and stale pins never change automatic relevance', () {
+    final data = _snapshot();
+    expect(_ids(data, selected: null, detected: null), [
+      'fb_comp_laliga',
+      'fb_comp_cr',
+    ]);
+    expect(_ids(data, selected: 'CR', detected: 'MX'), [
+      'fb_comp_laliga',
+      'fb_comp_cr',
+    ]);
+    expect(_ids(data, pinned: ['fb_comp_cr']), [
+      'fb_comp_laliga',
+      'fb_comp_cr',
+    ]);
+    expect(
+      _ids(
+        data,
+        pinned: ['fb_comp_cr'],
+        mode: CompetitionOrderMode.personalized,
+      ),
+      ['fb_comp_laliga', 'fb_comp_cr'],
+    );
+    expect(
+      _ids(data, pinned: ['fb_comp_cr'], follows: {'competition:fb_comp_cr'}),
+      ['fb_comp_cr', 'fb_comp_laliga'],
+    );
+    expect(data.matches, hasLength(2));
+  });
+
   test('explicit null editorial fields preserve every ordering group', () {
     final base = _snapshot();
     final competitions = [
@@ -257,7 +339,7 @@ void main() {
         pinned: ['favorite', 'pinned'],
         mode: CompetitionOrderMode.personalized,
       ),
-      ['favorite', 'pinned', 'primary', 'global', 'secondary', 'rest'],
+      ['favorite', 'pinned', 'global', 'primary', 'rest', 'secondary'],
     );
     final unknown = data.competitions.firstWhere((item) => item.id == 'rest');
     expect(unknown.json.containsKey('countryCode'), isTrue);
@@ -318,12 +400,6 @@ void main() {
       bool globalFirst = false,
       bool custom = false,
     }) {
-      final primary = country == 'CR' ? 0 : 1;
-      final secondary = country == 'CR' ? 3 : 4;
-      List<String> group(bool Function(int) predicate) => [
-        for (var i = 0; i < 118; i++)
-          if (predicate(i % 6)) 'scale_$i',
-      ];
       return [
         if (custom) ...[
           'scale_119',
@@ -332,11 +408,7 @@ void main() {
           'scale_118',
           'scale_119',
         ],
-        if (globalFirst) ...group((r) => r == 2),
-        ...group((r) => r == primary),
-        if (!globalFirst) ...group((r) => r == 2),
-        ...group((r) => r == secondary),
-        ...group((r) => r != primary && r != secondary && r != 2),
+        for (var i = 0; i < 118; i++) 'scale_$i',
       ];
     }
 
@@ -398,15 +470,15 @@ void main() {
       ],
     });
     expect(_ids(data, selected: 'CR'), [
-      'fb_comp_cr',
-      'fb_comp_laliga',
       'friendly',
+      'fb_comp_laliga',
+      'fb_comp_cr',
     ]);
   });
 
   test('without follows every competition stays visible', () {
     final data = _snapshot();
-    expect(_ids(data), ['fb_comp_cr', 'fb_comp_laliga']);
+    expect(_ids(data), ['fb_comp_laliga', 'fb_comp_cr']);
     expect(data.matches.map((match) => match.id).toSet(), {
       'fb_match_cr',
       'fb_match_es',
@@ -425,28 +497,28 @@ void main() {
   test('following a team never promotes its whole competition', () {
     final data = _snapshot(includeCup: true);
     expect(_ids(data, follows: {'team:fb_team_lda'}), [
-      'fb_comp_cr',
       'fb_comp_laliga',
       'fb_comp_cac',
+      'fb_comp_cr',
     ]);
   });
 
-  test('country preference is a ranking signal without hiding the catalog', () {
+  test('legacy country preferences do not change relevance ranking', () {
     expect(_ids(_snapshot(), selected: 'ES'), ['fb_comp_laliga', 'fb_comp_cr']);
-    expect(_ids(_snapshot(), detected: 'CR'), ['fb_comp_cr', 'fb_comp_laliga']);
-    expect(_ids(_snapshot(), selected: 'CR'), ['fb_comp_cr', 'fb_comp_laliga']);
+    expect(_ids(_snapshot(), detected: 'CR'), ['fb_comp_laliga', 'fb_comp_cr']);
+    expect(_ids(_snapshot(), selected: 'CR'), ['fb_comp_laliga', 'fb_comp_cr']);
   });
 
-  test('switching selected countries reorders but preserves every match', () {
+  test('switching selected countries preserves order and every match', () {
     final data = _snapshot();
     final before = data.matches.map((match) => match.id).toSet();
 
-    expect(_ids(data, selected: 'CR'), ['fb_comp_cr', 'fb_comp_laliga']);
+    expect(_ids(data, selected: 'CR'), ['fb_comp_laliga', 'fb_comp_cr']);
     expect(_ids(data, selected: 'ES'), ['fb_comp_laliga', 'fb_comp_cr']);
     expect(data.matches.map((match) => match.id).toSet(), before);
   });
 
-  test('primary domestic precedes globals and domestic secondary follows', () {
+  test('editorial score outranks domestic and global categories', () {
     final base = _snapshot();
     final raw = <String, dynamic>{
       'schemaVersion': 1,
@@ -496,10 +568,10 @@ void main() {
     };
     final data = Snapshot(raw);
     expect(_ids(data, selected: 'CR'), [
-      'fb_comp_cr',
       'fb_comp_laliga',
-      'fb_comp_cr_second',
+      'fb_comp_cr',
       'fb_comp_other',
+      'fb_comp_cr_second',
     ]);
   });
 
@@ -526,7 +598,7 @@ void main() {
         selected: 'CR',
         follows: {'competition:fb_comp_cr', 'competition:fb_comp_laliga'},
         mode: CompetitionOrderMode.automatic,
-        pinned: ['fb_comp_cr', 'fb_comp_laliga'],
+        pinned: ['fb_comp_laliga', 'fb_comp_cr'],
       ),
       ['fb_comp_laliga', 'fb_comp_cr'],
     );
