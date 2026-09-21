@@ -620,6 +620,9 @@ class Lineups extends StatelessWidget {
           formation: detail.homeFormation,
           starters: detail.homeStarters,
           substitutes: detail.homeSubstitutes,
+          coach: detail.homeCoach,
+          incidents: detail.incidents,
+          side: 'home',
         ),
         const SizedBox(height: 16),
         _TeamLineup(
@@ -627,6 +630,9 @@ class Lineups extends StatelessWidget {
           formation: detail.awayFormation,
           starters: detail.awayStarters,
           substitutes: detail.awaySubstitutes,
+          coach: detail.awayCoach,
+          incidents: detail.incidents,
+          side: 'away',
         ),
       ],
     );
@@ -639,16 +645,22 @@ class _TeamLineup extends StatelessWidget {
     required this.formation,
     required this.starters,
     required this.substitutes,
+    required this.coach,
+    required this.incidents,
+    required this.side,
   });
 
   final Entity team;
   final String? formation;
   final List<Json> starters;
   final List<Json> substitutes;
+  final Json? coach;
+  final List<Json> incidents;
+  final String side;
 
   @override
   Widget build(BuildContext context) {
-    final pitchRows = formationPlayerRows(formation, starters);
+    final pitchRows = adaptiveFormationRows(formation, starters);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -676,23 +688,54 @@ class _TeamLineup extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 14),
-            const Text(
-              'Titulares',
-              style: TextStyle(color: muted, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            if (pitchRows != null)
-              _FormationPitch(pitchRows)
-            else
-              for (final player in starters) _PlayerRow(player),
+            if (starters.isNotEmpty) ...[
+              const Text(
+                'Titulares',
+                style: TextStyle(color: muted, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              _FormationPitch(pitchRows, incidents: incidents, side: side),
+            ],
             if (substitutes.isNotEmpty) ...[
               const Divider(height: 28),
               const Text(
                 'Suplentes',
                 style: TextStyle(color: muted, fontWeight: FontWeight.w700),
               ),
-              const SizedBox(height: 6),
-              for (final player in substitutes) _PlayerRow(player),
+              const SizedBox(height: 10),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final columns = constraints.maxWidth >= 460 ? 3 : 2;
+                  return GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: substitutes.length,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columns,
+                      mainAxisExtent: 82,
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 8,
+                    ),
+                    itemBuilder: (_, index) => _BenchPlayer(
+                      substitutes[index],
+                      events: lineupEventsForPlayer(
+                        substitutes[index],
+                        incidents,
+                        side,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+            if (coach != null) ...[
+              const Divider(height: 28),
+              const Text(
+                'Entrenador',
+                style: TextStyle(color: muted, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              _CoachTile(coach!),
             ],
           ],
         ),
@@ -731,42 +774,192 @@ List<List<Json>>? formationPlayerRows(String? formation, List<Json> starters) {
   return rows.reversed.toList();
 }
 
+List<List<Json>> adaptiveFormationRows(String? formation, List<Json> starters) {
+  final declared = formationPlayerRows(formation, starters);
+  if (declared != null) return declared;
+  if (starters.isEmpty) return const [];
+
+  final ordered = [...starters]
+    ..sort(
+      (a, b) => (a['lineupPosition'] as num? ?? 999).compareTo(
+        b['lineupPosition'] as num? ?? 999,
+      ),
+    );
+  final groups = <int, List<Json>>{};
+  for (final player in ordered) {
+    groups.putIfAbsent(_positionBand(player['position']), () => []).add(player);
+  }
+  if (groups.length > 1) {
+    return [
+      for (final key in groups.keys.toList()..sort((a, b) => b - a))
+        groups[key]!,
+    ];
+  }
+
+  final rows = <List<Json>>[];
+  for (var index = 0; index < ordered.length; index += 4) {
+    rows.add(ordered.sublist(index, (index + 4).clamp(0, ordered.length)));
+  }
+  return rows.reversed.toList();
+}
+
+int _positionBand(dynamic raw) {
+  final value = raw?.toString().toLowerCase() ?? '';
+  if (value.contains('goal') || value == 'gk' || value.contains('portero')) {
+    return 0;
+  }
+  if (value.contains('def') ||
+      value == 'cb' ||
+      value == 'lb' ||
+      value == 'rb') {
+    return 1;
+  }
+  if (value.contains('mid') || value.contains('medio') || value == 'cm') {
+    return 2;
+  }
+  if (value.contains('for') ||
+      value.contains('att') ||
+      value.contains('wing')) {
+    return 3;
+  }
+  return 2;
+}
+
+class LineupPlayerEvent {
+  const LineupPlayerEvent(this.type, this.minute, {this.role});
+  final String type;
+  final int? minute;
+  final String? role;
+}
+
+List<LineupPlayerEvent> lineupEventsForPlayer(
+  Json player,
+  List<Json> incidents,
+  String side,
+) {
+  final id = player['id']?.toString().trim();
+  if (id == null || id.isEmpty) return const [];
+  final result = <LineupPlayerEvent>[];
+  for (final incident in incidents) {
+    final incidentSide =
+        incident['side']?.toString() ?? incident['team']?.toString() ?? '';
+    if (incidentSide.isNotEmpty && incidentSide != side) continue;
+    final type = incident['type']?.toString() ?? 'OTHER';
+    final minute = incident['minute'] as int?;
+    if (incident['playerId']?.toString() == id) {
+      result.add(LineupPlayerEvent(type, minute));
+    }
+    if (incident['assistPlayerId']?.toString() == id) {
+      result.add(LineupPlayerEvent('ASSIST', minute));
+    }
+    if (incident['outPlayerId']?.toString() == id) {
+      result.add(LineupPlayerEvent('SUB_OUT', minute, role: 'out'));
+    }
+    if (incident['inPlayerId']?.toString() == id) {
+      result.add(LineupPlayerEvent('SUB_IN', minute, role: 'in'));
+    }
+  }
+  return result;
+}
+
 class _FormationPitch extends StatelessWidget {
-  const _FormationPitch(this.rows);
+  const _FormationPitch(
+    this.rows, {
+    required this.incidents,
+    required this.side,
+  });
 
   final List<List<Json>> rows;
+  final List<Json> incidents;
+  final String side;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 18),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(
-        color: Theme.of(context).dividerColor.withValues(alpha: .35),
+  Widget build(BuildContext context) => ClipRRect(
+    borderRadius: BorderRadius.circular(18),
+    child: CustomPaint(
+      painter: const _PitchPainter(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 22),
+        constraints: BoxConstraints(
+          minHeight: (rows.length >= 4 ? 410 : 100 + rows.length * 82)
+              .toDouble(),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            for (final row in rows)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final player in row)
+                    Expanded(
+                      child: _PitchPlayer(
+                        player,
+                        events: lineupEventsForPlayer(player, incidents, side),
+                      ),
+                    ),
+                ],
+              ),
+          ],
+        ),
       ),
-    ),
-    child: Column(
-      children: [
-        for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) ...[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final player in rows[rowIndex])
-                Expanded(child: _PitchPlayer(player)),
-            ],
-          ),
-          if (rowIndex != rows.length - 1) const SizedBox(height: 18),
-        ],
-      ],
     ),
   );
 }
 
+class _PitchPainter extends CustomPainter {
+  const _PitchPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grass = Paint()..color = const Color(0xFF123F35);
+    canvas.drawRect(Offset.zero & size, grass);
+    final stripe = Paint()..color = const Color(0x0AFFFFFF);
+    for (var i = 0; i < 8; i += 2) {
+      canvas.drawRect(
+        Rect.fromLTWH(0, size.height * i / 8, size.width, size.height / 8),
+        stripe,
+      );
+    }
+    final line = Paint()
+      ..color = Colors.white.withValues(alpha: .28)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    final field = Rect.fromLTWH(10, 10, size.width - 20, size.height - 20);
+    canvas.drawRect(field, line);
+    canvas.drawLine(
+      Offset(10, size.height / 2),
+      Offset(size.width - 10, size.height / 2),
+      line,
+    );
+    canvas.drawCircle(Offset(size.width / 2, size.height / 2), 34, line);
+    canvas.drawRect(
+      Rect.fromCenter(
+        center: Offset(size.width / 2, 10),
+        width: size.width * .48,
+        height: 70,
+      ),
+      line,
+    );
+    canvas.drawRect(
+      Rect.fromCenter(
+        center: Offset(size.width / 2, size.height - 10),
+        width: size.width * .48,
+        height: 70,
+      ),
+      line,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 class _PitchPlayer extends StatelessWidget {
-  const _PitchPlayer(this.player);
+  const _PitchPlayer(this.player, {required this.events});
 
   final Json player;
+  final List<LineupPlayerEvent> events;
 
   @override
   Widget build(BuildContext context) {
@@ -776,12 +969,19 @@ class _PitchPlayer extends StatelessWidget {
 
     return Column(
       children: [
-        CircleAvatar(
-          radius: 19,
-          child: Text(
-            player['number']?.toString() ?? '—',
-            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
-          ),
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            _PlayerAvatar(player, size: 43),
+            if (player['rating'] is num)
+              Positioned(
+                right: -6,
+                top: -5,
+                child: _RatingBadge(player['rating'] as num),
+              ),
+            if (player['captain'] == true)
+              const Positioned(left: -5, top: -5, child: _CaptainBadge()),
+          ],
         ),
         const SizedBox(height: 5),
         Text(
@@ -796,43 +996,239 @@ class _PitchPlayer extends StatelessWidget {
             '#${player['number']}',
             style: const TextStyle(fontSize: 10, color: muted),
           ),
+        if (events.isNotEmpty) ...[
+          const SizedBox(height: 3),
+          _PlayerEvents(events),
+        ],
       ],
     );
   }
 }
 
-class _PlayerRow extends StatelessWidget {
-  const _PlayerRow(this.player);
+class _BenchPlayer extends StatelessWidget {
+  const _BenchPlayer(this.player, {required this.events});
   final Json player;
+  final List<LineupPlayerEvent> events;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(8),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest
+          .withValues(alpha: .55),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: Theme.of(context).dividerColor.withValues(alpha: .2),
+      ),
+    ),
     child: Row(
       children: [
-        SizedBox(
-          width: 30,
-          child: Text(
-            player['number']?.toString() ?? '—',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: muted, fontWeight: FontWeight.w700),
-          ),
-        ),
+        _PlayerAvatar(player, size: 42),
         const SizedBox(width: 8),
         Expanded(
-          child: Text(
-            player['name']?.toString() ?? 'Jugador',
-            style: const TextStyle(fontWeight: FontWeight.w600),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                player['name']?.toString() ?? 'Jugador',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                [
+                  if (player['number'] != null) '#${player['number']}',
+                  if (player['position'] != null) player['position'].toString(),
+                ].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: muted, fontSize: 10),
+              ),
+              if (events.isNotEmpty) _PlayerEvents(events),
+            ],
           ),
         ),
-        if (player['position'] != null)
-          Text(
-            player['position'].toString(),
-            style: const TextStyle(color: muted, fontSize: 12),
-          ),
+        if (player['rating'] is num) _RatingBadge(player['rating'] as num),
       ],
     ),
   );
+}
+
+class _CoachTile extends StatelessWidget {
+  const _CoachTile(this.coach);
+  final Json coach;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest
+          .withValues(alpha: .4),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Row(
+      children: [
+        _PlayerAvatar(coach, size: 38),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            coach['name']?.toString() ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _PlayerAvatar extends StatelessWidget {
+  const _PlayerAvatar(this.player, {required this.size});
+  final Json player;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final image = player['image']?.toString();
+    final fallback = Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xFF202D2A),
+        border: Border.all(color: lime.withValues(alpha: .55)),
+      ),
+      child: Text(
+        player['number']?.toString() ?? _playerInitials(player['name']),
+        style: TextStyle(fontSize: size * .27, fontWeight: FontWeight.w900),
+      ),
+    );
+    if (image == null || image.isEmpty) return fallback;
+    return ClipOval(
+      child: Image.network(
+        image,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, error, stack) => fallback,
+      ),
+    );
+  }
+}
+
+String _playerInitials(dynamic name) {
+  final words =
+      name?.toString().trim().split(RegExp(r'\s+')) ?? const <String>[];
+  return words
+      .where((word) => word.isNotEmpty)
+      .take(2)
+      .map((word) => word[0])
+      .join()
+      .toUpperCase();
+}
+
+class _RatingBadge extends StatelessWidget {
+  const _RatingBadge(this.rating);
+  final num rating;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = rating.toDouble();
+    final color = value >= 8
+        ? lime
+        : value >= 7
+        ? Colors.amber
+        : Colors.orangeAccent;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Text(
+        value.toStringAsFixed(1),
+        style: const TextStyle(
+          color: Colors.black,
+          fontSize: 9,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _CaptainBadge extends StatelessWidget {
+  const _CaptainBadge();
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 18,
+    height: 18,
+    alignment: Alignment.center,
+    decoration: const BoxDecoration(
+      color: Colors.white,
+      shape: BoxShape.circle,
+    ),
+    child: const Text(
+      'C',
+      style: TextStyle(
+        color: Colors.black,
+        fontSize: 10,
+        fontWeight: FontWeight.w900,
+      ),
+    ),
+  );
+}
+
+class _PlayerEvents extends StatelessWidget {
+  const _PlayerEvents(this.events);
+  final List<LineupPlayerEvent> events;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 3,
+    runSpacing: 2,
+    alignment: WrapAlignment.center,
+    children: [for (final event in events) _LineupEventIcon(event)],
+  );
+}
+
+class _LineupEventIcon extends StatelessWidget {
+  const _LineupEventIcon(this.event);
+  final LineupPlayerEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, color) = switch (event.type) {
+      'GOAL' => (Icons.sports_soccer, Colors.white),
+      'ASSIST' => (Icons.assistant_rounded, lime),
+      'YELLOW_CARD' => (Icons.square_rounded, Colors.amber),
+      'RED_CARD' => (Icons.square_rounded, Colors.redAccent),
+      'SUB_IN' => (Icons.arrow_upward_rounded, lime),
+      'SUB_OUT' => (Icons.arrow_downward_rounded, Colors.redAccent),
+      _ => (Icons.circle, muted),
+    };
+    final minute = event.minute == null ? '' : " ${event.minute}′";
+    return Tooltip(
+      message: '${eventLabel(event.type)}$minute',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          if (event.minute != null)
+            Text(
+              '${event.minute}′',
+              style: const TextStyle(fontSize: 8, color: Colors.white70),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class EventBadge extends StatelessWidget {
@@ -888,6 +1284,9 @@ String eventLabel(String type) => switch (type) {
   'YELLOW_CARD' => 'Tarjeta amarilla',
   'RED_CARD' => 'Tarjeta roja',
   'SUBSTITUTION' => 'Sustitución',
+  'SUB_IN' => 'Entró',
+  'SUB_OUT' => 'Salió',
+  'ASSIST' => 'Asistencia',
   'VAR' => 'VAR',
   'MISSED_PENALTY' => 'Penal fallado',
   'KICKOFF' => 'Inicio',

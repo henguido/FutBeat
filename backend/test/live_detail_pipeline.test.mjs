@@ -48,6 +48,13 @@ test('Match API supports actual GOAL array payloads and read-only refresh', asyn
   assert.match(source, /Array\.isArray\(value\)/);
   assert.match(source, /requestUrl\.searchParams\.get\('request'\)/);
   assert.match(source, /futbeat_read_match_detail/);
+  assert.match(source, /homeScorerId/);
+  assert.match(source, /assistPlayerId/);
+  assert.match(source, /homePlayerId/);
+  assert.match(source, /outPlayerId/);
+  assert.match(source, /inPlayerId/);
+  assert.match(source, /playerRating/);
+  assert.match(source, /row\.type\)\.toLowerCase\(\) === 'coach'/);
 });
 
 test('detail fast lane runs every minute without replacing LIVE cadence', async () => {

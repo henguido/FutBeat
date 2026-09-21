@@ -183,6 +183,8 @@ class MatchDetail {
   List<Json> get awayStarters => _maps(away['starters']);
   List<Json> get homeSubstitutes => _maps(home['substitutes']);
   List<Json> get awaySubstitutes => _maps(away['substitutes']);
+  Json? get homeCoach => _nullableMap(home['coach']);
+  Json? get awayCoach => _nullableMap(away['coach']);
   List<Json> get statistics => _maps(json['statistics']);
   List<Json> get incidents => _maps(json['incidents']);
   List<Json> get videos => _maps(json['videos']);
@@ -194,6 +196,9 @@ class MatchDetail {
 
   static Json _map(dynamic value) =>
       value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+
+  static Json? _nullableMap(dynamic value) =>
+      value is Map ? Map<String, dynamic>.from(value) : null;
 
   static List<Json> _maps(dynamic value) => value is List
       ? value

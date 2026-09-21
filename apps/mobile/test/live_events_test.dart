@@ -209,6 +209,7 @@ void main() {
           },
         ],
         'substitutes': <dynamic>[],
+        'coach': {'name': 'Home Coach'},
       },
       'away': {
         'formation': '4-2-3-1',
@@ -240,6 +241,7 @@ void main() {
     expect(detail.homeFormation, '4-3-3');
     expect(detail.awayFormation, '4-2-3-1');
     expect(detail.homeStarters.single['name'], 'Home One');
+    expect(detail.homeCoach?['name'], 'Home Coach');
     expect(detail.statistics.single['home'], '55%');
     expect(detail.incidents.single['minute'], 44);
     expect(detail.referee, 'Ref Test');

@@ -76,6 +76,10 @@ function normalizeLineupPlayer(value: unknown) {
     country: cleanText(row.playerCountry) || null,
     age: Number.isFinite(Number(row.playerAge)) ? Number(row.playerAge) : null,
     image: safeImage(row.playerImage ?? nested.image),
+    rating: Number.isFinite(Number(row.playerRating ?? row.rating))
+      ? Number(row.playerRating ?? row.rating)
+      : null,
+    captain: row.captain === true || cleanText(row.captain).toLowerCase() === 'true',
   };
 }
 
@@ -97,6 +101,10 @@ function normalizeLineupSide(lineups: unknown, side: 'home' | 'away') {
       starters: players(['starting_lineups', 'startinglineups', 'starter']),
       substitutes: players(['substitutes', 'substitute']),
       missing: players(['missing_players', 'missingplayers', 'missing']),
+      coach: rows
+        .filter((row) => cleanText(row.type).toLowerCase() === 'coach')
+        .map(normalizeLineupPlayer)
+        .find((item) => item !== null) ?? null,
     };
   }
 
@@ -114,6 +122,7 @@ function normalizeLineupSide(lineups: unknown, side: 'home' | 'away') {
     starters: players('startingLineups'),
     substitutes: players('substitutes'),
     missing: players('missingPlayers'),
+    coach: normalizeLineupPlayer(data.coach),
   };
 }
 
@@ -197,6 +206,11 @@ function normalizeMatchDetail(raw: unknown, rawVideos: unknown = []) {
         cleanText(row.awayAssist) ||
         cleanText(row.assist);
       const score = cleanText(row.score);
+      const side = cleanText(row.homeScorer) || cleanText(row.homeAssist)
+        ? 'home'
+        : cleanText(row.awayScorer) || cleanText(row.awayAssist)
+        ? 'away'
+        : null;
       return {
         type,
         minute: minuteValue(row.time),
@@ -214,6 +228,9 @@ function normalizeMatchDetail(raw: unknown, rawVideos: unknown = []) {
           score,
           cleanText(row.info),
         ].filter((part) => part.length > 0).join(' · ') || null,
+        playerId: cleanText(row.homeScorerId) || cleanText(row.awayScorerId) || null,
+        assistPlayerId: cleanText(row.homeAssistId) || cleanText(row.awayAssistId) || null,
+        side,
       };
     }),
     ...asList(payload.cards).map((value) => {
@@ -229,10 +246,20 @@ function normalizeMatchDetail(raw: unknown, rawVideos: unknown = []) {
           cleanText(row.awayFault) ||
           cleanText(row.info) ||
           null,
+        playerId: cleanText(row.homePlayerId) || cleanText(row.awayPlayerId) || null,
+        side: cleanText(row.homeFault)
+          ? 'home'
+          : cleanText(row.awayFault)
+          ? 'away'
+          : null,
       };
     }),
     ...asList(payload.substitutions).map((value) => {
       const row = asRecord(value);
+      const playerIds = cleanText(row.substitutionPlayerId)
+        .split('|')
+        .map((part) => part.trim())
+        .filter(Boolean);
       return {
         type: 'SUBSTITUTION',
         minute: minuteValue(row.time),
@@ -240,6 +267,8 @@ function normalizeMatchDetail(raw: unknown, rawVideos: unknown = []) {
         label: 'Sustitución',
         detail: cleanText(row.substitution) || null,
         team: cleanText(row.team) || null,
+        outPlayerId: playerIds[0] || null,
+        inPlayerId: playerIds[1] || null,
       };
     }),
   ].sort((a, b) => (a.minute ?? 999) - (b.minute ?? 999));
