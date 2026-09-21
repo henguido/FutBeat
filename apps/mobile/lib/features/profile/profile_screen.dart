@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/providers.dart';
 import '../../core/push.dart';
+import 'competition_order_preferences.dart';
 import 'country_preferences.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -194,6 +195,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
           const SizedBox(height: 8),
           const CountryPreferencePanel(),
+          const SizedBox(height: 12),
+          const CompetitionOrderPanel(),
           const SizedBox(height: 20),
           const Text(
             'Preferencias',

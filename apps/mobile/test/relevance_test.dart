@@ -8,12 +8,20 @@ Entity _entity(
   String country, {
   String? competitionId,
   int? relevanceScore,
+  int? domesticTier,
+  String? countryCode,
+  String? competitionClass,
+  bool? isGlobalRelevant,
 }) => Entity({
   'id': id,
   'name': name,
   'country': country,
   'competitionId': ?competitionId,
   'relevanceScore': ?relevanceScore,
+  'domesticTier': ?domesticTier,
+  'countryCode': ?countryCode,
+  'competitionClass': ?competitionClass,
+  'isGlobalRelevant': ?isGlobalRelevant,
   'aliases': <dynamic>[],
 });
 
@@ -28,18 +36,21 @@ Snapshot _snapshot() => Snapshot({
       'id': 'fb_comp_eng',
       'name': 'Premier League',
       'country': 'England',
+      'countryCode': 'GB',
       'relevanceScore': 930,
     },
     {
       'id': 'fb_comp_cr',
       'name': 'Liga Promerica',
       'country': 'Costa Rica',
+      'countryCode': 'CR',
       'relevanceScore': 660,
     },
     {
       'id': 'fb_comp_pt',
       'name': 'Primeira Liga',
       'country': 'Portugal',
+      'countryCode': 'PT',
       'relevanceScore': 790,
     },
   ],
@@ -48,12 +59,14 @@ Snapshot _snapshot() => Snapshot({
       'id': 'fb_team_sporting_cr',
       'name': 'Sporting San José',
       'country': 'Costa Rica',
+      'countryCode': 'CR',
       'competitionId': 'fb_comp_cr',
     },
     {
       'id': 'fb_team_sporting_pt',
       'name': 'Sporting CP',
       'country': 'Portugal',
+      'countryCode': 'PT',
       'competitionId': 'fb_comp_pt',
     },
   ],
@@ -80,6 +93,45 @@ void main() {
     expect(
       competitionImportance(premier),
       greaterThan(competitionImportance(weak)),
+    );
+  });
+
+  test('feed categories are explicit and relevance only orders a category', () {
+    final primary = _entity(
+      'primary',
+      'Primary',
+      'Costa Rica',
+      relevanceScore: 500,
+      domesticTier: 1,
+      countryCode: 'CR',
+    );
+    final global = _entity(
+      'global',
+      'Global',
+      'Europe',
+      relevanceScore: 970,
+      competitionClass: 'international_club',
+      isGlobalRelevant: true,
+    );
+    final secondary = _entity(
+      'secondary',
+      'Secondary',
+      'Costa Rica',
+      relevanceScore: 200,
+      domesticTier: 2,
+      countryCode: 'CR',
+    );
+    expect(
+      competitionFeedCategory(primary, follows: const {}, userCountry: 'CR'),
+      CompetitionFeedCategory.domesticPrimary,
+    );
+    expect(
+      competitionFeedCategory(global, follows: const {}, userCountry: 'CR'),
+      CompetitionFeedCategory.globalRelevance,
+    );
+    expect(
+      competitionFeedCategory(secondary, follows: const {}, userCountry: 'CR'),
+      CompetitionFeedCategory.domesticSecondary,
     );
   });
 

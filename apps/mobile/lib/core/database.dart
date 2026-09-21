@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 part 'database.g.dart';
@@ -15,6 +17,13 @@ class Preferences extends Table {
   TextColumn get selectedCountry => text().nullable()();
   BoolColumn get bootstrapDismissed =>
       boolean().withDefault(const Constant(false))();
+  TextColumn get competitionOrderMode =>
+      text().withDefault(const Constant('automatic'))();
+  TextColumn get competitionOrderPreference =>
+      text().withDefault(const Constant('country_first'))();
+  TextColumn get pinnedCompetitionIds =>
+      text().withDefault(const Constant('[]'))();
+  DateTimeColumn get competitionOrderUpdatedAt => dateTime().nullable()();
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -42,7 +51,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor])
     : super(executor ?? driftDatabase(name: 'futbeat'));
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) => m.createAll(),
@@ -52,6 +61,17 @@ class AppDatabase extends _$AppDatabase {
         await m.createTable(temporaryInterests);
       }
       if (from < 3) await m.createTable(calendarSnapshots);
+      if (from >= 2 && from < 4) {
+        await m.addColumn(preferences, preferences.competitionOrderMode);
+        await m.addColumn(preferences, preferences.competitionOrderPreference);
+        await m.addColumn(preferences, preferences.pinnedCompetitionIds);
+        await m.addColumn(preferences, preferences.competitionOrderUpdatedAt);
+        await customStatement(
+          'UPDATE preferences SET competition_order_updated_at = '
+          "CAST(strftime('%s', 'now') AS INTEGER) "
+          'WHERE competition_order_updated_at IS NULL',
+        );
+      }
     },
   );
   Stream<Set<String>> watchFollows() => select(follows)
@@ -77,12 +97,22 @@ class AppDatabase extends _$AppDatabase {
           detectedCountry: row?.detectedCountry,
           selectedCountry: row?.selectedCountry,
           bootstrapDismissed: row?.bootstrapDismissed ?? false,
+          competitionOrderMode:
+              row?.competitionOrderMode ?? CompetitionOrderMode.automatic,
+          competitionOrderPreference:
+              row?.competitionOrderPreference ??
+              CompetitionOrderPreference.countryFirst,
+          pinnedCompetitionIds: _decodeIds(row?.pinnedCompetitionIds),
+          competitionOrderUpdatedAt: row?.competitionOrderUpdatedAt,
         ),
       );
   Future<void> savePreference({
     String? detectedCountry,
     String? selectedCountry,
     bool? bootstrapDismissed,
+    String? competitionOrderMode,
+    String? competitionOrderPreference,
+    List<String>? pinnedCompetitionIds,
   }) async {
     final old = await (select(
       preferences,
@@ -94,6 +124,28 @@ class AppDatabase extends _$AppDatabase {
         selectedCountry: Value(selectedCountry),
         bootstrapDismissed: Value(
           bootstrapDismissed ?? old?.bootstrapDismissed ?? false,
+        ),
+        competitionOrderMode: Value(
+          competitionOrderMode ??
+              old?.competitionOrderMode ??
+              CompetitionOrderMode.automatic,
+        ),
+        competitionOrderPreference: Value(
+          competitionOrderPreference ??
+              old?.competitionOrderPreference ??
+              CompetitionOrderPreference.countryFirst,
+        ),
+        pinnedCompetitionIds: Value(
+          pinnedCompetitionIds == null
+              ? old?.pinnedCompetitionIds ?? '[]'
+              : jsonEncode(pinnedCompetitionIds.toSet().toList()),
+        ),
+        competitionOrderUpdatedAt: Value(
+          competitionOrderMode != null ||
+                  competitionOrderPreference != null ||
+                  pinnedCompetitionIds != null
+              ? DateTime.now().toUtc()
+              : old?.competitionOrderUpdatedAt ?? DateTime.now().toUtc(),
         ),
       ),
     );
@@ -151,9 +203,39 @@ class CountryPreference {
     required this.detectedCountry,
     required this.selectedCountry,
     required this.bootstrapDismissed,
+    this.competitionOrderMode = CompetitionOrderMode.automatic,
+    this.competitionOrderPreference = CompetitionOrderPreference.countryFirst,
+    this.pinnedCompetitionIds = const <String>[],
+    this.competitionOrderUpdatedAt,
   });
   final String? detectedCountry;
   final String? selectedCountry;
   final bool bootstrapDismissed;
+  final String competitionOrderMode;
+  final String competitionOrderPreference;
+  final List<String> pinnedCompetitionIds;
+  final DateTime? competitionOrderUpdatedAt;
   String? get effectiveCountry => selectedCountry ?? detectedCountry;
+}
+
+abstract final class CompetitionOrderMode {
+  static const automatic = 'automatic';
+  static const personalized = 'personalized';
+}
+
+abstract final class CompetitionOrderPreference {
+  static const globalFirst = 'global_first';
+  static const countryFirst = 'country_first';
+}
+
+List<String> _decodeIds(String? raw) {
+  try {
+    return (jsonDecode(raw ?? '[]') as List)
+        .map((value) => value.toString())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList();
+  } catch (_) {
+    return const <String>[];
+  }
 }
