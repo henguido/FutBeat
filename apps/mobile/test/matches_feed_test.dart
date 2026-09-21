@@ -209,6 +209,63 @@ List<String> _ids(
 ).map((competition) => competition.id).toList();
 
 void main() {
+  test('explicit null editorial fields preserve every ordering group', () {
+    final base = _snapshot();
+    final competitions = [
+      for (final id in [
+        'favorite',
+        'pinned',
+        'primary',
+        'global',
+        'secondary',
+        'rest',
+      ])
+        {
+          'id': id,
+          'name': id,
+          'countryCode': ['primary', 'secondary'].contains(id) ? 'CR' : null,
+          'domesticTier': id == 'primary' ? 1 : null,
+          'competitionClass': id == 'global' ? 'international_club' : 'other',
+          'relevanceScore': id == 'global' ? 970 : 100,
+          'isPrimaryDomestic': id == 'primary',
+          'isGlobalRelevant': id == 'global',
+          'audienceClass': 'unknown',
+          'relevanceSource': id == 'global' ? 'editorial' : 'derived',
+        },
+    ];
+    final data = Snapshot({
+      'schemaVersion': 1,
+      'demo': false,
+      'updatedAt': base.updatedAt.toIso8601String(),
+      'competitions': competitions,
+      'teams': base.teams.map((item) => item.json).toList(),
+      'players': <dynamic>[],
+      'matches': [
+        for (final competition in competitions)
+          {
+            ...base.matches.first.json,
+            'id': 'match_${competition['id']}',
+            'competitionId': competition['id'],
+          },
+      ],
+      'standings': <dynamic>[],
+    });
+    expect(
+      _ids(
+        data,
+        follows: {'competition:favorite', 'competition:pinned'},
+        pinned: ['favorite', 'pinned'],
+        mode: CompetitionOrderMode.personalized,
+      ),
+      ['favorite', 'pinned', 'primary', 'global', 'secondary', 'rest'],
+    );
+    final unknown = data.competitions.firstWhere((item) => item.id == 'rest');
+    expect(unknown.json.containsKey('countryCode'), isTrue);
+    expect(unknown.json['countryCode'], isNull);
+    expect(unknown.json.containsKey('domesticTier'), isTrue);
+    expect(unknown.json['domesticTier'], isNull);
+  });
+
   test('120 competitions and 1200 matches retain every group across ordering modes', () {
     final competitions = [
       for (var i = 0; i < 120; i++)

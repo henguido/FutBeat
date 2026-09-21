@@ -1,0 +1,265 @@
+{
+  "source": "Previously read 500-competition catalog, 2026-09-21; local reproduction, not the exact 277-competition day response.",
+  "competitions": [
+    {
+      "id": "fb_competition_665500f19ba64bf4895d3f4880560aec",
+      "name": "1st League",
+      "country": "Bosnia and Herzegovina"
+    },
+    {
+      "id": "fb_competition_fb6fc6cb51b149a78dbca41801cf2179",
+      "name": "Premijer Liga",
+      "country": "Bosnia and Herzegovina and Herzegovina"
+    },
+    {
+      "id": "fb_competition_990b8c6d8bc648c8bcfe15e252fa1371",
+      "name": "China League One",
+      "country": "China PR"
+    },
+    {
+      "id": "fb_competition_4306d7f83ff142dd9bba9e2728502414",
+      "name": "China League Two",
+      "country": "China PR"
+    },
+    {
+      "id": "fb_competition_c65c2d286ae74295a3038b7cc301751b",
+      "name": "Chinese Super League",
+      "country": "China PR"
+    },
+    {
+      "id": "fb_competition_0d346a2228444e29b76c633273905b15",
+      "name": "FA Cup",
+      "country": "China PR"
+    },
+    {
+      "id": "fb_competition_57c519b8077f44f283d06b4155884f8f",
+      "name": "Taiwan Football Premier League",
+      "country": "Chinese Taipei"
+    },
+    {
+      "id": "fb_competition_0ab954590fb341df9218976a163b203d",
+      "name": "1. Liga U19",
+      "country": "Czech Republic"
+    },
+    {
+      "id": "fb_competition_05e1f5a823404a17abf74537710f7fcd",
+      "name": "1. Liga Women",
+      "country": "Czech Republic"
+    },
+    {
+      "id": "fb_competition_149ee987452f47609d6f988588a71129",
+      "name": "3. liga",
+      "country": "Czech Republic"
+    },
+    {
+      "id": "fb_competition_9e065ab689ca412c9415a61f081f0fae",
+      "name": "4. liga",
+      "country": "Czech Republic"
+    },
+    {
+      "id": "fb_competition_d89cae3d4f8e4301a423412af198a50e",
+      "name": "Cup",
+      "country": "Czech Republic"
+    },
+    {
+      "id": "fb_competition_805c62ca848c4697bb8df650932025fe",
+      "name": "Czech Liga",
+      "country": "Czech Republic"
+    },
+    {
+      "id": "fb_competition_f505208f15f8482ea7c6d2f87916d2f8",
+      "name": "FNL",
+      "country": "Czech Republic"
+    },
+    {
+      "id": "fb_competition_c53ebda91cd84025aacd4f161b9a9b9e",
+      "name": "U20 Elite League",
+      "country": "eurocups"
+    },
+    {
+      "id": "fb_competition_fc613c65ebd142028a70d6943410f895",
+      "name": "UEFA U19 Championship Qualification",
+      "country": "eurocups"
+    },
+    {
+      "id": "fb_competition_1bc633011c66422aaeaddfce796d2ccb",
+      "name": "UEFA Youth League",
+      "country": "eurocups"
+    },
+    {
+      "id": "fb_competition_2f484dc8a8d44e078ed8e8792dad60c6",
+      "name": "FA Cup",
+      "country": "Hong Kong"
+    },
+    {
+      "id": "fb_competition_81e1e92b8adb42a7befaa5f18e33adb8",
+      "name": "Premier League",
+      "country": "Hong Kong"
+    },
+    {
+      "id": "fb_competition_517fed018fd74e51a1a2bead6eb0b136",
+      "name": "Senior Shield",
+      "country": "Hong Kong"
+    },
+    {
+      "id": "fb_competition_3a6d94543ff74a32a720e2af768c714c",
+      "name": "AFC Challenge League",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_a8f943f3c774435a9b0ad91059eebe7c",
+      "name": "AFC Champions League Elite",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_e6589c011bbc4c438d657003a354b528",
+      "name": "AFC Champions League Two",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_fe221277254e42569a3e157a59da15ab",
+      "name": "AFC U20 Asian Cup",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_4925c6d800124291b511a341a1a1fa19",
+      "name": "AFC Women's Champions League",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_fb046a44f2664bdca1226a1ebbaa0b88",
+      "name": "Africa Cup of Nations Qualification",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_27b0951cbe3a4f31905a78f411eac06b",
+      "name": "ASEAN Championship",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_972264a6f79a40b7a8fcd90dd386fb7a",
+      "name": "ASEAN Club Championship",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_1c213a93d7f54bdca97622708514c020",
+      "name": "Asian Cup Qualification",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_ecf5cbd4e4b846f1bcf0ea378cf11985",
+      "name": "Asian Games",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_f2dcb3caf40045d99afd7e2754998bbb",
+      "name": "CAF Champions League",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_7e94f79fe2674024a3ffc5bcf775e905",
+      "name": "CAF Confederation Cup",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_3daa2d6be9d947e5811faccd9f610216",
+      "name": "Campeones Cup",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_dc95cb46bc6047468ccc33f584fefbc6",
+      "name": "CECAFA U20 Championship",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_22dc1db4988e4d328d30b3841a594fff",
+      "name": "Concacaf Caribbean Cup",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_2746e87598924461a33510d7c477b475",
+      "name": "Concacaf Central American Cup",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_91cb1e8d6be14dcd908464d7416470b0",
+      "name": "FIFA U20 Women's World Cup",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_252e0728c39f4519bf20f77443e83979",
+      "name": "Friendlies Women",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_08d5197e7787451fb551c3a14f8525e9",
+      "name": "Leagues Cup",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_2136a17488884bd082672d9fa1b2339f",
+      "name": "Mediterranean Games",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_705ad21c9f254c368e1aba549a2bd9c4",
+      "name": "OFC Champions League",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_24a9bb3a6b714a8b839245395803d64d",
+      "name": "Premier League International Cup",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_62d8738d0072470e95388baf11163cb9",
+      "name": "South American Youth Games",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_ecc96fcddbb44e52ba68079a7118083d",
+      "name": "UEFA U17 Championship Qualification",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_50e1d69cdff24f828047d3fdd948300c",
+      "name": "UEFA U21 Championship Qualification",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_d6699d1797504afea30f64d9e5273d46",
+      "name": "UEFA Women's Champions League",
+      "country": "intl"
+    },
+    {
+      "id": "fb_competition_87ca4ca12be347a0ba533ec1d388f285",
+      "name": "Premier League",
+      "country": "Kyrgyz Republic"
+    },
+    {
+      "id": "fb_competition_38603eb1ea594b59b8479feb9cd4754b",
+      "name": "National League",
+      "country": "Myanmar"
+    },
+    {
+      "id": "fb_competition_bc483ca69d90410185c7c00abcb2123a",
+      "name": "First Division",
+      "country": "Republic of Ireland"
+    },
+    {
+      "id": "fb_competition_8cf1639e78e34cfe8c0c9c43ad7a5ac7",
+      "name": "Premier Division",
+      "country": "Republic of Ireland"
+    },
+    {
+      "id": "fb_competition_f1ada0af296a48f9973ba9a74a37dd5d",
+      "name": "FIFA Intercontinental Cup",
+      "country": "Worldcup"
+    },
+    {
+      "id": "fb_competition_a6798ac9d660450e896162de0235bc26",
+      "name": "Women's WC Qualification Europe",
+      "country": "Worldcup"
+    }
+  ]
+}

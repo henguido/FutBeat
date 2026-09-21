@@ -383,9 +383,9 @@ test('canonical relevance sample keeps major competitions above secondary tiers'
       ['Bundesliga', 'Germany', 900],
       ['Copa Libertadores', 'CONMEBOL', 950],
       ['Liga Promerica', 'Costa Rica', 660],
-      ['Segunda División', 'Costa Rica', 180],
-      ['Liga 2', 'Spain', 180],
-      ['Second League', 'England', 180],
+      ['Segunda División', 'Costa Rica', 100],
+      ['Liga 2', 'Spain', 100],
+      ['Second League', 'England', 100],
     ];
     for (const [name, country, expected] of samples) {
       const score = (await db.query(
