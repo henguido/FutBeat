@@ -571,6 +571,36 @@ async function syncOneMatchDetail() {
       throw new Error("GOAL match detail payload is invalid");
     }
 
+    const detailRecord = detail as Record<string, unknown>;
+    const lineupRows = Array.isArray(detailRecord.lineups)
+      ? detailRecord.lineups
+      : [];
+    const playerItems = [...new Map(
+      lineupRows
+        .map((value) => value && typeof value === "object"
+          ? value as Record<string, unknown>
+          : {})
+        .filter((row) => {
+          const type = clean(row.type).toLowerCase();
+          return type.startsWith("start") || type.startsWith("sub");
+        })
+        .map((row) => {
+          const external = clean(row.playerId) || clean(row.playerKey);
+          return [external, {
+            kind: "player",
+            external,
+            name: clean(row.lineupPlayer) || clean(row.playerName),
+          }] as const;
+        })
+        .filter(([external]) => external),
+    ).values()];
+    if (playerItems.length > 0) {
+      await rpc("futbeat_resolve_global_entities", {
+        p_provider: "goal_api",
+        p_items: playerItems,
+      }, 30000);
+    }
+
     const fetchedAt = new Date().toISOString();
     const stored = await rpc("futbeat_store_match_detail", {
       p_match_id: matchId,

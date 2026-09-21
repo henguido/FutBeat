@@ -226,9 +226,9 @@ class FootballMatch {
       ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status) &&
       costaRicaNow().isAfter(startTime.add(const Duration(minutes: 15)));
 
-  bool get isUpcoming =>
-      ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status) &&
-      !isAwaitingUpdate;
+  bool get isScheduled =>
+      ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status);
+  bool get isUpcoming => isScheduled && !isAwaitingUpdate;
   String get score => json['score'] == null
       ? '—'
       : '${json['score']['home']} - ${json['score']['away']}';
@@ -243,7 +243,6 @@ class FootballMatch {
   }
 
   String get statusLabel {
-    if (isAwaitingUpdate) return '';
     return switch (status) {
       'LIVE' => "${json['minute'] ?? '—'}′ · En vivo",
       'HALFTIME' => 'Descanso',
@@ -254,7 +253,8 @@ class FootballMatch {
       'SUSPENDED' => 'Suspendido',
       'ABANDONED' => 'Abandonado',
       'CANCELLED' => 'Cancelado',
-      _ => 'Próximo',
+      'DISCOVERED' || 'SCHEDULED' || 'PRE_MATCH' => 'Programado',
+      _ => 'Estado no disponible',
     };
   }
 

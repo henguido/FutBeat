@@ -130,7 +130,7 @@ void main() {
     },
   );
 
-  test('overdue scheduled match is not presented as upcoming', () {
+  test('overdue scheduled match keeps its kickoff presentation', () {
     final now = costaRicaNow();
     final match = FootballMatch({
       'id': 'fb_match_overdue',
@@ -149,8 +149,9 @@ void main() {
     });
 
     expect(match.isAwaitingUpdate, isTrue);
+    expect(match.isScheduled, isTrue);
     expect(match.isUpcoming, isFalse);
-    expect(match.statusLabel, isEmpty);
+    expect(match.statusLabel, 'Programado');
   });
 
   test(

@@ -21,6 +21,7 @@ class MatchScreen extends ConsumerStatefulWidget {
 }
 
 class _MatchScreenState extends ConsumerState<MatchScreen> {
+  final Set<String> _recordedTeamInterests = {};
   @override
   void initState() {
     super.initState();
@@ -86,6 +87,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen> {
           'Vuelve a Partidos para consultar los encuentros disponibles.',
         ),
       );
+    }
+
+    for (final teamId in [match.homeId, match.awayId]) {
+      if (_recordedTeamInterests.add(teamId)) {
+        Future.microtask(() => recordTemporaryInterest(ref, 'team', teamId));
+      }
     }
 
     final competition = data.competition(match.competitionId);

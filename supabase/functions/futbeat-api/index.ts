@@ -57,16 +57,24 @@ const minuteParts = (value: unknown) => {
 const minuteValue = (value: unknown) => minuteParts(value).minute;
 const extraMinuteValue = (value: unknown) => minuteParts(value).extraMinute;
 
-function normalizeLineupPlayer(value: unknown) {
+type PlayerMedia = Record<string, { canonicalId?: unknown; image?: unknown }>;
+
+function normalizeLineupPlayer(value: unknown, media: PlayerMedia = {}) {
   const row = asRecord(value);
   const nested = asRecord(row.player);
+  const providerId =
+    cleanText(row.playerId) ||
+    cleanText(row.playerKey) ||
+    cleanText(nested.id);
+  const canonical = asRecord(media[providerId]);
   const name =
     cleanText(row.lineupPlayer) ||
     cleanText(nested.name) ||
     cleanText(row.playerName);
   if (!name) return null;
   return {
-    id: cleanText(row.playerId) || cleanText(nested.id) || null,
+    id: providerId || null,
+    canonicalId: cleanText(canonical.canonicalId) || null,
     name,
     number: cleanText(row.lineupNumber) || null,
     position: cleanText(row.playerPosition) || null,
@@ -75,7 +83,7 @@ function normalizeLineupPlayer(value: unknown) {
       : null,
     country: cleanText(row.playerCountry) || null,
     age: Number.isFinite(Number(row.playerAge)) ? Number(row.playerAge) : null,
-    image: safeImage(row.playerImage ?? nested.image),
+    image: safeImage(canonical.image) ?? safeImage(row.playerImage ?? nested.image),
     rating: Number.isFinite(Number(row.playerRating ?? row.rating))
       ? Number(row.playerRating ?? row.rating)
       : null,
@@ -83,7 +91,11 @@ function normalizeLineupPlayer(value: unknown) {
   };
 }
 
-function normalizeLineupSide(lineups: unknown, side: 'home' | 'away') {
+function normalizeLineupSide(
+  lineups: unknown,
+  side: 'home' | 'away',
+  media: PlayerMedia = {},
+) {
   if (Array.isArray(lineups)) {
     const rows = lineups
       .map(asRecord)
@@ -91,7 +103,7 @@ function normalizeLineupSide(lineups: unknown, side: 'home' | 'away') {
     const players = (types: string[]) =>
       rows
         .filter((row) => types.includes(cleanText(row.type).toLowerCase()))
-        .map(normalizeLineupPlayer)
+        .map((row) => normalizeLineupPlayer(row, media))
         .filter((item): item is NonNullable<ReturnType<typeof normalizeLineupPlayer>> => item !== null)
         .sort((left, right) =>
           (left.lineupPosition ?? 999) - (right.lineupPosition ?? 999)
@@ -103,7 +115,7 @@ function normalizeLineupSide(lineups: unknown, side: 'home' | 'away') {
       missing: players(['missing_players', 'missingplayers', 'missing']),
       coach: rows
         .filter((row) => cleanText(row.type).toLowerCase() === 'coach')
-        .map(normalizeLineupPlayer)
+        .map((row) => normalizeLineupPlayer(row, media))
         .find((item) => item !== null) ?? null,
     };
   }
@@ -112,7 +124,7 @@ function normalizeLineupSide(lineups: unknown, side: 'home' | 'away') {
   const data = asRecord(root[side]);
   const players = (key: string) =>
     asList(data[key])
-      .map(normalizeLineupPlayer)
+      .map((row) => normalizeLineupPlayer(row, media))
       .filter((item): item is NonNullable<ReturnType<typeof normalizeLineupPlayer>> => item !== null)
       .sort((left, right) =>
         (left.lineupPosition ?? 999) - (right.lineupPosition ?? 999)
@@ -122,8 +134,35 @@ function normalizeLineupSide(lineups: unknown, side: 'home' | 'away') {
     starters: players('startingLineups'),
     substitutes: players('substitutes'),
     missing: players('missingPlayers'),
-    coach: normalizeLineupPlayer(data.coach),
+    coach: normalizeLineupPlayer(data.coach, media),
   };
+}
+
+function lineupPlayerIds(raw: unknown) {
+  const payload = asRecord(asRecord(raw).payload);
+  const lineups = payload.lineups;
+  const ids = new Set<string>();
+  const add = (value: unknown) => {
+    const row = asRecord(value);
+    const nested = asRecord(row.player);
+    const id = cleanText(row.playerId) || cleanText(row.playerKey) || cleanText(nested.id);
+    if (id) ids.add(id);
+  };
+  if (Array.isArray(lineups)) {
+    lineups.map(asRecord)
+      .filter((row) => {
+        const type = cleanText(row.type).toLowerCase();
+        return type.startsWith('start') || type.startsWith('sub');
+      })
+      .forEach(add);
+  } else {
+    const root = asRecord(lineups);
+    for (const side of ['home', 'away']) {
+      const team = asRecord(root[side]);
+      [...asList(team.startingLineups), ...asList(team.substitutes)].forEach(add);
+    }
+  }
+  return [...ids].slice(0, 100);
 }
 
 function normalizeStatistics(value: unknown) {
@@ -160,7 +199,11 @@ function normalizeStatistics(value: unknown) {
     }));
 }
 
-function normalizeMatchDetail(raw: unknown, rawVideos: unknown = []) {
+function normalizeMatchDetail(
+  raw: unknown,
+  rawVideos: unknown = [],
+  media: PlayerMedia = {},
+) {
   const envelope = asRecord(raw);
   const videos = asList(rawVideos)
     .map(asRecord)
@@ -273,8 +316,8 @@ function normalizeMatchDetail(raw: unknown, rawVideos: unknown = []) {
     }),
   ].sort((a, b) => (a.minute ?? 999) - (b.minute ?? 999));
 
-  const home = normalizeLineupSide(lineups, 'home');
-  const away = normalizeLineupSide(lineups, 'away');
+  const home = normalizeLineupSide(lineups, 'home', media);
+  const away = normalizeLineupSide(lineups, 'away', media);
   if (!home.formation) home.formation = cleanText(payload.homeTeamSystem) || null;
   if (!away.formation) away.formation = cleanText(payload.awayTeamSystem) || null;
 
@@ -469,9 +512,23 @@ export default {
         return replyNoStore(404, { error: 'Partido no encontrado' });
       }
 
+      let playerMedia: PlayerMedia = {};
+      const playerIds = lineupPlayerIds(detail);
+      if (playerIds.length > 0) {
+        const { data: media, error: mediaError } = await ctx.supabaseAdmin.rpc(
+          'futbeat_read_lineup_player_media',
+          { p_provider: 'goal_api', p_external_ids: playerIds },
+        );
+        if (mediaError) {
+          console.warn('lineup player media unavailable');
+        } else {
+          playerMedia = asRecord(media) as PlayerMedia;
+        }
+      }
+
       return replyNoStore(
         200,
-        normalizeMatchDetail(detail, videosError ? [] : videos),
+        normalizeMatchDetail(detail, videosError ? [] : videos, playerMedia),
       );
     }
 
