@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -29,8 +30,9 @@ class DemoRepository implements FootballRepository {
 }
 
 class ApiRepository implements FootballRepository {
-  ApiRepository(this.dio);
+  ApiRepository(this.dio, [this.database]);
   final Dio dio;
+  final AppDatabase? database;
 
   final Map<String, Snapshot> _snapshotCache = <String, Snapshot>{};
 
@@ -135,6 +137,61 @@ class ApiRepository implements FootballRepository {
     );
   }
 
+  Stream<Snapshot> watchDate(DateTime date) async* {
+    final value = _dateParam(date);
+    final key = 'calendar:$value';
+    Snapshot? cached;
+    final memory = _snapshotCache[key];
+    if (memory != null) {
+      cached = memory;
+    } else {
+      final stored = await database?.readCalendarSnapshot(value);
+      if (stored != null) {
+        try {
+          cached = _canonical(jsonDecode(stored) as Json).asStale();
+          _remember(key, cached);
+        } catch (_) {
+          // Ignore a corrupt local row; the canonical endpoint can replace it.
+        }
+      }
+    }
+    if (cached != null) yield cached;
+
+    try {
+      final raw = await _getJson(
+        '/v1/calendar',
+        queryParameters: {'date': value, 'timezone': 'America/Costa_Rica'},
+      );
+      final fresh = _canonical(raw);
+      _remember(key, fresh);
+      await database?.saveCalendarSnapshot(value, jsonEncode(raw));
+      yield fresh;
+      unawaited(prefetchDate(date.subtract(const Duration(days: 1))));
+      unawaited(prefetchDate(date.add(const Duration(days: 1))));
+    } catch (error, stack) {
+      if (cached == null) Error.throwWithStackTrace(error, stack);
+    }
+  }
+
+  Future<void> prefetchDate(DateTime date) async {
+    final value = _dateParam(date);
+    if (_snapshotCache.containsKey('calendar:$value') ||
+        await database?.readCalendarSnapshot(value) != null) {
+      return;
+    }
+    try {
+      final raw = await _getJson(
+        '/v1/calendar',
+        queryParameters: {'date': value, 'timezone': 'America/Costa_Rica'},
+      );
+      final snapshot = _canonical(raw);
+      _remember('calendar:$value', snapshot);
+      await database?.saveCalendarSnapshot(value, jsonEncode(raw));
+    } catch (_) {
+      // Prefetch is opportunistic and never changes the visible request.
+    }
+  }
+
   Future<Snapshot> loadEntity(String type, String id) => _loadSnapshot(
     'entity:$type:$id',
     '/v1/entity',
@@ -203,16 +260,21 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
   );
 
   ref.onDispose(() => dio.close(force: true));
-  return ApiRepository(dio);
+  return ApiRepository(dio, ref.watch(databaseProvider));
 });
 
 final snapshotProvider = FutureProvider<Snapshot>(
   (ref) => ref.watch(repositoryProvider).load(),
 );
 
-final calendarSnapshotProvider = FutureProvider.family<Snapshot, DateTime>(
-  (ref, date) => ref.watch(repositoryProvider).loadDate(date),
-);
+final calendarSnapshotProvider = StreamProvider.family<Snapshot, DateTime>((
+  ref,
+  date,
+) {
+  final repository = ref.watch(repositoryProvider);
+  if (repository is ApiRepository) return repository.watchDate(date);
+  return Stream.fromFuture(repository.loadDate(date));
+});
 
 final entitySnapshotProvider =
     FutureProvider.family<Snapshot, ({String type, String id})>((

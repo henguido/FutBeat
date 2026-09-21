@@ -29,6 +29,21 @@ void main() {
     },
   );
   test(
+    'calendar snapshots persist by civil date and replace stale rows',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      try {
+        await db.saveCalendarSnapshot('2026-08-20', '{"version":1}');
+        expect(await db.readCalendarSnapshot('2026-08-20'), '{"version":1}');
+        await db.saveCalendarSnapshot('2026-08-20', '{"version":2}');
+        expect(await db.readCalendarSnapshot('2026-08-20'), '{"version":2}');
+        expect(await db.readCalendarSnapshot('2026-08-21'), isNull);
+      } finally {
+        await db.close();
+      }
+    },
+  );
+  test(
     'country inference, manual selection and temporary interest stay separate',
     () async {
       final db = AppDatabase(NativeDatabase.memory());

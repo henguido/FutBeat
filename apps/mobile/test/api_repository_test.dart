@@ -1,7 +1,9 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/providers.dart';
 
 void main() {
@@ -63,6 +65,75 @@ void main() {
           throwsA(isA<DioException>()),
         );
       } finally {
+        dio.close(force: true);
+        await server.close(force: true);
+      }
+    },
+  );
+
+  test(
+    'calendar supports historical, previous-month and future civil dates',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final requested = <String>[];
+      server.listen((request) async {
+        requested.add(request.uri.queryParameters['date']!);
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          File('assets/demo.snapshot.json')
+              .readAsStringSync()
+              .replaceFirst('"demo": true', '"demo": false'),
+        );
+        await request.response.close();
+      });
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      try {
+        final repository = ApiRepository(dio);
+        for (final date in [
+          DateTime(2026, 9, 18),
+          DateTime(2026, 8, 20),
+          DateTime(2026, 7, 31),
+          DateTime(2026, 10, 12),
+        ]) {
+          expect((await repository.loadDate(date)).demo, isFalse);
+        }
+        expect(requested, [
+          '2026-09-18',
+          '2026-08-20',
+          '2026-07-31',
+          '2026-10-12',
+        ]);
+      } finally {
+        dio.close(force: true);
+        await server.close(force: true);
+      }
+    },
+  );
+
+  test(
+    'persistent calendar cache is returned when the network fails',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        request.response.statusCode = 503;
+        await request.response.close();
+      });
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      final database = AppDatabase(NativeDatabase.memory());
+      try {
+        final raw = File('assets/demo.snapshot.json')
+            .readAsStringSync()
+            .replaceFirst('"demo": true', '"demo": false');
+        await database.saveCalendarSnapshot('2026-08-20', raw);
+        final values = await ApiRepository(
+          dio,
+          database,
+        ).watchDate(DateTime(2026, 8, 20)).toList();
+        expect(values, hasLength(1));
+        expect(values.single.demo, isFalse);
+        expect(values.single.stale, isTrue);
+      } finally {
+        await database.close();
         dio.close(force: true);
         await server.close(force: true);
       }

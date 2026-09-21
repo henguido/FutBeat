@@ -282,6 +282,7 @@ Deno.serve(async (request) => {
     fromDate?: string;
     toDate?: string;
     limit?: number;
+    requestedOnly?: boolean;
     reserve?: number;
     teamId?: string;
     externalTeamId?: string;
@@ -1020,8 +1021,8 @@ Deno.serve(async (request) => {
 
   if (input.action === "calendar-plan") {
     if (
-      !validDate(input.fromDate) ||
-      !validDate(input.toDate) ||
+      (input.requestedOnly !== true &&
+        (!validDate(input.fromDate) || !validDate(input.toDate))) ||
       !Number.isInteger(input.limit) ||
       Number(input.limit) < 1 ||
       Number(input.limit) > 90
@@ -1032,14 +1033,19 @@ Deno.serve(async (request) => {
     }
 
     try {
-      const dates = await rpc("futbeat_calendar_missing_provider_dates", {
-        p_provider: "goal_api",
-        p_from_date: input.fromDate,
-        p_to_date: input.toDate,
-        p_limit: input.limit,
-      });
+      const dates = input.requestedOnly === true
+        ? await rpc("futbeat_requested_calendar_dates", {
+          p_limit: input.limit,
+        })
+        : await rpc("futbeat_calendar_missing_provider_dates", {
+          p_provider: "goal_api",
+          p_from_date: input.fromDate,
+          p_to_date: input.toDate,
+          p_limit: input.limit,
+        });
       return Response.json({
         status: "ok",
+        mode: input.requestedOnly === true ? "requested" : "background",
         dates: Array.isArray(dates) ? dates : [],
       });
     } catch (error) {

@@ -124,12 +124,14 @@ class EmptyState extends StatelessWidget {
           style: Theme.of(context).textTheme.titleMedium,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 8),
-        Text(
-          message,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: muted, height: 1.5),
-        ),
+        if (message.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: muted, height: 1.5),
+          ),
+        ],
       ],
     ),
   );
