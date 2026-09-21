@@ -473,6 +473,16 @@ export default {
         return reply(503, { error: 'Datos temporalmente no disponibles' });
       }
 
+      if (snapshot.coverage?.partial === true) {
+        const { error: requestError } = await ctx.supabaseAdmin.rpc(
+          'futbeat_request_calendar_date',
+          { p_local_date: date, p_timezone: timezone },
+        );
+        if (requestError) {
+          console.warn('calendar recovery request unavailable');
+        }
+      }
+
       return reply(200, snapshot);
     }
 

@@ -27,12 +27,22 @@ class TemporaryInterests extends Table {
   Set<Column> get primaryKey => {entityId, entityType};
 }
 
-@DriftDatabase(tables: [Follows, Preferences, TemporaryInterests])
+class CalendarSnapshots extends Table {
+  TextColumn get calendarDate => text()();
+  TextColumn get payload => text()();
+  DateTimeColumn get savedAt => dateTime()();
+  @override
+  Set<Column> get primaryKey => {calendarDate};
+}
+
+@DriftDatabase(
+  tables: [Follows, Preferences, TemporaryInterests, CalendarSnapshots],
+)
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor])
     : super(executor ?? driftDatabase(name: 'futbeat'));
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) => m.createAll(),
@@ -41,6 +51,7 @@ class AppDatabase extends _$AppDatabase {
         await m.createTable(preferences);
         await m.createTable(temporaryInterests);
       }
+      if (from < 3) await m.createTable(calendarSnapshots);
     },
   );
   Stream<Set<String>> watchFollows() => select(follows)
@@ -105,6 +116,33 @@ class AppDatabase extends _$AppDatabase {
     return query.watch().map(
       (rows) => rows.map((r) => '${r.entityType}:${r.entityId}').toSet(),
     );
+  }
+
+  Future<String?> readCalendarSnapshot(String date) async => (await (select(
+    calendarSnapshots,
+  )..where((row) => row.calendarDate.equals(date))).getSingleOrNull())?.payload;
+
+  Future<void> saveCalendarSnapshot(String date, String payload) async {
+    await into(calendarSnapshots).insertOnConflictUpdate(
+      CalendarSnapshotsCompanion.insert(
+        calendarDate: date,
+        payload: payload,
+        savedAt: DateTime.now().toUtc(),
+      ),
+    );
+    final old =
+        await (select(calendarSnapshots)
+              ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
+              ..limit(100, offset: 64))
+            .get();
+    if (old.isNotEmpty) {
+      await (delete(calendarSnapshots)..where(
+            (row) => row.calendarDate.isIn(
+              old.map((item) => item.calendarDate).toList(),
+            ),
+          ))
+          .go();
+    }
   }
 }
 

@@ -818,6 +818,281 @@ class TemporaryInterestsCompanion extends UpdateCompanion<TemporaryInterest> {
   }
 }
 
+class $CalendarSnapshotsTable extends CalendarSnapshots
+    with TableInfo<$CalendarSnapshotsTable, CalendarSnapshot> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CalendarSnapshotsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _calendarDateMeta = const VerificationMeta(
+    'calendarDate',
+  );
+  @override
+  late final GeneratedColumn<String> calendarDate = GeneratedColumn<String>(
+    'calendar_date',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
+  );
+  @override
+  late final GeneratedColumn<String> payload = GeneratedColumn<String>(
+    'payload',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _savedAtMeta = const VerificationMeta(
+    'savedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> savedAt = GeneratedColumn<DateTime>(
+    'saved_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [calendarDate, payload, savedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'calendar_snapshots';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<CalendarSnapshot> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('calendar_date')) {
+      context.handle(
+        _calendarDateMeta,
+        calendarDate.isAcceptableOrUnknown(
+          data['calendar_date']!,
+          _calendarDateMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_calendarDateMeta);
+    }
+    if (data.containsKey('payload')) {
+      context.handle(
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_payloadMeta);
+    }
+    if (data.containsKey('saved_at')) {
+      context.handle(
+        _savedAtMeta,
+        savedAt.isAcceptableOrUnknown(data['saved_at']!, _savedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_savedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {calendarDate};
+  @override
+  CalendarSnapshot map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CalendarSnapshot(
+      calendarDate: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}calendar_date'],
+      )!,
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload'],
+      )!,
+      savedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}saved_at'],
+      )!,
+    );
+  }
+
+  @override
+  $CalendarSnapshotsTable createAlias(String alias) {
+    return $CalendarSnapshotsTable(attachedDatabase, alias);
+  }
+}
+
+class CalendarSnapshot extends DataClass
+    implements Insertable<CalendarSnapshot> {
+  final String calendarDate;
+  final String payload;
+  final DateTime savedAt;
+  const CalendarSnapshot({
+    required this.calendarDate,
+    required this.payload,
+    required this.savedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['calendar_date'] = Variable<String>(calendarDate);
+    map['payload'] = Variable<String>(payload);
+    map['saved_at'] = Variable<DateTime>(savedAt);
+    return map;
+  }
+
+  CalendarSnapshotsCompanion toCompanion(bool nullToAbsent) {
+    return CalendarSnapshotsCompanion(
+      calendarDate: Value(calendarDate),
+      payload: Value(payload),
+      savedAt: Value(savedAt),
+    );
+  }
+
+  factory CalendarSnapshot.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CalendarSnapshot(
+      calendarDate: serializer.fromJson<String>(json['calendarDate']),
+      payload: serializer.fromJson<String>(json['payload']),
+      savedAt: serializer.fromJson<DateTime>(json['savedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'calendarDate': serializer.toJson<String>(calendarDate),
+      'payload': serializer.toJson<String>(payload),
+      'savedAt': serializer.toJson<DateTime>(savedAt),
+    };
+  }
+
+  CalendarSnapshot copyWith({
+    String? calendarDate,
+    String? payload,
+    DateTime? savedAt,
+  }) => CalendarSnapshot(
+    calendarDate: calendarDate ?? this.calendarDate,
+    payload: payload ?? this.payload,
+    savedAt: savedAt ?? this.savedAt,
+  );
+  CalendarSnapshot copyWithCompanion(CalendarSnapshotsCompanion data) {
+    return CalendarSnapshot(
+      calendarDate: data.calendarDate.present
+          ? data.calendarDate.value
+          : this.calendarDate,
+      payload: data.payload.present ? data.payload.value : this.payload,
+      savedAt: data.savedAt.present ? data.savedAt.value : this.savedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CalendarSnapshot(')
+          ..write('calendarDate: $calendarDate, ')
+          ..write('payload: $payload, ')
+          ..write('savedAt: $savedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(calendarDate, payload, savedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CalendarSnapshot &&
+          other.calendarDate == this.calendarDate &&
+          other.payload == this.payload &&
+          other.savedAt == this.savedAt);
+}
+
+class CalendarSnapshotsCompanion extends UpdateCompanion<CalendarSnapshot> {
+  final Value<String> calendarDate;
+  final Value<String> payload;
+  final Value<DateTime> savedAt;
+  final Value<int> rowid;
+  const CalendarSnapshotsCompanion({
+    this.calendarDate = const Value.absent(),
+    this.payload = const Value.absent(),
+    this.savedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  CalendarSnapshotsCompanion.insert({
+    required String calendarDate,
+    required String payload,
+    required DateTime savedAt,
+    this.rowid = const Value.absent(),
+  }) : calendarDate = Value(calendarDate),
+       payload = Value(payload),
+       savedAt = Value(savedAt);
+  static Insertable<CalendarSnapshot> custom({
+    Expression<String>? calendarDate,
+    Expression<String>? payload,
+    Expression<DateTime>? savedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (calendarDate != null) 'calendar_date': calendarDate,
+      if (payload != null) 'payload': payload,
+      if (savedAt != null) 'saved_at': savedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  CalendarSnapshotsCompanion copyWith({
+    Value<String>? calendarDate,
+    Value<String>? payload,
+    Value<DateTime>? savedAt,
+    Value<int>? rowid,
+  }) {
+    return CalendarSnapshotsCompanion(
+      calendarDate: calendarDate ?? this.calendarDate,
+      payload: payload ?? this.payload,
+      savedAt: savedAt ?? this.savedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (calendarDate.present) {
+      map['calendar_date'] = Variable<String>(calendarDate.value);
+    }
+    if (payload.present) {
+      map['payload'] = Variable<String>(payload.value);
+    }
+    if (savedAt.present) {
+      map['saved_at'] = Variable<DateTime>(savedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CalendarSnapshotsCompanion(')
+          ..write('calendarDate: $calendarDate, ')
+          ..write('payload: $payload, ')
+          ..write('savedAt: $savedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -825,6 +1100,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $PreferencesTable preferences = $PreferencesTable(this);
   late final $TemporaryInterestsTable temporaryInterests =
       $TemporaryInterestsTable(this);
+  late final $CalendarSnapshotsTable calendarSnapshots =
+      $CalendarSnapshotsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -833,6 +1110,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     follows,
     preferences,
     temporaryInterests,
+    calendarSnapshots,
   ];
 }
 
@@ -1360,6 +1638,192 @@ typedef $$TemporaryInterestsTableProcessedTableManager =
       TemporaryInterest,
       PrefetchHooks Function()
     >;
+typedef $$CalendarSnapshotsTableCreateCompanionBuilder =
+    CalendarSnapshotsCompanion Function({
+      required String calendarDate,
+      required String payload,
+      required DateTime savedAt,
+      Value<int> rowid,
+    });
+typedef $$CalendarSnapshotsTableUpdateCompanionBuilder =
+    CalendarSnapshotsCompanion Function({
+      Value<String> calendarDate,
+      Value<String> payload,
+      Value<DateTime> savedAt,
+      Value<int> rowid,
+    });
+
+class $$CalendarSnapshotsTableFilterComposer
+    extends Composer<_$AppDatabase, $CalendarSnapshotsTable> {
+  $$CalendarSnapshotsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get calendarDate => $composableBuilder(
+    column: $table.calendarDate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get savedAt => $composableBuilder(
+    column: $table.savedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$CalendarSnapshotsTableOrderingComposer
+    extends Composer<_$AppDatabase, $CalendarSnapshotsTable> {
+  $$CalendarSnapshotsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get calendarDate => $composableBuilder(
+    column: $table.calendarDate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get savedAt => $composableBuilder(
+    column: $table.savedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$CalendarSnapshotsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $CalendarSnapshotsTable> {
+  $$CalendarSnapshotsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get calendarDate => $composableBuilder(
+    column: $table.calendarDate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get payload =>
+      $composableBuilder(column: $table.payload, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get savedAt =>
+      $composableBuilder(column: $table.savedAt, builder: (column) => column);
+}
+
+class $$CalendarSnapshotsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $CalendarSnapshotsTable,
+          CalendarSnapshot,
+          $$CalendarSnapshotsTableFilterComposer,
+          $$CalendarSnapshotsTableOrderingComposer,
+          $$CalendarSnapshotsTableAnnotationComposer,
+          $$CalendarSnapshotsTableCreateCompanionBuilder,
+          $$CalendarSnapshotsTableUpdateCompanionBuilder,
+          (
+            CalendarSnapshot,
+            BaseReferences<
+              _$AppDatabase,
+              $CalendarSnapshotsTable,
+              CalendarSnapshot
+            >,
+          ),
+          CalendarSnapshot,
+          PrefetchHooks Function()
+        > {
+  $$CalendarSnapshotsTableTableManager(
+    _$AppDatabase db,
+    $CalendarSnapshotsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CalendarSnapshotsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CalendarSnapshotsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CalendarSnapshotsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> calendarDate = const Value.absent(),
+                Value<String> payload = const Value.absent(),
+                Value<DateTime> savedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => CalendarSnapshotsCompanion(
+                calendarDate: calendarDate,
+                payload: payload,
+                savedAt: savedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String calendarDate,
+                required String payload,
+                required DateTime savedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => CalendarSnapshotsCompanion.insert(
+                calendarDate: calendarDate,
+                payload: payload,
+                savedAt: savedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$CalendarSnapshotsTable, CalendarSnapshot>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $CalendarSnapshotsTable,
+                    CalendarSnapshot
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$CalendarSnapshotsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $CalendarSnapshotsTable,
+      CalendarSnapshot,
+      $$CalendarSnapshotsTableFilterComposer,
+      $$CalendarSnapshotsTableOrderingComposer,
+      $$CalendarSnapshotsTableAnnotationComposer,
+      $$CalendarSnapshotsTableCreateCompanionBuilder,
+      $$CalendarSnapshotsTableUpdateCompanionBuilder,
+      (
+        CalendarSnapshot,
+        BaseReferences<
+          _$AppDatabase,
+          $CalendarSnapshotsTable,
+          CalendarSnapshot
+        >,
+      ),
+      CalendarSnapshot,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -1370,4 +1834,6 @@ class $AppDatabaseManager {
       $$PreferencesTableTableManager(_db, _db.preferences);
   $$TemporaryInterestsTableTableManager get temporaryInterests =>
       $$TemporaryInterestsTableTableManager(_db, _db.temporaryInterests);
+  $$CalendarSnapshotsTableTableManager get calendarSnapshots =>
+      $$CalendarSnapshotsTableTableManager(_db, _db.calendarSnapshots);
 }

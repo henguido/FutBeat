@@ -178,10 +178,6 @@ jobs:
           # 09:17 UTC run also expands the cold calendar. Manual runs expand too.
           $utcHour = [DateTime]::UtcNow.Hour
           $shouldExpand = @("workflow_dispatch", "push") -contains $env:GITHUB_EVENT_NAME -or $utcHour -eq 9
-          if (-not $shouldExpand) {
-            Write-Output "CALENDAR_EXPAND_SKIPPED reason=not_daily_window"
-            exit 0
-          }
 
           $postHotQuota = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "global-quota-plan"
@@ -192,17 +188,28 @@ jobs:
             exit 0
           }
 
-          $todayUtc = [DateTime]::UtcNow.Date
           $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "calendar-plan"
-            fromDate = $todayUtc.AddDays(-90).ToString("yyyy-MM-dd")
-            toDate = $todayUtc.AddDays(180).ToString("yyyy-MM-dd")
-            limit = 45
+            requestedOnly = $true
+            limit = 12
           })
           $planDates = @($plan.dates)
 
+          if ($planDates.Count -eq 0 -and $shouldExpand) {
+            $todayUtc = [DateTime]::UtcNow.Date
+            $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+              action = "calendar-plan"
+              fromDate = $todayUtc.AddDays(-90).ToString("yyyy-MM-dd")
+              toDate = $todayUtc.AddDays(180).ToString("yyyy-MM-dd")
+              requestedOnly = $false
+              limit = 45
+            })
+            $planDates = @($plan.dates)
+          }
+
           if ($planDates.Count -eq 0) {
-            Write-Output "CALENDAR_EXPAND_OK dates=0 reason=coverage_fresh"
+            $reason = if ($shouldExpand) { "coverage_fresh" } else { "no_requested_dates" }
+            Write-Output "CALENDAR_EXPAND_OK dates=0 reason=$reason"
             exit 0
           }
 
@@ -299,4 +306,3 @@ jobs:
           if ($stopForQuota) {
             Write-Output "CALENDAR_EXPAND_COMPLETE reason=quota_guard"
           }
-

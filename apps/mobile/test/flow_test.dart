@@ -234,7 +234,7 @@ void main() {
         find.textContaining('Los datos pueden estar desactualizados'),
         findsOneWidget,
       );
-      expect(find.text('No hay partidos este día'), findsOneWidget);
+      expect(find.text('Sin partidos'), findsOneWidget);
       expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
       expect(find.widgetWithText(ActionChip, '20/1/2030'), findsNothing);
       expect(tester.takeException(), isNull);
@@ -335,7 +335,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('En vivo'));
     await tester.pumpAndSettle();
-    expect(find.text('No hay partidos este día'), findsOneWidget);
+    expect(find.text('Sin partidos'), findsOneWidget);
     await tester.tap(find.text('HOY'));
     await tester.tap(find.text('Todos'));
     await tester.pumpAndSettle();

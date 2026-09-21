@@ -350,12 +350,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             ..add(() => const SizedBox(height: 16));
 
           if (games.isEmpty) {
-            feedItems.add(
-              () => const EmptyState(
-                'No hay partidos este día',
-                'Prueba otra fecha o cambia el filtro.',
-              ),
-            );
+            feedItems.add(() => const EmptyState('Sin partidos', ''));
           }
 
           if (followedGames.isNotEmpty) {
