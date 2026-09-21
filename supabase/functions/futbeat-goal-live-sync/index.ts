@@ -533,6 +533,138 @@ async function syncLive() {
   }
 }
 
+async function syncOneResultsDate() {
+  const plan = await rpc("futbeat_reserve_goal_results_date", {
+    p_trigger_source: "supabase-cron",
+  });
+  if (!plan?.allowed) {
+    return {
+      status: "skipped",
+      reason: plan?.reason ?? "unknown",
+      reservation: plan,
+    };
+  }
+
+  const reservationId = Number(plan.reservationId);
+  const providerDate = clean(plan.date);
+  const fixtures: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  const receivedAt = new Date().toISOString();
+  let providerRequests = 0;
+  let providerTotal: number | null = null;
+  let remaining: number | null = null;
+  let httpStatus: number | null = null;
+
+  try {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(providerDate)) {
+      throw new Error("Invalid historical results date reservation");
+    }
+    const goalKey = await readGoalKey();
+    let offset = 0;
+    for (let page = 0; page < 5; page += 1) {
+      const response = await fetchGoal(
+        goalKey,
+        `/results/date/${providerDate}?limit=500&offset=${offset}`,
+      );
+      httpStatus = response.status;
+      remaining = response.remaining ?? remaining;
+      providerRequests += 1;
+      const data = response.payload.data;
+      if (!Array.isArray(data)) {
+        throw new Error("GOAL results payload data must be an array");
+      }
+      let added = 0;
+      for (const item of data) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+        const fixture = item as Record<string, unknown>;
+        const external = clean(fixture.apiId ?? fixture.id);
+        if (!external || seen.has(external)) continue;
+        seen.add(external);
+        fixtures.push(fixture);
+        added += 1;
+      }
+      const pagination = response.payload.pagination;
+      const row = pagination && typeof pagination === "object" &&
+          !Array.isArray(pagination)
+        ? pagination as Record<string, unknown>
+        : {};
+      const total = nonNegativeInteger(row.total);
+      if (total != null) providerTotal = total;
+      // GOAL documents pagination on list endpoints, but older cached
+      // responses can omit the envelope. A full 500-row results page is the
+      // only safe signal to probe the next offset. Stop if the provider
+      // ignores offset and repeats the same page.
+      const pageLimit = Math.max(nonNegativeInteger(row.limit) ?? 500, 1);
+      const hasMore = row.hasMore === true ||
+        (pagination == null && data.length === 500);
+      if (!hasMore || added === 0) break;
+      offset += pageLimit;
+      if (page === 4) throw new Error("GOAL results pagination exceeded safety limit");
+    }
+
+    const linkResult = await rpc("futbeat_link_goal_live_matches", {
+      p_fixtures: fixtures,
+    }, 30000);
+    const observations = await Promise.all(fixtures.map(normalizeLiveFixture));
+    const persistence = await rpc("futbeat_record_live_batch", {
+      p_provider: "goal_api",
+      p_received_at: receivedAt,
+      p_observations: observations,
+    }, 30000);
+    const finalized = await rpc("futbeat_finalize_goal_results_date", {
+      p_provider_date: providerDate,
+      p_received_at: receivedAt,
+    }, 30000);
+
+    await rpc("futbeat_complete_provider_call", {
+      p_reservation_id: reservationId,
+      p_status: "SUCCEEDED",
+      p_provider_remaining: remaining,
+      p_http_status: httpStatus ?? 200,
+      p_error_code: null,
+      p_metadata: {
+        mode: "results-date",
+        date: providerDate,
+        providerRequests,
+        providerTotal: providerTotal ?? observations.length,
+        results: observations.length,
+        linkedMatches: linkResult?.linked ?? 0,
+        alreadyLinkedMatches: linkResult?.alreadyLinked ?? 0,
+        unmappedMatches: linkResult?.unmappedCount ?? 0,
+        insertedObservations: persistence?.insertedObservations ?? 0,
+        duplicates: persistence?.duplicates ?? 0,
+        resultsComplete: finalized?.resultsComplete ?? false,
+        unresolved: finalized?.unresolved ?? null,
+        transport: "supabase-cron",
+        provider: "GOAL API",
+      },
+    });
+    return {
+      status: "ok",
+      date: providerDate,
+      results: observations.length,
+      providerRequests,
+      providerTotal,
+      remaining,
+      finalized,
+    };
+  } catch (error) {
+    await completeFailure(
+      reservationId,
+      "GOAL_RESULTS_DATE_FETCH_FAILED",
+      {
+        mode: "results-date",
+        date: providerDate,
+        providerRequests,
+        detail: error instanceof Error ? error.message.slice(0, 300) : "unknown",
+      },
+      remaining,
+      httpStatus,
+    );
+    throw error;
+  }
+}
+
 async function syncOneMatchDetail() {
   try {
     await rpc("futbeat_enqueue_stale_live_detail");
@@ -1027,6 +1159,18 @@ Deno.serve(async (request) => {
 
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const trigger = clean(body.trigger).toLowerCase();
+    if (trigger === "results-only") {
+      try {
+        const results = await syncOneResultsDate();
+        return Response.json({ status: "ok", results });
+      } catch (error) {
+        console.error(
+          "GOAL results-only sync failed",
+          error instanceof Error ? error.message : "unknown",
+        );
+        return Response.json({ status: "ok", results: { status: "failed" } });
+      }
+    }
     if (trigger === "detail-only") {
       try {
         const detail = await syncOneMatchDetail();
