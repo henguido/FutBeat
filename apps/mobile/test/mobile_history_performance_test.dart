@@ -28,7 +28,21 @@ Map<String, dynamic> payload({bool table = false}) => {
   'players': [],
   'standings': table
       ? [
-          {'competitionId': 'fb_comp_test', 'rows': []},
+          {
+            'competitionId': 'fb_comp_test',
+            'rows': [
+              {
+                'teamId': 'fb_team_home',
+                'played': 1,
+                'won': 1,
+                'drawn': 0,
+                'lost': 0,
+                'gf': 2,
+                'ga': 1,
+                'points': 3,
+              },
+            ],
+          },
         ]
       : [],
   'matches': [
@@ -106,7 +120,7 @@ void main() {
       await tester.pump();
       expect(find.text('Sin estadísticas'), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsWidgets);
-      await tester.tap(find.text('Alineaciones'));
+      await tester.tap(find.text('Alineación'));
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(find.text('Sin alineaciones'), findsNothing);
@@ -557,7 +571,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         await tester.tap(
-          find.text(selected == 1 ? 'Estadísticas' : 'Alineaciones'),
+          find.text(selected == 1 ? 'Estadísticas' : 'Alineación'),
         );
         await tester.pumpAndSettle();
         hasTable = true;
@@ -632,7 +646,7 @@ void main() {
       await tester.tap(find.text('Estadísticas'));
       await tester.pumpAndSettle();
       expect(find.text('Sin estadísticas'), findsOneWidget);
-      await tester.tap(find.text('Alineaciones'));
+      await tester.tap(find.text('Alineación'));
       await tester.pumpAndSettle();
       expect(find.text('Sin alineaciones'), findsOneWidget);
       context.add(Snapshot(payload(table: true)));

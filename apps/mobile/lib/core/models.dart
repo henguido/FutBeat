@@ -346,6 +346,8 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
           'detail': detail.incidents[i]['detail'],
         if (detail.incidents[i]['team'] != null)
           'team': detail.incidents[i]['team'],
+        if (detail.incidents[i]['side'] != null)
+          'side': detail.incidents[i]['side'],
         'detailSource': true,
       },
   ];
