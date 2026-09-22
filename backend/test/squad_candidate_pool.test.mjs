@@ -5,7 +5,7 @@ import { seedCandidatePool,tracePools,internalPoolSQL,planNodes } from '../bench
 import { explain } from '../bench/squad_planner.mjs';
 const plan=async(db,n=20)=>(await db.query('select public.futbeat_team_squad_plan($1) v',[n])).rows[0].v;
 
-test('10000 upcoming teams: nearest kickoff first, bounded mapping pool and deterministic read-only result',async(t)=>{
+test('10000 upcoming teams: ranked P2, bounded mapping pool and deterministic read-only result',async(t)=>{
  const db=await openDatabase();
  try {
   await seedCandidatePool(db);
@@ -13,7 +13,9 @@ test('10000 upcoming teams: nearest kickoff first, bounded mapping pool and dete
   const first=await plan(db); assert.deepEqual(await plan(db),first);
   await db.exec('commit');
   assert.equal(first.length,20); assert.deepEqual(first.slice(0,2).map(x=>x.priorityTier),[1,1]);
-  assert.deepEqual(new Set(first.slice(2).map(x=>x.teamId)),new Set(Array.from({length:18},(_,i)=>`fb_pool_team_${i+1}`)));
+  const expected=(await db.query('select team_id from futbeat_private.squad_upcoming_candidates() where not team_id=any($1) limit 18',
+   [first.slice(0,2).map(x=>x.teamId)])).rows.map(x=>x.team_id);
+  assert.deepEqual(first.slice(2).map(x=>x.teamId),expected);
   assert.deepEqual(Object.keys(first[0]).sort(),['externalTeamId','lastFetchedAt','priority','priorityTier','reason','teamId']);
   const traced=await tracePools(db);
   assert.equal(traced.raw,20); assert.equal(traced.mappings,20);
@@ -31,6 +33,7 @@ test('upcoming cursor refills past missing mappings, freshness, backoff, leases 
  const db=await openDatabase();
  try {
   await seedCandidatePool(db);
+  await db.exec('update futbeat_private.competition_editorial_metadata set relevance_score=100');
   await db.exec(`delete from futbeat_private.coverage_interests;
    delete from futbeat_private.provider_entities where canonical_id in(select 'fb_pool_team_'||i from generate_series(1,200) i);
    insert into futbeat_private.team_detail_coverage(team_id,provider,fetched_at,player_count,next_retry_at,lease_until)
@@ -44,10 +47,11 @@ test('upcoming cursor refills past missing mappings, freshness, backoff, leases 
  } finally {await db.close();}
 });
 
-test('same-kickoff group preserves fetched/team tie order and mapping batches refill without fixed oversampling cutoff',async()=>{
+test('same-kickoff group preserves team tie order and mapping batches refill without fixed oversampling cutoff',async()=>{
  const db=await openDatabase();
  try {
   await seedCandidatePool(db);
+  await db.exec('update futbeat_private.competition_editorial_metadata set relevance_score=100');
   await db.exec(`delete from futbeat_private.coverage_interests;
    update futbeat_private.calendar_matches set start_time=now()+interval '1 hour';
    delete from futbeat_private.provider_entities where canonical_id in(
@@ -59,7 +63,7 @@ test('same-kickoff group preserves fetched/team tie order and mapping batches re
   assert.deepEqual((await plan(db)).map(x=>x.teamId),expected);
   const traced=await tracePools(db);
   assert.equal(traced.mappings,120); // 100 unusable mappings, then 20 usable, not 10000.
-  assert.equal(traced.raw,10000); // Full tie group is needed to preserve global team-ID order.
+  assert.equal(traced.raw,120); // Metadata sort handles the full tie; only bounded pools reach eligibility.
  } finally {await db.close();}
 });
 
@@ -84,6 +88,7 @@ test('upcoming chained aliases deduplicate across kickoffs and preserve the newe
  const db=await openDatabase();
  try {
   await seedCandidatePool(db);
+  await db.exec('update futbeat_private.competition_editorial_metadata set relevance_score=100');
   await db.exec(`delete from futbeat_private.coverage_interests;
    insert into futbeat_private.entity_redirects(alias_id,canonical_id,kind,reason) values
     ('fb_pool_team_1','fb_pool_team_3','team','test'),('fb_pool_team_3','fb_pool_team_5','team','test');
