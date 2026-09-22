@@ -96,7 +96,7 @@ test('newer partial detail preserves richer lineups and canonical verified media
     const media = (await db.query("select public.futbeat_read_lineup_player_media('goal_api',array['player-key-1','missing']) value")).rows[0].value;
     assert.equal(media['player-key-1'].canonicalId, player);
     assert.equal(media['player-key-1'].image, 'https://media.goal-api.com/players/real.png');
-    assert.equal(media.missing, undefined);
+    assert.deepEqual(media.missing, { providerId: 'missing', canonicalId: null, image: null });
   } finally {
     await db.close();
   }
