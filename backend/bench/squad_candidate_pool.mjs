@@ -68,7 +68,8 @@ export async function internalPoolSQL(db) {
  return {
   eligible:due.slice(due.indexOf('with canonical'),due.indexOf(';\n batch_size')).replace(' into eligible_ids','').replaceAll('p_ids','$1::text[]').replaceAll('p_excluded','array[]::text[]'),
   mappings:due.slice(due.indexOf('with recursive mapping_targets'),due.indexOf(';\n  result:=')).replace(' into part','').replaceAll('batch_ids','$1::text[]').replaceAll('p_limit','$2').replaceAll('jsonb_array_length(result)','0'),
-  upcoming:main.slice(main.indexOf('select c.start_time,e.payload'),main.indexOf('\n   loop',main.indexOf('select c.start_time,e.payload'))).trim(),
+  upcoming:main.includes('squad_upcoming_due') ? (await source('futbeat_private.squad_upcoming_candidates(integer)')).trim().replace(/;$/,'').replaceAll('p_bucket','null::integer')
+   : main.slice(main.indexOf('select c.start_time,e.payload'),main.indexOf('\n   loop',main.indexOf('select c.start_time,e.payload'))).trim(),
   competition:activity.slice(activity.indexOf('with matching'),activity.indexOf(';\n return')).replace(' into result','').replaceAll('p_competitions','$1::text[]'),
  };
 }

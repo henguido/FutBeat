@@ -1,5 +1,70 @@
 # Squad planner: local performance audit
 
+## Third optimization: P2 upcoming quality (local, not deployed)
+
+Base `c8e13a944366694c05ba15d6b9674c392dc645d9`, branch `perf/squad-upcoming-ranking`. The supplied production report describes a fast planner (~25 ms warm for 20) but low-value nearest-kickoff P2 candidates filling the limited 16-squad daily budget. These production observations were not remeasured. This block changes only ranking **inside P2**, not the global P0 LIVE → P1 favorite → P2 upcoming → P3 followed competition → P4 editorial → P5 recently opened hierarchy.
+
+### Signal audit and exact order
+
+| Signal | Existing source | Use / limitation |
+| --- | --- | --- |
+| Followed competition | `coverage_interests`, competition with `explicit_followers>0` | Boolean central aggregate; canonicalize aliases. Same mechanism as P3; no new follower counter. |
+| Editorial relevance | `competition_editorial_metadata.relevance_score` | Use exact score only with `source='editorial'`. Derived/provider/missing metadata falls back to 100, including an accidentally high derived score. No name-based inference. |
+| Temporary team demand | `temporary_interests`, team rows with `expires_at>now()` | Distinct canonical team IDs, boolean existence across all users. No user identity/count influences rank; stale `coverage_interests.temporary_users` is not trusted for expiry. |
+| Kickoff | `calendar_matches.start_time` | Existing canonical calendar time. |
+| Stable tie | Canonical team ID | No country, invented team popularity, media completeness or extra fetched-at ranking signal. |
+
+Exact lexicographic P2 order: **time bucket ASC → followed competition DESC → editorial relevance DESC → temporary demand DESC → kickoff ASC → canonical team ID ASC**. Buckets use rolling instants: `[now, now+24h]`, `(now+24h, now+72h]`, `(now+72h, now+7d]`. This is not a weighted formula. A followed competition wins within its bucket even at a lower relevance score; temporary interest only wins after equal followed/relevance signals. Repeated user touches cannot multiply a score.
+
+Window audit: deployed P2 already selected only future `SCHEDULED` matches from **now through +7d**. It still does. P0/P3/P4 retain their wider **−6h through +7d** activity window. This block does not broaden past scheduled matches into P2 or change any window. Missing match competition identity gets conservative metadata, not a guessed league from team name/country.
+
+### A versus B, compared before selection
+
+The 20-team realistic synthetic fixture mixes Champions 970, Libertadores 950, Premier 930, LaLiga 920, Serie A 910, editorial 500, low/derived 100, an incorrectly high derived/provider 999, missing metadata, a followed competition, real temporary demand, high/low editorial women's and U23 competitions and varied kickoffs. Labels occur only in fixture code, never in production ranking SQL.
+
+- **A: no time bucket**, followed → relevance → demand → kickoff → team ID. Champions at +6d ranks alongside today's Champions, and editorial 940 at +6d displaces Premier 930 today. This is valid relevance ordering but a poor use of a small daily hydration budget when the score difference is tiny.
+- **B: time bucket first**, followed by the same signals. Today's Premier stays ahead of +6d Champions/940, while today's Champions +40min and Premier +1h still beat low relevance +10min. Selected B for its explicit time horizon and simpler operational explanation.
+- B deliberately has step boundaries: a lower-relevance match at +23h can precede a high-relevance one at +25h. Continuous first-bucket demand can defer later buckets until those matches approach; there is no claimed fairness guarantee across quality scores. Buckets protect near-term opportunities rather than excluding any competition type. An editorially high women's/U23 competition rises exactly like any other.
+
+Final repeated full-source A/B ranking-only measurements on 10000 candidate teams: **71.626 / 65.799 ms** (realistic 20-team fixture: **1.832 / 2.083 ms**). These compare sorting all candidates, **not** the full planner or GOAL mapping. The selected implementation evaluates B buckets lazily to avoid sorting the full week when the first bucket fills the result.
+
+Realistic top-five before (nearest kickoff): derived 999 (effective fallback 100), provider 999 (100), missing metadata (100), low competition (100), U23 low (100). After: followed competition (500), Champions (970), women's high editorial (960), Libertadores (950), U23 high editorial (940). If no competition is followed, Champions leads this fixture. Premier +20min stays ahead of Premier +2h when other signals match; a genuinely demanded Premier team can lead both because demand precedes kickoff within equal relevance.
+
+### Candidate pools, dedupe and performance
+
+`squad_upcoming_candidates(bucket)` first bounds calendar activity and reads matches by primary key. It resolves competition metadata once per distinct match competition before home/away expansion. Team redirects are joined set-wise; recursive resolution runs only for actual aliases, preserving the existing depth/cycle protection. Within each bucket, DISTINCT ON chooses the canonical team's best representation by the complete ranking tuple, not simply its earliest match. Across buckets, selected canonical IDs are excluded; a team with several matches has one returned position. Unavailable teams may be checked again in a later bucket, but cannot be returned twice.
+
+`squad_upcoming_due` opens bucket 0 first and opens 1/2 only when needed. It consumes ranked unique IDs in batches no larger than the remaining slots (at most 25), reuses the **unchanged** `squad_pool_due` for freshness/backoff/lease/entity validity and provider mappings, then restores P2's rank within the mapped batch. It does not let the shared helper's fetched-at ordering choose P2 winners. Missing mappings trigger progressive refill without a fixed oversampling cutoff. Higher-tier canonical favorites are excluded and remain P1. P0/P1/P3/P4/P5 code is checked unchanged by regression tests.
+
+The complete bucket is ranked before its first rows can be emitted. Ranking within a bucket is **not incremental**; only bucket opening and eligibility/mapping batches are progressive.
+
+Large fixture: **5000 upcoming matches / 10000 raw team appearances**, varied competition metadata and demand. Bucket 0 contains **1380 matches / 2760 appearances**; only **20 candidate IDs reach eligibility and 20 mapping evaluations** for planner(20). Distinguish these levels: the cheap calendar/source scan and metadata sort do inspect more than 20 rows. The planner never resolves all 10000 provider mappings just to sort them. P0's existing exhaustive LIVE behavior is deliberately unchanged.
+
+Final warm local PGlite medians (three samples after warmup, milliseconds):
+
+| 10000-team mixed fixture | planner(1) | planner(5) | planner(20) |
+| --- | ---: | ---: | ---: |
+| CURRENT nearest-kickoff P2 | 3.499 | 4.438 | 9.135 |
+| NEW quality-ranked P2, lazy buckets | 22.470 | 22.839 | 22.940 |
+| CURRENT mapping evaluations | 2 | 6 | 20 |
+| NEW candidate IDs inspected / mappings | 1 / 1 | 5 / 5 | 20 / 20 |
+
+Ranking is not free: NEW spends more CPU on cheap metadata than CURRENT but remains in local tens of milliseconds and keeps mapping work bounded. Do not equate this synthetic baseline with the user-reported ~25 ms production timing or infer a production SLA. When all fixtures occupy the first bucket, all of that bucket's metadata must be ranked. If many candidates lack mappings or are fresh/backed-off/leased, more batches are necessarily inspected. A test exhausts all first-bucket mappings and still fills from the second bucket. No artificial guarantee of constant work is claimed for an exhausted universe.
+
+EXPLAIN ANALYZE confirms match primary-key probes, 1380 matching rows before expansion, 2760-row metadata sorts, no provider/observation access in the ranking source and no temp spill. No new index is justified by this fixture. Existing calendar start-time, entity PK, competition metadata PK, redirect and mapping indexes are reused. Production cardinality/distribution still needs separately authorized validation.
+
+Reproduce locally with `node backend/bench/squad_upcoming_ranking.mjs`. It prints A/B orderings, CURRENT/NEW planner timings, raw universe, candidate-pool rows, mapping evaluations and EXPLAIN nodes. CURRENT is the previous candidate-pool planner installed only into a disposable database; functions/instrumentation are restored between comparisons. No migration history, deployed migration, remote database or provider is modified by the benchmark.
+
+### Contract, diagnosis and safety
+
+The public planner still returns only `teamId`, `externalTeamId`, `priority`, `priorityTier`, `reason`, `lastFetchedAt`. Both new helpers are private, STABLE, empty-search-path and revoked from PUBLIC/anon/authenticated/service_role. The existing service-only SECURITY DEFINER planner boundary is retained. In an authorized database-owner/admin SQL session, `select * from futbeat_private.squad_upcoming_candidates();` provides ranking signals for diagnosis; a bucket argument limits its scope. It deliberately shows ranking candidates before eligibility/mapping, not a promise that they will be returned by the public planner. No new public RPC is exposed.
+
+New incremental migration: `20260922154959_rank_upcoming_squad_candidates.sql`, generated by the local Supabase CLI with telemetry/update checks disabled. Prior migrations remain untouched. No changes to squad-only/worker, reservation, quota values, daily limit 16, protected reserve, last_seen, media/ingest, cron, calendar implementation, Explore or Flutter. Expected quota impact is better choice per available squad slot, **not** a quota increase or a guaranteed number of photos.
+
+Final validation: **backend 224/224** (10 new ranking tests), **Flutter 123/123**, `flutter analyze --no-pub` clean, diff-check clean including untracked source files. Tests cover A/B, metadata provenance, temporary expiry, all tier regressions, canonical best representation, window boundaries, missing-mapping refill across buckets, bounded mapping work, private permissions and READ ONLY execution. No commit, push, PR, deploy, remote migration, manual cron, production query or GOAL call was performed.
+
+---
+
 ## Second optimization: candidate pools (2026-09-22)
 
 Base `62ee8c6faa90aa10ef9239dc8d104b0154896fe7`, branch `perf/squad-planner-candidate-pool`. PR81 is now applied in production **according to the supplied report**, with about 2050 ms warm / 3075 ms cold and 2667 matches / 5334 appearances / 4670 distinct active teams. About 92 are editorially relevant. No production measurements or provider calls were performed here.
