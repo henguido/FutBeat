@@ -1,5 +1,24 @@
 typedef Json = Map<String, dynamic>;
 
+String? safePlayerImage(dynamic value) {
+  if (value is! String) return null;
+  final uri = Uri.tryParse(value.trim());
+  return uri != null &&
+          uri.scheme == 'https' &&
+          uri.host.isNotEmpty &&
+          uri.userInfo.isEmpty
+      ? uri.toString()
+      : null;
+}
+
+String? playerImage(Json player) {
+  final media = player['media'];
+  final canonical = media is Map && media['verificationStatus'] == 'VERIFIED'
+      ? safePlayerImage(media['url'])
+      : null;
+  return canonical ?? safePlayerImage(player['image']);
+}
+
 // Costa Rica uses UTC-06:00 year-round and does not observe daylight saving.
 DateTime costaRicaTime(DateTime instant) =>
     instant.toUtc().subtract(const Duration(hours: 6));
@@ -35,12 +54,21 @@ class Entity {
   String? get imageUrl {
     final media = json['media'] as Json?;
     if (media == null || media['verificationStatus'] != 'VERIFIED') return null;
-    return media['url'] as String?;
+    return safePlayerImage(media['url']);
   }
 
-  String get initials =>
-      json['shortName'] as String? ??
-      name.split(' ').take(2).map((s) => s[0]).join();
+  String get initials {
+    final short = (json['shortName'] as String?)?.trim();
+    if (short != null && short.isNotEmpty) return short;
+    final result = name
+        .split(RegExp(r'\s+'))
+        .where((s) => s.isNotEmpty)
+        .take(2)
+        .map((s) => s[0])
+        .join();
+    return result.isEmpty ? '·' : result;
+  }
+
   bool matches(String query) => [
     name,
     json['shortName'] ?? '',

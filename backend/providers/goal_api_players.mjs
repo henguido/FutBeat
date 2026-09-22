@@ -2,9 +2,10 @@ const clean = (value) => String(value ?? '').trim();
 
 function rawPlayers(payload) {
   if (Array.isArray(payload)) return payload;
-  if (!payload || typeof payload !== 'object') return [];
+  if (!payload || typeof payload !== 'object') throw new Error('Invalid squad envelope');
 
   const root = payload;
+  if (root.success === false || root.error) throw new Error('Failed squad response');
   if (Array.isArray(root.data)) return root.data;
   if (root.data && typeof root.data === 'object') {
     if (Array.isArray(root.data.players)) return root.data.players;
@@ -12,7 +13,7 @@ function rawPlayers(payload) {
   }
   if (Array.isArray(root.players)) return root.players;
   if (Array.isArray(root.squad)) return root.squad;
-  return [];
+  throw new Error('Invalid squad envelope');
 }
 
 function nestedPlayer(row) {
@@ -47,10 +48,12 @@ function playerIdentity(row) {
 
 export function collectGoalApiPlayerIdentities(payload) {
   const identities = new Map();
-  for (const row of rawPlayers(payload)) {
+  const rows = rawPlayers(payload);
+  for (const row of rows) {
     const identity = playerIdentity(row);
     if (identity) identities.set(identity.external, identity);
   }
+  if (rows.length > 0 && identities.size === 0) throw new Error('Squad contains no valid identities');
   return [...identities.values()];
 }
 
@@ -58,7 +61,7 @@ function verifiedPhoto(value, receivedAt) {
   if (!value) return null;
   try {
     const url = new URL(String(value));
-    if (url.protocol !== 'https:' || url.hostname !== 'media.goal-api.com') {
+    if (url.protocol !== 'https:' || url.hostname !== 'media.goal-api.com' || url.username || url.password || url.port) {
       return null;
     }
     return {
@@ -116,17 +119,18 @@ export async function normalizeGoalApiSquad(
   if (!Number.isFinite(Date.parse(receivedAt))) throw new Error('Invalid receivedAt');
 
   const players = new Map();
-  for (const row of rawPlayers(payload)) {
+  const rows = rawPlayers(payload);
+  for (const row of rows) {
     const identity = playerIdentity(row);
     if (!identity) continue;
 
     const player = nestedPlayer(row);
     const id = await resolve('player', identity.external, identity);
-    const photo = verifiedPhoto(
+    const photoValue =
       player?.photo ?? player?.photoUrl ?? player?.image ?? player?.avatar ??
-        row?.photo ?? row?.photoUrl ?? row?.image ?? row?.avatar,
-      receivedAt,
-    );
+        row?.photo ?? row?.photoUrl ?? row?.image ?? row?.avatar;
+    const photo = verifiedPhoto(photoValue, receivedAt);
+    if (photo) Object.assign(photo, { externalId: identity.external, discoveredVia: 'squad' });
 
     const position = clean(
       player?.position?.name ?? player?.positionName ?? player?.position ??
@@ -179,9 +183,12 @@ export async function normalizeGoalApiSquad(
         externalId: identity.external,
         receivedAt,
         verificationStatus: 'PROVISIONAL',
+        mediaSource: 'squad',
+        mediaStatus: photo ? 'AVAILABLE' : clean(photoValue) ? 'FETCH_FAILED' : 'NO_PHOTO',
       },
     });
   }
 
+  if (rows.length > 0 && players.size === 0) throw new Error('Squad contains no valid identities');
   return [...players.values()];
 }

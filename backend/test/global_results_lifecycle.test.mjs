@@ -551,7 +551,7 @@ test('player media coverage keeps verified photos and negative-caches confirmed 
     ]) {
       await db.query("insert into futbeat_private.entities values($1,'player',$2)", [
         id,
-        JSON.stringify({ id, name: id, media, provenance: { source: 'GOAL API' } }),
+        JSON.stringify({ id, name: id, media, provenance: { source: 'GOAL API', mediaStatus: media ? 'AVAILABLE' : 'NO_PHOTO' } }),
       ]);
     }
     const rows = (await db.query(

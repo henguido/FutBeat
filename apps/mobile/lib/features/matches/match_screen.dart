@@ -1131,7 +1131,7 @@ class _PlayerAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final image = player['image']?.toString();
+    final image = playerImage(player);
     final fallback = Container(
       width: size,
       height: size,

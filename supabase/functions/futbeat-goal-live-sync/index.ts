@@ -894,6 +894,9 @@ async function syncOneSquad() {
         detail: error instanceof Error ? error.message.slice(0, 300) : "unknown",
       },
       remaining,
+      error instanceof Error
+        ? Number(error.message.match(/^GOAL API (?:returned non-JSON )?HTTP (\d{3})$/)?.[1]) || null
+        : null,
     );
     throw error;
   }

@@ -33,6 +33,7 @@ test('Players v2 plans each canonical team once and reserves squad quota indepen
    [team],
   );
 
+  await db.query("insert into futbeat_private.coverage_interests(subject_type,subject_id,explicit_followers,depth) values('team',$1,1,'DEEP')",[team]);
   const plan=(await db.query(
    'select public.futbeat_team_squad_plan(10) value'
   )).rows[0].value;
@@ -60,6 +61,7 @@ test('Players v2 plans each canonical team once and reserves squad quota indepen
    );
   }
 
+  await db.query('update futbeat_private.team_detail_coverage set lease_until=null where team_id=$1',[team]);
   const blocked=(await db.query(
    "select public.futbeat_reserve_goal_squad_call($1,$2,'test-limit') value",
    [team,'goal-team-z'],
