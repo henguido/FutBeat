@@ -57,7 +57,9 @@ export class PersistentStore {
       };
       const batch = validateSnapshot(await normalize(raw, resolve, receivedAt));
       for (const [key, kind] of [['competitions', 'competition'], ['teams', 'team'], ['matches', 'match']]) {
-        for (const entity of batch[key]) await tx.query('update futbeat_private.entities set payload=$2 where id=$1', [entity.id, JSON.stringify(entity)]);
+        // Matches share the SQL non-degradation rule for stored terminal states.
+        const payload = kind === 'match' ? 'futbeat_private.merge_calendar_match_payload(payload,$2::jsonb)' : '$2';
+        for (const entity of batch[key]) await tx.query(`update futbeat_private.entities set payload=${payload} where id=$1`, [entity.id, JSON.stringify(entity)]);
         // A limited provider window must never delete previously imported records.
         batch[key] = (await tx.query('select payload from futbeat_private.entities where kind=$1 order by id', [kind])).rows.map((row) => row.payload);
       }
