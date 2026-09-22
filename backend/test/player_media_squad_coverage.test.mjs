@@ -169,6 +169,10 @@ test('squad planner ranks demand P0 through P5, deduplicates mappings and has no
     'homeTeamId','fb_team_priority_'||i,'awayTeamId','fb_team_priority_'||i,
     'startTime',now()+case when i=0 then interval '-10 minutes' else interval '1 day' end,
     'status',case when i=0 then 'LIVE' else 'SCHEDULED' end) from (values(0),(2)) x(i);
+   -- P3/P4 now require real activity, not catalog membership alone.
+   insert into futbeat_private.entities select 'fb_match_recent_'||i,'match',jsonb_build_object(
+    'id','fb_match_recent_'||i,'homeTeamId','fb_team_priority_'||i,'awayTeamId','fb_team_priority_'||i,
+    'competitionId','fb_comp_priority_'||i,'startTime',now()-interval '1 hour','status','FINISHED') from (values(3),(4)) x(i);
    insert into futbeat_private.coverage_interests(subject_type,subject_id,explicit_followers,depth) values
     ('team','fb_team_priority_1',1,'DEEP'),('competition','fb_comp_priority_3',1,'DEEP');
    update futbeat_private.competition_editorial_metadata set relevance_score=900,source='editorial' where competition_id='fb_comp_priority_4';
