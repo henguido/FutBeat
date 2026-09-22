@@ -30,8 +30,8 @@ export async function plannerSQL(db) {
   .replace(' into result from due',' from due').replace(/\bp_limit\b/g,'20').replace(/;\s*$/,'');
 }
 
-export async function explain(db,sql) {
- return (await db.query('explain (analyze,buffers,format json) '+sql)).rows[0]['QUERY PLAN'][0];
+export async function explain(db,sql,params=[]) {
+ return (await db.query('explain (analyze,buffers,format json) '+sql,params)).rows[0]['QUERY PLAN'][0];
 }
 function nodes(plan,out=[]) {
  out.push({node:plan['Node Type'],relation:plan['Relation Name'],cte:plan['CTE Name'],subplan:plan['Subplan Name'],index:plan['Index Name'],
@@ -40,6 +40,11 @@ function nodes(plan,out=[]) {
  return out;
 }
 export async function measure(db,label) {
+ const body=(await db.query("select prosrc from pg_proc where oid='futbeat_private.futbeat_team_squad_plan(integer)'::regprocedure")).rows[0].prosrc;
+ if(body.includes('squad_pool_due')) {
+  for(const limit of [1,5,20]) console.log(JSON.stringify({label,limit,ms:(await explain(db,`select futbeat_private.futbeat_team_squad_plan(${limit})`))['Execution Time']}));
+  return;
+ }
  const sql=await plannerSQL(db);
  const prefix=sql.slice(0,sql.lastIndexOf(') select coalesce'))+')';
  for(const cte of ['recent_provider_teams','active_matches','candidates','ranked','provider_mapping','due']) {

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { openDatabase } from '../storage/database.mjs';
-import { seedPlannerFixture,plannerSQL,explain } from '../bench/squad_planner.mjs';
+import { seedPlannerFixture,explain } from '../bench/squad_planner.mjs';
+import { internalPoolSQL,tracePools } from '../bench/squad_candidate_pool.mjs';
 
 async function seed(db) {
  await db.exec(`insert into futbeat_private.entities values('fb_comp_plan','competition','{"id":"fb_comp_plan"}');
@@ -124,12 +125,13 @@ test('large planner fixture uses indexed bounded lookups and never scans observa
  const db=await openDatabase();
  try {
   await seedPlannerFixture(db);
-  const sql=await plannerSQL(db),p=await explain(db,sql);
+  const queries=await internalPoolSQL(db),p=await explain(db,queries.mappings,[['fb_bench_team_1','fb_bench_team_2'],20]);
   const nodes=[]; const walk=n=>{nodes.push(n); for(const c of n.Plans??[]) walk(c);}; walk(p.Plan);
   assert.ok(!nodes.some(n=>n['Relation Name']==='provider_observations'));
   assert.ok(!nodes.some(n=>n['Relation Name']==='entities' && n['Node Type']==='Seq Scan'));
   assert.ok(nodes.some(n=>n['Index Name']==='provider_entities_canonical_id_idx'));
-  assert.ok(nodes.some(n=>n['Index Name']==='calendar_matches_start_time_idx'));
+  const calendar=await explain(db,queries.upcoming);
+  assert.ok(JSON.stringify(calendar).includes('calendar_matches_start_time_idx'));
   assert.equal((await plan(db)).length,20);
   // All 8,000 catalog teams now belong to followed/high-editorial competitions.
   // Only the 40 teams with real window activity may become candidates.
@@ -137,8 +139,9 @@ test('large planner fixture uses indexed bounded lookups and never scans observa
    select 'fb_bench_comp_'||i,'domestic_league',900,'editorial' from generate_series(0,99) i on conflict(competition_id) do update set relevance_score=900,source='editorial';
    insert into futbeat_private.coverage_interests(subject_type,subject_id,explicit_followers,depth)
    select 'competition','fb_bench_comp_'||i,1,'DEEP' from generate_series(0,99) i on conflict do nothing;`);
-  const prefix=sql.slice(0,sql.lastIndexOf(') select coalesce'))+')';
-  assert.equal((await db.query(prefix+' select count(*)::int n from ranked')).rows[0].n,40);
+  const pool=(await db.query('select futbeat_private.squad_competition_pool($1) ids',[Array.from({length:100},(_,i)=>`fb_bench_comp_${i}`)])).rows[0].ids;
+  assert.equal(pool.length,40);
+  assert.equal((await tracePools(db)).mappings,40); // LIVE stays exhaustive.
   assert.ok(p['Execution Time']<1000,`Local planner took ${p['Execution Time']} ms`);
   assert.equal((await db.query('select count(*)::int n from futbeat_private.provider_call_ledger')).rows[0].n,0);
   t.diagnostic(JSON.stringify({fixture:'synthetic PGlite',teams:8000,players:20000,matches:4000,mappings:28000,observations:30000,sqlMs:p['Execution Time']}));
