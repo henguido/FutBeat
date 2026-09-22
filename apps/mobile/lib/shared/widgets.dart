@@ -218,6 +218,7 @@ class CalendarDataView extends ConsumerWidget {
     // Render the same date controls even on a cold cache miss or error.
     return Column(
       children: [
+        if (data.revalidating) const LinearProgressIndicator(minHeight: 2),
         if (data.stale)
           const Padding(
             padding: EdgeInsets.all(8),
@@ -325,9 +326,15 @@ class PlayerProfileFacts extends StatelessWidget {
 }
 
 class EntityTile extends StatelessWidget {
-  const EntityTile(this.entity, this.type, {super.key});
+  const EntityTile(
+    this.entity,
+    this.type, {
+    super.key,
+    this.showFollow = false,
+  });
   final Entity entity;
   final String type;
+  final bool showFollow;
 
   String get _subtitle {
     if (type != 'player') return entity.country;
@@ -351,7 +358,13 @@ class EntityTile extends StatelessWidget {
       subtitle: _subtitle.isEmpty
           ? null
           : Text(_subtitle, style: const TextStyle(color: muted)),
-      trailing: const Icon(Icons.chevron_right),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (showFollow) FollowButton(type, entity.id),
+          const Icon(Icons.chevron_right),
+        ],
+      ),
       onTap: () => context.push('/$type/${entity.id}'),
     ),
   );

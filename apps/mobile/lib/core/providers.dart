@@ -36,6 +36,8 @@ class ApiRepository implements FootballRepository {
 
   final Map<String, DateTime> _calendarFetchedAt = {};
   final Map<String, Future<Snapshot>> _calendarInFlight = {};
+  final Set<String> _forcedDates = {};
+  final Map<String, DateTime> _catalogFetchedAt = {};
   final Set<String> _detailRequested = {};
   final Map<String, Future<MatchDetail>> _detailRequestInFlight = {};
 
@@ -87,7 +89,7 @@ class ApiRepository implements FootballRepository {
             receiveTimeout: path == '/v1/match-detail'
                 ? const Duration(seconds: 3)
                 : null,
-            headers: attempt == 0 ? null : const {'X-Retry-Count': '1'},
+            headers: {if (attempt > 0) 'X-Retry-Count': '1'},
           ),
         );
         final data = response.data;
@@ -143,6 +145,7 @@ class ApiRepository implements FootballRepository {
   Future<Snapshot> load() => _loadSnapshot('snapshot', '/v1/snapshot');
 
   bool _freshDate(String value) {
+    if (_forcedDates.contains(value)) return false;
     final fetched = _calendarFetchedAt[value];
     if (fetched == null) return false;
     final today = _dateParam(costaRicaNow());
@@ -152,24 +155,27 @@ class ApiRepository implements FootballRepository {
     final ttl = recovering
         ? const Duration(seconds: 20)
         : value.compareTo(today) < 0
-        ? const Duration(minutes: 15)
+        ? const Duration(seconds: 30)
         : value == today
         ? const Duration(seconds: 20)
-        : const Duration(minutes: 5);
+        : const Duration(seconds: 30);
     return DateTime.now().toUtc().difference(fetched) < ttl;
   }
 
-  Future<Snapshot> _fetchDate(String value) {
+  Future<Snapshot> _fetchDate(String value, {CancelToken? cancelToken}) {
     return _calendarInFlight.putIfAbsent(value, () async {
       try {
         final raw = await _getJson(
           '/v1/calendar',
           queryParameters: {'date': value, 'timezone': 'America/Costa_Rica'},
+          cancelToken: cancelToken,
+          maxAttempts: 1,
         );
         final fresh = _canonical(raw);
         _remember('calendar:$value', fresh);
         _calendarFetchedAt[value] = DateTime.now().toUtc();
         await database?.saveCalendarSnapshot(value, jsonEncode(raw));
+        _forcedDates.remove(value);
         return fresh;
       } finally {
         _calendarInFlight.remove(value);
@@ -180,7 +186,11 @@ class ApiRepository implements FootballRepository {
   @override
   Future<Snapshot> loadDate(DateTime date) => _fetchDate(_dateParam(date));
 
-  Stream<Snapshot> watchDate(DateTime date) async* {
+  Stream<Snapshot> watchDate(
+    DateTime date, {
+    CancelToken? cancelToken,
+    Duration retryDelay = const Duration(seconds: 3),
+  }) async* {
     final value = _dateParam(date);
     final key = 'calendar:$value';
     Snapshot? cached = _snapshotCache[key];
@@ -196,18 +206,32 @@ class ApiRepository implements FootballRepository {
         }
       }
     }
-    if (cached != null) yield cached;
-    if (cached != null && _freshDate(value)) return;
-    try {
-      yield await _fetchDate(value);
-      // Only today's visible load may prefetch. Prefetch itself never recurses.
-      if (value == _dateParam(costaRicaNow())) {
-        unawaited(prefetchDate(date.subtract(const Duration(days: 1))));
-        unawaited(prefetchDate(date.add(const Duration(days: 1))));
+    final freshCache = cached != null && _freshDate(value);
+    if (cached != null) yield cached.withFreshness(revalidating: !freshCache);
+    if (freshCache) return;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (cancelToken?.isCancelled == true) return;
+      try {
+        cached = await _fetchDate(value, cancelToken: cancelToken);
+        yield cached;
+        // Only today's visible load may prefetch. Prefetch itself never recurses.
+        if (value == _dateParam(costaRicaNow())) {
+          unawaited(prefetchDate(date.subtract(const Duration(days: 1))));
+          unawaited(prefetchDate(date.add(const Duration(days: 1))));
+        }
+        return;
+      } catch (error, stack) {
+        if (cancelToken?.isCancelled == true) return;
+        if (cached != null) yield cached.asStale();
+        if (attempt == 2) {
+          if (cached == null) Error.throwWithStackTrace(error, stack);
+          return;
+        }
+        await Future.any([
+          Future<void>.delayed(retryDelay * (attempt + 1)),
+          if (cancelToken != null) cancelToken.whenCancel,
+        ]);
       }
-    } catch (error, stack) {
-      if (cached == null) Error.throwWithStackTrace(error, stack);
-      yield cached.asStale();
     }
   }
 
@@ -224,8 +248,10 @@ class ApiRepository implements FootballRepository {
     }
   }
 
-  void refreshDate(DateTime date) =>
-      _calendarFetchedAt.remove(_dateParam(date));
+  void refreshDate(DateTime date) {
+    _forcedDates.add(_dateParam(date));
+    _calendarFetchedAt.remove(_dateParam(date));
+  }
 
   Future<Snapshot> loadEntity(String type, String id) => _loadSnapshot(
     'entity:$type:$id',
@@ -239,16 +265,52 @@ class ApiRepository implements FootballRepository {
     queryParameters: {'id': id},
   );
 
-  Future<Snapshot> searchCatalog(String query, String? country) {
+  Future<Snapshot> loadExplore({CancelToken? cancelToken}) =>
+      _loadCatalog('explore', '/v1/explore', cancelToken: cancelToken);
+
+  Future<Snapshot> _loadCatalog(
+    String key,
+    String path, {
+    Map<String, dynamic>? queryParameters,
+    CancelToken? cancelToken,
+  }) async {
+    final cached = _snapshotCache[key];
+    final fetched = _catalogFetchedAt[key];
+    if (cached != null &&
+        fetched != null &&
+        DateTime.now().difference(fetched) < const Duration(minutes: 1)) {
+      return cached;
+    }
+    final snapshot = _canonical(
+      await _getJson(
+        path,
+        queryParameters: queryParameters,
+        cancelToken: cancelToken,
+        maxAttempts: 1,
+      ),
+    );
+    _remember(key, snapshot);
+    _catalogFetchedAt.removeWhere(
+      (key, value) => !_snapshotCache.containsKey(key),
+    );
+    _catalogFetchedAt[key] = DateTime.now();
+    return snapshot;
+  }
+
+  Future<Snapshot> searchCatalog(
+    String query,
+    String? country, {
+    CancelToken? cancelToken,
+  }) {
     final normalizedQuery = query.trim().toLowerCase();
-    final normalizedCountry = country?.trim().toUpperCase() ?? '';
-    return _loadSnapshot(
-      'search:$normalizedCountry:$normalizedQuery',
+    if (normalizedQuery.length < 2) {
+      return loadExplore(cancelToken: cancelToken);
+    }
+    return _loadCatalog(
+      'search:$normalizedQuery',
       '/v1/search',
-      queryParameters: {
-        'q': query,
-        if (normalizedCountry.isNotEmpty) 'country': normalizedCountry,
-      },
+      queryParameters: {'q': normalizedQuery},
+      cancelToken: cancelToken,
     );
   }
 
@@ -329,10 +391,29 @@ final snapshotProvider = FutureProvider<Snapshot>(
 );
 
 final calendarSnapshotProvider = StreamProvider.autoDispose
-    .family<Snapshot, DateTime>((ref, date) {
+    .family<Snapshot, DateTime>((ref, date) async* {
       final repository = ref.watch(repositoryProvider);
-      if (repository is ApiRepository) return repository.watchDate(date);
-      return Stream.fromFuture(repository.loadDate(date));
+      if (repository is! ApiRepository) {
+        yield await repository.loadDate(date);
+        return;
+      }
+      final token = CancelToken();
+      Timer? timer;
+      var disposed = false;
+      ref.onDispose(() {
+        disposed = true;
+        token.cancel('Calendar date closed');
+        timer?.cancel();
+      });
+      try {
+        yield* repository.watchDate(date, cancelToken: token);
+      } finally {
+        // Revalidate while visible, including after exhausted network retries.
+        // Never overlap a slow request or keep polling after the screen closes.
+        if (!disposed) {
+          timer = Timer(const Duration(seconds: 30), ref.invalidateSelf);
+        }
+      }
     });
 
 final entitySnapshotProvider =
@@ -347,14 +428,34 @@ final entitySnapshotProvider =
       return repository.load();
     });
 
-final searchSnapshotProvider =
-    FutureProvider.family<Snapshot, ({String query, String? country})>((
-      ref,
-      request,
-    ) async {
+final exploreSnapshotProvider = FutureProvider.autoDispose<Snapshot>((
+  ref,
+) async {
+  final repository = ref.watch(repositoryProvider);
+  final token = CancelToken();
+  ref.onDispose(() => token.cancel('Explore closed'));
+  final value = await (repository is ApiRepository
+      ? repository.loadExplore(cancelToken: token)
+      : repository.load());
+  if (ref.mounted) {
+    final link = ref.keepAlive();
+    final expiry = Timer(const Duration(minutes: 1), link.close);
+    ref.onDispose(expiry.cancel);
+  }
+  return value;
+});
+
+final searchSnapshotProvider = FutureProvider.autoDispose
+    .family<Snapshot, ({String query, String? country})>((ref, request) async {
       final repository = ref.watch(repositoryProvider);
+      final token = CancelToken();
+      ref.onDispose(() => token.cancel('Search superseded'));
       if (repository is ApiRepository) {
-        return repository.searchCatalog(request.query, request.country);
+        return repository.searchCatalog(
+          request.query,
+          null,
+          cancelToken: token,
+        );
       }
       return repository.load();
     });

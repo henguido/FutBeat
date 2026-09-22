@@ -359,6 +359,7 @@ class Snapshot {
     : demo = json['demo'] as bool,
       coverage = json['coverage'] as Json?,
       stale = (json['freshness'] as Json?)?['stale'] == true,
+      revalidating = (json['freshness'] as Json?)?['revalidating'] == true,
       updatedAt = DateTime.parse(json['updatedAt'] as String),
       entityRedirects = (json['entityRedirects'] as Map? ?? const {}).map(
         (key, value) => MapEntry(key.toString(), value.toString()),
@@ -396,6 +397,7 @@ class Snapshot {
   final bool demo;
   final Json? coverage;
   final bool stale;
+  final bool revalidating;
   final DateTime updatedAt;
   final Map<String, String> entityRedirects;
   final List<Entity> teams, players, competitions;
@@ -470,12 +472,15 @@ class Snapshot {
   }
 
   Snapshot asStale() {
-    if (stale) return this;
+    return withFreshness(stale: true);
+  }
+
+  Snapshot withFreshness({bool stale = false, bool revalidating = false}) {
     return Snapshot({
       'schemaVersion': 1,
       'demo': demo,
       'coverage': coverage,
-      'freshness': {'stale': true},
+      'freshness': {'stale': stale, 'revalidating': revalidating},
       'updatedAt': updatedAt.toIso8601String(),
       'entityRedirects': entityRedirects,
       'teams': teams.map((entity) => entity.json).toList(),
@@ -503,7 +508,7 @@ class Snapshot {
       'schemaVersion': 1,
       'demo': demo,
       'coverage': coverage,
-      'freshness': {'stale': false},
+      'freshness': {'stale': stale, 'revalidating': revalidating},
       'updatedAt': updatedAt.toIso8601String(),
       'entityRedirects': entityRedirects,
       'teams': teams.map((entity) => entity.json).toList(),

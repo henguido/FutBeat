@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { readFile, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { normalize } from '../providers/thesportsdb.mjs';
@@ -7,7 +8,7 @@ import { validateSnapshot } from '../providers/core/snapshot.mjs';
 const known = { 'competition:4815': 'fb_comp_cr', 'team:139705': 'fb_team_car', 'team:139703': 'fb_team_lda' };
 
 export async function openDatabase(directory) {
-  const db = await PGlite.create(directory);
+  const db = await PGlite.create(directory, { extensions: { pg_trgm } });
   // Supabase creates these roles before project migrations. Mirror that
   // prerequisite so permission migrations are exercised locally as written.
   await db.exec(`do $$ begin
