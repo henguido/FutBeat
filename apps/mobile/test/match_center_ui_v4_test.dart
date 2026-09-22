@@ -128,8 +128,9 @@ void main() {
 
     expect(find.text('60%'), findsOneWidget);
     expect(find.text('40%'), findsOneWidget);
-    expect(find.text('Possession'), findsOneWidget);
-    expect(find.byType(LinearProgressIndicator), findsNWidgets(2));
+    expect(find.text('Posesión'), findsOneWidget);
+    expect(find.text('Tiros'), findsOneWidget);
+    expect(find.byKey(const ValueKey('stat-bars')), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 
