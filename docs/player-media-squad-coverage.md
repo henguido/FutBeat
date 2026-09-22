@@ -51,6 +51,34 @@ P6 on-demand is available **capability, not an active route**: `futbeat_reserve_
 
 Shared freshness is seven days. Successful empty/404 responses wait 30 days. Failures wait 15 minutes, then 30, 60, etc., capped at one day. HTTP 429 waits one day; the existing quota ledger also retains the 350-call reserve and 16-squad daily cap. A per-team advisory lock and ten-minute in-flight lease suppress concurrent callers across users. An abandoned lease expires; it cannot create an immediate retry loop.
 
+### Controlled internal `squad-only` trigger
+
+`futbeat-goal-live-sync` accepts a POST body containing only `{"trigger":"squad-only"}` for controlled activation/validation. This is an internal authenticated mode, not a public endpoint or P6 on-demand dispatcher. It uses the existing `x-futbeat-cron-token` header and stored cron token, with the same secure comparison as other triggers. Missing/wrong tokens return 403 before planning; query parameters cannot supply authentication. No new secret is introduced.
+
+The mode invokes `futbeat_team_squad_plan(1)` and uses only its first candidate, even if an unexpected response contains additional rows. It accepts no body fields besides `trigger`: arbitrary `teamId`, `externalTeamId`, endpoint, limit or quota overrides return 400. Query parameters are not used for selection or provider configuration.
+
+The existing `syncOneSquad` flow is shared with cron: one planner candidate → `futbeat_reserve_goal_squad_call` → at most one GOAL squad request → existing `squad-ingest` handler, normalizer and store. An empty plan is a clean `skipped/no_squad_due` with no reservation or provider request. A denied reservation returns its existing reason and makes no provider request. Daily limit 16, LIVE reserve, canonical mapping, seven-day freshness, backoff, lease and single-flight are unchanged.
+
+The handler returns before LIVE, detail, results, standings, news, video, fixtures or individual-player work. The default cron still runs LIVE + detail + squad + news + video; `results-only` and `detail-only` remain isolated and do not run squad. No schedule changes.
+
+Response fields:
+
+- `trigger`, `status` (`ok`, `skipped` or `failed`);
+- `candidate`: planner team/external IDs, priority tier and reason, or null;
+- `reservation`: `{allowed, reason}`, or null when not attempted/completed; top-level `allowed` defaults to false when no allowance was obtained;
+- `providerCalls`: 0 or 1 **attempts**, including a failed network attempt (not a claim about provider billing);
+- `result.success`, `result.players` from successful ingest, `result.reason` on a no-op/denial, or sanitized `result.error` on failure. `success:false` with `status:skipped` is a normal no-op, not a transport error. No canonical-created/reused or photo metrics are inferred.
+
+There is no retry, candidate loop or fallback to team #2. The existing transport has no automatic retry; HTTP redirects are additionally disallowed in this isolated mode to avoid hidden follow-up requests. Provider failure/429 completes the existing ledger as FAILED with HTTP status, allowing the existing SQL trigger to set backoff (first ordinary failure: 15 minutes; 429: one day). No failure text, provider token or secret headers are exposed in the response or this mode's failure log. If ledger completion itself is unavailable, the response remains failed and the existing lease protects against immediate repetition; completion is not falsely reported as successful.
+
+After successful ingest, fresh coverage excludes that team from immediate planning (or reservation rejects a stale racing plan). A later invocation may select a different eligible team: the one-call limit is per invocation, with the existing shared daily quota.
+
+This block adds no migration and does not activate or deploy the mode. Local tests execute the real Edge handlers with all HTTP surfaces mocked, including an in-memory SQL bridge for the existing ingestion, ledger/backoff and freshness contracts. Production use requires separate authorization.
+
+Validation also exposed an existing Windows-only benchmark extraction bug after checkout: CRLF function bodies did not match LF delimiters. The local benchmark helper now normalizes line endings before extracting EXPLAIN queries, with an LF/CRLF regression test. No planner SQL, migration, priorities or runtime behavior changed for this fix.
+
+Final local squad-only validation: backend **214/214** (23 added tests, including LF/CRLF regression), Flutter **123/123**, `flutter analyze --no-pub` clean and `git diff --check` clean, including the new test file. No real provider requests or remote operations were executed.
+
 `team_detail_coverage` now exposes last successful response, last attempt, status, retained player count, photo count at squad refresh, next permitted refresh, failures, last error and lease. Runtime metrics compute photos from canonical entities, so opportunistic detail enrichment is visible without waiting for another squad refresh.
 
 Failures are captured when the existing central call ledger completes a squad reservation. Other call kinds are ignored. Only the squad catch block in the existing worker changes: it forwards its HTTP error status for 404/429 classification. No LIVE scheduling, fetch cadence, score lifecycle or result pagination changes.
