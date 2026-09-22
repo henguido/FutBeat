@@ -363,8 +363,10 @@ async function fetchGoal(
   key: string,
   path: string,
   timeoutMs = 30000,
+  singleCall = false,
 ) {
   const response = await fetch(`https://api.goal-api.com/v1${path}`, {
+    redirect: singleCall ? "error" : "follow",
     headers: {
       Authorization: `Bearer ${key}`,
       Accept: "application/json",
@@ -394,6 +396,7 @@ async function completeFailure(
   metadata: Record<string, unknown>,
   providerRemaining: number | null = null,
   httpStatus: number | null = null,
+  safeLog = false,
 ) {
   try {
     await rpc("futbeat_complete_provider_call", {
@@ -410,7 +413,8 @@ async function completeFailure(
   } catch (error) {
     console.error(
       "provider failure completion failed",
-      error instanceof Error ? error.message : "unknown",
+      safeLog ? "completion unavailable"
+        : error instanceof Error ? error.message : "unknown",
     );
   }
 }
@@ -823,7 +827,13 @@ async function syncOneMatchDetail() {
   }
 }
 
-async function syncOneSquad() {
+type SquadAttempt = {
+  candidate: Record<string, unknown> | null;
+  reservation: { allowed: boolean; reason: string | null } | null;
+  providerCalls: 0 | 1;
+};
+
+async function syncOneSquad(attempt?: SquadAttempt) {
   const plan = await rpc("futbeat_team_squad_plan", { p_limit: 1 });
   if (!Array.isArray(plan) || plan.length === 0) {
     return { status: "skipped", reason: "no_squad_due" };
@@ -835,12 +845,26 @@ async function syncOneSquad() {
   if (!teamId.startsWith("fb_team_") || !externalTeamId) {
     throw new Error("Invalid squad plan row");
   }
+  if (attempt) {
+    attempt.candidate = {
+      teamId,
+      externalTeamId,
+      priorityTier: row.priorityTier ?? null,
+      reason: row.reason ?? null,
+    };
+  }
 
   const reservation = await rpc("futbeat_reserve_goal_squad_call", {
     p_team_id: teamId,
     p_external_team_id: externalTeamId,
     p_trigger_source: "supabase-cron",
   });
+  if (attempt) {
+    attempt.reservation = {
+      allowed: reservation?.allowed === true,
+      reason: reservation?.reason ?? null,
+    };
+  }
   if (!reservation?.allowed) {
     return {
       status: "skipped",
@@ -854,9 +878,13 @@ async function syncOneSquad() {
 
   try {
     const goalKey = await readGoalKey();
+    // Count attempts, including network failures. No retry or next candidate.
+    if (attempt) attempt.providerCalls = 1;
     const response = await fetchGoal(
       goalKey,
       `/teams/${encodeURIComponent(externalTeamId)}/players`,
+      30000,
+      attempt != null,
     );
     remaining = response.remaining;
     if (
@@ -891,14 +919,48 @@ async function syncOneSquad() {
         mode: "team-squad",
         teamId,
         externalTeamId,
-        detail: error instanceof Error ? error.message.slice(0, 300) : "unknown",
+        detail: attempt ? "Squad fetch or ingest failed"
+          : error instanceof Error ? error.message.slice(0, 300) : "unknown",
       },
       remaining,
       error instanceof Error
         ? Number(error.message.match(/^GOAL API (?:returned non-JSON )?HTTP (\d{3})$/)?.[1]) || null
         : null,
+      attempt != null,
     );
     throw error;
+  }
+}
+
+async function syncSquadOnly() {
+  const attempt: SquadAttempt = {
+    candidate: null,
+    reservation: null,
+    providerCalls: 0,
+  };
+  try {
+    // Same planner/reservation/transport/ingest as cron; only reporting differs.
+    const squad = await syncOneSquad(attempt);
+    return {
+      trigger: "squad-only",
+      status: squad.status,
+      ...attempt,
+      allowed: attempt.reservation?.allowed ?? false,
+      result: {
+        success: squad.status === "ok",
+        ...("players" in squad ? { players: squad.players } : {}),
+        ...("reason" in squad ? { reason: squad.reason } : {}),
+      },
+    };
+  } catch {
+    // Do not expose provider/RPC text, credentials or request headers.
+    return {
+      trigger: "squad-only",
+      status: "failed",
+      ...attempt,
+      allowed: attempt.reservation?.allowed ?? false,
+      result: { success: false, error: "GOAL_SQUAD_SYNC_FAILED" },
+    };
   }
 }
 
@@ -1185,6 +1247,15 @@ Deno.serve(async (request) => {
 
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const trigger = clean(body.trigger).toLowerCase();
+    if (trigger === "squad-only") {
+      // This mode accepts no team, provider URL, quota or planner overrides.
+      if (Object.keys(body).some((key) => key !== "trigger")) {
+        return Response.json({ error: "squad-only accepts only trigger" }, {
+          status: 400,
+        });
+      }
+      return Response.json(await syncSquadOnly());
+    }
     if (trigger === "results-only") {
       try {
         const results = await syncOneResultsDate();

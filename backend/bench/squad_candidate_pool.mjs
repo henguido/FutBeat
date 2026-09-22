@@ -60,7 +60,8 @@ export async function tracePools(db,limit=20) {
  } finally {await db.exec(def);}
 }
 export async function internalPoolSQL(db) {
- const source=async(name)=>(await db.query('select prosrc from pg_proc where oid=$1::regprocedure',[name])).rows[0].prosrc;
+ // Windows checkouts preserve CRLF inside function bodies; extraction uses LF markers.
+ const source=async(name)=>(await db.query('select prosrc from pg_proc where oid=$1::regprocedure',[name])).rows[0].prosrc.replace(/\r\n/g,'\n');
  const due=await source('futbeat_private.squad_pool_due(text[],text[],integer)');
  const main=await source('futbeat_private.futbeat_team_squad_plan(integer)');
  const activity=await source('futbeat_private.squad_competition_pool(text[])');
