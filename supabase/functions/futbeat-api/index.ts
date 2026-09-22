@@ -396,6 +396,14 @@ export default {
       return reply(200, snapshot);
     }
 
+    if (path.endsWith('/futbeat-api/v1/explore')) {
+      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc('futbeat_read_explore');
+      if (error || !snapshot || snapshot.schemaVersion !== 1 || snapshot.demo !== false) {
+        return reply(503, { error: 'Sugerencias temporalmente no disponibles' });
+      }
+      return replyNoStore(200, snapshot);
+    }
+
     if (path.endsWith('/futbeat-api/v1/search')) {
       const query = (requestUrl.searchParams.get('q') ?? '').trim();
       const country = (requestUrl.searchParams.get('country') ?? '').trim();

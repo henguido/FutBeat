@@ -87,11 +87,11 @@ test('equivalent 1083-match day measures compact bytes before and after',async(t
   } finally {await db.close();}
 });
 
-test('HTTP caching distinguishes complete history from recovery and live days',()=>{
+test('HTTP revalidates against the dependency-aware SQL cache for every date',()=>{
   const now=new Date('2026-09-21T18:00:00Z');
-  assert.match(calendarCacheControl('2026-09-20','America/Costa_Rica',false,now),/max-age=300/);
-  assert.match(calendarCacheControl('2026-09-20','America/Costa_Rica',true,now),/max-age=20/);
-  assert.match(calendarCacheControl('2026-09-21','America/Costa_Rica',false,now),/max-age=20/);
+  assert.match(calendarCacheControl('2026-09-20','America/Costa_Rica',false,now),/no-cache/);
+  assert.match(calendarCacheControl('2026-09-20','America/Costa_Rica',true,now),/no-cache/);
+  assert.match(calendarCacheControl('2026-09-21','America/Costa_Rica',false,now),/no-cache/);
 });
 
 test('rescheduling rejects older stored scores and helper stays private',async()=>{
