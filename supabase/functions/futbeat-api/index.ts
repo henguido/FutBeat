@@ -178,6 +178,15 @@ export default {
         return reply(400, { error: 'Partido inválido' });
       }
 
+      // Opening a historical partial match elevates that day's terminal-result
+      // recovery (server-side only, deduped by date). A failure here never
+      // blocks the read.
+      const { error: demandError } = await ctx.supabaseAdmin.rpc(
+        'futbeat_request_terminal_result',
+        { p_match_id: id },
+      );
+      if (demandError) console.warn('terminal result demand unavailable');
+
       const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
         'futbeat_read_match_context',
         { p_match_id: id },

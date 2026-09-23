@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { openDatabase } from '../storage/database.mjs';
 
 let seq = 0;
@@ -163,3 +164,16 @@ test('same date requested twice within 5 minutes dedupes (no second wake)', () =
   assert.equal((await db.query("select wake_count::int n from futbeat_private.worker_wakeups where trigger='results'")).rows[0].n, 1);
   assert.equal(await metric(db, 'deduped_requests'), 1);
 }));
+
+test('match-context API route requests terminal result recovery', async () => {
+  const source = await readFile(
+    new URL('../../supabase/functions/futbeat-api/index.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /futbeat_request_terminal_result/);
+  assert.ok(
+    source.indexOf("/futbeat-api/v1/match-context") <
+      source.indexOf("futbeat_request_terminal_result"),
+    'terminal result demand must run inside the match-context route',
+  );
+});
