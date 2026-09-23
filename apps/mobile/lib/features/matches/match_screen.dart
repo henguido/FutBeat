@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +17,13 @@ const _headerBottom = Color(0xFF0F181C);
 const _cardBorder = Color(0xFF2B373D);
 const awaySideColor = Color(0xFF4FC3F7);
 
+/// Bounded refreshes while the server hydrates missing lineup photos.
+/// Same cadence as EntityScreen's profileEnrichmentRetryDelays.
+const _lineupEnrichmentRetryDelays = [
+  Duration(seconds: 6),
+  Duration(seconds: 12),
+];
+
 class MatchScreen extends ConsumerStatefulWidget {
   const MatchScreen({super.key, required this.id, this.initialData});
 
@@ -29,6 +38,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     with TickerProviderStateMixin {
   final Set<String> _recordedTeamInterests = {};
   late TabController _tabs;
+  Timer? _lineupEnrichmentRetry;
+  int _lineupEnrichmentAttempts = 0;
   @override
   void initState() {
     super.initState();
@@ -48,9 +59,28 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     previous.dispose();
   }
 
+  void _scheduleLineupEnrichmentRefresh() {
+    if (_lineupEnrichmentRetry != null ||
+        _lineupEnrichmentAttempts >= _lineupEnrichmentRetryDelays.length) {
+      return;
+    }
+    _lineupEnrichmentRetry = Timer(
+      _lineupEnrichmentRetryDelays[_lineupEnrichmentAttempts],
+      () {
+        if (!mounted) return;
+        setState(() {
+          _lineupEnrichmentAttempts++;
+          _lineupEnrichmentRetry = null;
+        });
+        ref.invalidate(matchDetailProvider(widget.id));
+      },
+    );
+  }
+
   @override
   void dispose() {
     _tabs.dispose();
+    _lineupEnrichmentRetry?.cancel();
     super.dispose();
   }
 
@@ -59,6 +89,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final updates =
         ref.watch(liveMatchUpdatesProvider).asData?.value ??
         const <String, LiveMatchUpdate>{};
+    ref.listen(matchDetailProvider(widget.id), (_, next) {
+      // Ignore the refresh-in-progress state (it still carries old data).
+      if (!next.isLoading && next.asData?.value.lineupEnrichmentPending == true) {
+        _scheduleLineupEnrichmentRefresh();
+      }
+    });
     final refreshed =
         ref.watch(repositoryProvider) is ApiRepository ||
             widget.initialData == null
