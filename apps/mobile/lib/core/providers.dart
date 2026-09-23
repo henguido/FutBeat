@@ -476,8 +476,8 @@ final favoritesSnapshotProvider = FutureProvider.family<Snapshot, String>((
   return repository.load();
 });
 
-/// Settled match data stays cached this long after the Match Center closes,
-/// so leaving and re-entering a match does not refetch it.
+/// Settled match data stays cached for this long after it loads, so leaving
+/// and re-entering a match shortly after does not refetch it.
 const matchCacheRetention = Duration(minutes: 1);
 
 void _retainSettled(Ref ref) {

@@ -1,15 +1,18 @@
--- 1) Match detail: a later, poorer refresh never wipes a richer stored lineup
---    or statistics section, whatever its shape. The previous check only
---    counted ARRAY lineups/statistics, so the GOAL object shapes
+-- 1) Match detail: a later EMPTY refresh never wipes a stored lineup or
+--    statistics section, whatever its shape. The previous check only counted
+--    ARRAY lineups/statistics, so the GOAL object shapes
 --    ({home:{startingLineups,...}} and {match:{fullTime:[...]}}) counted as 0
---    and were replaced by [], {hasLineups:false} or null. Lineups are now
---    counted with lineup_rows (both shapes, starters + substitutes) and
---    statistics by their non-null values. Other sections are unchanged.
+--    and were replaced by [], {hasLineups:false} or null. Lineups are counted
+--    with lineup_rows (both shapes, starters + substitutes) and statistics by
+--    their non-null values. Any non-empty newer section wins, even if shorter
+--    (a corrected lineup or updated statistics must never be frozen by an
+--    older, longer one). Other sections are unchanged.
 --
 -- 2) Squads: when a squad moves a player to a DIFFERENT club, club-level facts
---    from the previous club (shirt number, position, season numbers, injury)
---    that the new squad does not supply are dropped instead of being shown as
---    the new club's. Same-club refreshes keep the previous behavior.
+--    from the previous club (shirt number, position, season numbers) that the
+--    new squad does not supply are dropped instead of being shown as the new
+--    club's. Player-level facts (injury, age, photo...) stay. Same-club
+--    refreshes keep the previous behavior.
 --
 -- Local only: no provider calls, no ledger writes.
 
@@ -65,17 +68,19 @@ begin
     end if;
   end loop;
 
-  -- Statistics in any shape (array rows, {match:{fullTime}}, team-keyed).
+  -- Statistics in any shape (array rows, {match:{fullTime}}, team-keyed):
+  -- keep the stored ones only when the newer response has none.
   if v_existing ? 'statistics'
-     and futbeat_private.detail_statistics_count(v_existing->'statistics')
-       >futbeat_private.detail_statistics_count(p_payload->'statistics') then
+     and futbeat_private.detail_statistics_count(p_payload->'statistics')=0
+     and futbeat_private.detail_statistics_count(v_existing->'statistics')>0 then
     v_merged:=jsonb_set(v_merged,'{statistics}',v_existing->'statistics',true);
   end if;
 
-  -- Lineups in both GOAL shapes; formations travel with their lineup.
+  -- Lineups in both GOAL shapes: keep the stored lineup only when the newer
+  -- response has no players at all.
   select count(*) into v_old_count from futbeat_private.lineup_rows(coalesce(v_existing,'{}'::jsonb));
   select count(*) into v_new_count from futbeat_private.lineup_rows(p_payload);
-  if v_old_count>v_new_count then
+  if v_new_count=0 and v_old_count>0 then
     v_merged:=jsonb_set(v_merged,'{lineups}',v_existing->'lineups',true);
   end if;
 
@@ -133,7 +138,7 @@ begin
      continue;
    end if;
    foreach field in array array['shirtNumber','position','matchesPlayed','appearances','starts',
-     'minutesPlayed','goals','assists','yellowCards','redCards','rating','injured','seasonStats'] loop
+     'minutesPlayed','goals','assists','yellowCards','redCards','rating','seasonStats'] loop
      supplied:=r.value->'item'->field;
      if supplied is null or supplied='null'::jsonb or supplied='""'::jsonb then
        next_payload:=next_payload-field;

@@ -165,6 +165,21 @@ test('statistics in array form survive poorer refreshes; half-only data is not s
   '2026-09-01T20:10:00Z');
   assert.deepEqual((await api(db)).statistics, [
     { label: 'Corners', home: 6, away: 3 }, { label: 'Fouls', home: 9, away: 11 }]);
+  // A newer, shorter but non-empty set also wins: stored data never freezes.
+  await store(db, { statistics: [{ type: 'Corners', home: 7, away: 3, half: 'full' }] }, '2026-09-01T20:20:00Z');
+  assert.deepEqual((await api(db)).statistics, [{ label: 'Corners', home: 7, away: 3 }]);
+}));
+
+test('a newer corrected lineup with fewer players replaces the stored one', () => withDb(async (db) => {
+  await seedMatch(db);
+  await store(db, { lineups: objectLineups }, '2026-09-01T17:00:00Z');
+  const corrected = structuredClone(objectLineups);
+  corrected.home.substitutes = [];
+  corrected.home.startingLineups = corrected.home.startingLineups.slice(0, 1);
+  await store(db, { lineups: corrected }, '2026-09-01T17:30:00Z');
+  const detail = await api(db);
+  assert.deepEqual(detail.home.starters.map((p) => p.name), ['Portero Con Foto']);
+  assert.deepEqual(detail.home.substitutes, []);
 }));
 
 test('no stored detail: empty lineups and statistics, never invented', () => withDb(async (db) => {
@@ -182,17 +197,18 @@ async function squadAt(db, teamId, row, stamp) {
 const mover = async (db) => (await db.query(`select e.payload from futbeat_private.provider_entities pe
   join futbeat_private.entities e on e.id=pe.canonical_id where pe.kind='player' and pe.external_id='e2e-mover'`)).rows[0].payload;
 
-test('a club move drops the previous club number, position, season numbers and injury', () => withDb(async (db) => {
+test('a club move drops the previous club number, position and season numbers', () => withDb(async (db) => {
   await seedMatch(db);
   await squadAt(db, 'fb_team_e2e_home', { id: 'e2e-mover', name: 'Mover', number: 4, position: 'Defender',
     goals: 2, assists: 1, matchPlayed: 20, rating: '7.1', injured: true, age: 27, photo: cdn('mover') }, '2026-08-01T00:00:00Z');
   await squadAt(db, 'fb_team_e2e_away', { id: 'e2e-mover', name: 'Mover', age: 27 }, '2026-09-01T00:00:00Z');
   const moved = await mover(db);
   assert.equal(moved.teamId, 'fb_team_e2e_away');
-  for (const key of ['shirtNumber', 'position', 'goals', 'assists', 'matchesPlayed', 'rating', 'injured']) {
+  for (const key of ['shirtNumber', 'position', 'goals', 'assists', 'matchesPlayed', 'rating']) {
     assert.equal(moved[key], undefined, key);
   }
-  // Identity-level facts and the photo stay.
+  // Player-level facts (injury, age) and the photo stay.
+  assert.equal(moved.injured, true);
   assert.equal(moved.age, 27);
   assert.equal(moved.media.url, cdn('mover'));
   // The new club's own values apply when supplied.

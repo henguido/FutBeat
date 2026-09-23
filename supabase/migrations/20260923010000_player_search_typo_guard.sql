@@ -22,7 +22,7 @@ $$;
 create or replace function futbeat_private.search_word_guard(p_query text,p_term text)
 returns real language sql immutable set search_path='' as $$
  select coalesce(min(best),0)::real from (
-   select (select max(greatest(extensions.similarity(w,x),case when x like w||'%' then 1 else 0 end))
+   select (select max(greatest(extensions.similarity(w,x),case when left(x,length(w))=w then 1 else 0 end))
      from unnest(string_to_array(p_term,' ')) x where x<>'') best
    from unnest(string_to_array(p_query,' ')) w where w<>''
  ) words
@@ -95,8 +95,11 @@ begin
        when h.term like '%'||pf||'%' then 1 else 0 end end) quality,
      max(case when h.kind<>'player' then extensions.similarity(h.term,qr)
        else extensions.strict_word_similarity(qf,h.term) end) similarity,
-     max(case when h.kind='player' and position(' ' in qf)>0
-       then futbeat_private.search_word_guard(qf,h.term) end) word_guard
+     -- Multi-word fuzzy is judged per term, so similarity and the word guard
+     -- always come from the same name/alias.
+     bool_or(h.kind='player' and position(' ' in qf)>0
+       and extensions.strict_word_similarity(qf,h.term)>=0.5
+       and futbeat_private.search_word_guard(qf,h.term)>=0.35) multiword_fuzzy
    from hits h join futbeat_private.entities src on src.id=h.entity_id
    cross join lateral (select h.kind='player' and h.term in (lower(btrim(coalesce(src.payload->>'name',''))),
      coalesce(futbeat_private.search_fold(src.payload->>'name'),''),
@@ -115,7 +118,7 @@ begin
    -- one shared word ("lionel messi" vs "lionel scaloni") is not a typo.
    where e.kind<>'player' or h.quality>=2 or (h.quality=1 and length(qf)>=4)
      or (position(' ' in qf)=0 and h.similarity>=0.5)
-     or (position(' ' in qf)>0 and h.similarity>=0.5 and h.word_guard>=0.35)
+     or h.multiword_fuzzy
  ), ranked as (
    select *,row_number() over(partition by kind order by quality desc,similarity desc,relevance desc,
      lower(payload->>'name'),id) rn from scored
