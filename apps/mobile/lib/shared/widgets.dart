@@ -267,64 +267,6 @@ String playerPositionLabel(String value) {
   };
 }
 
-class PlayerProfileFacts extends StatelessWidget {
-  const PlayerProfileFacts(this.player, {super.key});
-
-  final Entity player;
-
-  @override
-  Widget build(BuildContext context) {
-    final position = playerPositionLabel(
-      player.json['position']?.toString() ?? '',
-    );
-    final number = player.json['shirtNumber'];
-    final age = player.json['age'];
-    final matches = player.json['matchesPlayed'];
-    final goals = player.json['goals'];
-    final assists = player.json['assists'];
-    final rating = player.json['rating'];
-    final injured = player.json['injured'] == true;
-    final birthdate = player.json['dateOfBirth']?.toString() ?? '';
-
-    final chips = <String>[
-      if (position.isNotEmpty) position,
-      if (number is int) 'Dorsal #$number',
-      if (age is int) '$age años',
-      if (matches is int) '$matches PJ',
-      if (goals is int) '$goals goles',
-      if (assists is int) '$assists asist.',
-      if (rating is num) 'Rating ${rating.toStringAsFixed(1)}',
-      if (injured) 'Lesionado',
-    ];
-
-    if (chips.isEmpty && birthdate.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Column(
-      children: [
-        if (chips.isNotEmpty)
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final value in chips)
-                Chip(label: Text(value), visualDensity: VisualDensity.compact),
-            ],
-          ),
-        if (birthdate.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(
-            'Nacimiento: $birthdate',
-            style: const TextStyle(color: muted, fontSize: 12),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
 class EntityTile extends StatelessWidget {
   const EntityTile(
     this.entity,
