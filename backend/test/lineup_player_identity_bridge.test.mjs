@@ -231,3 +231,123 @@ test('a photo hydrated via the bridged catalog id shows up for the original line
   assert.equal(after.canonicalId, pid);
   assert.equal(after.image, 'https://media.goal-api.com/players/sels.png');
 }));
+
+test('bridge_player_identity guard: non-Latin (or blank) names never count as a match, even with team context', () => withDb(async (db) => {
+  // Tested directly against bridge_player_identity, not through the
+  // search-discovery pipeline: player_search_key/search_fold separately
+  // reject a name with zero [a-z0-9] characters as "too_short" before any
+  // search ever fires, which would make an end-to-end test pass trivially
+  // (nothing runs) without actually exercising the guard in
+  // bridge_player_identity itself -- normalize_live_name folding two
+  // different non-Latin names to the SAME blank string.
+  const { teamId, externalId: teamExternal } = await seedTeam(db);
+  await seedLineupOnlyPlayer(db, { name: '기성용', numericId: '555001', teamId });
+
+  const bridge = (await db.query(
+    "select futbeat_private.bridge_player_identity('cmr7different','손흥민',$1) v", [teamExternal],
+  )).rows[0].v;
+  assert.equal(bridge, null, 'two blank-folding names must never be treated as the same person');
+}));
+
+test('numeric-only player_profile_coverage rows doomed by a prior 404 are repaired by the migration logic', () => withDb(async (db) => {
+  const { teamId } = await seedTeam(db);
+  const pid = await seedLineupOnlyPlayer(db, { name: 'Old 404 Player', numericId: '777777', teamId });
+  const other = await seedLineupOnlyPlayer(db, { name: 'Already Bridged Player', numericId: '888', teamId });
+  // Simulate the pre-fix state: a profile call was attempted against the
+  // numeric id, GOAL 404'd, and futbeat_fail_player_call backed it off ~30 days.
+  await db.query(`insert into futbeat_private.player_profile_coverage(
+      player_id,external_id,requested_at,request_count,profile_status,profile_next_retry_at,failure_count,last_error)
+    values($1,'777777',now()-interval '1 day',1,'FETCH_FAILED',now()+interval '29 days',1,'HTTP 404')`, [pid]);
+  // A catalog-id row (already working correctly) must be left untouched.
+  await db.query(`insert into futbeat_private.player_profile_coverage(
+      player_id,external_id,requested_at,request_count,profile_status,profile_next_retry_at)
+    values($1,'cmr7ok',now(),1,'AVAILABLE',now()+interval '25 days')`, [other]);
+
+  // Re-run the migration's own repair statement (it only ran once, at
+  // migration-apply time, against whatever data existed then) to prove its
+  // logic correctly targets numeric-external-id rows.
+  await db.query(`update futbeat_private.player_profile_coverage c
+    set profile_status='NEVER',profile_fetched_at=null,profile_next_retry_at=null,
+      stats_status='NEVER',stats_fetched_at=null,stats_next_retry_at=null,
+      failure_count=0,lease_until=null,last_error=null
+    where futbeat_private.player_external_id_is_numeric(c.external_id)
+      and (c.profile_status<>'NEVER' or c.stats_status<>'NEVER' or c.failure_count>0)`);
+
+  const repaired = (await db.query(
+    "select profile_status,profile_next_retry_at,failure_count from futbeat_private.player_profile_coverage where player_id=$1",
+    [pid],
+  )).rows[0];
+  assert.deepEqual(repaired, { profile_status: 'NEVER', profile_next_retry_at: null, failure_count: 0 });
+  const untouched = (await db.query(
+    "select profile_status from futbeat_private.player_profile_coverage where player_id=$1", [other],
+  )).rows[0];
+  assert.equal(untouched.profile_status, 'AVAILABLE');
+}));
+
+test('bridge_player_identity is symmetric: a catalog-id-only player bridges to a NEW numeric lineup id too', () => withDb(async (db) => {
+  const { teamId, externalId: teamExternal } = await seedTeam(db);
+  const pid = (await db.query(
+    "select futbeat_private.futbeat_resolve_global_entity('goal_api','player','cmr7early','Early Bird') v",
+  )).rows[0].v;
+  await db.query("update futbeat_private.entities set payload=payload||jsonb_build_object('teamId',$2::text) where id=$1",
+    [pid, teamId]);
+
+  const bridge = (await db.query(
+    "select futbeat_private.bridge_player_identity('888888','Early Bird',$1) v", [teamExternal],
+  )).rows[0].v;
+  assert.equal(bridge, pid);
+}));
+
+test('harvest_lineup_players end to end: a lineup numeric id bridges to an already squad/search-known catalog player', () => withDb(async (db) => {
+  const { teamId: homeTeamId, externalId: homeTeamExternal } = await seedTeam(db, { name: 'Home Club' });
+  const { teamId: awayTeamId } = await seedTeam(db, { name: 'Away Club' });
+  const matchId = 'fb_match_harvest_bridge';
+  await db.query('insert into futbeat_private.entities values($1,$2,$3)', [matchId, 'match', JSON.stringify({
+    id: matchId, homeTeamId, awayTeamId, startTime: new Date().toISOString(), status: 'SCHEDULED', events: [], statistics: [],
+  })]);
+  // Already known via search/squad, catalog id only, no numeric id yet.
+  const pid = (await db.query(
+    "select futbeat_private.futbeat_resolve_global_entity('goal_api','player','cmr7harvest','Harvest Target') v",
+  )).rows[0].v;
+  await db.query("update futbeat_private.entities set payload=payload||jsonb_build_object('teamId',$2::text) where id=$1",
+    [pid, homeTeamId]);
+  const before = await canonicalCount(db);
+
+  await db.query('select futbeat_private.harvest_lineup_players($1,$2,now())', [matchId, JSON.stringify({
+    lineups: { home: { startingLineups: [{ playerId: '999111', lineupPlayer: 'Harvest Target' }] } },
+  })]);
+
+  assert.equal(await canonicalCount(db), before, 'no new canonical player was minted for the lineup row');
+  assert.deepEqual(await providerEntitiesFor(db, pid), ['999111', 'cmr7harvest'].sort());
+}));
+
+test('discovery demand from lineup hydration is bounded per call, not one search per undiscovered player', () => withDb(async (db) => {
+  const { teamId } = await seedTeam(db);
+  const pids = [];
+  for (let i = 0; i < 8; i++) {
+    pids.push(await seedLineupOnlyPlayer(db, { name: `Discover Me ${i}`, numericId: `600000${i}`, teamId }));
+  }
+  await lineupHydrate(db, pids);
+  const demands = (await db.query('select count(*)::int n from futbeat_private.player_search_demands')).rows[0].n;
+  assert.ok(demands <= 5, `expected at most 5 discovery demands per call, got ${demands}`);
+}));
+
+test('futbeat_request_player_profile never claims pending when neither profile nor stats is due', () => withDb(async (db) => {
+  const player = (await db.query(
+    "select futbeat_private.futbeat_resolve_global_entity('goal_api','player','cmr7fully','Fully Hydrated') v",
+  )).rows[0].v;
+  await db.query(`update futbeat_private.entities set payload=payload||jsonb_build_object(
+      'dateOfBirth','2000-01-01','country','Test','position','Forward','height','180',
+      'media',jsonb_build_object('url','https://media.goal-api.com/players/x.png','verificationStatus','VERIFIED')
+    ) where id=$1`, [player]);
+  // profileDue is now false (all profile facts present); make statsDue false
+  // too via an existing, not-yet-due coverage row (the simplest way to reach
+  // that state without needing the separate fresh-squad exemption path).
+  await db.query(`insert into futbeat_private.player_profile_coverage(
+      player_id,external_id,requested_at,request_count,profile_status,profile_next_retry_at,
+      stats_status,stats_next_retry_at)
+    values($1,'cmr7fully',now(),1,'AVAILABLE',now()+interval '25 days','AVAILABLE',now()+interval '10 hours')`,
+    [player]);
+  const result = (await db.query('select public.futbeat_request_player_profile($1) v', [player])).rows[0].v;
+  assert.equal(result.enrichmentPending, false);
+}));

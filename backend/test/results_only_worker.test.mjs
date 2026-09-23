@@ -36,7 +36,10 @@ function edge(source, fetch, logs) {
 
 // Routes every RPC the results-only path can call through the REAL local SQL
 // functions (PGlite), the same pattern squad_only_trigger.test.mjs uses.
-function sqlRpc(db) {
+// failAt: an RPC name to fail with an HTTP 500 instead of executing --
+// injects a failure at one exact stage of the pipeline, downstream of the
+// GOAL fetch itself.
+function sqlRpc(db, failAt) {
   const allowed = new Set([
     'futbeat_reserve_goal_results_date', 'futbeat_link_goal_live_matches',
     'futbeat_record_live_batch', 'futbeat_finalize_goal_results_date',
@@ -44,6 +47,7 @@ function sqlRpc(db) {
   ]);
   return async (name, body) => {
     if (!allowed.has(name)) return unhandled;
+    if (name === failAt) throw Object.assign(new Error(`RPC ${name} failed: 500 injected failure`), { httpStatus: 500 });
     const entries = Object.entries(body);
     assert.ok(entries.every(([key]) => /^p_[a-z_]+$/.test(key)), JSON.stringify(body));
     const args = entries.map(([key], i) => `${key} => $${i + 1}`).join(',');
@@ -54,7 +58,7 @@ function sqlRpc(db) {
 
 function harness(db, options = {}) {
   const calls = [], logs = [], unexpected = [];
-  const rpc = sqlRpc(db);
+  const rpc = sqlRpc(db, options.failAt);
   const fetch = async (input, init = {}) => {
     const url = new URL(input);
     const body = init.body ? JSON.parse(init.body) : {};
@@ -63,7 +67,14 @@ function harness(db, options = {}) {
       const name = url.pathname.split('/').at(-1);
       if (name === 'futbeat_read_goal_live_cron_token') return Response.json(token);
       if (name === 'futbeat_read_goal_live_secret') return Response.json(goalKey);
-      const result = await rpc(name, body);
+      let result;
+      try {
+        result = await rpc(name, body);
+      } catch (error) {
+        // Mirrors a real PostgREST failure: the worker's rpc() helper reads
+        // response.ok, not a thrown JS exception.
+        return new Response(error.message, { status: error.httpStatus ?? 500 });
+      }
       if (result !== unhandled) return Response.json(result);
       unexpected.push(url.href);
       throw new Error(`Unmocked RPC: ${name}`);
@@ -153,6 +164,15 @@ test('results-only: no date due -> skipped, zero provider calls', () => withDb(a
   assert.equal(h.providers().length, 0);
 }));
 
+test('a failure at the reservation itself (before anything is reserved) is tagged "reserve", not left unknown', () => withDb(async (db) => {
+  await seedResultsDueMatch(db);
+  const h = harness(db, { failAt: 'futbeat_reserve_goal_results_date' });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.stage, 'reserve');
+  assert.equal(h.rpcCalls('futbeat_complete_provider_call').length, 0, 'nothing was ever reserved, so nothing to complete');
+}));
+
 test('results-only: local repair resolves it before any provider call is needed', () => withDb(async (db) => {
   const { match, dateStr } = await seedResultsDueMatch(db);
   // Terminal evidence already stored locally (mirrors a FINISHED observation
@@ -180,8 +200,8 @@ test('results-only: provider HTTP failure is recorded as FAILED with a sanitized
   assert.ok(!JSON.stringify([value, h.logs]).includes(goalKey));
 }));
 
-test('results-only: finalization stage failure is distinguishable from a provider fetch failure', () => withDb(async (db) => {
-  const { external, dateStr } = await seedResultsDueMatch(db);
+test('a fixture missing apiId/id is silently skipped upstream, not a finalization failure', () => withDb(async (db) => {
+  await seedResultsDueMatch(db);
   // A fixture with no apiId/id cannot be linked or normalized -> exercises
   // the post-fetch pipeline (link/record/finalize) rather than the fetch itself.
   const h = harness(db, {
@@ -193,6 +213,43 @@ test('results-only: finalization stage failure is distinguishable from a provide
   // batch still completes -- 0 results linked, not a hard failure.
   assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
   assert.equal(value.results.results, 0);
+}));
+
+for (const [failAt, expectedStage] of [
+  ['futbeat_link_goal_live_matches', 'link'],
+  ['futbeat_record_live_batch', 'record'],
+  ['futbeat_finalize_goal_results_date', 'finalize'],
+  ['futbeat_complete_results_date_attempt', 'complete_attempt'],
+]) {
+  test(`a failure at the ${failAt} RPC is tagged with stage "${expectedStage}", not hidden as a generic failure`, () => withDb(async (db) => {
+    const { external, dateStr } = await seedResultsDueMatch(db);
+    const h = harness(db, {
+      failAt,
+      provider: () => Response.json({ success: true, data: [resultFixture(external)], pagination: { total: 1 } }),
+    });
+    const { value } = await h.invoke();
+    assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
+    assert.equal(value.results.stage, expectedStage);
+    assert.ok(!JSON.stringify([value, h.logs]).includes(goalKey));
+    const completion = h.rpcCalls('futbeat_complete_provider_call')[0];
+    // complete_attempt's own failure still reaches completeFailure with the
+    // correct stage; complete_provider_call's own failure is the one stage
+    // whose ledger row is never written (the write itself is what failed).
+    if (failAt !== 'futbeat_complete_provider_call') {
+      assert.equal(completion.body.p_metadata.stage, expectedStage);
+    }
+  }));
+}
+
+test('a failure at futbeat_complete_provider_call itself is tagged "complete_call"', () => withDb(async (db) => {
+  const { external } = await seedResultsDueMatch(db);
+  const h = harness(db, {
+    failAt: 'futbeat_complete_provider_call',
+    provider: () => Response.json({ success: true, data: [resultFixture(external)], pagination: { total: 1 } }),
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.stage, 'complete_call');
 }));
 
 test('results-only wake actually invokes syncOneResultsDate (not a routing no-op)', async () => {
@@ -273,4 +330,57 @@ test('a stage-tagged failure names the failing stage and never leaks the GOAL ke
   assert.ok(!JSON.stringify([value, h.logs]).includes(goalKey), 'the GOAL key must never appear in the response or logs');
   const completion = h.rpcCalls('futbeat_complete_provider_call')[0];
   assert.equal(completion.body.p_metadata.stage, 'provider_fetch');
+}));
+
+test('pagination: an inflated total followed by an empty page cannot make progress -> tagged "provider_fetch"', () => withDb(async (db) => {
+  const { external } = await seedResultsDueMatch(db);
+  let call = 0;
+  const h = harness(db, {
+    provider: () => {
+      call++;
+      if (call === 1) return Response.json({ success: true, data: [resultFixture(external)], pagination: { total: 600 } });
+      // GOAL claims 600 total but page 2 has nothing: rowCount=0 -> cannot advance.
+      return Response.json({ success: true, data: [], pagination: { total: 600 } });
+    },
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.stage, 'provider_fetch');
+  assert.match(value.results.detail, /cannot make progress/);
+}));
+
+test('pagination: hasMore:true followed by an empty page cannot make progress -> tagged "provider_fetch"', () => withDb(async (db) => {
+  const { external } = await seedResultsDueMatch(db);
+  let call = 0;
+  const h = harness(db, {
+    provider: () => {
+      call++;
+      if (call === 1) return Response.json({ success: true, data: [resultFixture(external)], pagination: { hasMore: true } });
+      return Response.json({ success: true, data: [], pagination: { hasMore: true } });
+    },
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.stage, 'provider_fetch');
+}));
+
+test('pagination: 5 full pages (a page limit below the real day volume) hits the safety cap -> tagged "provider_fetch"', () => withDb(async (db) => {
+  const { external } = await seedResultsDueMatch(db);
+  let call = 0;
+  const h = harness(db, {
+    provider: () => {
+      call++;
+      // Every page is a full 500 rows (the worker's own requested limit)
+      // and all distinct, so hasMore keeps inferring true (rowCount>=limit,
+      // no total/hasMore field to say otherwise) and the worker's 5-page
+      // safety cap throws rather than fetching forever.
+      const data = Array.from({ length: 500 }, (_, i) => resultFixture(`${external}-page${call}-${i}`));
+      return Response.json({ success: true, data, pagination: {} });
+    },
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.stage, 'provider_fetch');
+  assert.match(value.results.detail, /pagination exceeded safety limit/);
+  assert.equal(call, 5);
 }));

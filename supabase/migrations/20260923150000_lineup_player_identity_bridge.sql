@@ -8,21 +8,29 @@
 -- _entity deliberately never matches players by name (player_on_demand.sql:
 -- "Found players are canonicalized strictly by provider id (never by
 -- name)"), so a lineup-discovered canonical player and a later
--- search-discovered one for the SAME real person previously became two
--- separate canonical entities whenever their external ids differed, and
--- lineup hydration kept sending the numeric id to /players/:id forever.
+-- search-discovered (or squad-discovered) one for the SAME real person
+-- previously became two separate canonical entities whenever their
+-- external ids differed, and lineup hydration kept sending the numeric id
+-- to /players/:id forever.
 --
--- Bridge: when a NEW catalog-style search result arrives for a player whose
--- normalized name AND current team (verified via provider_entities, never
--- supplied by the caller) match EXACTLY ONE existing lineup-only canonical
--- player (one with no profile-compatible id yet), that search id is aliased
--- onto the SAME canonical player instead of minting a new one. Ambiguous or
--- team-unverified matches are never merged: futbeat_resolve_global_entity's
--- own player rule stands, a search id with no unambiguous bridge target
--- gets its own new canonical player exactly as before. Until a bridge (or a
--- direct search) resolves the profile-compatible id, hydration registers a
--- name-based discovery demand through the EXISTING search pipeline instead
--- of calling /players/:id with an id that would 404.
+-- Bridge: whenever a NEW id (either namespace) is about to be minted a
+-- brand-new canonical player, and its normalized name AND current team
+-- (verified via provider_entities, never supplied by the caller) match
+-- EXACTLY ONE existing canonical player who does not already have an id in
+-- THAT SAME namespace, the new id is aliased onto that player instead.
+-- Symmetric: this covers both "search/profile discovers a catalog id for an
+-- already lineup-known player" (upsert_goal_player) and "a lineup later
+-- names a player whose squad/search catalog id is already known"
+-- (harvest_lineup_players). Ambiguous, team-unverified, or name-collision
+-- matches are never merged -- futbeat_resolve_global_entity's own
+-- never-by-name rule is the fallback, exactly as before this migration.
+--
+-- Until a bridge (or a direct search/profile visit) resolves a
+-- profile-compatible id, hydration and reservation never call
+-- /players/:id or /players/:id/statistics with a numeric-only id; they
+-- register a name-based discovery demand through the EXISTING search
+-- pipeline instead (note_player_search_demand), bounded per hydration call
+-- so a busy lineup cannot burst the shared search admission budget.
 
 -- GOAL's live/lineup player ids are purely numeric; search/profile/squad ids
 -- are not (e.g. "cmr7..."). This is the only distinguishing evidence
@@ -33,41 +41,48 @@ returns boolean language sql immutable set search_path='' as $$
   select p_external_id ~ '^[0-9]+$'
 $$;
 
--- Exactly one existing lineup-only canonical player matching name + a
--- verified current team, or null (no match, or ambiguous -- never guessed).
-create or replace function futbeat_private.bridge_lineup_player_identity(
-  p_name text, p_team_external_id text
+-- Exactly one existing canonical player matching name + a verified current
+-- team, who does not already have an id in p_ext's own namespace (numeric
+-- vs catalog-style) -- or null (no match, or ambiguous, never guessed).
+-- The normalized-name guard rejects empty/near-empty folds: normalize_live
+-- _name maps any name with no Latin letters or digits (non-Latin scripts,
+-- or a genuinely blank lineup name) to '', and two blanks must never be
+-- treated as equal -- that would merge two unrelated players who happen to
+-- both have unrepresentable names. A minimum folded length of 3 guards the
+-- same failure mode for very short/degenerate names.
+create or replace function futbeat_private.bridge_player_identity(
+  p_ext text, p_name text, p_team_external_id text
 ) returns text language sql stable set search_path='' as $$
   select case when count(*)=1 then min(candidate) end
   from (
     select distinct e.id candidate
     from futbeat_private.entities e
-    join futbeat_private.provider_entities pe
-      on pe.canonical_id=e.id and pe.provider='goal_api' and pe.kind='player'
+    join futbeat_private.provider_entities team_pe
+      on team_pe.provider='goal_api' and team_pe.kind='team'
+      and team_pe.external_id=p_team_external_id
+      and team_pe.canonical_id=futbeat_private.futbeat_resolve_entity_id('team',e.payload->>'teamId')
     where e.kind='player'
-      and nullif(p_name,'') is not null
       and nullif(p_team_external_id,'') is not null
+      and nullif(futbeat_private.normalize_live_name(p_name),'') is not null
+      and length(replace(futbeat_private.normalize_live_name(p_name),' ','')) >= 3
       and futbeat_private.normalize_live_name(e.payload->>'name')
         = futbeat_private.normalize_live_name(p_name)
-      -- Only a still-numeric-only identity is a bridge candidate; an
-      -- already-bridged player is found by its own real id, never re-matched.
       and not exists(
         select 1 from futbeat_private.provider_entities pe2
         where pe2.canonical_id=e.id and pe2.provider='goal_api' and pe2.kind='player'
-          and not futbeat_private.player_external_id_is_numeric(pe2.external_id)
-      )
-      and exists(
-        select 1 from futbeat_private.provider_entities team_pe
-        where team_pe.provider='goal_api' and team_pe.kind='team'
-          and team_pe.external_id=p_team_external_id
-          and team_pe.canonical_id=futbeat_private.futbeat_resolve_entity_id('team',e.payload->>'teamId')
+          and futbeat_private.player_external_id_is_numeric(pe2.external_id)
+            = futbeat_private.player_external_id_is_numeric(p_ext)
       )
   ) candidates
 $$;
 
--- Same signature/behavior as before; one new branch: a brand-new
--- catalog-style search id that bridges to an existing lineup-only canonical
--- player reuses that player's id instead of minting a new one.
+-- Same signature/behavior as before; one new branch: a brand-new external id
+-- (search or profile; in practice always search -- a profile fetch only
+-- happens once profileIdReady is already true, so its id already exists)
+-- that bridges to an existing canonical player reuses that player's id
+-- instead of minting a new one. Re-checks existence after taking the lock
+-- (a concurrent store of the same id is possible; the loser must not
+-- overwrite the winner's mapping).
 create or replace function futbeat_private.upsert_goal_player(p_item jsonb,p_source text,p_received timestamptz)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare ext text:=nullif(btrim(p_item->>'externalId'),''); name text:=nullif(btrim(p_item->>'name'),'');
@@ -77,16 +92,21 @@ begin
   if ext is null or p_source not in ('search','profile') then return null; end if;
   existed:=exists(select 1 from futbeat_private.provider_entities where provider='goal_api' and kind='player' and external_id=ext);
   if not existed and name is null then return null; end if;
-  if not existed and p_source='search' and not futbeat_private.player_external_id_is_numeric(ext) then
-    bridge_pid:=futbeat_private.bridge_lineup_player_identity(name,p_item->>'teamExternalId');
+  if not existed then
+    bridge_pid:=futbeat_private.bridge_player_identity(ext,name,p_item->>'teamExternalId');
   end if;
   if bridge_pid is not null then
     perform pg_catalog.pg_advisory_xact_lock(hashtextextended('player:goal_api:'||ext,0));
-    insert into futbeat_private.provider_entities(provider,kind,external_id,canonical_id)
-    values('goal_api','player',ext,bridge_pid) on conflict do nothing;
-    pid:=bridge_pid;
-    perform futbeat_private.bump_metric('lineup_identity_bridged');
+    select canonical_id into pid from futbeat_private.provider_entities
+    where provider='goal_api' and kind='player' and external_id=ext;
+    if pid is null then
+      insert into futbeat_private.provider_entities(provider,kind,external_id,canonical_id)
+      values('goal_api','player',ext,bridge_pid) on conflict do nothing;
+      pid:=bridge_pid;
+      perform futbeat_private.bump_metric('lineup_identity_bridged');
+    end if;
   else
+    if not existed then perform futbeat_private.bump_metric('lineup_identity_bridge_skipped'); end if;
     pid:=futbeat_private.futbeat_resolve_global_entity('goal_api','player',ext,coalesce(name,''),
       coalesce(p_item->>'country',''),coalesce(p_item->>'shortName',''));
   end if;
@@ -137,6 +157,137 @@ begin
     'gained',(select count(*) from jsonb_each(next) n where not (old ? n.key) or old->n.key is distinct from n.value));
 end $$;
 
+-- Same lineup harvesting as before; one new branch, symmetric to
+-- upsert_goal_player's: a brand-new NUMERIC lineup id that bridges to an
+-- existing (squad- or search-discovered) canonical player -- verified by
+-- name + the match's own home/away team context -- reuses that player's id
+-- instead of minting a new one. Covers the common case of a popular team
+-- whose squad was already ingested before its next match's lineup arrives.
+create or replace function futbeat_private.harvest_lineup_players(
+ p_match_id text,p_payload jsonb,p_seen timestamptz
+) returns integer language plpgsql security definer set search_path='' as $$
+declare r record; ext text; pid text; player_name text; photo text; media jsonb;
+ old_payload jsonb; next_payload jsonb; tid text; home text; away text;
+ position text; shirt integer; country text; owned text[]; last_seen timestamptz;
+ team_moved boolean; changed integer:=0; existed boolean; bridge_pid text; team_external text;
+begin
+ if p_match_id is not null then
+   select futbeat_private.futbeat_resolve_entity_id('team',payload->>'homeTeamId'),
+     futbeat_private.futbeat_resolve_entity_id('team',payload->>'awayTeamId')
+   into home,away from futbeat_private.entities where id=p_match_id and kind='match';
+ end if;
+ for r in select * from futbeat_private.lineup_rows(p_payload) loop
+   ext:=coalesce(nullif(btrim(r.item->>'playerId'),''),nullif(btrim(r.item->>'playerKey'),''),
+     nullif(btrim(r.item#>>'{player,id}'),''));
+   if ext is null then continue; end if;
+   player_name:=coalesce(nullif(btrim(r.item->>'lineupPlayer'),''),
+     nullif(btrim(r.item#>>'{player,name}'),''),nullif(btrim(r.item->>'playerName'),''),'');
+   tid:=case r.side when 'home' then home when 'away' then away end;
+   -- Provider identity only (resolve_global_entity never matches players by
+   -- name). The ONLY name-assisted step is bridge_player_identity, gated on
+   -- a verified current team, and only for an id this player has never had.
+   existed:=exists(select 1 from futbeat_private.provider_entities where provider='goal_api' and kind='player' and external_id=ext);
+   bridge_pid:=null;
+   if not existed and tid is not null and player_name<>'' then
+     select external_id into team_external from futbeat_private.provider_entities
+     where provider='goal_api' and kind='team' and canonical_id=tid limit 1;
+     if team_external is not null then
+       bridge_pid:=futbeat_private.bridge_player_identity(ext,player_name,team_external);
+     end if;
+   end if;
+   if bridge_pid is not null then
+     perform pg_catalog.pg_advisory_xact_lock(hashtextextended('player:goal_api:'||ext,0));
+     select canonical_id into pid from futbeat_private.provider_entities
+     where provider='goal_api' and kind='player' and external_id=ext;
+     if pid is null then
+       insert into futbeat_private.provider_entities(provider,kind,external_id,canonical_id)
+       values('goal_api','player',ext,bridge_pid) on conflict do nothing;
+       pid:=bridge_pid;
+       perform futbeat_private.bump_metric('lineup_identity_bridged');
+     end if;
+   else
+     if not existed and tid is not null then perform futbeat_private.bump_metric('lineup_identity_bridge_skipped'); end if;
+     -- Provider identity only (resolve_global_entity never matches players by name).
+     pid:=futbeat_private.futbeat_resolve_global_entity('goal_api','player',ext,player_name);
+   end if;
+   select payload into old_payload from futbeat_private.entities
+     where id=pid and kind='player' for update;
+   if old_payload is null then continue; end if;
+   next_payload:=old_payload;
+   -- Identity-level facts: fill only when missing, from any lineup age.
+   if coalesce(btrim(next_payload->>'name'),'')='' and player_name<>'' then
+     next_payload:=next_payload||jsonb_build_object('name',player_name);
+   end if;
+   country:=nullif(btrim(coalesce(r.item->>'playerCountry','')),'');
+   if coalesce(btrim(next_payload->>'country'),'')='' and country is not null then
+     next_payload:=next_payload||jsonb_build_object('country',country);
+   end if;
+   photo:=coalesce(nullif(r.item->>'playerImage',''),nullif(r.item#>>'{player,image}',''),nullif(r.item->>'photo',''));
+   -- Detail omission is NOT evidence of NO_PHOTO. Only trusted CDN URLs, and an
+   -- identical valid photo is not rewritten (idempotent, keeps its TTL). An
+   -- older photo cannot replace a newer one (preserve_verified_player_media).
+   if futbeat_private.futbeat_valid_goal_player_media_url(photo,'GOAL API')
+      and not (futbeat_private.valid_player_media(old_payload->'media')
+        and old_payload#>>'{media,url}'=photo) then
+     media:=jsonb_build_object('url',photo,'kind','PLAYER_PHOTO','source','GOAL API','externalId',ext,
+       'receivedAt',p_seen,'verificationStatus','VERIFIED','rightsStatus','REVIEW_REQUIRED',
+       'usageScope','DEVELOPMENT_ONLY','discoveredVia','lineup');
+     next_payload:=jsonb_set(next_payload,'{media}',media,true);
+   end if;
+   -- Club-level facts: a stored squad owns them; lineups never touch squad data.
+   -- Otherwise only the NEWEST lineup applies, as one block: fields it set
+   -- earlier (lineupOwned) advance together, so a newer club is never paired
+   -- with an older lineup's shirt number/position. Fields from another source
+   -- are only filled when missing.
+   -- A row without a resolvable club (no side or no match context) carries no
+   -- club-level evidence: it never touches team/position/shirtNumber nor the
+   -- freshness markers, so it cannot block an older row that has context.
+   last_seen:=futbeat_private.try_timestamptz(next_payload->>'lineupSeenAt');
+   if tid is not null
+      and not exists(select 1 from futbeat_private.team_squad_members sm where sm.player_id=pid)
+      and (last_seen is null or p_seen>=last_seen) then
+     owned:=array(select jsonb_array_elements_text(case when jsonb_typeof(next_payload->'lineupOwned')='array'
+       then next_payload->'lineupOwned' else '[]'::jsonb end));
+     team_moved:=false;
+     if tid is distinct from next_payload->>'teamId'
+        and (coalesce(next_payload->>'teamId','')='' or 'teamId'=any(owned)) then
+       team_moved:=coalesce(next_payload->>'teamId','')<>'';
+       next_payload:=next_payload||jsonb_build_object('teamId',tid);
+       owned:=array_append(array_remove(owned,'teamId'),'teamId');
+     end if;
+     position:=futbeat_private.lineup_position(r.item->>'playerPosition');
+     if position is not null and (coalesce(btrim(next_payload->>'position'),'')='' or 'position'=any(owned)) then
+       next_payload:=next_payload||jsonb_build_object('position',position);
+       owned:=array_append(array_remove(owned,'position'),'position');
+     elsif position is null and team_moved and 'position'=any(owned) then
+       next_payload:=next_payload-'position';
+       owned:=array_remove(owned,'position');
+     end if;
+     shirt:=case when btrim(coalesce(r.item->>'lineupNumber',r.item->>'shirtNumber','')) ~ '^[0-9]{1,3}$'
+       then btrim(coalesce(r.item->>'lineupNumber',r.item->>'shirtNumber',''))::integer end;
+     if shirt is not null and (jsonb_typeof(next_payload->'shirtNumber') is distinct from 'number'
+        or 'shirtNumber'=any(owned)) then
+       next_payload:=next_payload||jsonb_build_object('shirtNumber',shirt);
+       owned:=array_append(array_remove(owned,'shirtNumber'),'shirtNumber');
+     elsif shirt is null and team_moved and 'shirtNumber'=any(owned) then
+       next_payload:=next_payload-'shirtNumber';
+       owned:=array_remove(owned,'shirtNumber');
+     end if;
+     if cardinality(owned)>0 then
+       next_payload:=next_payload||jsonb_build_object('lineupOwned',
+         (select to_jsonb(array_agg(f order by f)) from unnest(owned) f),
+         -- Deterministic UTC text, independent of the session TimeZone.
+         'lineupSeenAt',to_char(p_seen at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'));
+     end if;
+   end if;
+   if next_payload is distinct from old_payload then
+     update futbeat_private.entities set payload=next_payload where id=pid and kind='player';
+     changed:=changed+1;
+   end if;
+ end loop;
+ return changed;
+end $$;
+
 -- Same output keys as before, plus profileIdReady: whether a
 -- profile-compatible (non-numeric) external id is known yet. profileDue can
 -- be true while profileIdReady is false (a numeric-only lineup identity that
@@ -173,9 +324,9 @@ security definer
 set search_path=''
 as $$
 declare
-  pid text; v_priority smallint; ext text; due jsonb; player_name text;
+  pid text; v_priority smallint; ext text; due jsonb; player_name text; discovery jsonb;
   previous timestamptz; lease_at timestamptz;
-  any_pending boolean:=false; should_wake boolean:=false;
+  any_pending boolean:=false; should_wake boolean:=false; discovery_demands integer:=0;
 begin
   for pid,v_priority in
     select s.player_id,s.priority from (
@@ -193,18 +344,25 @@ begin
     if ext is null then continue; end if;
 
     due:=futbeat_private.player_hydration_due(pid);
+    -- This lane is photo hydration (profile data), not stats -- unchanged
+    -- from before this migration: only profileDue gates it, never statsDue.
     if not coalesce((due->>'profileDue')::boolean,false) then continue; end if;
 
     if not coalesce((due->>'profileIdReady')::boolean,false) then
       -- Only a numeric (lineup/live-only) id is known: /players/:id would
       -- 404 on it. Discover the profile-compatible id via the existing
-      -- search pipeline (name-only query; bridge_lineup_player_identity
-      -- links a matching result back to THIS canonical player, never by
-      -- name alone -- team context is verified when the result arrives).
-      select payload->>'name' into player_name from futbeat_private.entities where id=pid and kind='player';
-      if nullif(btrim(coalesce(player_name,'')),'') is not null then
-        any_pending:=true;
-        perform futbeat_private.note_player_search_demand(player_name);
+      -- search pipeline (name-only query; bridge_player_identity links a
+      -- matching result back to THIS canonical player, never by name alone
+      -- -- team context is verified when the result arrives). Bounded per
+      -- call: a busy lineup must not burst the shared search admission
+      -- budget (60 admissions / 5 minutes, shared with user-typed search).
+      if discovery_demands<5 then
+        select payload->>'name' into player_name from futbeat_private.entities where id=pid and kind='player';
+        if nullif(btrim(coalesce(player_name,'')),'') is not null then
+          discovery:=futbeat_private.note_player_search_demand(player_name);
+          discovery_demands:=discovery_demands+1;
+          if coalesce((discovery->>'pending')::boolean,false) then any_pending:=true; end if;
+        end if;
       end if;
       continue;
     end if;
@@ -247,7 +405,8 @@ $$;
 -- hydration for the same player (priority 0 < lineup's 1/2 < default 100).
 create or replace function public.futbeat_request_player_profile(p_player_id text)
 returns jsonb language plpgsql security definer set search_path='' as $$
-declare ext text; due jsonb; previous timestamptz; lease timestamptz; pending boolean; player_name text;
+declare ext text; due jsonb; previous timestamptz; lease timestamptz; pending boolean;
+  player_name text; discovery jsonb;
 begin
   select external_id into ext from futbeat_private.provider_entities
   where provider='goal_api' and kind='player' and canonical_id=p_player_id
@@ -255,14 +414,22 @@ begin
   limit 1;
   if ext is null then return jsonb_build_object('enrichmentPending',false,'reason','unmapped'); end if;
   due:=futbeat_private.player_hydration_due(p_player_id);
+  if not (coalesce((due->>'profileDue')::boolean,false) or coalesce((due->>'statsDue')::boolean,false)) then
+    perform futbeat_private.bump_metric('player_profile_cache_hits');
+    return jsonb_build_object('enrichmentPending',false)||due;
+  end if;
   if not coalesce((due->>'profileIdReady')::boolean,false) then
     -- Same numeric-id-only situation as lineup hydration: discover the
-    -- profile-compatible id before ever attempting /players/:id.
+    -- profile-compatible id before ever attempting /players/:id. Pending
+    -- reflects whether discovery is genuinely in flight (not rate-limited,
+    -- not cached, not a query too short to search).
     select payload->>'name' into player_name from futbeat_private.entities where id=p_player_id and kind='player';
-    if nullif(btrim(coalesce(player_name,'')),'') is not null then
-      perform futbeat_private.note_player_search_demand(player_name);
+    if nullif(btrim(coalesce(player_name,'')),'') is null then
+      return jsonb_build_object('enrichmentPending',false)||due;
     end if;
-    return jsonb_build_object('enrichmentPending',true,'reason','identity_discovery')||due;
+    discovery:=futbeat_private.note_player_search_demand(player_name);
+    return jsonb_build_object('enrichmentPending',coalesce((discovery->>'pending')::boolean,false),
+      'reason','identity_discovery')||due;
   end if;
   -- Only promise enrichment that the quota manager would allow today.
   pending:=((due->>'profileDue')::boolean
@@ -366,9 +533,25 @@ begin
     'providerRemaining',last_decision->'providerRemaining');
 end $$;
 
+-- One-time repair: every numeric-only player_profile_coverage row was
+-- doomed to a 404 by the pre-fix code and is very likely sitting in a
+-- 404 -> NO_DATA backoff (up to playerNoDataDays, 30 days by default) from
+-- futbeat_fail_player_call. Without this, the exact players production
+-- validation flagged stay stuck even after this fix ships, because
+-- profileDue would still read false until that backoff naturally expires.
+-- Clearing it makes them immediately eligible again under the new
+-- profileIdReady gate (still 0 provider calls until a bridge or a fresh
+-- search resolves a real profile-compatible id).
+update futbeat_private.player_profile_coverage c
+set profile_status='NEVER',profile_fetched_at=null,profile_next_retry_at=null,
+  stats_status='NEVER',stats_fetched_at=null,stats_next_retry_at=null,
+  failure_count=0,lease_until=null,last_error=null
+where futbeat_private.player_external_id_is_numeric(c.external_id)
+  and (c.profile_status<>'NEVER' or c.stats_status<>'NEVER' or c.failure_count>0);
+
 revoke all on function
   futbeat_private.player_external_id_is_numeric(text),
-  futbeat_private.bridge_lineup_player_identity(text,text)
+  futbeat_private.bridge_player_identity(text,text,text)
 from public,anon,authenticated,service_role;
 
 notify pgrst,'reload schema';

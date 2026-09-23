@@ -547,9 +547,17 @@ async function syncLive() {
 }
 
 async function syncOneResultsDate() {
-  const plan = await rpc("futbeat_reserve_goal_results_date", {
-    p_trigger_source: "supabase-cron",
-  });
+  let plan: Record<string, unknown> | null;
+  try {
+    plan = await rpc("futbeat_reserve_goal_results_date", {
+      p_trigger_source: "supabase-cron",
+    });
+  } catch (error) {
+    throw Object.assign(
+      error instanceof Error ? error : new Error(String(error)),
+      { stage: "reserve" },
+    );
+  }
   if (!plan?.allowed) {
     return {
       status: "skipped",
@@ -698,9 +706,14 @@ async function syncOneResultsDate() {
         // Provider-call failure remains primary; attempt bookkeeping retries later.
       }
     }
-    // Sanitized: only the failing stage name and a truncated error message
-    // (never the GOAL key, never a raw provider/RPC payload) reach the
-    // ledger and, via the thrown error below, the results-only response.
+    // Sanitized: the failing stage name and a truncated (300 char) error
+    // message reach the ledger and, via the thrown error below, the
+    // results-only response (truncated further, to 200 chars, there). The
+    // GOAL key never appears in any message here. An RPC failure's message
+    // may echo up to 180 chars of that RPC's own PostgREST error text
+    // (rpc(), earlier in this file) -- useful for diagnosis, and none of
+    // the RPCs in this pipeline handle secrets, but it is not purely a
+    // fixed stage label.
     await completeFailure(
       reservationId,
       "GOAL_RESULTS_DATE_FETCH_FAILED",
