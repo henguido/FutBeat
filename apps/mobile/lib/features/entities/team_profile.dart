@@ -5,11 +5,8 @@ import '../../core/models.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
+import 'profile_widgets.dart';
 import 'standings.dart';
-
-const _headerTop = Color(0xFF1B2B31);
-const _headerBottom = Color(0xFF0F181C);
-const _cardBorder = Color(0xFF2B373D);
 
 /// Squad sections in display order; "Otros" holds unclassifiable positions.
 const squadGroupOrder = [
@@ -128,59 +125,36 @@ class TeamProfileView extends StatelessWidget {
       'Noticias',
       'Transferencias',
     ];
-    final tabBar = TabBar(
-      isScrollable: true,
-      tabAlignment: TabAlignment.start,
-      labelPadding: const EdgeInsets.symmetric(horizontal: 14),
-      labelColor: Colors.white,
-      unselectedLabelColor: muted,
-      labelStyle: const TextStyle(
-        fontFamily: 'FutBeatRoboto',
-        fontSize: 14,
-        fontWeight: FontWeight.w800,
-      ),
-      unselectedLabelStyle: const TextStyle(
-        fontFamily: 'FutBeatRoboto',
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-      ),
-      indicatorSize: TabBarIndicatorSize.label,
-      indicator: const UnderlineTabIndicator(
-        borderSide: BorderSide(color: lime, width: 3),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(3)),
-      ),
-      dividerColor: Colors.transparent,
-      tabs: [for (final tab in tabs) Tab(text: tab, height: 42)],
-    );
+    final tabBar = profileTabBar(tabs);
 
     Widget body(String tab) => switch (tab) {
-      'Resumen' => _TabList('resumen', [
+      'Resumen' => ProfileTabList('resumen', [
         if (data.demo) const DemoNotice(),
         ..._summary(context, players),
       ]),
-      'Partidos' => _TabList('partidos', [
+      'Partidos' => ProfileTabList('partidos', [
         if (data.demo) const DemoNotice(),
         ..._matchList(),
       ]),
-      'Tabla' => _TabList('tabla', [
+      'Tabla' => ProfileTabList('tabla', [
         if (data.demo) const DemoNotice(),
         Standings(data, tableId!),
       ]),
-      'Plantilla' => _TabList('plantilla', [
+      'Plantilla' => ProfileTabList('plantilla', [
         if (data.demo) const DemoNotice(),
         TeamSquad(players, demo: data.demo),
       ]),
-      'Noticias' => _TabList('noticias', [
+      'Noticias' => ProfileTabList('noticias', [
         if (data.demo) const DemoNotice(),
         if (data.news.isEmpty)
-          const _InlineEmpty(Icons.article_outlined, 'Sin noticias disponibles')
+          const InlineEmpty(Icons.article_outlined, 'Sin noticias disponibles')
         else
           for (final article in data.news) NewsArticleCard(article),
       ]),
-      _ => _TabList('transferencias', [
+      _ => ProfileTabList('transferencias', [
         if (data.demo) const DemoNotice(),
         if (data.transfers.isEmpty)
-          const _InlineEmpty(
+          const InlineEmpty(
             Icons.swap_horiz,
             'Sin cambios de plantilla disponibles',
           )
@@ -194,7 +168,7 @@ class TeamProfileView extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: Text(team.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-          backgroundColor: _headerTop,
+          backgroundColor: profileHeaderTop,
           surfaceTintColor: Colors.transparent,
           scrolledUnderElevation: 0,
           actions: [FollowButton('team', team.id)],
@@ -213,7 +187,7 @@ class TeamProfileView extends StatelessWidget {
               handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
               sliver: SliverPersistentHeader(
                 pinned: true,
-                delegate: _TabBarHeader(tabBar),
+                delegate: ProfileTabBarHeader(tabBar),
               ),
             ),
           ],
@@ -228,29 +202,29 @@ class TeamProfileView extends StatelessWidget {
     final finished = matches.where((m) => m.isFinished).toList();
     final main = competitions.firstOrNull;
     return [
-      const _SectionTitle('Partidos destacados'),
+      const ProfileSectionTitle('Partidos destacados'),
       if (active.isEmpty)
-        const _InlineEmpty(
+        const InlineEmpty(
           Icons.event_outlined,
           'Sin próximos partidos publicados',
         )
       else
         for (final match in active) MatchCard(match, data),
       if (finished.isNotEmpty) ...[
-        const _SectionTitle('Último resultado'),
+        const ProfileSectionTitle('Último resultado'),
         MatchCard(finished.last, data),
       ],
-      const _SectionTitle('Competiciones'),
+      const ProfileSectionTitle('Competiciones'),
       if (competitions.isEmpty)
-        const _InlineEmpty(
+        const InlineEmpty(
           Icons.emoji_events_outlined,
           'Aparecerán según los partidos publicados',
         )
       else
         for (final competition in competitions.take(3))
           EntityTile(competition, 'competition'),
-      const _SectionTitle('Información'),
-      _InfoCard([
+      const ProfileSectionTitle('Información'),
+      ProfileInfoCard([
         if (team.country.isNotEmpty) (Icons.public, 'País', team.country),
         if (main != null)
           (Icons.emoji_events_outlined, 'Competición principal', main.name),
@@ -264,7 +238,7 @@ class TeamProfileView extends StatelessWidget {
   List<Widget> _matchList() {
     if (matches.isEmpty) {
       return const [
-        _InlineEmpty(Icons.event_busy_outlined, 'Sin partidos disponibles'),
+        InlineEmpty(Icons.event_busy_outlined, 'Sin partidos disponibles'),
       ];
     }
     final upcoming = matches.where((m) => !m.isFinished).toList();
@@ -287,11 +261,11 @@ class TeamProfileView extends StatelessWidget {
     );
     return [
       if (upcoming.isNotEmpty) ...[
-        const _SectionTitle('Próximos'),
+        const ProfileSectionTitle('Próximos'),
         for (final match in upcoming) dated(match),
       ],
       if (results.isNotEmpty) ...[
-        const _SectionTitle('Resultados'),
+        const ProfileSectionTitle('Resultados'),
         for (final match in results) dated(match),
       ],
     ];
@@ -337,7 +311,7 @@ class TeamHeader extends StatelessWidget {
       gradient: LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [_headerTop, _headerBottom],
+        colors: [profileHeaderTop, profileHeaderBottom],
       ),
     ),
     padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
@@ -351,7 +325,7 @@ class TeamHeader extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: .06),
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: _cardBorder),
+            border: Border.all(color: profileCardBorder),
           ),
           child: EntityAvatar(team, size: 64),
         ),
@@ -393,19 +367,19 @@ class TeamHeader extends StatelessWidget {
                 runSpacing: 6,
                 children: [
                   if (competition != null)
-                    _HeaderChip(
+                    ProfileHeaderChip(
                       icon: Icons.emoji_events_outlined,
                       label: competition!.name,
                       onTap: () =>
                           context.push('/competition/${competition!.id}'),
                     ),
                   if (players > 0)
-                    _HeaderChip(
+                    ProfileHeaderChip(
                       icon: Icons.groups_outlined,
                       label: '$players jugadores',
                     ),
                   if (matches > 0)
-                    _HeaderChip(
+                    ProfileHeaderChip(
                       icon: Icons.sports_soccer,
                       label: '$matches partidos',
                     ),
@@ -419,51 +393,6 @@ class TeamHeader extends StatelessWidget {
   );
 }
 
-class _HeaderChip extends StatelessWidget {
-  const _HeaderChip({required this.icon, required this.label, this.onTap});
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = onTap == null ? muted : lime;
-    return Material(
-      color: color.withValues(alpha: .1),
-      shape: StadiumBorder(
-        side: BorderSide(color: color.withValues(alpha: .35)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class TeamSquad extends StatelessWidget {
   const TeamSquad(this.players, {this.demo = false, super.key});
 
@@ -473,7 +402,7 @@ class TeamSquad extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (players.isEmpty) {
-      return const _InlineEmpty(
+      return const InlineEmpty(
         Icons.groups_outlined,
         'Plantilla no disponible',
         detail: 'No hay jugadores publicados para este equipo.',
@@ -517,7 +446,11 @@ class TeamSquad extends StatelessWidget {
               children: [
                 for (var i = 0; i < group.length; i++) ...[
                   if (i > 0)
-                    const Divider(height: 1, indent: 64, color: _cardBorder),
+                    const Divider(
+                      height: 1,
+                      indent: 64,
+                      color: profileCardBorder,
+                    ),
                   SquadPlayerRow(group[i], group: label),
                 ],
               ],
@@ -656,158 +589,4 @@ class PlayerPhoto extends StatelessWidget {
       ),
     );
   }
-}
-
-class _InfoCard extends StatelessWidget {
-  const _InfoCard(this.rows);
-
-  final List<(IconData, String, String)> rows;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      child: Column(
-        children: [
-          for (final (icon, label, value) in rows)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                children: [
-                  Icon(icon, size: 18, color: muted),
-                  const SizedBox(width: 12),
-                  Flexible(
-                    flex: 2,
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: muted, fontSize: 13),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 3,
-                    child: Text(
-                      value,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.end,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    ),
-  );
-}
-
-/// Compact empty state: informative without taking the whole screen.
-class _InlineEmpty extends StatelessWidget {
-  const _InlineEmpty(this.icon, this.title, {this.detail});
-
-  final IconData icon;
-  final String title;
-  final String? detail;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.symmetric(vertical: 4),
-    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: .03),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: _cardBorder),
-    ),
-    child: Row(
-      children: [
-        Icon(icon, size: 22, color: muted.withValues(alpha: .7)),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-              if (detail != null)
-                Text(
-                  detail!,
-                  style: const TextStyle(color: muted, fontSize: 12),
-                ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.title);
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(2, 14, 2, 8),
-    child: Text(
-      title,
-      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-    ),
-  );
-}
-
-class _TabBarHeader extends SliverPersistentHeaderDelegate {
-  _TabBarHeader(this.tabBar);
-
-  final TabBar tabBar;
-
-  @override
-  double get minExtent => tabBar.preferredSize.height + 1;
-
-  @override
-  double get maxExtent => tabBar.preferredSize.height + 1;
-
-  @override
-  Widget build(
-    BuildContext context,
-    double shrinkOffset,
-    bool overlapsContent,
-  ) => DecoratedBox(
-    decoration: const BoxDecoration(
-      color: _headerBottom,
-      border: Border(bottom: BorderSide(color: _cardBorder)),
-    ),
-    child: Align(alignment: Alignment.centerLeft, child: tabBar),
-  );
-
-  @override
-  bool shouldRebuild(covariant _TabBarHeader oldDelegate) =>
-      oldDelegate.tabBar != tabBar;
-}
-
-class _TabList extends StatelessWidget {
-  const _TabList(this.storageKey, this.children);
-
-  final String storageKey;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) => CustomScrollView(
-    key: PageStorageKey<String>(storageKey),
-    slivers: [
-      SliverOverlapInjector(
-        handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
-      ),
-      SliverPadding(
-        padding: const EdgeInsets.fromLTRB(14, 8, 14, 28),
-        sliver: SliverList(delegate: SliverChildListDelegate(children)),
-      ),
-    ],
-  );
 }

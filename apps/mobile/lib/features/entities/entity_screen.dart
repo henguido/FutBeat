@@ -7,6 +7,7 @@ import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
+import 'player_profile.dart';
 import 'standings.dart';
 import 'team_profile.dart';
 
@@ -168,21 +169,25 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             matches: matches,
           );
         }
-        final competitionId = type == 'competition'
-            ? canonicalId
-            : type == 'team'
-            ? teamCompetitions.firstOrNull?.id
-            : null;
-        final tabs = type == 'player'
-            ? ['Resumen', 'Partidos', 'Noticias', 'Transferencias']
-            : [
-                'Resumen',
-                'Partidos',
-                'Tabla',
-                type == 'team' ? 'Plantilla' : 'Equipos',
-                'Noticias',
-                'Transferencias',
-              ];
+        if (type == 'player') {
+          return PlayerProfileView(
+            data: data,
+            player: entity,
+            team: team,
+            matches: matches,
+          );
+        }
+        // Teams and players have dedicated profiles; this is the competition
+        // profile.
+        final competitionId = canonicalId;
+        const tabs = [
+          'Resumen',
+          'Partidos',
+          'Tabla',
+          'Equipos',
+          'Noticias',
+          'Transferencias',
+        ];
         return DefaultTabController(
           length: tabs.length,
           child: Scaffold(
@@ -221,35 +226,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        if (type == 'player') ...[
-                          PlayerProfileFacts(entity),
-                          heading(context, 'Equipo actual'),
-                          if (team != null)
-                            EntityTile(team, 'team')
-                          else
-                            const EmptyState(
-                              'Equipo no disponible',
-                              'El equipo actual todavía no está publicado.',
+                        if ((entity.json['season']?.toString() ?? '')
+                            .isNotEmpty)
+                          Center(
+                            child: Text(
+                              entity.json['season'].toString(),
+                              style: const TextStyle(color: muted),
                             ),
-                        ] else if (type == 'team') ...[
-                          heading(context, 'Competiciones'),
-                          if (teamCompetitions.isEmpty)
-                            const EmptyState(
-                              'Competiciones no disponibles',
-                              'Las competiciones aparecerán según los partidos publicados.',
-                            ),
-                          for (final competition in teamCompetitions.take(3))
-                            EntityTile(competition, 'competition'),
-                        ] else ...[
-                          if ((entity.json['season']?.toString() ?? '')
-                              .isNotEmpty)
-                            Center(
-                              child: Text(
-                                entity.json['season'].toString(),
-                                style: const TextStyle(color: muted),
-                              ),
-                            ),
-                        ],
+                          ),
                         heading(context, 'Partidos destacados'),
                         if (matches.isEmpty)
                           const EmptyState(
@@ -283,33 +267,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                           MatchCard(match, data),
                         ],
                       ] else if (tab == 'Tabla')
-                        if (competitionId != null)
-                          Standings(data, competitionId)
-                        else
-                          const EmptyState(
-                            'Tabla no disponible',
-                            'No hay competición asociada a este perfil.',
-                          )
-                      else if (tab == 'Plantilla') ...[
-                        Text(
-                          data.demo
-                              ? 'Selección de jugadores de demostración'
-                              : 'Jugadores disponibles',
-                          style: const TextStyle(color: muted),
-                        ),
-                        const SizedBox(height: 12),
-                        if (!data.players.any(
-                          (p) => p.json['teamId'] == canonicalId,
-                        ))
-                          const EmptyState(
-                            'Plantilla no disponible',
-                            'No hay jugadores publicados para este equipo.',
-                          ),
-                        for (final player in data.players.where(
-                          (p) => p.json['teamId'] == canonicalId,
-                        ))
-                          EntityTile(player, 'player'),
-                      ] else if (tab == 'Equipos') ...[
+                        Standings(data, competitionId)
+                      else if (tab == 'Equipos') ...[
                         for (final team in competitionTeams(data, canonicalId))
                           EntityTile(team, 'team'),
                       ] else if (tab == 'Noticias') ...[

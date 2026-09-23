@@ -38,10 +38,11 @@ test('GOAL worker reconciles detailed fixtures into global LIVE state', async ()
 });
 
 test('Match API supports actual GOAL array payloads and read-only refresh', async () => {
-  const source = await readFile(
-    new URL('../../supabase/functions/futbeat-api/index.ts', import.meta.url),
-    'utf8',
-  );
+  // Lineup/statistics normalizers live in _shared/match_detail.ts (behavior is
+  // covered by match_detail_normalizers.test.mjs); the handler wires them up.
+  const source = (await Promise.all([
+    'futbeat-api/index.ts', '_shared/match_detail.ts',
+  ].map((file) => readFile(new URL(`../../supabase/functions/${file}`, import.meta.url), 'utf8')))).join('\n');
 
   assert.match(source, /Array\.isArray\(lineups\)/);
   assert.match(source, /normalizeStatistics\(payload\.statistics\)/);
@@ -54,7 +55,7 @@ test('Match API supports actual GOAL array payloads and read-only refresh', asyn
   assert.match(source, /outPlayerId/);
   assert.match(source, /inPlayerId/);
   assert.match(source, /playerRating/);
-  assert.match(source, /row\.type\)\.toLowerCase\(\) === 'coach'/);
+  assert.match(source, /value === 'coach'/);
   assert.match(source, /row\.playerId\).*row\.playerKey/);
   assert.match(source, /futbeat_read_lineup_player_media/);
   assert.match(source, /safeImage\(canonical\.image\)/);
@@ -105,7 +106,8 @@ test('newer partial detail preserves richer lineups and canonical verified media
 test('calendar field merge keeps a valid canonical score beside newer status data', async () => {
   const db = await openDatabase();
   try {
-    const day = (await db.query("select ((now() at time zone 'America/Costa_Rica')::date)::text value")).rows[0].value;
+    // Calendar day of the kickoff (not of now): stable around local midnight.
+    const day = (await db.query("select (((now()-interval '30 minutes') at time zone 'America/Costa_Rica')::date)::text value")).rows[0].value;
     const ids = ['fb_comp_field_merge','fb_team_field_home','fb_team_field_away'];
     await db.query("insert into futbeat_private.entities values($1,'competition',$2)", [ids[0], JSON.stringify({ id: ids[0], name: 'Liga', country: 'Costa Rica' })]);
     for (const id of ids.slice(1)) await db.query("insert into futbeat_private.entities values($1,'team',$2)", [id, JSON.stringify({ id, name: id, competitionId: ids[0] })]);
@@ -148,7 +150,8 @@ test('calendar uses fresh cached detail when canonical state is behind', async (
   const db = await openDatabase();
   try {
     const localDate = (await db.query(
-      "select ((now() at time zone 'America/Costa_Rica')::date)::text value",
+      // Calendar day of the kickoff (not of now): stable around local midnight.
+      "select (((now()-interval '30 minutes') at time zone 'America/Costa_Rica')::date)::text value",
     )).rows[0].value;
     const startTime = (await db.query(
       "select (now()-interval '30 minutes')::text value",
@@ -230,7 +233,8 @@ test('calendar reconciliation expires stale LIVE and never reopens a terminal ma
   const db = await openDatabase();
   try {
     const day = (await db.query(
-      "select ((now() at time zone 'America/Costa_Rica')::date)::text value",
+      // Calendar day of the kickoff (not of now): stable around local midnight.
+      "select (((now()-interval '1 hour') at time zone 'America/Costa_Rica')::date)::text value",
     )).rows[0].value;
     const start = (await db.query("select (now()-interval '1 hour')::text value")).rows[0].value;
     const competition = 'fb_comp_reconcile';
@@ -303,7 +307,8 @@ test('newer terminal detail wins over an older LIVE observation with its real sc
   const db = await openDatabase();
   try {
     const day = (await db.query(
-      "select ((now() at time zone 'America/Costa_Rica')::date)::text value",
+      // Calendar day of the kickoff (not of now): stable around local midnight.
+      "select (((now()-interval '2 hours') at time zone 'America/Costa_Rica')::date)::text value",
     )).rows[0].value;
     const start = (await db.query("select (now()-interval '2 hours')::text value")).rows[0].value;
     const ids = ['fb_comp_detail_terminal', 'fb_team_detail_home', 'fb_team_detail_away'];

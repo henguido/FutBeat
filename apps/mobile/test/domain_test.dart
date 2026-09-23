@@ -49,6 +49,26 @@ void main() {
       'fb_team_sap',
     );
   });
+  test('a match with a missing team or competition is dropped, not fatal', () {
+    final broken = Snapshot({
+      ...json,
+      'matches': [
+        ...(json['matches'] as List),
+        {
+          'id': 'fb_match_orphan',
+          'competitionId': 'fb_comp_missing',
+          'homeTeamId': (json['teams'] as List).first['id'],
+          'awayTeamId': 'fb_team_missing',
+          'startTime': '2026-09-20T18:00:00Z',
+          'status': 'SCHEDULED',
+          'events': <dynamic>[],
+          'statistics': <dynamic>[],
+        },
+      ],
+    });
+    expect(broken.match('fb_match_orphan'), isNull);
+    expect(broken.matches.length, (json['matches'] as List).length);
+  });
   test('unknown IDs are safe and unsupported contract fails', () {
     expect(data.match('missing'), isNull);
     expect(

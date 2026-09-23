@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -210,6 +211,93 @@ List<String> _ids(
   pinnedCompetitionIds: pinned,
 ).map((competition) => competition.id).toList();
 
+/// Counts every field read the production code performs on a JSON-backed
+/// model. Entity/FootballMatch getters are `json[...]` lookups, so this is a
+/// deterministic proxy for comparator calls and match scans.
+class _CountingJson extends MapView<String, dynamic> {
+  _CountingJson(super.map, this._counter);
+  final _ReadCounter _counter;
+  @override
+  dynamic operator [](Object? key) {
+    _counter.reads++;
+    return super[key];
+  }
+}
+
+class _ReadCounter {
+  int reads = 0;
+}
+
+Snapshot _scaleSnapshot(int competitionCount, {_ReadCounter? counter}) {
+  Map<String, dynamic> wrap(Map<String, dynamic> json) =>
+      counter == null ? json : _CountingJson(json, counter);
+  return Snapshot({
+    'schemaVersion': 1,
+    'demo': false,
+    'updatedAt': '2026-09-21T12:00:00Z',
+    'competitions': [
+      for (var i = 0; i < competitionCount; i++)
+        wrap({
+          'id': 'scale_$i',
+          'name': 'Competition $i',
+          'countryCode': switch (i % 6) {
+            0 || 3 => 'CR',
+            1 || 4 => 'JP',
+            _ => 'ES',
+          },
+          'competitionClass': i % 6 == 2
+              ? 'international_club'
+              : 'domestic_league',
+          'isPrimaryDomestic': i % 6 < 2,
+          'domesticTier': i % 6 < 2 ? 1 : 2,
+          'isGlobalRelevant': i % 6 == 2,
+          'relevanceScore': 1000 - i,
+        }),
+    ],
+    'teams': [
+      {'id': 'home', 'name': 'Home'},
+      {'id': 'away', 'name': 'Away'},
+    ],
+    'players': <dynamic>[],
+    'standings': <dynamic>[],
+    'matches': [
+      for (var i = 0; i < competitionCount * 10; i++)
+        wrap({
+          'id': 'match_$i',
+          'competitionId': 'scale_${i ~/ 10}',
+          'homeTeamId': 'home',
+          'awayTeamId': 'away',
+          'startTime': '2026-09-21T18:00:00Z',
+          'status': 'SCHEDULED',
+          'events': <dynamic>[],
+          'statistics': <dynamic>[],
+        }),
+    ],
+  });
+}
+
+List<String> _order(Snapshot data, {required bool custom, required int n}) =>
+    orderMatchCompetitions(
+      data: data,
+      matches: data.matches,
+      follows: {'competition:scale_${n - 2}', 'competition:scale_${n - 1}'},
+      selectedCountry: 'CR',
+      detectedCountry: 'CR',
+      orderMode: custom
+          ? CompetitionOrderMode.personalized
+          : CompetitionOrderMode.automatic,
+      orderPreference: CompetitionOrderPreference.globalFirst,
+      pinnedCompetitionIds: ['scale_${n - 1}', 'scale_${n - 2}'],
+    ).map((competition) => competition.id).toList();
+
+int _readsFor(int competitionCount) {
+  final counter = _ReadCounter();
+  final data = _scaleSnapshot(competitionCount, counter: counter);
+  counter.reads = 0; // exclude Snapshot construction/indexing
+  _order(data, custom: true, n: competitionCount);
+  return counter.reads;
+}
+
 void main() {
   testWidgets(
     'unfollow removes your competitions block but keeps its matches despite stale pin',
@@ -349,96 +437,83 @@ void main() {
   });
 
   test('120 competitions and 1200 matches retain every group across ordering modes', () {
-    final competitions = [
-      for (var i = 0; i < 120; i++)
-        {
-          'id': 'scale_$i',
-          'name': 'Competition $i',
-          'countryCode': switch (i % 6) {
-            0 || 3 => 'CR',
-            1 || 4 => 'JP',
-            _ => 'ES',
-          },
-          'competitionClass': i % 6 == 2
-              ? 'international_club'
-              : 'domestic_league',
-          'isPrimaryDomestic': i % 6 < 2,
-          'domesticTier': i % 6 < 2 ? 1 : 2,
-          'isGlobalRelevant': i % 6 == 2,
-          'relevanceScore': 1000 - i,
-        },
-    ];
-    final data = Snapshot({
-      'schemaVersion': 1,
-      'demo': false,
-      'updatedAt': DateTime.now().toUtc().toIso8601String(),
-      'competitions': competitions,
-      'teams': [
-        {'id': 'home', 'name': 'Home'},
-        {'id': 'away', 'name': 'Away'},
-      ],
-      'players': <dynamic>[],
-      'standings': <dynamic>[],
-      'matches': [
-        for (var i = 0; i < 1200; i++)
-          {
-            'id': 'match_$i',
-            'competitionId': 'scale_${i ~/ 10}',
-            'homeTeamId': 'home',
-            'awayTeamId': 'away',
-            'startTime': '2026-09-21T18:00:00Z',
-            'status': 'SCHEDULED',
-            'events': <dynamic>[],
-            'statistics': <dynamic>[],
-          },
-      ],
-    });
-    const follows = {'competition:scale_118', 'competition:scale_119'};
-    final before = data.matches.map((match) => match.id).toSet();
-    List<String> expected(
-      String country, {
-      bool globalFirst = false,
-      bool custom = false,
-    }) {
-      return [
-        if (custom) ...[
-          'scale_119',
-          'scale_118',
-        ] else ...[
-          'scale_118',
-          'scale_119',
-        ],
-        for (var i = 0; i < 118; i++) 'scale_$i',
-      ];
-    }
+    final data = _scaleSnapshot(120);
+    final allCompetitionIds = {for (final c in data.competitions) c.id};
+    final allMatchIds = {for (final m in data.matches) m.id};
+    expect(data.matches, hasLength(1200));
 
-    final timer = Stopwatch()..start();
-    for (var iteration = 0; iteration < 20; iteration++) {
-      for (final country in ['CR', 'JP']) {
-        for (final custom in [false, true]) {
-          final ids = _ids(
-            data,
-            follows: follows,
-            selected: country,
-            mode: custom
-                ? CompetitionOrderMode.personalized
-                : CompetitionOrderMode.automatic,
-            preference: CompetitionOrderPreference.globalFirst,
-            pinned: ['scale_119', 'scale_118'],
-          );
-          expect(ids, expected(country, globalFirst: custom, custom: custom));
-          expect(ids.toSet(), competitions.map((c) => c['id']).toSet());
-          final displayed = data.matches.where(
-            (m) => ids.contains(m.competitionId),
-          );
-          expect(displayed.length, 1200);
-          expect(displayed.map((m) => m.id).toSet(), before);
-        }
+    for (final country in ['CR', 'JP']) {
+      for (final custom in [false, true]) {
+        final ids = orderMatchCompetitions(
+          data: data,
+          matches: data.matches,
+          follows: const {'competition:scale_118', 'competition:scale_119'},
+          selectedCountry: country,
+          orderMode: custom
+              ? CompetitionOrderMode.personalized
+              : CompetitionOrderMode.automatic,
+          orderPreference: CompetitionOrderPreference.globalFirst,
+          pinnedCompetitionIds: const ['scale_119', 'scale_118'],
+        ).map((c) => c.id).toList();
+
+        expect(ids, [
+          if (custom) ...[
+            'scale_119',
+            'scale_118',
+          ] else ...[
+            'scale_118',
+            'scale_119',
+          ],
+          for (var i = 0; i < 118; i++) 'scale_$i',
+        ]);
+        // O(n) set checks; `expect(set, set)` in package:matcher is O(n^2).
+        final idSet = ids.toSet();
+        expect(idSet.length, ids.length, reason: 'no duplicate competitions');
+        expect(idSet.containsAll(allCompetitionIds), isTrue);
+        final displayed = {
+          for (final m in data.matches)
+            if (idSet.contains(m.competitionId)) m.id,
+        };
+        expect(displayed.length, allMatchIds.length);
+        expect(displayed.containsAll(allMatchIds), isTrue);
       }
     }
-    timer.stop();
-    expect(timer.elapsed, lessThan(const Duration(seconds: 5)));
-    expect(data.matches.length, 1200);
+  });
+
+  test('competition ordering work grows ~n log n, not quadratically', () {
+    final small = _readsFor(120); // 1200 matches
+    final large = _readsFor(960); // 9600 matches (8x)
+    // Deterministic: same input -> same reads on every machine.
+    // n log n at 8x ≈ 8 * log(960)/log(120) ≈ 11.5x; quadratic would be 64x.
+    // One extra pass over matches per competition would be ~8x * 120 = huge.
+    printOnFailure('reads: 120 -> $small, 960 -> $large');
+    expect(large / small, lessThan(24));
+    // Absolute ceiling at the product size catches "re-scan every match per
+    // competition" (≈ 120 * 1200 = 144k reads) even if it scales linearly.
+    expect(small, lessThan(20000));
+  });
+
+  test('ordering 1200 matches stays fast (warm median, generous guard)', () {
+    final data = _scaleSnapshot(120);
+    for (var i = 0; i < 10; i++) {
+      _order(data, custom: i.isOdd, n: 120); // JIT warm-up
+    }
+    final samples = <int>[];
+    final sw = Stopwatch();
+    for (var i = 0; i < 21; i++) {
+      sw
+        ..reset()
+        ..start();
+      _order(data, custom: i.isOdd, n: 120);
+      sw.stop();
+      samples.add(sw.elapsedMicroseconds);
+    }
+    samples.sort();
+    final median = samples[samples.length ~/ 2];
+    printOnFailure('median ${median}us, samples $samples');
+    // Local median ≈ 0.3 ms; 50 ms is ~150x headroom for slow/shared CI
+    // runners yet still fails on a real algorithmic blow-up.
+    expect(median, lessThan(50000));
   });
 
   test('supranational scope and high score do not imply global relevance', () {
