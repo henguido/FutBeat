@@ -138,6 +138,39 @@ export function lineupPlayerIds(raw: unknown) {
   return [...ids].slice(0, 100);
 }
 
+// Same extraction as lineupPlayerIds, split by section so the caller can
+// prioritize starters over bench when registering hydration demand.
+export function lineupPlayerIdsBySection(raw: unknown) {
+  const payload = asRecord(asRecord(raw).payload);
+  const lineups = payload.lineups;
+  const starters = new Set<string>();
+  const substitutes = new Set<string>();
+  const add = (set: Set<string>, value: unknown) => {
+    const row = asRecord(value);
+    const nested = asRecord(row.player);
+    const id = cleanText(row.playerId) || cleanText(row.playerKey) || cleanText(nested.id);
+    if (id) set.add(id);
+  };
+  if (Array.isArray(lineups)) {
+    for (const row of lineups.map(asRecord)) {
+      const section = lineupSection(row.type);
+      if (section === 'starters') add(starters, row);
+      else if (section === 'substitutes') add(substitutes, row);
+    }
+  } else {
+    const root = asRecord(lineups);
+    for (const side of ['home', 'away']) {
+      const team = asRecord(root[side]);
+      asList(team.startingLineups).forEach((row) => add(starters, row));
+      asList(team.substitutes).forEach((row) => add(substitutes, row));
+    }
+  }
+  return {
+    starters: [...starters].slice(0, 30),
+    substitutes: [...substitutes].slice(0, 30),
+  };
+}
+
 // Whole-match period labels. Anything else labelled (1st, 2nd, firstHalf...)
 // is a partial period and must never be shown as the match total.
 const FULL_PERIODS = new Set(['full', 'fulltime', 'ft', 'all', 'match', 'total']);

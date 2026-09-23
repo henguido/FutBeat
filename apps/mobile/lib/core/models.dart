@@ -203,6 +203,8 @@ class MatchDetail {
   String? get referee => _optional(json['referee']);
   String? get stadium => _optional(json['stadium']);
   String? get round => _optional(json['round']);
+  Json? get coverage => _nullableMap(json['coverage']);
+  bool get lineupEnrichmentPending => coverage?['lineupEnrichmentPending'] == true;
 
   Json get home => _map(json['home']);
   Json get away => _map(json['away']);

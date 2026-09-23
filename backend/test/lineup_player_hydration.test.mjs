@@ -88,3 +88,18 @@ test('hydration later adds photo: a subsequent lineup media read reflects it (ph
   )).rows[0].v[`ext-lh-${player.split('_').pop()}`];
   assert.equal(after.image, 'https://media.goal-api.com/players/hydrated.png');
 }));
+
+test('match-detail API route requests lineup hydration for missing photos only', async () => {
+  const source = await (await import('node:fs/promises')).readFile(
+    new URL('../../supabase/functions/futbeat-api/index.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /lineupPlayerIdsBySection/);
+  assert.match(source, /futbeat_request_lineup_hydration/);
+  assert.match(source, /lineupEnrichmentPending/);
+  assert.ok(
+    source.indexOf("/futbeat-api/v1/match-detail") <
+      source.indexOf("futbeat_request_lineup_hydration"),
+    'lineup hydration demand must run inside the match-detail route',
+  );
+});

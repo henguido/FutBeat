@@ -2,8 +2,11 @@ import { withSupabase } from 'npm:@supabase/server';
 import { calendarCacheControl } from '../_shared/calendar_cache.ts';
 import {
   asRecord,
+  cleanText,
   lineupPlayerIds,
+  lineupPlayerIdsBySection,
   normalizeMatchDetail,
+  safeImage,
   type PlayerMedia,
 } from '../_shared/match_detail.ts';
 
@@ -259,10 +262,33 @@ export default {
         }
       }
 
-      return replyNoStore(
-        200,
-        normalizeMatchDetail(detail, videosError ? [] : videos, playerMedia),
-      );
+      let lineupEnrichmentPending = false;
+      const { starters, substitutes } = lineupPlayerIdsBySection(detail);
+      const missingCanonicalIds = (ids: string[]) =>
+        ids
+          .map((id) => asRecord(playerMedia[id]))
+          .filter((entry) => cleanText(entry.canonicalId) && !safeImage(entry.image))
+          .map((entry) => cleanText(entry.canonicalId));
+      const starterIds = missingCanonicalIds(starters);
+      const benchIds = missingCanonicalIds(substitutes);
+      if (starterIds.length > 0 || benchIds.length > 0) {
+        const { data: hydration, error: hydrationError } = await ctx.supabaseAdmin.rpc(
+          'futbeat_request_lineup_hydration',
+          { p_starter_ids: starterIds, p_bench_ids: benchIds },
+        );
+        if (hydrationError) {
+          console.warn('lineup player hydration demand unavailable');
+        } else {
+          lineupEnrichmentPending = asRecord(hydration).enrichmentPending === true;
+        }
+      }
+
+      const normalized = normalizeMatchDetail(detail, videosError ? [] : videos, playerMedia) as Record<string, unknown>;
+      if (lineupEnrichmentPending) {
+        // Partial lineup photos now; the app refreshes once hydration lands.
+        normalized.coverage = { ...asRecord(normalized.coverage), lineupEnrichmentPending: true };
+      }
+      return replyNoStore(200, normalized);
     }
 
     if (path.endsWith('/futbeat-api/v1/calendar')) {
