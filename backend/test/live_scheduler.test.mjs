@@ -347,27 +347,40 @@ test('GOAL quota priority preserves LIVE while allowing bounded Match Center det
   assert.equal(catalog.reason,'provider_remaining_reserve');
   assert.equal(catalog.reserve,350);
 
+  // Central quota manager: a LIVE match opened by a user is class 'live'
+  // (floor 20), so it keeps working in the band where catalog work stops.
   const detail=(await db.query(
    "select public.futbeat_reserve_match_detail_call('test') value"
   )).rows[0].value;
   assert.equal(detail.allowed,true);
-  assert.equal(detail.reserve,80);
+  assert.equal(detail.quotaClass,'live');
+  assert.equal(detail.priority,1);
+  await db.query("select public.futbeat_complete_provider_call($1,'FAILED',null,500,'test','{}')",[detail.reservationId]);
 
   await db.query(
    "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining) values('goal_api','global-ingest','test',now(),now(),'SUCCEEDED',70)"
   );
-  const protectedDetail=(await db.query(
+  const lowDetail=(await db.query(
    "select public.futbeat_reserve_match_detail_call('test') value"
   )).rows[0].value;
-  assert.equal(protectedDetail.allowed,false);
-  assert.equal(protectedDetail.reason,'provider_remaining_reserve');
-  assert.equal(protectedDetail.reserve,80);
+  assert.equal(lowDetail.allowed,true);
+  assert.equal(lowDetail.quotaClass,'live');
+  await db.query("select public.futbeat_complete_provider_call($1,'FAILED',null,500,'test','{}')",[lowDetail.reservationId]);
 
   const live=(await db.query(
    "select public.futbeat_reserve_goal_live_call('test') value"
   )).rows[0].value;
   assert.equal(live.allowed,true);
   assert.equal(live.reserve,20);
+
+  await db.query(
+   "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining) values('goal_api','global-ingest','test',now()+interval '1 second',now()+interval '1 second','SUCCEEDED',15)"
+  );
+  const protectedDetail=(await db.query(
+   "select public.futbeat_reserve_match_detail_call('test') value"
+  )).rows[0].value;
+  assert.equal(protectedDetail.allowed,false);
+  assert.equal(protectedDetail.reason,'provider_remaining_reserve');
  } finally {await db.close();}
 });
 
