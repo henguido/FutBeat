@@ -1831,8 +1831,10 @@ class _PitchPlayer extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = player['name']?.toString() ?? 'Jugador';
     final number = player['number']?.toString().trim() ?? '';
+    final canonicalId = player['canonicalId']?.toString();
+    final canOpenProfile = canonicalId != null && canonicalId.isNotEmpty;
 
-    return Column(
+    final content = Column(
       children: [
         Stack(
           clipBehavior: Clip.none,
@@ -1884,6 +1886,13 @@ class _PitchPlayer extends StatelessWidget {
         ],
       ],
     );
+
+    if (!canOpenProfile) return content;
+    return InkWell(
+      borderRadius: BorderRadius.circular(28),
+      onTap: () => context.push('/player/$canonicalId'),
+      child: content,
+    );
   }
 }
 
@@ -1933,7 +1942,10 @@ class _BenchPlayer extends StatelessWidget {
   Widget build(BuildContext context) {
     final number = player['number']?.toString().trim() ?? '';
     final position = _positionLabel(player['position']);
-    return Container(
+    final canonicalId = player['canonicalId']?.toString();
+    final canOpenProfile = canonicalId != null && canonicalId.isNotEmpty;
+
+    final content = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: .04),
@@ -1971,6 +1983,13 @@ class _BenchPlayer extends StatelessWidget {
           if (player['rating'] is num) _RatingBadge(player['rating'] as num),
         ],
       ),
+    );
+
+    if (!canOpenProfile) return content;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => context.push('/player/$canonicalId'),
+      child: content,
     );
   }
 }
