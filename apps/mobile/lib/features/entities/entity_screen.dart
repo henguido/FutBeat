@@ -8,6 +8,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
 import 'standings.dart';
+import 'team_profile.dart';
 
 List<Entity> orderedTeamCompetitions(Snapshot data, String teamId) {
   final counts = <String, int>{};
@@ -159,6 +160,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
         final teamCompetitions = teamId == null
             ? const <Entity>[]
             : orderedTeamCompetitions(data, teamId);
+        if (type == 'team') {
+          return TeamProfileView(
+            data: data,
+            team: entity,
+            competitions: teamCompetitions,
+            matches: matches,
+          );
+        }
         final competitionId = type == 'competition'
             ? canonicalId
             : type == 'team'
