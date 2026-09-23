@@ -76,14 +76,17 @@ function latestFunctionBody(functionName) {
   return { body, definedIn };
 }
 
-// The full call graph reachable from a results-only worker cycle, before any
-// provider fetch: public.futbeat_reserve_goal_results_date wraps this
-// directly, invalidate_calendar_cache is reached indirectly via the
-// AFTER trigger that reconcile_goal_results_local's entities UPDATE fires.
+// The full call graph reachable from reserve_goal_results_date, before any
+// provider fetch: the direct call chain (reserve -> reconcile -> candidate/
+// quota/metric/retry helpers) PLUS every trigger function that fires on
+// futbeat_private.entities, because reconcile_goal_results_local's
+// `update entities ... where id=...` (the write that started this incident)
+// fires ALL of them, not just invalidate_calendar_cache -- a fresh reviewer
+// caught that the original list only checked the one trigger already known
+// to be guilty and missed its 7 siblings.
 const RESERVE_CALL_GRAPH = [
   'futbeat_private.reserve_goal_results_date',
   'futbeat_private.reconcile_goal_results_local',
-  'futbeat_private.invalidate_calendar_cache',
   'futbeat_private.next_goal_results_candidate',
   'futbeat_private.quota_decision',
   'futbeat_private.bump_metric',
@@ -91,6 +94,16 @@ const RESERVE_CALL_GRAPH = [
   'futbeat_private.wake_provider_worker',
   'futbeat_private.results_retry_delay',
   'futbeat_private.match_provider_date',
+  // Every AFTER/BEFORE trigger function on futbeat_private.entities that an
+  // UPDATE OF kind,payload can fire:
+  'futbeat_private.invalidate_calendar_cache',
+  'futbeat_private.futbeat_index_calendar_match',
+  'futbeat_private.preserve_verified_player_media',
+  'futbeat_private.track_player_media_coverage',
+  'futbeat_private.apply_competition_relevance',
+  'futbeat_private.sync_competition_metadata',
+  'futbeat_private.normalize_canonical_event_contract',
+  'futbeat_private.index_entity_search',
 ];
 
 test('safeupdate compat checker: flags a bare UPDATE without WHERE', () => {
@@ -112,6 +125,13 @@ test('safeupdate compat checker: ignores DELETE with a WHERE clause', () => {
 test('safeupdate compat checker: ignores INSERT ... ON CONFLICT DO UPDATE (pg_safeupdate never inspects it)', () => {
   assert.equal(
     findUnsafeStatements("insert into t(id) values(1) on conflict(id) do update set x=1;").length,
+    0,
+  );
+});
+
+test('safeupdate compat checker: ignores SELECT ... FOR UPDATE SKIP LOCKED (a row lock, not a DML UPDATE)', () => {
+  assert.equal(
+    findUnsafeStatements('select 1 from t where id=$1 for update skip locked;').length,
     0,
   );
 });
@@ -211,7 +231,12 @@ test('existing results_date_attempts row is updated (not duplicated) on a second
   assert.equal(rowsAfterSecond, 1, 'still exactly one row: UPDATE via ON CONFLICT, not a new INSERT');
 }));
 
-test('two sequential reservations never double-book the same date (mutual exclusion survives the fix)', () => withDb(async (db) => {
+// Two calls in sequence within the same test process, not two truly
+// concurrent connections -- PGlite is single-connection, so this exercises
+// the backoff/bookkeeping half of mutual exclusion (a reserved date drops
+// out of candidacy immediately), not lock contention itself. The advisory
+// lock (pg_advisory_xact_lock) is untouched by this fix either way.
+test('two sequential reservations never double-book the same date (backoff bookkeeping survives the fix)', () => withDb(async (db) => {
   const a = await seedKickoffCorrectableMatch(db, { daysAgo: 10 });
   const b = await seedKickoffCorrectableMatch(db, { daysAgo: 11 });
   const first = (await db.query("select futbeat_private.reserve_goal_results_date('test') v")).rows[0].v;
@@ -226,8 +251,15 @@ test('two sequential reservations never double-book the same date (mutual exclus
 // End-to-end: the real results-only worker, driving the real reservation SQL
 // through PGlite (same harness pattern as results_only_worker.test.mjs),
 // seeded with the exact kickoff-correction shape that used to fail at
-// stage="reserve" in production. Proves the worker now actually leaves the
-// reserve stage and completes the cycle.
+// stage="reserve" in production. IMPORTANT: PGlite cannot load pg_safeupdate
+// (a native C extension), so this test's pass/fail is unaffected by whether
+// the fix is applied -- it cannot reproduce the crash and never could. What
+// it proves is functional: the worker's behavior around the reserve stage
+// (candidate selection, local repair, attempt bookkeeping, and the pipeline
+// past it) is unchanged by the fix. The only test in this file that actually
+// fails without the fix is the static contract test above -- verified by
+// temporarily stripping `where singleton` from the migration and confirming
+// it, and only it, goes red.
 const token = 'test-only-cron-token-not-a-secret-123456789';
 const goalKey = 'test-only-goal-key-not-a-secret';
 const unhandled = Symbol('unhandled');
@@ -308,7 +340,7 @@ function resultFixture(external, { status = 'FINISHED', home = 2, away = 1 } = {
   };
 }
 
-test('results-only worker actually exits stage=reserve for the kickoff-correction case that used to fail there', () => withDb(async (db) => {
+test('results-only worker completes the kickoff-correction case end to end (functional check; cannot reproduce the safeupdate crash locally)', () => withDb(async (db) => {
   const { external, dateStr } = await seedKickoffCorrectableMatch(db);
   const w = worker(db, () => Response.json({
     success: true, data: [resultFixture(external)], pagination: { total: 1, hasMore: false },
