@@ -102,10 +102,18 @@ test('local player exists -> no demand, 0 provider calls', () => withDb(async (d
   assert.equal(await providerCalls(db), 0);
 }));
 
-test('short, team and competition queries never create player demand', () => withDb(async (db) => {
-  await seedTeam(db);
-  for (const q of ['ab', 'a.b', 'inter miami', 'inter']) await search(db, q);
+test('short queries never create player demand', () => withDb(async (db) => {
+  for (const q of ['ab', 'a.b', 'x y', '..']) await search(db, q);
   assert.equal(await count(db, 'select count(*)::int n from futbeat_private.player_search_demands'), 0);
+}));
+
+test('a matching team never suppresses player discovery; the team is still returned', () => withDb(async (db) => {
+  await seedTeam(db);
+  const snapshot = await search(db, 'inter miami');
+  assert.deepEqual(snapshot.teams.map((t) => t.name), ['Inter Miami']);
+  assert.equal(snapshot.coverage.pendingRemote, true);
+  assert.deepEqual((await db.query('select query_key from futbeat_private.player_search_demands')).rows,
+    [{ query_key: 'inter miami' }]);
 }));
 
 test('unknown player: one demand; 100 identical searches -> one row and one provider call', () => withDb(async (db) => {

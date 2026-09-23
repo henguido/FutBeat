@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { nextResultsOffset } from "../_shared/results_pagination.ts";
 import {
+  GOAL_PLAYER_ENDPOINTS,
   normalizeGoalPlayerProfile,
   normalizeGoalPlayerSearch,
   normalizeGoalPlayerStatistics,
@@ -863,7 +864,7 @@ async function syncPlayerDemand(maxCalls = 2) {
       if (kind === "player-search") {
         const response = await fetchGoal(
           goalKey,
-          `/players/search?q=${encodeURIComponent(clean(plan.query))}`,
+          GOAL_PLAYER_ENDPOINTS.search(clean(plan.query)),
           30000,
           true,
         );
@@ -875,10 +876,12 @@ async function syncPlayerDemand(maxCalls = 2) {
         });
         results.push({ status: "ok", kind, ...stored });
       } else if (kind === "player-profile" || kind === "player-stats") {
-        const external = encodeURIComponent(clean(plan.externalPlayerId));
+        const external = clean(plan.externalPlayerId);
         const response = await fetchGoal(
           goalKey,
-          kind === "player-profile" ? `/players/${external}` : `/players/${external}/statistics`,
+          kind === "player-profile"
+            ? GOAL_PLAYER_ENDPOINTS.profile(external)
+            : GOAL_PLAYER_ENDPOINTS.statistics(external),
           30000,
           true,
         );

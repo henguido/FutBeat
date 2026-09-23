@@ -15,7 +15,9 @@
 --     negative cache, demand window).
 -- Unknown remaining (no reading yet today) allows LIVE/results freely; every
 -- other class also stops once today's total calls reach unknownDailyCap
--- (conservative, in case the provider never reports remaining). The per-kind
+-- (conservative, in case the provider never reports remaining), and each such
+-- kind may use at most unknownKindShare of that total, so no single lane
+-- (e.g. player search) can consume the whole blind budget. The per-kind
 -- safety caps always apply.
 --
 -- Metrics: sharded daily counters (no single hot row under concurrency).
@@ -45,8 +47,9 @@ values('goal_api',
   '{"team-squad":["team-squad","team-squad-ingest"]}',
   '{"playerProfileDays":30,"playerStatsHours":12,"playerSearchDays":7,
     "playerSearchNegativeDays":3,"playerNoDataDays":30,"demandWindowMinutes":30,
-    "leaseMinutes":10,"wakeDebounceSeconds":15,"unknownDailyCap":600,
-    "playerStatsNoDataDays":3}')
+    "leaseMinutes":10,"wakeDebounceSeconds":15,"unknownDailyCap":600,"unknownKindShare":0.25,
+    "playerStatsNoDataDays":3,"searchAdmissionWindowMinutes":5,"searchAdmissionsPerWindow":60,
+    "searchQueueMax":200}')
 on conflict(provider) do nothing;
 
 create table if not exists futbeat_private.runtime_settings(
@@ -109,6 +112,9 @@ begin
   where provider=p_provider
     and reserved_at>=date_trunc('day',now() at time zone 'UTC') at time zone 'UTC';
   unknown_cap:=coalesce((policy.freshness->>'unknownDailyCap')::integer,600);
+  if remaining is null and p_class not in ('live','results') then
+    cap:=least(cap,floor(unknown_cap*coalesce((policy.freshness->>'unknownKindShare')::numeric,0.25))::integer);
+  end if;
   return jsonb_build_object(
     'allowed',(remaining is null or remaining>floor_value) and used<cap
       and not (remaining is null and p_class not in ('live','results') and total>=unknown_cap),

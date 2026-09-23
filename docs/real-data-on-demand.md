@@ -27,9 +27,11 @@ app ── GET /v1/search | /v1/entity?type=player | /v1/match-detail ──► 
 ## Player search
 
 - The local search always runs first.
-- A demand is recorded only when no player matches the query as a whole word
-  (or through a multi-word typo match), no team or competition matches it well,
-  and the query has at least 3 useful characters.
+- A demand is recorded only when no **player** matches the query as a whole
+  word (or through a multi-word typo match) and the query has at least 3 useful
+  characters.
+- The decision depends only on player results. Matching teams and
+  competitions are still returned, but they never suppress player discovery.
 - There is one row per normalized query (`player_search_demands.query_key`),
   so 1000 users searching the same name cost at most one call.
 - Typing a name doesn't queue one paid search per prefix. A newer, longer query
@@ -37,6 +39,13 @@ app ── GET /v1/search | /v1/entity?type=player | /v1/match-detail ──► 
 - Reservations take the freshest demand first. Popularity only breaks ties, up
   to a cap of 5, so repeating junk queries can't monopolize the budget.
 - Old rows are cleaned up in bounded batches during reservation.
+- Flood protection for the anonymous API: a new key, or re-queueing an expired
+  one, needs an admission slot. There are at most 60 per 5 minutes and at most
+  200 queued (`searchAdmissionsPerWindow`, `searchAdmissionWindowMinutes`,
+  `searchQueueMax`). Queued duplicates and cached keys never use a slot. When
+  the limit is hit the answer is local only, with no demand and no
+  `pendingRemote`, and `player_search_demand_limited` is counted. It doesn't
+  depend on IP.
 - States: `QUEUED` (lease 10 min), then `AVAILABLE` (cached 7 days) or
   `NO_DATA` (negative cache 3 days, also used for HTTP 404) or `FETCH_FAILED`
   (backoff 15 min·2ⁿ up to 1 day; 429 waits 1 h).
@@ -91,7 +100,9 @@ app ── GET /v1/search | /v1/entity?type=player | /v1/match-detail ──► 
   `class_floors`, `kind_daily_caps`, `kind_groups` and `freshness`.
 - Unknown remaining (no reading yet today) always allows LIVE and results.
   Every other class also stops once the day's total calls reach
-  `unknownDailyCap` (600). The worker keeps `x-ratelimit-remaining` even on
+  `unknownDailyCap` (600). Each of those kinds may use at most
+  `unknownKindShare` (25%, i.e. 150 calls), so player search or profile can't
+  take the whole blind budget. The worker keeps `x-ratelimit-remaining` even on
   provider errors, so a failing day doesn't run blind.
 - Safety caps per day:
 
@@ -143,9 +154,13 @@ Diagnostics (service role only):
 ## Known limits / follow-ups
 
 - There's no per-client rate limit on `/v1/search`, because the API is
-  anonymous. Provider calls stay bounded by the quota class and the per-kind
-  cap, but distinct junk queries still create demand rows (cleaned after
-  30 min or 30 days).
+  anonymous. Global admission control bounds the demand rows, and the quota
+  class and per-kind caps bound provider calls. A flood can still use up the
+  window's slots and delay legitimate discovery for up to 5 minutes; local
+  results are never affected.
+- GOAL player contract: paths and readers live only in
+  `supabase/functions/_shared/goal_players.ts` (`GOAL_PLAYER_ENDPOINTS`). They
+  are **unverified** until a real response is captured.
 - `futbeat_request_player_profile` promises enrichment only when the quota
   would allow it today.
 - The older GOAL lanes build their day lock from the session time zone

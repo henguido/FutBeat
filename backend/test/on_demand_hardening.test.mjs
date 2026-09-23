@@ -59,6 +59,56 @@ test('unknown remaining: LIVE/results keep working, everything else stops at the
   assert.equal((await decide(db, 'match-detail', 'user')).allowed, true);
 }));
 
+test('unknown remaining: no single demand lane can take the whole blind budget', () => withDb(async (db) => {
+  const search = await decide(db, 'player-search', 'user');
+  assert.equal(search.safetyCap, 150); // 25% of unknownDailyCap (600)
+  assert.equal((await decide(db, 'player-profile', 'user')).safetyCap, 150);
+  assert.equal((await decide(db, 'match-detail', 'live')).safetyCap, 400, 'LIVE keeps its own cap');
+  await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status)
+    select 'goal_api','player-search','test','FAILED' from generate_series(1,150)`);
+  assert.equal((await decide(db, 'player-search', 'user')).reason, 'kind_daily_cap');
+  assert.equal((await decide(db, 'player-profile', 'user')).allowed, true);
+  assert.equal((await decide(db, 'match-detail', 'live')).allowed, true);
+}));
+
+test('flood: 1000 distinct junk queries do not create 1000 rows; local search keeps working', () => withDb(async (db) => {
+  await db.query(`insert into futbeat_private.entities values('fb_player_fl','player','{"id":"fb_player_fl","name":"Keylor Navas"}')`);
+  for (let i = 0; i < 1000; i++) await search(db, `junk${i} qx${i * 7919}`);
+  const rows = (await db.query('select count(*)::int n from futbeat_private.player_search_demands')).rows[0].n;
+  assert.equal(rows, 60); // searchAdmissionsPerWindow
+  assert.equal((await db.query("select coalesce(sum(value),0)::int n from futbeat_private.demand_metrics where metric='player_search_demand_limited'")).rows[0].n, 940);
+  const local = await search(db, 'keylor navas');
+  assert.deepEqual(local.players.map((p) => p.name), ['Keylor Navas']);
+  // A limited query answers locally without claiming pending work.
+  assert.equal((await search(db, 'otro junk nuevo')).coverage.pendingRemote, undefined);
+}));
+
+test('flood limit: repeated and cached queries are unaffected; the window frees up', () => withDb(async (db) => {
+  await search(db, 'repetida uno');
+  await db.query(`insert into futbeat_private.player_search_demands(query_key,query_text,status,next_retry_at)
+    values('cacheada','cacheada','AVAILABLE',now()+interval '3 days')`);
+  for (let i = 0; i < 80; i++) await search(db, `llenar${i} zz${i}`);
+  // Duplicate of a queued key: still one row, still pending.
+  const again = await search(db, 'repetida uno');
+  assert.equal(again.coverage.pendingRemote, true);
+  assert.equal((await db.query("select request_count::int n from futbeat_private.player_search_demands where query_key='repetida uno'")).rows[0].n, 2);
+  // Cached key: cache hit, no slot needed.
+  assert.equal((await search(db, 'cacheada')).coverage.pendingRemote, undefined);
+  assert.equal((await db.query("select status from futbeat_private.player_search_demands where query_key='cacheada'")).rows[0].status, 'AVAILABLE');
+  // Blocked now...
+  assert.equal((await search(db, 'nueva tras ventana')).coverage.pendingRemote, undefined);
+  // ...admitted again once the admission window has passed.
+  await db.query("update futbeat_private.player_search_demands set admitted_at=now()-interval '10 minutes'");
+  assert.equal((await search(db, 'nueva tras ventana')).coverage.pendingRemote, true);
+}));
+
+test('flood limit: a full pending queue stops new demand', () => withDb(async (db) => {
+  await db.query(`insert into futbeat_private.player_search_demands(query_key,query_text,admitted_at)
+    select 'cola '||i,'cola '||i,now()-interval '1 hour' from generate_series(1,200) i`);
+  assert.equal((await search(db, 'no cabe')).coverage.pendingRemote, undefined);
+  assert.equal((await db.query("select count(*)::int n from futbeat_private.player_search_demands where query_key='no cabe'")).rows[0].n, 0);
+}));
+
 test('profile badge only promises enrichment the quota would allow', () => withDb(async (db) => {
   const id = (await db.query("select public.futbeat_resolve_global_entity('goal_api','player','goal-badge','Badge') id")).rows[0].id;
   await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining,completed_at)

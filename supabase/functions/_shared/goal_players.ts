@@ -1,10 +1,17 @@
-// Pure normalizers for GOAL player endpoints (no I/O). Used by the GOAL
-// worker and node tests. The exact GOAL response shapes are not pinned by a
-// captured sample yet, so readers are tolerant and only emit fields that are
-// actually present and valid; the database stores nothing else.
-//   GET /players/search?q=      -> normalizeGoalPlayerSearch
-//   GET /players/:id            -> normalizeGoalPlayerProfile
-//   GET /players/:id/statistics -> normalizeGoalPlayerStatistics
+// GOAL player contract: endpoint paths + pure normalizers (no I/O). This is
+// the ONLY place that knows the GOAL player endpoints and response shapes;
+// the worker imports both from here. The shapes are not pinned by a captured
+// sample yet (UNVERIFIED): readers are tolerant and only emit fields that are
+// actually present and valid; the database stores nothing else. After the
+// first real response is captured, adjust GOAL_PLAYER_ENDPOINTS and the
+// readers below and pin the sample as a fixture.
+
+/** Paths relative to https://api.goal-api.com/v1 (the worker adds base + auth). */
+export const GOAL_PLAYER_ENDPOINTS = {
+  search: (query: string) => `/players/search?q=${encodeURIComponent(query)}`,
+  profile: (externalId: string) => `/players/${encodeURIComponent(externalId)}`,
+  statistics: (externalId: string) => `/players/${encodeURIComponent(externalId)}/statistics`,
+};
 
 type Json = Record<string, unknown>;
 

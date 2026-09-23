@@ -1,8 +1,9 @@
 -- Player discovery and profile hydration on demand (GOAL, server-side only).
 --
--- Search: the local catalog ALWAYS answers first. Only when no player matches
--- the query as a whole word (and no team/competition matches it well) a
--- normalized search demand is recorded (>= 3 useful characters). One row per
+-- Search: the local catalog ALWAYS answers first. Only when no PLAYER matches
+-- the query well (whole word or multi-word typo match) a normalized search
+-- demand is recorded (>= 3 useful characters). Matching teams/competitions
+-- are still returned but never suppress player discovery. One row per
 -- normalized query: 1000 users searching the same name cost at most one
 -- provider call; results are cached (playerSearchDays), empty results are
 -- negatively cached (playerSearchNegativeDays), failures back off.
@@ -32,8 +33,12 @@ create table if not exists futbeat_private.player_search_demands(
   failure_count integer not null default 0,
   result_count integer,
   result_player_ids text[] not null default '{}',
-  last_error text
+  last_error text,
+  -- When this key was (re)admitted into the queue: admission control window.
+  admitted_at timestamptz not null default now()
 );
+create index if not exists player_search_demands_admitted_idx
+  on futbeat_private.player_search_demands(admitted_at desc);
 create index if not exists player_search_demands_due_idx
   on futbeat_private.player_search_demands(status,requested_at desc);
 alter table futbeat_private.player_search_demands enable row level security;
@@ -67,12 +72,47 @@ returns text language sql immutable set search_path='' as $$
     '[^a-z0-9 ]+',' ','g'),'\s+',' ','g')) k) q
 $$;
 
+-- Global admission control for new search demands: at most
+-- searchAdmissionsPerWindow per searchAdmissionWindowMinutes and at most
+-- searchQueueMax queued. Serialized by one advisory lock held only on the
+-- new-key path (cached/duplicate searches never take it).
+create or replace function futbeat_private.admit_player_search_demand()
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare window_size interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','searchAdmissionWindowMinutes',5)::integer);
+  per_window integer:=futbeat_private.quota_setting('goal_api','searchAdmissionsPerWindow',60)::integer;
+  queue_max integer:=futbeat_private.quota_setting('goal_api','searchQueueMax',200)::integer;
+  admitted integer; queued integer;
+begin
+  perform pg_advisory_xact_lock(hashtext('futbeat-player-search-admission'));
+  select count(*)::integer into admitted from futbeat_private.player_search_demands
+  where admitted_at>now()-window_size;
+  if admitted>=per_window then
+    return jsonb_build_object('admitted',false,'reason','demand_rate_limited');
+  end if;
+  select count(*)::integer into queued from futbeat_private.player_search_demands where status='QUEUED';
+  if queued>=queue_max then
+    return jsonb_build_object('admitted',false,'reason','demand_queue_full');
+  end if;
+  return jsonb_build_object('admitted',true);
+end $$;
+
 create or replace function futbeat_private.note_player_search_demand(p_query text)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare key text:=futbeat_private.player_search_key(p_query); v_status text; v_next timestamptz;
-  v_lease timestamptz; inserted boolean;
+  v_lease timestamptz; inserted boolean; admission jsonb;
 begin
   if key is null then return jsonb_build_object('pending',false,'reason','too_short'); end if;
+  -- Flood protection (anonymous API): a NEW key, or re-queueing an expired
+  -- one, needs an admission slot. Known keys (queued = dedupe, cached = hit)
+  -- never consume slots. Local results are returned either way.
+  select status,next_retry_at into v_status,v_next from futbeat_private.player_search_demands where query_key=key;
+  if not found or (v_status<>'QUEUED' and coalesce(v_next,'-infinity')<=now()) then
+    admission:=futbeat_private.admit_player_search_demand();
+    if not (admission->>'admitted')::boolean then
+      perform futbeat_private.bump_metric('player_search_demand_limited');
+      return jsonb_build_object('pending',false,'reason',admission->>'reason','key',key);
+    end if;
+  end if;
   insert into futbeat_private.player_search_demands(query_key,query_text)
   values(key,left(btrim(p_query),80))
   on conflict(query_key) do update set request_count=futbeat_private.player_search_demands.request_count+1,
@@ -101,7 +141,7 @@ begin
     perform futbeat_private.bump_metric('player_search_cache_hits');
     return jsonb_build_object('pending',false,'status',v_status,'key',key);
   end if;
-  update futbeat_private.player_search_demands set status='QUEUED' where query_key=key;
+  update futbeat_private.player_search_demands set status='QUEUED',admitted_at=now() where query_key=key;
   perform futbeat_private.bump_metric('player_search_demands');
   perform futbeat_private.wake_provider_worker('demand');
   return jsonb_build_object('pending',true,'status','QUEUED','key',key);
@@ -456,7 +496,7 @@ returns jsonb language plpgsql volatile security definer
 set search_path='' set pg_trgm.strict_word_similarity_threshold='0.5' as $$
 -- qr/pr: previous raw query (teams, competitions). qf/pf: folded (players).
 declare qr text:=lower(btrim(coalesce(p_query,''))); pr text; qf text; pf text; v_result jsonb;
- v_player_ok boolean; v_other_ok boolean; v_demand jsonb;
+ v_player_ok boolean; v_demand jsonb;
 begin
  if length(qr)>80 then raise exception 'Invalid search query'; end if;
  if qr='' then return public.futbeat_read_explore(); end if;
@@ -525,11 +565,11 @@ begin
    coalesce(jsonb_agg(futbeat_private.catalog_entity(payload,relevance) order by rn) filter(where kind='team'),'[]'),
    coalesce(jsonb_agg(futbeat_private.catalog_entity(payload,relevance) order by rn) filter(where kind='player'),'[]')
  ),
- coalesce(bool_or(kind='player' and (whole_word or multiword_fuzzy)),false),
- coalesce(bool_or(kind<>'player' and quality>=2),false)
- into v_result,v_player_ok,v_other_ok from bounded;
- -- Local first, always. Discovery only when nothing local answers the query.
- if qf is not null and not v_player_ok and not v_other_ok then
+ coalesce(bool_or(kind='player' and (whole_word or multiword_fuzzy)),false)
+ into v_result,v_player_ok from bounded;
+ -- Local first, always. Discovery depends ONLY on player quality: a matching
+ -- team/competition is still returned but never suppresses player discovery.
+ if qf is not null and not v_player_ok then
    v_demand:=futbeat_private.note_player_search_demand(qr);
    if (v_demand->>'pending')::boolean then
      v_result:=jsonb_set(v_result,'{coverage,pendingRemote}','true'::jsonb,true);
@@ -540,6 +580,7 @@ end $$;
 
 
 revoke all on function
+  futbeat_private.admit_player_search_demand(),
   futbeat_private.player_search_key(text),
   futbeat_private.note_player_search_demand(text),
   futbeat_private.upsert_goal_player(jsonb,text,timestamptz),
