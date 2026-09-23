@@ -79,7 +79,8 @@ function verifiedPhoto(value, receivedAt) {
 }
 
 function integerOrNull(value) {
-  if (value == null || value === '') return null;
+  // Arrays/objects are never counts (Number([7]) would be 7).
+  if (value == null || value === '' || typeof value === 'object') return null;
   const number = Number(value);
   return Number.isInteger(number) && number >= 0 ? number : null;
 }
@@ -95,6 +96,25 @@ function decimalOrNull(value) {
   if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+// Height in whole centimetres from 182, "182", "182 cm", "1.82 m" or "1,82".
+function heightCmOrNull(value) {
+  if (value == null || typeof value === 'object') return null;
+  const text = clean(value).toLowerCase().replace(',', '.');
+  const match = text.match(/^(\d+(?:\.\d+)?)\s*(cm|m)?$/);
+  if (!match) return null;
+  const number = Number(match[1]);
+  const cm = match[2] === 'm' || number < 3 ? Math.round(number * 100) : Math.round(number);
+  return cm >= 140 && cm <= 230 ? cm : null;
+}
+
+function footOrNull(value) {
+  const text = clean(typeof value === 'object' ? '' : value).toLowerCase();
+  if (['right', 'r', 'derecho', 'diestro'].includes(text)) return 'right';
+  if (['left', 'l', 'izquierdo', 'zurdo'].includes(text)) return 'left';
+  if (['both', 'ambos', 'ambidextrous', 'ambidiestro'].includes(text)) return 'both';
+  return null;
 }
 
 function booleanOrNull(value) {
@@ -158,6 +178,17 @@ export async function normalizeGoalApiSquad(
     const redCards = integerOrNull(player?.redCards ?? row?.redCards);
     const rating = decimalOrNull(player?.rating ?? row?.rating);
     const injured = booleanOrNull(player?.injured ?? row?.injured);
+    // Optional profile facts: stored only when the provider sends them.
+    const height = heightCmOrNull(player?.height ?? row?.height);
+    const preferredFoot = footOrNull(
+      player?.preferredFoot ?? player?.foot ?? row?.preferredFoot ?? row?.foot,
+    );
+    const minutesPlayed = integerOrNull(
+      player?.minutesPlayed ?? player?.minutes ?? row?.minutesPlayed ?? row?.minutes,
+    );
+    const starts = integerOrNull(
+      player?.starts ?? player?.gamesStarted ?? row?.starts ?? row?.gamesStarted,
+    );
 
     players.set(id, {
       id,
@@ -176,6 +207,10 @@ export async function normalizeGoalApiSquad(
       redCards,
       rating,
       injured,
+      height,
+      preferredFoot,
+      minutesPlayed,
+      starts,
       aliases: [],
       media: photo,
       provenance: {
