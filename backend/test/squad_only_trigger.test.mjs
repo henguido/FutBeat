@@ -235,7 +235,8 @@ for (const trigger of ['results-only', 'detail-only', 'cron']) {
       syncOneMatchDetail=async()=>{ran.push('detail');return {status:'ok'};};
       syncOneResultsDate=async()=>{ran.push('results');return {status:'ok'};};
       syncOneNews=async()=>{ran.push('news');return {status:'ok'};};
-      syncOnePostMatchVideo=async()=>{ran.push('video');return {status:'ok'};};`, h.context);
+      syncOnePostMatchVideo=async()=>{ran.push('video');return {status:'ok'};};
+      syncPlayerDemand=async()=>{ran.push('player');return [];};`, h.context);
     const { value } = await h.invoke({ trigger });
     if (trigger === 'cron') {
       assert.deepEqual(ran, ['live', 'detail', 'news', 'video']);
@@ -244,7 +245,8 @@ for (const trigger of ['results-only', 'detail-only', 'cron']) {
       assert.equal(h.providers().length, 1);
       assert.equal(h.providers()[0].init.redirect, 'follow');
     } else {
-      assert.deepEqual(ran, [trigger.split('-')[0]]);
+      // detail-only is also the user-demand lane: up to two details, then players.
+      assert.deepEqual(ran, trigger === 'detail-only' ? ['detail', 'detail', 'player'] : [trigger.split('-')[0]]);
       assert.equal(h.rpcCalls('futbeat_team_squad_plan').length, 0);
       assert.equal(h.providers().length, 0);
     }
