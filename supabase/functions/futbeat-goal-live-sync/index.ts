@@ -390,7 +390,9 @@ async function fetchGoal(
     throw new Error(`GOAL API returned non-JSON HTTP ${response.status}`);
   }
   if (!response.ok || payload.success !== true) {
-    throw new Error(`GOAL API HTTP ${response.status}`);
+    // Keep the provider's remaining budget even on errors so the quota
+    // manager never runs blind on a failing day.
+    throw Object.assign(new Error(`GOAL API HTTP ${response.status}`), { remaining });
   }
   return { payload, remaining, status: response.status };
 }
@@ -817,6 +819,8 @@ async function syncOneMatchDetail() {
       stored,
     };
   } catch (error) {
+    const reported = (error as { remaining?: unknown })?.remaining;
+    if (typeof reported === "number") remaining = reported;
     await completeFailure(
       reservationId,
       "GOAL_MATCH_DETAIL_FETCH_FAILED",
@@ -895,6 +899,8 @@ async function syncPlayerDemand(maxCalls = 2) {
         throw new Error("Unknown player reservation kind");
       }
     } catch (error) {
+      const reported = (error as { remaining?: unknown })?.remaining;
+      if (typeof reported === "number") remaining = reported;
       try {
         await rpc("futbeat_fail_player_call", {
           p_reservation_id: reservationId,

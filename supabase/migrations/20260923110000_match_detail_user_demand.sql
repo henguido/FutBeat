@@ -24,6 +24,21 @@ alter table futbeat_private.match_detail_requests
     check(source in ('user','prefetch','bootstrap')),
   add column if not exists user_requested_at timestamptz;
 
+-- The prefetch enqueuer upserts without touching source; over an expired
+-- user row it must become a prefetch again (never inherit user priority).
+create or replace function futbeat_private.reset_expired_detail_request_source()
+returns trigger language plpgsql set search_path='' as $$
+begin
+  if old.expires_at<=now() and new.user_requested_at is not distinct from old.user_requested_at then
+    new.source:='prefetch';
+    new.user_requested_at:=null;
+  end if;
+  return new;
+end $$;
+drop trigger if exists match_detail_request_source on futbeat_private.match_detail_requests;
+create trigger match_detail_request_source before update on futbeat_private.match_detail_requests
+for each row execute function futbeat_private.reset_expired_detail_request_source();
+
 -- Single freshness rule shared by request (cache hit) and reservation.
 create or replace function futbeat_private.match_detail_due(p_status text,p_fetched_at timestamptz)
 returns boolean language sql stable set search_path='' as $$
@@ -84,6 +99,8 @@ begin
   if v_goal_mapped
      and v_start between now()-interval '90 days' and now()+interval '24 hours'
   then
+    -- Serialize opens of the same match so dedupe accounting is exact.
+    perform pg_advisory_xact_lock(hashtext('futbeat-match-detail-request'),hashtext(p_match_id));
     select fetched_at into v_fetched from futbeat_private.match_detail_cache where match_id=p_match_id;
     if not futbeat_private.match_detail_due(futbeat_private.match_detail_status(p_match_id),v_fetched) then
       perform futbeat_private.bump_metric('match_detail_cache_hits');
@@ -100,11 +117,17 @@ begin
             request_count=futbeat_private.match_detail_requests.request_count+1,
             source='user',
             user_requested_at=now();
-      if (v_existing.match_id is not null and v_existing.source='user')
-         or futbeat_private.detail_inflight(p_match_id) then
+      if futbeat_private.detail_inflight(p_match_id) then
         perform futbeat_private.bump_metric('deduped_requests');
       else
-        perform futbeat_private.bump_metric('match_detail_user_demands');
+        if v_existing.match_id is not null and v_existing.source='user'
+           and v_existing.user_requested_at>now()-interval '1 minute' then
+          perform futbeat_private.bump_metric('deduped_requests');
+        else
+          perform futbeat_private.bump_metric('match_detail_user_demands');
+        end if;
+        -- Due and not in flight: wake (debounced), e.g. a LIVE detail that
+        -- became stale again while its request row is still open.
         perform futbeat_private.wake_provider_worker('demand');
       end if;
     end if;
@@ -242,6 +265,7 @@ end
 $$;
 
 revoke all on function
+  futbeat_private.reset_expired_detail_request_source(),
   futbeat_private.match_detail_due(text,timestamptz),
   futbeat_private.match_detail_status(text),
   futbeat_private.detail_inflight(text)

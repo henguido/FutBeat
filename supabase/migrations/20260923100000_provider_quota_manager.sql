@@ -13,8 +13,10 @@
 --     whole budget; not a product policy.
 --   * freshness: TTLs used by the demand queues (profile vs stats, search,
 --     negative cache, demand window).
--- Unknown remaining (no reading yet today) allows every class; the per-kind
--- safety caps still apply.
+-- Unknown remaining (no reading yet today) allows LIVE/results freely; every
+-- other class also stops once today's total calls reach unknownDailyCap
+-- (conservative, in case the provider never reports remaining). The per-kind
+-- safety caps always apply.
 --
 -- Metrics: sharded daily counters (no single hot row under concurrency).
 --
@@ -43,7 +45,8 @@ values('goal_api',
   '{"team-squad":["team-squad","team-squad-ingest"]}',
   '{"playerProfileDays":30,"playerStatsHours":12,"playerSearchDays":7,
     "playerSearchNegativeDays":3,"playerNoDataDays":30,"demandWindowMinutes":30,
-    "leaseMinutes":10,"wakeDebounceSeconds":15}')
+    "leaseMinutes":10,"wakeDebounceSeconds":15,"unknownDailyCap":600,
+    "playerStatsNoDataDays":3}')
 on conflict(provider) do nothing;
 
 create table if not exists futbeat_private.runtime_settings(
@@ -90,7 +93,7 @@ $$;
 create or replace function futbeat_private.quota_decision(p_provider text,p_kind text,p_class text)
 returns jsonb language plpgsql stable set search_path='' as $$
 declare policy futbeat_private.provider_quota_policy; remaining integer; floor_value integer;
-  cap integer; used integer; kinds text[];
+  cap integer; used integer; kinds text[]; total integer; unknown_cap integer;
 begin
   select * into policy from futbeat_private.provider_quota_policy where provider=p_provider;
   if policy is null then raise exception 'No quota policy for provider %',p_provider; end if;
@@ -101,15 +104,19 @@ begin
   kinds:=coalesce(array(select jsonb_array_elements_text(policy.kind_groups->p_kind)),array[p_kind]);
   if cardinality(kinds)=0 then kinds:=array[p_kind]; end if;
   remaining:=futbeat_private.provider_remaining(p_provider);
-  select count(*)::integer into used from futbeat_private.provider_call_ledger
-  where provider=p_provider and call_kind=any(kinds)
+  select count(*)::integer,count(*) filter(where call_kind=any(kinds))::integer into total,used
+  from futbeat_private.provider_call_ledger
+  where provider=p_provider
     and reserved_at>=date_trunc('day',now() at time zone 'UTC') at time zone 'UTC';
+  unknown_cap:=coalesce((policy.freshness->>'unknownDailyCap')::integer,600);
   return jsonb_build_object(
-    'allowed',(remaining is null or remaining>floor_value) and used<cap,
+    'allowed',(remaining is null or remaining>floor_value) and used<cap
+      and not (remaining is null and p_class not in ('live','results') and total>=unknown_cap),
     'reason',case when remaining is not null and remaining<=floor_value then 'provider_remaining_reserve'
-      when used>=cap then 'kind_daily_cap' end,
+      when used>=cap then 'kind_daily_cap'
+      when remaining is null and p_class not in ('live','results') and total>=unknown_cap then 'unknown_budget_cap' end,
     'provider',p_provider,'kind',p_kind,'class',p_class,'providerRemaining',remaining,
-    'floor',floor_value,'usedToday',used,'safetyCap',cap,
+    'floor',floor_value,'usedToday',used,'safetyCap',cap,'totalToday',total,
     'band',case when remaining is null then 'unknown'
       when remaining>(policy.class_floors->>'bootstrap')::integer then 'abundant'
       when remaining>(policy.class_floors->>'user')::integer then 'normal'
@@ -148,17 +155,30 @@ revoke all on futbeat_private.worker_wakeups from public,anon,authenticated;
 create or replace function futbeat_private.wake_provider_worker(p_trigger text default 'demand')
 returns text language plpgsql security definer set search_path='' as $$
 declare debounce interval:=make_interval(secs=>futbeat_private.quota_setting('goal_api','wakeDebounceSeconds',15));
-  claimed boolean; url text; result text;
+  last_wake timestamptz; url text; result text;
 begin
   if p_trigger is null or p_trigger not in ('demand') then raise exception 'Invalid wake trigger'; end if;
-  insert into futbeat_private.worker_wakeups(trigger,last_wake_at,wake_count)
-  values(p_trigger,now(),1)
-  on conflict(trigger) do update set last_wake_at=now(),wake_count=futbeat_private.worker_wakeups.wake_count+1
-    where futbeat_private.worker_wakeups.last_wake_at<=now()-debounce
-  returning true into claimed;
-  if claimed is null then
-    update futbeat_private.worker_wakeups set debounced_count=debounced_count+1 where trigger=p_trigger;
+  -- Never queue request transactions behind each other on this shared row:
+  -- whoever finds it locked (another request is waking right now) or recent
+  -- simply skips; the debounce counter is a sharded metric.
+  select w.last_wake_at into last_wake from futbeat_private.worker_wakeups w
+  where w.trigger=p_trigger for update skip locked;
+  if not found then
+    if exists(select 1 from futbeat_private.worker_wakeups where trigger=p_trigger) then
+      perform futbeat_private.bump_metric('wake_debounced');
+      return 'debounced';
+    end if;
+    insert into futbeat_private.worker_wakeups(trigger,last_wake_at,wake_count)
+    values(p_trigger,now(),1) on conflict(trigger) do nothing;
+    if not found then
+      perform futbeat_private.bump_metric('wake_debounced');
+      return 'debounced';
+    end if;
+  elsif last_wake>now()-debounce then
+    perform futbeat_private.bump_metric('wake_debounced');
     return 'debounced';
+  else
+    update futbeat_private.worker_wakeups set last_wake_at=now(),wake_count=wake_count+1 where trigger=p_trigger;
   end if;
   select value into url from futbeat_private.runtime_settings where key='goal_worker_url';
   if to_regnamespace('net') is null or to_regnamespace('vault') is null or url is null then

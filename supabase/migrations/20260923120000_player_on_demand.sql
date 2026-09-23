@@ -79,6 +79,12 @@ begin
     requested_at=now()
   returning status,next_retry_at,lease_until,(xmax::text='0') into v_status,v_next,v_lease,inserted;
   if inserted then
+    -- Typing "haa", "haal", "haala"... must not queue one paid search per
+    -- prefix: a newer, longer query supersedes its never-attempted prefixes.
+    delete from futbeat_private.player_search_demands d
+    where d.status='QUEUED' and d.last_attempt_at is null and d.query_key<>key
+      and d.request_count<=2 and key like d.query_key||'%'
+      and d.requested_at>now()-interval '2 minutes';
     perform futbeat_private.bump_metric('player_search_demands');
     perform futbeat_private.wake_provider_worker('demand');
     return jsonb_build_object('pending',true,'status','QUEUED','key',key);
@@ -119,15 +125,17 @@ begin
   select payload into old from futbeat_private.entities where id=pid and kind='player' for update;
   if old is null then return null; end if;
   next:=old;
+  squad:=exists(select 1 from futbeat_private.team_squad_members where player_id=pid);
   foreach key in array array['name','shortName','country','dateOfBirth','age','height','preferredFoot'] loop
     value:=p_item->key;
     if value is null or value='null'::jsonb or value='""'::jsonb then continue; end if;
-    if p_source='profile' and key not in ('name','shortName')
+    -- A stored squad also writes these facts: only fill what it lacks, so the
+    -- two sources never flip-flop.
+    if p_source='profile' and not squad and key not in ('name','shortName')
        or coalesce(btrim(next->>key),'')='' then
       next:=next||jsonb_build_object(key,value);
     end if;
   end loop;
-  squad:=exists(select 1 from futbeat_private.team_squad_members where player_id=pid);
   if not squad then
     if coalesce(next->>'teamId','')='' and nullif(p_item->>'teamExternalId','') is not null then
       select canonical_id into team_id from futbeat_private.provider_entities
@@ -189,7 +197,11 @@ begin
   order by external_id limit 1;
   if ext is null then return jsonb_build_object('enrichmentPending',false,'reason','unmapped'); end if;
   due:=futbeat_private.player_hydration_due(p_player_id);
-  pending:=(due->>'profileDue')::boolean or (due->>'statsDue')::boolean;
+  -- Only promise enrichment that the quota manager would allow today.
+  pending:=((due->>'profileDue')::boolean
+      and (futbeat_private.quota_decision('goal_api','player-profile','user')->>'allowed')::boolean)
+    or ((due->>'statsDue')::boolean
+      and (futbeat_private.quota_decision('goal_api','player-stats','user')->>'allowed')::boolean);
   if not pending then
     perform futbeat_private.bump_metric('player_profile_cache_hits');
     return jsonb_build_object('enrichmentPending',false)||due;
@@ -220,13 +232,24 @@ begin
   if nullif(btrim(p_trigger_source),'') is null then raise exception 'trigger_source is required'; end if;
   perform futbeat_private.lock_provider_quota('goal_api');
 
+  -- Housekeeping (bounded): demand nobody is waiting for anymore, and old
+  -- finished rows whose cache/backoff ended long ago.
+  delete from futbeat_private.player_search_demands where query_key in (
+    select query_key from futbeat_private.player_search_demands
+    where (status='QUEUED' and last_attempt_at is null and requested_at<=window_start)
+       or (status<>'QUEUED' and coalesce(next_retry_at,last_attempt_at,requested_at)<now()-interval '30 days')
+    limit 500);
+
   decision:=futbeat_private.quota_decision('goal_api','player-search','user');
   last_decision:=decision;
   if (decision->>'allowed')::boolean then
     select * into demand from futbeat_private.player_search_demands
     where status='QUEUED' and requested_at>window_start and coalesce(lease_until,'-infinity')<=now()
       and coalesce(next_retry_at,'-infinity')<=now()
-    order by request_count desc,requested_at desc,query_key limit 1 for update skip locked;
+    -- Freshest demand first; popularity only breaks ties up to a small cap,
+    -- so repeating junk queries cannot monopolize the budget.
+    order by requested_at>now()-interval '1 minute' desc,least(request_count,5) desc,requested_at desc,query_key
+    limit 1 for update skip locked;
     if demand.query_key is not null then
       update futbeat_private.player_search_demands set lease_until=now()+lease,last_attempt_at=now()
       where query_key=demand.query_key;
@@ -290,7 +313,9 @@ begin
   if jsonb_typeof(p_players) is distinct from 'array' then raise exception 'Invalid player search result'; end if;
   meta:=futbeat_private.complete_player_ledger(p_reservation_id,'player-search','SUCCEEDED',p_provider_remaining,
     200,null,jsonb_build_object('players',least(jsonb_array_length(p_players),50)));
-  for item in select value from jsonb_array_elements(p_players) with ordinality x(value,n) where n<=50 loop
+  -- Stable lock order (same as squad stores): concurrent stores never deadlock.
+  for item in select value from (select value from jsonb_array_elements(p_players) with ordinality x(value,n)
+      where n<=50) first50 order by value->>'externalId' loop
     result:=futbeat_private.upsert_goal_player(item,'search',now());
     if result is null then continue; end if;
     ids:=array_append(ids,result->>'id');
@@ -357,7 +382,7 @@ begin
     stats_fetched_at=now(),
     stats_next_retry_at=now()+case when has_data
       then make_interval(hours=>futbeat_private.quota_setting('goal_api','playerStatsHours',12)::integer)
-      else make_interval(days=>futbeat_private.quota_setting('goal_api','playerSearchNegativeDays',3)::integer) end,
+      else make_interval(days=>futbeat_private.quota_setting('goal_api','playerStatsNoDataDays',3)::integer) end,
     failure_count=0,lease_until=null,last_error=null
   where player_id=meta->>'playerId';
   return jsonb_build_object('playerId',meta->>'playerId','seasonStats',has_data);
@@ -382,7 +407,9 @@ begin
       last_error=left(coalesce(p_error_code,'failed'),120)
     where player_id=meta->>'playerId' returning failure_count into failures;
   end if;
-  retry:=case when p_http_status=404 then make_interval(days=>futbeat_private.quota_setting('goal_api','playerSearchNegativeDays',3)::integer)
+  retry:=case when p_http_status=404 then make_interval(days=>futbeat_private.quota_setting('goal_api',
+      case p_kind when 'player-search' then 'playerSearchNegativeDays' when 'player-profile' then 'playerNoDataDays'
+        else 'playerStatsNoDataDays' end,3)::integer)
     when p_http_status=429 then interval '1 hour'
     else least(interval '1 day',interval '15 minutes'*power(2,least(greatest(coalesce(failures,1)-1,0),7))) end;
   if p_kind='player-search' then

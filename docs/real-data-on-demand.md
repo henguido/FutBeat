@@ -32,6 +32,11 @@ app ── GET /v1/search | /v1/entity?type=player | /v1/match-detail ──► 
   and the query has at least 3 useful characters.
 - There is one row per normalized query (`player_search_demands.query_key`),
   so 1000 users searching the same name cost at most one call.
+- Typing a name doesn't queue one paid search per prefix. A newer, longer query
+  supersedes its prefixes that were never attempted.
+- Reservations take the freshest demand first. Popularity only breaks ties, up
+  to a cap of 5, so repeating junk queries can't monopolize the budget.
+- Old rows are cleaned up in bounded batches during reservation.
 - States: `QUEUED` (lease 10 min), then `AVAILABLE` (cached 7 days) or
   `NO_DATA` (negative cache 3 days, also used for HTTP 404) or `FETCH_FAILED`
   (backoff 15 min·2ⁿ up to 1 day; 429 waits 1 h).
@@ -84,8 +89,10 @@ app ── GET /v1/search | /v1/entity?type=player | /v1/match-detail ──► 
 
 - Floors, per-kind safety caps and TTLs are all in that one row:
   `class_floors`, `kind_daily_caps`, `kind_groups` and `freshness`.
-- Unknown remaining (no reading yet today) allows every class; the safety caps
-  still apply.
+- Unknown remaining (no reading yet today) always allows LIVE and results.
+  Every other class also stops once the day's total calls reach
+  `unknownDailyCap` (600). The worker keeps `x-ratelimit-remaining` even on
+  provider errors, so a failing day doesn't run blind.
 - Safety caps per day:
 
   | Call kind | Cap |
@@ -132,6 +139,20 @@ Diagnostics (service role only):
   database and posted only to the worker URL in `runtime_settings`.
 - The GOAL key is read from Vault by the worker and never logged or returned
   (this is tested).
+
+## Known limits / follow-ups
+
+- There's no per-client rate limit on `/v1/search`, because the API is
+  anonymous. Provider calls stay bounded by the quota class and the per-kind
+  cap, but distinct junk queries still create demand rows (cleaned after
+  30 min or 30 days).
+- `futbeat_request_player_profile` promises enrichment only when the quota
+  would allow it today.
+- The older GOAL lanes build their day lock from the session time zone
+  (`v_day_start::date`); the new manager uses UTC. They're equivalent under
+  Supabase's default UTC sessions.
+- An open user request row still blocks the prefetch enqueuer until it expires
+  (15 min). This is existing behavior.
 
 ## Deploy order (not done)
 
