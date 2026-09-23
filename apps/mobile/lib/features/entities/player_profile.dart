@@ -305,6 +305,7 @@ class PlayerProfileView extends StatelessWidget {
     required this.player,
     required this.team,
     required this.matches,
+    this.enriching = false,
     super.key,
   });
 
@@ -312,6 +313,9 @@ class PlayerProfileView extends StatelessWidget {
   final Entity player;
   final Entity? team;
   final List<FootballMatch> matches;
+
+  /// The server is fetching more of this player's data right now.
+  final bool enriching;
 
   @override
   Widget build(BuildContext context) {
@@ -346,7 +350,7 @@ class PlayerProfileView extends StatelessWidget {
         const Padding(
           padding: EdgeInsets.fromLTRB(4, 6, 4, 0),
           child: Text(
-            'Datos publicados por el proveedor de la plantilla.',
+            'Datos publicados por el proveedor.',
             style: TextStyle(color: muted, fontSize: 12),
           ),
         ),
@@ -412,6 +416,7 @@ class PlayerProfileView extends StatelessWidget {
     final season = playerSeason(player);
     final events = playerRecentEvents(data, player.id).take(5).toList();
     return [
+      if (enriching) const _EnrichingNotice(),
       const ProfileSectionTitle('Ficha del jugador'),
       if (player.json['injured'] == true) const _InjuryBanner(),
       if (facts.isEmpty)
@@ -1052,6 +1057,31 @@ class PlayerSeasonCard extends StatelessWidget {
           ),
         ],
       ),
+    ),
+  );
+}
+
+class _EnrichingNotice extends StatelessWidget {
+  const _EnrichingNotice();
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+    key: ValueKey('player-enriching'),
+    padding: EdgeInsets.fromLTRB(2, 10, 2, 0),
+    child: Row(
+      children: [
+        SizedBox.square(
+          dimension: 12,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Actualizando datos del jugador…',
+            style: TextStyle(color: muted, fontSize: 12),
+          ),
+        ),
+      ],
     ),
   );
 }

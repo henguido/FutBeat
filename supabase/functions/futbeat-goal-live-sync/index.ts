@@ -1,5 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { nextResultsOffset } from "../_shared/results_pagination.ts";
+import {
+  GOAL_PLAYER_ENDPOINTS,
+  normalizeGoalPlayerProfile,
+  normalizeGoalPlayerSearch,
+  normalizeGoalPlayerStatistics,
+} from "../_shared/goal_players.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -385,7 +391,9 @@ async function fetchGoal(
     throw new Error(`GOAL API returned non-JSON HTTP ${response.status}`);
   }
   if (!response.ok || payload.success !== true) {
-    throw new Error(`GOAL API HTTP ${response.status}`);
+    // Keep the provider's remaining budget even on errors so the quota
+    // manager never runs blind on a failing day.
+    throw Object.assign(new Error(`GOAL API HTTP ${response.status}`), { remaining });
   }
   return { payload, remaining, status: response.status };
 }
@@ -812,6 +820,8 @@ async function syncOneMatchDetail() {
       stored,
     };
   } catch (error) {
+    const reported = (error as { remaining?: unknown })?.remaining;
+    if (typeof reported === "number") remaining = reported;
     await completeFailure(
       reservationId,
       "GOAL_MATCH_DETAIL_FETCH_FAILED",
@@ -825,6 +835,122 @@ async function syncOneMatchDetail() {
     );
     throw error;
   }
+}
+
+function httpStatusOf(error: unknown) {
+  const match = (error instanceof Error ? error.message : "").match(/HTTP (\d{3})/);
+  return match ? Number(match[1]) : null;
+}
+
+// Player discovery/hydration on user demand. Each iteration reserves exactly
+// one provider call through the central quota manager (search first, then
+// profile, then season statistics) and stores only what GOAL returned.
+async function syncPlayerDemand(maxCalls = 2) {
+  const results: Record<string, unknown>[] = [];
+  let goalKey = "";
+  for (let i = 0; i < maxCalls; i++) {
+    const plan = await rpc("futbeat_reserve_player_call", {
+      p_trigger_source: "supabase-cron",
+    });
+    if (!plan?.allowed) {
+      results.push({ status: "skipped", reason: plan?.reason ?? "unknown" });
+      break;
+    }
+    const reservationId = Number(plan.reservationId);
+    const kind = clean(plan.kind);
+    let remaining: number | null = null;
+    try {
+      goalKey ||= await readGoalKey();
+      if (kind === "player-search") {
+        const response = await fetchGoal(
+          goalKey,
+          GOAL_PLAYER_ENDPOINTS.search(clean(plan.query)),
+          30000,
+          true,
+        );
+        remaining = response.remaining;
+        const stored = await rpc("futbeat_store_player_search_result", {
+          p_reservation_id: reservationId,
+          p_players: normalizeGoalPlayerSearch(response.payload),
+          p_provider_remaining: remaining,
+        });
+        results.push({ status: "ok", kind, ...stored });
+      } else if (kind === "player-profile" || kind === "player-stats") {
+        const external = clean(plan.externalPlayerId);
+        const response = await fetchGoal(
+          goalKey,
+          kind === "player-profile"
+            ? GOAL_PLAYER_ENDPOINTS.profile(external)
+            : GOAL_PLAYER_ENDPOINTS.statistics(external),
+          30000,
+          true,
+        );
+        remaining = response.remaining;
+        const stored = kind === "player-profile"
+          ? await rpc("futbeat_store_player_profile", {
+            p_reservation_id: reservationId,
+            p_profile: normalizeGoalPlayerProfile(response.payload) ?? {},
+            p_provider_remaining: remaining,
+          })
+          : await rpc("futbeat_store_player_stats", {
+            p_reservation_id: reservationId,
+            p_stats: normalizeGoalPlayerStatistics(response.payload),
+            p_provider_remaining: remaining,
+          });
+        results.push({ status: "ok", kind, ...stored });
+      } else {
+        throw new Error("Unknown player reservation kind");
+      }
+    } catch (error) {
+      const reported = (error as { remaining?: unknown })?.remaining;
+      if (typeof reported === "number") remaining = reported;
+      try {
+        await rpc("futbeat_fail_player_call", {
+          p_reservation_id: reservationId,
+          p_kind: kind,
+          p_http_status: httpStatusOf(error),
+          p_error_code: "GOAL_PLAYER_FETCH_FAILED",
+          p_provider_remaining: remaining,
+        });
+      } catch {
+        console.error("player failure completion failed");
+      }
+      results.push({ status: "failed", kind, httpStatus: httpStatusOf(error) });
+    }
+  }
+  return results;
+}
+
+// User demand lane: match detail first (a Match Center is open), then player
+// discovery/hydration. Woken by the database right after demand is recorded
+// and also run by the per-minute cron, so a lost wake-up only adds latency.
+async function syncDemand() {
+  const detail: unknown[] = [];
+  for (let i = 0; i < 2; i++) {
+    try {
+      const result = await syncOneMatchDetail() as Record<string, unknown>;
+      detail.push(result);
+      if (result?.status !== "ok") break;
+    } catch (error) {
+      console.error(
+        "GOAL demand detail sync failed",
+        error instanceof Error ? error.message : "unknown",
+      );
+      detail.push({ status: "failed" });
+      break;
+    }
+  }
+  let players: unknown;
+  try {
+    players = await syncPlayerDemand();
+  } catch (error) {
+    console.error(
+      "GOAL player demand sync failed",
+      error instanceof Error ? error.message : "unknown",
+    );
+    players = { status: "failed" };
+  }
+  return { detail, players };
 }
 
 type SquadAttempt = {
@@ -1268,17 +1394,13 @@ Deno.serve(async (request) => {
         return Response.json({ status: "ok", results: { status: "failed" } });
       }
     }
-    if (trigger === "detail-only") {
-      try {
-        const detail = await syncOneMatchDetail();
-        return Response.json({ status: "ok", detail });
-      } catch (error) {
-        console.error(
-          "GOAL detail-only sync failed",
-          error instanceof Error ? error.message : "unknown",
-        );
-        return Response.json({ status: "ok", detail: { status: "failed" } });
+    if (trigger === "detail-only" || trigger === "demand") {
+      if (Object.keys(body).some((key) => key !== "trigger")) {
+        return Response.json({ error: `${trigger} accepts only trigger` }, {
+          status: 400,
+        });
       }
+      return Response.json({ status: "ok", ...(await syncDemand()) });
     }
 
     let live: unknown;

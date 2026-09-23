@@ -66,6 +66,21 @@ export default {
         return reply(400, { error: 'Entidad inválida' });
       }
 
+      // Opening a player records a deduplicated hydration demand (server-side
+      // only). A failure here never blocks the cached profile.
+      let enrichmentPending = false;
+      if (type === 'player') {
+        const { data: demand, error: demandError } = await ctx.supabaseAdmin.rpc(
+          'futbeat_request_player_profile',
+          { p_player_id: id },
+        );
+        if (demandError) {
+          console.warn('player profile demand unavailable');
+        } else {
+          enrichmentPending = asRecord(demand).enrichmentPending === true;
+        }
+      }
+
       const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
         'futbeat_read_entity_detail',
         {
@@ -84,6 +99,11 @@ export default {
         return reply(503, { error: 'Datos temporalmente no disponibles' });
       }
 
+      if (enrichmentPending) {
+        // Partial profile now; the app refreshes once enrichment lands.
+        snapshot.coverage = { ...asRecord(snapshot.coverage), enrichmentPending: true };
+        return replyNoStore(200, snapshot);
+      }
       return reply(200, snapshot);
     }
 
@@ -117,6 +137,10 @@ export default {
         snapshot.demo !== false
       ) {
         return reply(503, { error: 'Búsqueda temporalmente no disponible' });
+      }
+      // Remote discovery in progress: never cache this partial answer.
+      if (asRecord(snapshot.coverage).pendingRemote === true) {
+        return replyNoStore(200, snapshot);
       }
       return reply(200, snapshot);
     }

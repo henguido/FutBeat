@@ -109,8 +109,8 @@ test('native PostgreSQL: overlapping detail reservations are atomic', {
       // Test-only fault injection makes the two sessions use different daily
       // quota keys, as can happen across midnight. Production SQL is restored.
       const isolated = original.replace(
-        "hashtext('futbeat-provider-quota:goal_api:'||v_day_start::date::text)",
-        "hashtext('test-daily-quota:'||current_setting('application_name'))",
+        "perform futbeat_private.lock_provider_quota('goal_api');",
+        "perform pg_advisory_xact_lock(hashtext('test-daily-quota:'||current_setting('application_name')));",
       );
       assert.notEqual(isolated, original);
       try {

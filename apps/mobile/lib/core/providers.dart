@@ -276,7 +276,9 @@ class ApiRepository implements FootballRepository {
   }) async {
     final cached = _snapshotCache[key];
     final fetched = _catalogFetchedAt[key];
+    // A partial answer (remote discovery pending) is never served from cache.
     if (cached != null &&
+        !cached.pendingRemote &&
         fetched != null &&
         DateTime.now().difference(fetched) < const Duration(minutes: 1)) {
       return cached;

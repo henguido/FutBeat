@@ -51,10 +51,13 @@ test('Players v2 plans each canonical team once and reserves squad quota indepen
    [team,'goal-team-z'],
   )).rows[0].value;
   assert.equal(first.allowed,true);
-  assert.equal(first.reserve,350);
+  // Central quota manager: squads are class 'coverage' (floor 300) with a
+  // per-kind safety cap of 150/day (provider_quota_policy).
+  assert.equal(first.class,'coverage');
+  assert.equal(first.floor,300);
   assert.equal(first.usedToday,1);
 
-  for(let i=0;i<15;i+=1){
+  for(let i=0;i<149;i+=1){
    await db.query(
     "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,metadata) values('goal_api','team-squad','test',now(),$1)",
     [JSON.stringify({synthetic:true,n:i})],
@@ -67,9 +70,9 @@ test('Players v2 plans each canonical team once and reserves squad quota indepen
    [team,'goal-team-z'],
   )).rows[0].value;
   assert.equal(blocked.allowed,false);
-  assert.equal(blocked.reason,'squad_daily_limit');
-  assert.equal(blocked.usedToday,16);
-  assert.equal(blocked.limit,16);
+  assert.equal(blocked.reason,'kind_daily_cap');
+  assert.equal(blocked.usedToday,150);
+  assert.equal(blocked.safetyCap,150);
  } finally {
   await db.close();
  }

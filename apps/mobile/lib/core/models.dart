@@ -426,6 +426,13 @@ class Snapshot {
   }
   final bool demo;
   final Json? coverage;
+
+  /// The server launched a remote player discovery for this search; results
+  /// may grow shortly (bounded client retries).
+  bool get pendingRemote => coverage?['pendingRemote'] == true;
+
+  /// The server is hydrating this profile; a refresh shortly shows more data.
+  bool get enrichmentPending => coverage?['enrichmentPending'] == true;
   final bool stale;
   final bool revalidating;
   final DateTime updatedAt;

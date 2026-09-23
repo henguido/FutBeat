@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -86,7 +88,16 @@ class EntityScreen extends ConsumerStatefulWidget {
   ConsumerState<EntityScreen> createState() => _EntityScreenState();
 }
 
+/// Bounded refreshes while the server hydrates a profile on demand.
+const profileEnrichmentRetryDelays = [
+  Duration(seconds: 6),
+  Duration(seconds: 12),
+];
+
 class _EntityScreenState extends ConsumerState<EntityScreen> {
+  Timer? enrichmentRetry;
+  int enrichmentAttempts = 0;
+
   @override
   void initState() {
     super.initState();
@@ -96,8 +107,40 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   }
 
   @override
+  void dispose() {
+    enrichmentRetry?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleEnrichmentRefresh() {
+    if (enrichmentRetry != null ||
+        enrichmentAttempts >= profileEnrichmentRetryDelays.length) {
+      return;
+    }
+    enrichmentRetry = Timer(
+      profileEnrichmentRetryDelays[enrichmentAttempts],
+      () {
+        if (!mounted) return;
+        setState(() {
+          enrichmentAttempts++;
+          enrichmentRetry = null;
+        });
+        ref.invalidate(
+          entitySnapshotProvider((type: widget.type, id: widget.id)),
+        );
+      },
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final type = widget.type, id = widget.id;
+    ref.listen(entitySnapshotProvider((type: type, id: id)), (_, next) {
+      // Ignore the refresh-in-progress state (it still carries old data).
+      if (!next.isLoading && next.asData?.value.enrichmentPending == true) {
+        _scheduleEnrichmentRefresh();
+      }
+    });
     final detail = ref.watch(entitySnapshotProvider((type: type, id: id)));
 
     return detail.when(
@@ -175,6 +218,9 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             player: entity,
             team: team,
             matches: matches,
+            enriching:
+                data.enrichmentPending &&
+                enrichmentAttempts < profileEnrichmentRetryDelays.length,
           );
         }
         // Teams and players have dedicated profiles; this is the competition

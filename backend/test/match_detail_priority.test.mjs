@@ -459,21 +459,22 @@ test('expired flight permits retry without refunding its quota or modifying the 
   } finally { await db.close(); }
 });
 
-test('detail daily quota and remaining reserve unchanged; denied attempts add no ledger rows', async () => {
+test('central quota: LIVE detail keeps its hard reserve and the per-kind safety cap; denied attempts add no rows', async () => {
   const db = await openDatabase();
   try {
     const { match } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -40 });
     await db.query("insert into futbeat_private.match_detail_requests values($1,now(),now()+interval '10 minutes',1)", [match]);
+    // LIVE is the last class to stop: floor 20 (provider_quota_policy.class_floors.live).
     await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining)
-      values('goal_api','live','test','SUCCEEDED',80)`);
+      values('goal_api','live','test','SUCCEEDED',20)`);
     assert.equal((await reserve(db)).reason, 'provider_remaining_reserve');
     assert.equal((await db.query('select count(*)::int n from futbeat_private.provider_call_ledger')).rows[0].n, 1);
-    await db.exec(`update futbeat_private.provider_call_ledger set provider_remaining=81;
+    await db.exec(`update futbeat_private.provider_call_ledger set provider_remaining=21;
       insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status)
-      select 'goal_api','match-detail','test','FAILED' from generate_series(1,23)`);
+      select 'goal_api','match-detail','test','FAILED' from generate_series(1,399)`);
     assert.equal((await reserve(db)).allowed, true);
-    assert.equal((await reserve(db)).reason, 'detail_daily_limit');
-    assert.equal((await db.query("select count(*)::int n from futbeat_private.provider_call_ledger where call_kind='match-detail'")).rows[0].n, 24);
+    assert.equal((await reserve(db)).reason, 'kind_daily_cap');
+    assert.equal((await db.query("select count(*)::int n from futbeat_private.provider_call_ledger where call_kind='match-detail'")).rows[0].n, 400);
   } finally { await db.close(); }
 });
 
