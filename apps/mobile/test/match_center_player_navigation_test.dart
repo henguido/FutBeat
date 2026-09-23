@@ -78,8 +78,12 @@ Map<String, dynamic> _detail({
   'incidents': const [],
 };
 
-Future<void> _pumpMatch(WidgetTester tester, Map<String, dynamic> detail) async {
-  tester.view.physicalSize = const Size(390, 844);
+Future<void> _pumpMatch(
+  WidgetTester tester,
+  Map<String, dynamic> detail, {
+  Size size = const Size(390, 844),
+}) async {
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -226,14 +230,13 @@ void main() {
   // tree, which flutter_test flags as a leaked timer.
   for (final width in [320.0, 360.0]) {
     testWidgets('renders at ${width.toInt()}px without overflow (case F)', (tester) async {
-      tester.view.physicalSize = Size(width, 780);
-      tester.view.devicePixelRatio = 1;
       await _pumpMatch(
         tester,
         _detail(
           starter: _lineupPlayer(name: 'Goleador con Nombre Largo', canonicalId: 'fb_player_1'),
           bench: _lineupPlayer(name: 'Suplente', canonicalId: 'fb_player_2', lineupPosition: 2),
         ),
+        size: Size(width, 780),
       );
       expect(tester.takeException(), isNull);
     });

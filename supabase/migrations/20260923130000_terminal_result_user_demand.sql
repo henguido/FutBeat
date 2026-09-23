@@ -68,6 +68,12 @@ begin
                   'POSTPONED','SUSPENDED','ABANDONED') then
     return jsonb_build_object('resultsPending',false,'reason','terminal');
   end if;
+  -- A fresh LIVE match legitimately has hasPlayedEvidence=true (kickoff was
+  -- >15 minutes ago); that is not a stuck partial, it is the match actually
+  -- being played. Recovering "today" is not excluded on principle.
+  if v_status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES') then
+    return jsonb_build_object('resultsPending',false,'reason','live');
+  end if;
   if not coalesce((v_model->>'hasPlayedEvidence')::boolean,false) then
     return jsonb_build_object('resultsPending',false,'reason','no_evidence');
   end if;
@@ -91,7 +97,7 @@ begin
     perform futbeat_private.bump_metric('deduped_requests');
   else
     perform futbeat_private.bump_metric('terminal_result_user_demands');
-    perform futbeat_private.wake_provider_worker('results');
+    perform futbeat_private.wake_provider_worker('results-only');
   end if;
 
   return jsonb_build_object('resultsPending',true,'providerDate',v_date);
@@ -127,6 +133,10 @@ begin
   left join futbeat_private.results_date_attempts a
     on a.provider='goal_api' and a.provider_date=d.provider_date
   where d.provider='goal_api' and d.requested_at>now()-interval '24 hours'
+    -- Outside the 90-day retention window, results_date_attempts rows for
+    -- this date are deleted every call below, so no backoff could ever
+    -- stick and a single stale request would win every reservation.
+    and d.provider_date>=(now() at time zone 'UTC')::date-90
     and (a.next_retry_at is null or a.next_retry_at<=now())
     and (a.updated_at is null or a.updated_at<d.requested_at)
   order by d.requested_at desc limit 1;
@@ -187,15 +197,21 @@ begin
     'attempt',v_attempt,'localRepair',v_local,'providerRemaining',v_remaining,'userPriority',v_user_priority);
 end $$;
 
--- The dedicated wake lane for terminal-result recovery, separate from the
--- match-detail/player 'demand' lane so opening a stale historical match
--- never competes with a live Match Center's detail refresh budget.
+-- The wake for terminal-result recovery reuses the worker's existing
+-- 'results-only' branch (supabase/functions/futbeat-goal-live-sync/index.ts,
+-- the same trigger the 2-hourly results cron already posts), so opening a
+-- stale historical match runs a real syncOneResultsDate() call instead of
+-- falling through the Deno.serve handler's default branch (which runs
+-- syncLive/detail/squad/news/video and never touches results at all). It
+-- still debounces separately from the match-detail/player 'demand' lane, so
+-- a stale historical open never competes with a live Match Center's detail
+-- refresh budget.
 create or replace function futbeat_private.wake_provider_worker(p_trigger text default 'demand')
 returns text language plpgsql security definer set search_path='' as $$
 declare debounce interval:=make_interval(secs=>futbeat_private.quota_setting('goal_api','wakeDebounceSeconds',15));
   last_wake timestamptz; url text; result text;
 begin
-  if p_trigger is null or p_trigger not in ('demand','results') then raise exception 'Invalid wake trigger'; end if;
+  if p_trigger is null or p_trigger not in ('demand','results-only') then raise exception 'Invalid wake trigger'; end if;
   select w.last_wake_at into last_wake from futbeat_private.worker_wakeups w
   where w.trigger=p_trigger for update skip locked;
   if not found then

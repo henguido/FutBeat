@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { openDatabase } from '../storage/database.mjs';
 
 let seq = 0;
-async function seedPartialMatch(db, { startOffsetHours = -30, status = 'SCHEDULED', withScore = true } = {}) {
+async function seedPartialMatch(db, { startOffsetHours = -30, status = 'SCHEDULED', withScore = true, provenance } = {}) {
   const n = ++seq;
   const comp = `fb_comp_tr_${n}`, home = `fb_team_tr_h${n}`, away = `fb_team_tr_a${n}`, match = `fb_match_tr_${n}`;
   const start = new Date(Date.now() + startOffsetHours * 3600000).toISOString();
@@ -14,7 +14,8 @@ async function seedPartialMatch(db, { startOffsetHours = -30, status = 'SCHEDULE
     [home, 'team', { id: home, name: `Home ${n}` }],
     [away, 'team', { id: away, name: `Away ${n}` }],
     [match, 'match', { id: match, competitionId: comp, homeTeamId: home, awayTeamId: away,
-      startTime: start, status, ...(score ? { score } : {}), events: [], statistics: [] }],
+      startTime: start, status, ...(score ? { score } : {}), events: [], statistics: [],
+      ...(provenance ? { provenance } : {}) }],
   ]) await db.query('insert into futbeat_private.entities values($1,$2,$3)', [id, kind, JSON.stringify(payload)]);
   // futbeat_private.futbeat_index_calendar_match already indexes calendar_matches
   // from the entities insert above (trigger on entities, keyed off startTime).
@@ -104,7 +105,7 @@ test('20 partial matches same date: opening several dedupes to one date demand, 
   const rows = (await db.query('select provider_date,request_count::int n from futbeat_private.results_date_user_demand')).rows;
   assert.equal(rows.length, 1, 'all 20 matches bucket into the same provider_date');
   assert.equal(rows[0].n, 20);
-  assert.equal((await db.query("select wake_count::int n from futbeat_private.worker_wakeups where trigger='results'")).rows[0].n, 1);
+  assert.equal((await db.query("select wake_count::int n from futbeat_private.worker_wakeups where trigger='results-only'")).rows[0].n, 1);
 }));
 
 test('user-opened date is reserved before a more recent background candidate', () => withDb(async (db) => {
@@ -161,9 +162,41 @@ test('same date requested twice within 5 minutes dedupes (no second wake)', () =
   await request(db, match);
   const second = await seedPartialMatch(db, { startOffsetHours: -30.1 });
   await request(db, second);
-  assert.equal((await db.query("select wake_count::int n from futbeat_private.worker_wakeups where trigger='results'")).rows[0].n, 1);
+  assert.equal((await db.query("select wake_count::int n from futbeat_private.worker_wakeups where trigger='results-only'")).rows[0].n, 1);
   assert.equal(await metric(db, 'deduped_requests'), 1);
 }));
+
+test('LIVE match: hasPlayedEvidence is legitimately true but it is not a stuck partial, no demand', () => withDb(async (db) => {
+  // match_read_model downgrades a stale LIVE (no recent provenance) back to
+  // SCHEDULED, so a genuinely-live match needs a fresh receivedAt to stay LIVE.
+  const match = await seedPartialMatch(db, {
+    status: 'LIVE', startOffsetHours: -1,
+    provenance: { receivedAt: new Date().toISOString() },
+  });
+  const result = await request(db, match);
+  assert.deepEqual(result, { resultsPending: false, reason: 'live' });
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.results_date_user_demand')).rows[0].n, 0);
+}));
+
+test('date older than the 90-day retention window: no user-priority demand recorded', () => withDb(async (db) => {
+  const match = await seedPartialMatch(db, { startOffsetHours: -91 * 24 });
+  const result = await request(db, match);
+  assert.equal(result.resultsPending, true, 'the match itself is still reported as pending');
+  const row = (await db.query('select count(*)::int n from futbeat_private.results_date_user_demand where provider_date=$1', [result.providerDate])).rows[0];
+  // The demand row is written (so a future retention window would still see
+  // it), but reserve_goal_results_date must never treat it as user-priority.
+  assert.equal(row.n, 1);
+  const plan = await reserve(db);
+  assert.notEqual(plan.userPriority, true);
+}));
+
+test('wake trigger matches a branch the worker actually handles (results-only, not an invented "results")', async () => {
+  const source = await readFile(
+    new URL('../../supabase/functions/futbeat-goal-live-sync/index.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /trigger === "results-only"/);
+});
 
 test('match-context API route requests terminal result recovery', async () => {
   const source = await readFile(

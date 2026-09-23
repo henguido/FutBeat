@@ -63,10 +63,27 @@ test('unmapped provider player (no provider_entities row): skipped silently, no 
 
 test('same player requested twice within a minute dedupes', () => withDb(async (db) => {
   const player = await seedCanonicalPlayer(db);
-  await hydrate(db, [player], []);
-  await hydrate(db, [player], []);
+  const first = await hydrate(db, [player], []);
+  const second = await hydrate(db, [player], []);
   assert.equal((await db.query('select request_count::int n from futbeat_private.player_profile_coverage where player_id=$1', [player])).rows[0].n, 2);
   assert.equal((await db.query("select wake_count::int n from futbeat_private.worker_wakeups where trigger='demand'")).rows[0].n, 1);
+  // The player is still genuinely due (still not hydrated), so the client's
+  // bounded refresh must keep seeing enrichmentPending:true even though the
+  // second call deduped the worker wake -- a false "false" here would make
+  // the retry loop stop before the (already-woken) worker has a chance to land it.
+  assert.equal(first.enrichmentPending, true);
+  assert.equal(second.enrichmentPending, true);
+}));
+
+test('direct player-profile visit outranks lineup hydration demand for a different player', () => withDb(async (db) => {
+  const lineupStarter = await seedCanonicalPlayer(db);
+  const directVisit = await seedCanonicalPlayer(db);
+  await hydrate(db, [lineupStarter], []);
+  await db.query('select public.futbeat_request_player_profile($1)', [directVisit]);
+  const first = await reserve(db);
+  assert.equal(first.allowed, true);
+  assert.equal(first.playerId, directVisit, 'a user waiting on their own profile screen must not queue behind lineup photos');
+  assert.deepEqual(await coverage(db, directVisit), { p: 0, n: 1 });
 }));
 
 test('hydration later adds photo: a subsequent lineup media read reflects it (photo pipeline case 5)', () => withDb(async (db) => {

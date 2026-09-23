@@ -22,7 +22,8 @@ set search_path=''
 as $$
 declare
   pid text; v_priority smallint; ext text; due jsonb;
-  previous timestamptz; lease_at timestamptz; any_pending boolean:=false;
+  previous timestamptz; lease_at timestamptz;
+  any_pending boolean:=false; should_wake boolean:=false;
 begin
   for pid,v_priority in
     select s.player_id,s.priority from (
@@ -44,6 +45,13 @@ begin
       continue;
     end if;
 
+    -- Still due and quota-allowed: pending regardless of whether THIS call
+    -- deduped against an earlier request for the same player (matching
+    -- futbeat_request_player_profile's own pending semantics) — otherwise
+    -- the client's bounded refresh sees enrichmentPending:false and stops
+    -- retrying while the player is still genuinely queued.
+    any_pending:=true;
+
     select requested_at,lease_until into previous,lease_at
     from futbeat_private.player_profile_coverage where player_id=pid;
     insert into futbeat_private.player_profile_coverage(player_id,external_id,requested_at,request_count,priority)
@@ -58,17 +66,55 @@ begin
       perform futbeat_private.bump_metric('deduped_requests');
     else
       perform futbeat_private.bump_metric('lineup_player_hydration_demands');
-      any_pending:=true;
+      should_wake:=true;
     end if;
   end loop;
 
-  if any_pending then perform futbeat_private.wake_provider_worker('demand'); end if;
+  if should_wake then perform futbeat_private.wake_provider_worker('demand'); end if;
   return jsonb_build_object('enrichmentPending',any_pending);
 end
 $$;
 
--- Starters/urgent hydration first, then freshest demand, matching the
--- priority most recently requested by lineup hydration or player-profile.
+-- A user actively viewing a player's own screen always outranks lineup
+-- hydration for the same player (priority 0 < lineup's 1/2 < default 100),
+-- so direct profile visits are never starved by up to 60 lineup demands
+-- sharing the same player-profile worker cycle (futbeat_reserve_player_call,
+-- 20 rows per pass, priority-ordered below).
+create or replace function public.futbeat_request_player_profile(p_player_id text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare ext text; due jsonb; previous timestamptz; lease timestamptz; pending boolean;
+begin
+  select external_id into ext from futbeat_private.provider_entities
+  where provider='goal_api' and kind='player' and canonical_id=p_player_id
+  order by external_id limit 1;
+  if ext is null then return jsonb_build_object('enrichmentPending',false,'reason','unmapped'); end if;
+  due:=futbeat_private.player_hydration_due(p_player_id);
+  -- Only promise enrichment that the quota manager would allow today.
+  pending:=((due->>'profileDue')::boolean
+      and (futbeat_private.quota_decision('goal_api','player-profile','user')->>'allowed')::boolean)
+    or ((due->>'statsDue')::boolean
+      and (futbeat_private.quota_decision('goal_api','player-stats','user')->>'allowed')::boolean);
+  if not pending then
+    perform futbeat_private.bump_metric('player_profile_cache_hits');
+    return jsonb_build_object('enrichmentPending',false)||due;
+  end if;
+  select requested_at,lease_until into previous,lease from futbeat_private.player_profile_coverage
+  where player_id=p_player_id;
+  insert into futbeat_private.player_profile_coverage(player_id,external_id,requested_at,request_count,priority)
+  values(p_player_id,ext,now(),1,0)
+  on conflict(player_id) do update set requested_at=now(),external_id=excluded.external_id,
+    request_count=futbeat_private.player_profile_coverage.request_count+1,priority=0;
+  if lease>now() or previous>now()-interval '1 minute' then
+    perform futbeat_private.bump_metric('deduped_requests');
+  else
+    perform futbeat_private.bump_metric('player_profile_demands');
+    perform futbeat_private.wake_provider_worker('demand');
+  end if;
+  return jsonb_build_object('enrichmentPending',true)||due;
+end $$;
+
+-- Direct profile visits (priority 0) first, then starters (1), then bench
+-- (2), then freshest demand at the shared default priority (100).
 create or replace function public.futbeat_reserve_player_call(p_trigger_source text default 'supabase-cron')
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare window_start timestamptz:=now()-make_interval(mins=>futbeat_private.quota_setting('goal_api','demandWindowMinutes',30)::integer);

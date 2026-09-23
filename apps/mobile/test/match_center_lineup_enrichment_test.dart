@@ -62,13 +62,20 @@ void main() {
     // retry, which a single-subscription StreamController would reject.
     final detailController = StreamController<MatchDetail>.broadcast();
     addTearDown(detailController.close);
+    // Counts real re-subscriptions caused by ref.invalidate(matchDetailProvider),
+    // so this test fails if _scheduleLineupEnrichmentRefresh became a no-op
+    // (a bounded-timer-count assertion alone would not catch that).
+    var subscriptionCount = 0;
 
     final container = ProviderContainer(
       overrides: [
         databaseProvider.overrideWithValue(db),
         repositoryProvider.overrideWithValue(ApiRepository(Dio())),
         matchContextSnapshotProvider.overrideWith((ref, id) async => Snapshot(payload)),
-        matchDetailProvider.overrideWith((ref, id) => detailController.stream),
+        matchDetailProvider.overrideWith((ref, id) {
+          subscriptionCount++;
+          return detailController.stream;
+        }),
         followsProvider.overrideWith((ref) => Stream.value({})),
         liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
       ],
@@ -104,5 +111,10 @@ void main() {
     // when it ends, so an unbounded retry loop would fail here.
     await tester.pump(const Duration(seconds: 30));
     expect(tester.takeException(), isNull);
+
+    // The provider was genuinely re-subscribed twice (the 6s and 12s
+    // retries), on top of the initial subscription -- proving the refresh
+    // actually re-fetches instead of just scheduling timers that do nothing.
+    expect(subscriptionCount, 3);
   });
 }
