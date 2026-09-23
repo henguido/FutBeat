@@ -325,8 +325,8 @@ class FootballMatch {
     return timeline.isEmpty ? null : timeline.last;
   }
 
-  List<Json> get statistics =>
-      (json['statistics'] as List? ?? const []).cast<Json>();
+  // Tolerates a non-list or malformed rows instead of failing the snapshot.
+  List<Json> get statistics => MatchDetail._maps(json['statistics']);
 }
 
 List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {

@@ -38,10 +38,11 @@ test('GOAL worker reconciles detailed fixtures into global LIVE state', async ()
 });
 
 test('Match API supports actual GOAL array payloads and read-only refresh', async () => {
-  const source = await readFile(
-    new URL('../../supabase/functions/futbeat-api/index.ts', import.meta.url),
-    'utf8',
-  );
+  // Lineup/statistics normalizers live in _shared/match_detail.ts (behavior is
+  // covered by match_detail_normalizers.test.mjs); the handler wires them up.
+  const source = (await Promise.all([
+    'futbeat-api/index.ts', '_shared/match_detail.ts',
+  ].map((file) => readFile(new URL(`../../supabase/functions/${file}`, import.meta.url), 'utf8')))).join('\n');
 
   assert.match(source, /Array\.isArray\(lineups\)/);
   assert.match(source, /normalizeStatistics\(payload\.statistics\)/);
@@ -54,7 +55,7 @@ test('Match API supports actual GOAL array payloads and read-only refresh', asyn
   assert.match(source, /outPlayerId/);
   assert.match(source, /inPlayerId/);
   assert.match(source, /playerRating/);
-  assert.match(source, /row\.type\)\.toLowerCase\(\) === 'coach'/);
+  assert.match(source, /value === 'coach'/);
   assert.match(source, /row\.playerId\).*row\.playerKey/);
   assert.match(source, /futbeat_read_lineup_player_media/);
   assert.match(source, /safeImage\(canonical\.image\)/);

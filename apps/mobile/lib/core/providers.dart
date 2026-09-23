@@ -476,13 +476,24 @@ final favoritesSnapshotProvider = FutureProvider.family<Snapshot, String>((
   return repository.load();
 });
 
+/// Settled match data stays cached this long after the Match Center closes,
+/// so leaving and re-entering a match does not refetch it.
+const matchCacheRetention = Duration(minutes: 1);
+
+void _retainSettled(Ref ref) {
+  final link = ref.keepAlive();
+  final expiry = Timer(matchCacheRetention, link.close);
+  ref.onDispose(expiry.cancel);
+}
+
 final matchContextSnapshotProvider = FutureProvider.autoDispose
     .family<Snapshot, String>((ref, id) async {
       final repository = ref.watch(repositoryProvider);
-      if (repository is ApiRepository) {
-        return repository.loadMatchContext(id);
-      }
-      return repository.load();
+      final value = await (repository is ApiRepository
+          ? repository.loadMatchContext(id)
+          : repository.load());
+      if (ref.mounted) _retainSettled(ref);
+      return value;
     });
 
 final detailPollIntervalProvider = Provider<Duration>(
@@ -559,8 +570,12 @@ final matchDetailProvider = StreamProvider.autoDispose
         }
       }
       if (!disposed && current.pending) {
-        yield MatchDetail({...current.json, 'pending': false});
+        current = MatchDetail({...current.json, 'pending': false});
+        yield current;
       }
+      // Only real stored detail is retained; a failed/empty read retries on
+      // the next visit.
+      if (!disposed && current.available) _retainSettled(ref);
     });
 
 final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(

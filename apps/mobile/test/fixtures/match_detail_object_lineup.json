@@ -1,0 +1,101 @@
+{
+  "matchId": "fb_match_e2e",
+  "available": true,
+  "pending": false,
+  "detailLevel": "full",
+  "home": {
+    "formation": "4-4-2",
+    "starters": [
+      {
+        "id": "e2e-h1",
+        "canonicalId": "fb_player_fixture_e2e_h1",
+        "name": "Portero Con Foto",
+        "number": "1",
+        "position": "G",
+        "lineupPosition": 1,
+        "country": null,
+        "age": null,
+        "image": "https://media.goal-api.com/players/h1.png",
+        "rating": null,
+        "captain": false
+      },
+      {
+        "id": "e2e-h2",
+        "canonicalId": "fb_player_fixture_e2e_h2",
+        "name": "Defensa Sin Foto",
+        "number": "4",
+        "position": "D",
+        "lineupPosition": 2,
+        "country": null,
+        "age": null,
+        "image": null,
+        "rating": null,
+        "captain": false
+      }
+    ],
+    "substitutes": [
+      {
+        "id": "e2e-h3",
+        "canonicalId": "fb_player_fixture_e2e_h3",
+        "name": "Suplente Canonico",
+        "number": "12",
+        "position": "G",
+        "lineupPosition": null,
+        "country": null,
+        "age": null,
+        "image": "https://media.goal-api.com/players/squad-h3.png",
+        "rating": null,
+        "captain": false
+      }
+    ],
+    "missing": [],
+    "coach": {
+      "id": null,
+      "canonicalId": null,
+      "name": "DT Local",
+      "number": null,
+      "position": null,
+      "lineupPosition": null,
+      "country": null,
+      "age": null,
+      "image": null,
+      "rating": null,
+      "captain": false
+    }
+  },
+  "away": {
+    "formation": "4-3-3",
+    "starters": [
+      {
+        "id": "e2e-a1",
+        "canonicalId": "fb_player_fixture_e2e_a1",
+        "name": "Delantero Visita",
+        "number": "9",
+        "position": "F",
+        "lineupPosition": 1,
+        "country": null,
+        "age": null,
+        "image": "https://media.goal-api.com/players/a1.png",
+        "rating": null,
+        "captain": false
+      }
+    ],
+    "substitutes": [],
+    "missing": [],
+    "coach": null
+  },
+  "statistics": [
+    {
+      "label": "Ball Possession",
+      "home": "55%",
+      "away": "45%"
+    },
+    {
+      "label": "Shots on Goal",
+      "home": 6,
+      "away": 2
+    }
+  ],
+  "incidents": [],
+  "videos": []
+}

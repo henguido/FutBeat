@@ -850,10 +850,14 @@ class Statistics extends StatelessWidget {
   }
 }
 
+/// Provider statistic name: normalized rows use `label`, raw rows `type`.
+String statisticName(Json stat) =>
+    (stat['label'] ?? stat['type'])?.toString() ?? '';
+
 /// Keeps provider order but lifts possession first, as football apps do.
 List<Json> orderedStatistics(List<Json> stats) {
   bool isPossession(Json stat) =>
-      _statKey(stat['label']?.toString() ?? '').contains('possession');
+      _statKey(statisticName(stat)).contains('possession');
   return [
     ...stats.where(isPossession),
     ...stats.where((s) => !isPossession(s)),
@@ -889,7 +893,7 @@ class _StatisticComparison extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Text(
-                    _statLabel(stat['label']?.toString() ?? ''),
+                    _statLabel(statisticName(stat)),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,

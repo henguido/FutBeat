@@ -233,7 +233,7 @@ test('20 lineup identities use one batch query; coverage metrics match canonical
   assert.equal(metrics.canonical_players,20); assert.equal(metrics.players_with_photo,10);
   assert.equal(metrics.players_without_photo_known,10); assert.equal(metrics.squad_mapping_pct,100);
   assert.equal(metrics.squad_photo_pct,50); assert.equal(metrics.teams_fresh_pct,100);
-  const source=await readFile(new URL('../../supabase/functions/futbeat-api/index.ts',import.meta.url),'utf8');
+  const source=await readFile(new URL('../../supabase/functions/_shared/match_detail.ts',import.meta.url),'utf8');
   assert.match(source,/safeImage\(canonical.image\) \?\?/);
  } finally {await db.close();}
 });
