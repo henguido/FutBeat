@@ -414,15 +414,15 @@ class Snapshot {
     _teamsById = {for (final entity in teams) entity.id: entity};
     _playersById = {for (final entity in players) entity.id: entity};
     _competitionsById = {for (final entity in competitions) entity.id: entity};
-    _matchesById = {for (final match in matches) match.id: match};
-
-    for (final match in matches) {
-      if (team(match.homeId) == null ||
+    // A match whose team/competition is missing cannot be rendered. Drop only
+    // that match instead of failing the whole feed or profile.
+    matches.removeWhere(
+      (match) =>
+          team(match.homeId) == null ||
           team(match.awayId) == null ||
-          competition(match.competitionId) == null) {
-        throw const FormatException('Referencia de partido inválida');
-      }
-    }
+          competition(match.competitionId) == null,
+    );
+    _matchesById = {for (final match in matches) match.id: match};
   }
   final bool demo;
   final Json? coverage;
