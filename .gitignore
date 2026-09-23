@@ -17,3 +17,4 @@ node_modules/
 .local-data/
 supabase/.temp/
 *.log
+.superpowers/

@@ -56,6 +56,25 @@ test('object lineups: formation, canonical photo first, raw https fallback, none
   assert.deepEqual(lineupPlayerIds({ payload: { lineups } }).sort(), ['a', 'b', 'c', 'd']);
 });
 
+test('lineupPlayerIdsBySection splits starters/substitutes for both raw shapes', async () => {
+  const { lineupPlayerIdsBySection } = await import('../../supabase/functions/_shared/match_detail.ts');
+  const arrayLineups = [
+    { team: 'home', type: 'starting', playerId: 'p1' },
+    { team: 'home', type: 'sub', playerId: 'p2' },
+    { team: 'away', type: 'starting', playerId: 'p3' },
+  ];
+  assert.deepEqual(lineupPlayerIdsBySection({ payload: { lineups: arrayLineups } }), {
+    starters: ['p1', 'p3'], substitutes: ['p2'],
+  });
+  const objectLineups = {
+    home: { startingLineups: [{ playerId: 'a' }], substitutes: [{ playerId: 'b' }] },
+    away: { startingLineups: [{ playerId: 'c' }], substitutes: [] },
+  };
+  assert.deepEqual(lineupPlayerIdsBySection({ payload: { lineups: objectLineups } }), {
+    starters: ['a', 'c'], substitutes: ['b'],
+  });
+});
+
 test('statistics: full-time rows only; partial periods are never shown as totals', () => {
   const rows = [
     { type: 'Shots', home: 3, away: 2, half: '1st' },
