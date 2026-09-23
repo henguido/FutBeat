@@ -547,9 +547,17 @@ async function syncLive() {
 }
 
 async function syncOneResultsDate() {
-  const plan = await rpc("futbeat_reserve_goal_results_date", {
-    p_trigger_source: "supabase-cron",
-  });
+  let plan: Record<string, unknown> | null;
+  try {
+    plan = await rpc("futbeat_reserve_goal_results_date", {
+      p_trigger_source: "supabase-cron",
+    });
+  } catch (error) {
+    throw Object.assign(
+      error instanceof Error ? error : new Error(String(error)),
+      { stage: "reserve" },
+    );
+  }
   if (!plan?.allowed) {
     return {
       status: "skipped",
@@ -567,13 +575,21 @@ async function syncOneResultsDate() {
   let providerTotal: number | null = null;
   let remaining: number | null = null;
   let httpStatus: number | null = null;
+  // Every step of the pipeline (fetch -> link -> normalize -> record ->
+  // finalize -> attempt bookkeeping -> ledger completion) can fail
+  // independently; tag which one so a failure is diagnosable from the
+  // sanitized ledger/log entry alone, without a second investigation pass.
+  let stage = "reserve";
 
   try {
+    stage = "validate_date";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(providerDate)) {
       throw new Error("Invalid historical results date reservation");
     }
+    stage = "read_key";
     const goalKey = await readGoalKey();
     let offset = 0;
+    stage = "provider_fetch";
     for (let page = 0; page < 5; page += 1) {
       const response = await fetchGoal(
         goalKey,
@@ -618,19 +634,24 @@ async function syncOneResultsDate() {
       if (page === 4) throw new Error("GOAL results pagination exceeded safety limit");
     }
 
+    stage = "link";
     const linkResult = await rpc("futbeat_link_goal_live_matches", {
       p_fixtures: fixtures,
     }, 30000);
+    stage = "normalize";
     const observations = await Promise.all(fixtures.map(normalizeLiveFixture));
+    stage = "record";
     const persistence = await rpc("futbeat_record_live_batch", {
       p_provider: "goal_api",
       p_received_at: receivedAt,
       p_observations: observations,
     }, 30000);
+    stage = "finalize";
     const finalized = await rpc("futbeat_finalize_goal_results_date", {
       p_provider_date: providerDate,
       p_received_at: receivedAt,
     }, 30000);
+    stage = "complete_attempt";
     const unmatchedCount = Number(linkResult?.unmappedCount ?? 0);
     await rpc("futbeat_complete_results_date_attempt", {
       p_provider_date: providerDate,
@@ -639,6 +660,7 @@ async function syncOneResultsDate() {
       p_unmatched_count: Number.isFinite(unmatchedCount) ? unmatchedCount : 0,
     });
 
+    stage = "complete_call";
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservationId,
       p_status: "SUCCEEDED",
@@ -684,6 +706,14 @@ async function syncOneResultsDate() {
         // Provider-call failure remains primary; attempt bookkeeping retries later.
       }
     }
+    // Sanitized: the failing stage name and a truncated (300 char) error
+    // message reach the ledger and, via the thrown error below, the
+    // results-only response (truncated further, to 200 chars, there). The
+    // GOAL key never appears in any message here. An RPC failure's message
+    // may echo up to 180 chars of that RPC's own PostgREST error text
+    // (rpc(), earlier in this file) -- useful for diagnosis, and none of
+    // the RPCs in this pipeline handle secrets, but it is not purely a
+    // fixed stage label.
     await completeFailure(
       reservationId,
       "GOAL_RESULTS_DATE_FETCH_FAILED",
@@ -691,12 +721,16 @@ async function syncOneResultsDate() {
         mode: "results-date",
         date: providerDate,
         providerRequests,
+        stage,
         detail: error instanceof Error ? error.message.slice(0, 300) : "unknown",
       },
       remaining,
       httpStatus,
     );
-    throw error;
+    throw Object.assign(
+      error instanceof Error ? error : new Error(String(error)),
+      { stage },
+    );
   }
 }
 
@@ -1387,11 +1421,20 @@ Deno.serve(async (request) => {
         const results = await syncOneResultsDate();
         return Response.json({ status: "ok", results });
       } catch (error) {
-        console.error(
-          "GOAL results-only sync failed",
-          error instanceof Error ? error.message : "unknown",
-        );
-        return Response.json({ status: "ok", results: { status: "failed" } });
+        const stage = error && typeof error === "object" && "stage" in error
+          ? clean((error as { stage?: unknown }).stage)
+          : "unknown";
+        // Safe by construction: `stage` is one of this function's own fixed
+        // labels and `detail` is a truncated Error.message, never the GOAL
+        // key, a raw provider payload, or a raw RPC response body.
+        const detail = error instanceof Error
+          ? error.message.slice(0, 200)
+          : "unknown";
+        console.error("GOAL results-only sync failed", stage, detail);
+        return Response.json({
+          status: "ok",
+          results: { status: "failed", stage: stage || "unknown", detail },
+        });
       }
     }
     if (trigger === "detail-only" || trigger === "demand") {
