@@ -271,6 +271,12 @@ test('failed builds back off instead of looping', () => withDb(async (db) => {
     where timezone='Invalid/Zone'`)).rows[0];
   assert.deepEqual(row, { status: 'pending', later: true });
   assert.equal((await drain(db, 5)).failed, 0, 'not retried before its backoff');
+  // A permanently failing date is not re-armed by the planner or readers
+  // before its backoff passes.
+  await db.query(`update futbeat_private.calendar_snapshot_queue set status='failed',attempt_count=5,
+    next_retry_at=now()+interval '1 hour' where timezone='Invalid/Zone'`);
+  await db.query('select futbeat_private.enqueue_calendar_snapshot($1,$2,1)', [day, 'Invalid/Zone']);
+  assert.equal((await db.query("select status from futbeat_private.calendar_snapshot_queue where timezone='Invalid/Zone'")).rows[0].status, 'failed');
 }));
 
 test('security: queue and status helpers are service-only', () => withDb(async (db) => {

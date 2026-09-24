@@ -264,7 +264,9 @@ $$;
 --   * ingest writes nothing new: dirty days are found by the planner, which
 --     compares each snapshot's per-date version with calendar_cache_versions
 --     (already maintained by the existing invalidation triggers);
---   * readers enqueue with skip-locked writes and never wait on a builder;
+--   * readers enqueue with skip-locked writes and never wait on a builder
+--     (only a small day's inline build may wait, boundedly, for that same
+--     day's build; no lock cycle is possible);
 --   * the worker plans in one short transaction and then builds ONE snapshot
 --     per transaction (futbeat_build_next_calendar_snapshot), so no lock is
 --     held across builds.
@@ -325,13 +327,16 @@ begin
   where calendar_date=p_date and timezone=p_timezone for update skip locked;
   if found then
     if q.status='pending' and q.priority<=p_priority then return; end if;
+    -- A failing date keeps its backoff: re-armed only once its retry time
+    -- passed, and its attempts keep counting (at most one try per backoff).
+    if q.status='failed' and coalesce(q.next_retry_at,'-infinity')>now() then return; end if;
     update futbeat_private.calendar_snapshot_queue set
       status='pending',
       priority=case when q.status='pending' then least(q.priority,p_priority) else p_priority end,
       sort_key=case when q.status='pending' and q.priority<=p_priority then q.sort_key else p_sort_key end,
       requested_at=now(),
-      attempt_count=case when q.status='pending' then q.attempt_count else 0 end,
-      next_retry_at=case when q.status='pending' then q.next_retry_at end
+      attempt_count=case when q.status='done' then 0 else q.attempt_count end,
+      next_retry_at=case when q.status='done' then null else q.next_retry_at end
     where calendar_date=p_date and timezone=p_timezone;
     return;
   end if;
@@ -571,7 +576,7 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- Read path: never blocks on a heavy build and never waits on a lock.
+-- Read path: never blocks on a heavy build; queue writes never wait.
 -- ---------------------------------------------------------------------------
 create or replace function public.futbeat_read_calendar_range(
  p_from_date date,p_to_date date,p_timezone text default 'America/Costa_Rica')
