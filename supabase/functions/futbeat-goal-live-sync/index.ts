@@ -1020,7 +1020,9 @@ async function syncStandingsDemand() {
 // and also run by the per-minute cron, so a lost wake-up only adds latency.
 async function syncDemand() {
   const detail: unknown[] = [];
-  for (let i = 0; i < 2; i++) {
+  // Up to three details per run (per-minute cron + debounced wake-ups); the
+  // central quota manager still decides every one.
+  for (let i = 0; i < 3; i++) {
     try {
       const result = await syncOneMatchDetail() as Record<string, unknown>;
       detail.push(result);

@@ -246,8 +246,8 @@ for (const trigger of ['results-only', 'detail-only', 'cron']) {
       assert.equal(h.providers().length, 1);
       assert.equal(h.providers()[0].init.redirect, 'follow');
     } else {
-      // detail-only is also the user-demand lane: up to two details, players, standings.
-      assert.deepEqual(ran, trigger === 'detail-only' ? ['detail', 'detail', 'player', 'standings'] : [trigger.split('-')[0]]);
+      // detail-only is also the user-demand lane: up to three details, players, standings.
+      assert.deepEqual(ran, trigger === 'detail-only' ? ['detail', 'detail', 'detail', 'player', 'standings'] : [trigger.split('-')[0]]);
       assert.equal(h.rpcCalls('futbeat_team_squad_plan').length, 0);
       assert.equal(h.providers().length, 0);
     }
