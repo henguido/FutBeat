@@ -101,7 +101,7 @@ declare lim integer:=greatest(1,least(coalesce(p_limit,
     futbeat_private.quota_setting('goal_api','calendarWarmBatch',3)::integer),14));
   back integer:=futbeat_private.quota_setting('goal_api','calendarWarmBackDays',2)::integer;
   forward integer:=futbeat_private.quota_setting('goal_api','calendarWarmForwardDays',7)::integer;
-  tz text; offs integer; d date; built jsonb:='[]'; checked integer:=0; zones text[];
+  tz text; offs integer; d date; built jsonb:='[]'; checked integer:=0; zones text[]; zone_builds integer;
 begin
   -- Timezones readers actually used in the last day (bounded), else the default.
   select coalesce(array_agg(timezone order by n desc),'{}') into zones from (
@@ -112,11 +112,13 @@ begin
   end if;
   foreach tz in array zones loop
     if not exists(select 1 from pg_catalog.pg_timezone_names where name=tz) then continue; end if;
+    -- Budget per timezone: one busy zone never starves the others.
+    zone_builds:=0;
     -- today, +1, -1, +2, -2, ... within the window.
     for offs in select o from (
         select g o,abs(g)*2-case when g>0 then 1 else 0 end rank from generate_series(-back,forward) g) x
       order by rank loop
-      exit when jsonb_array_length(built)>=lim;
+      exit when zone_builds>=lim;
       d:=(now() at time zone tz)::date+offs;
       checked:=checked+1;
       if exists(select 1 from futbeat_private.compact_calendar_cache c where c.calendar_date=d and c.timezone=tz
@@ -128,6 +130,7 @@ begin
       if exists(select 1 from futbeat_private.compact_calendar_cache c
           where c.calendar_date=d and c.timezone=tz and c.built_at=now()) then
         built:=built||jsonb_build_array(jsonb_build_object('date',d,'timezone',tz));
+        zone_builds:=zone_builds+1;
       end if;
     end loop;
   end loop;

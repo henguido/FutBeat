@@ -204,7 +204,26 @@ test('background planning stops at its share of the daily cap; LIVE and user ope
   assert.equal(first.matchId, live.match);
   await db.query("select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,'{}')", [first.reservationId]);
   await store(db, live, { lineups, statistics: stats });
-  assert.equal((await reserve(db)).reason, 'background_share');
+  // The background request is never selected once the share is used...
+  assert.equal((await reserve(db)).reason, 'no_detail_due');
+  // ...so an open pre-match planner request cannot block a user open.
+  const pre = await seed(db, { minutes: 45 });
+  await db.query("insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count,source) values($1,now(),now()+interval '10 minutes',1,'prematch')", [pre.match]);
   await db.query('select public.futbeat_request_match_detail($1)', [recent.match]);
-  assert.equal((await reserve(db)).allowed, true, 'a user open is not background');
+  const user = await reserve(db);
+  assert.equal(user.allowed, true, 'a user open is not background');
+  assert.equal(user.matchId, recent.match);
+}));
+
+test('planner LIVE work leaves a reserve of the daily cap for user opens and results', () => withDb(async (db) => {
+  await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining)
+    select 'goal_api','match-detail','test','SUCCEEDED',50000 from generate_series(1,770)`);
+  const live = await seed(db, { status: 'LIVE', minutes: -30 });
+  const opened = await seed(db, { status: 'LIVE', minutes: -50 });
+  assert.deepEqual(await plan(db, 5), [], 'planner LIVE stops at the user reserve');
+  await db.query("insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count,source) values($1,now(),now()+interval '10 minutes',1,'prefetch')", [live.match]);
+  await db.query('select public.futbeat_request_match_detail($1)', [opened.match]);
+  const r = await reserve(db);
+  assert.equal(r.matchId, opened.match);
+  assert.equal(r.quotaClass, 'live');
 }));

@@ -17,7 +17,7 @@ Background work keeps the snapshots ready:
 
 - `futbeat_warm_calendar_window` (worker demand lane, every minute): today,
   +1, -1, +2, -2, ... inside `calendarWarmBackDays`/`calendarWarmForwardDays`,
-  at most `calendarWarmBatch` builds per call, for the timezones readers used
+  at most `calendarWarmBatch` builds per timezone per call, for the timezones readers used
   in the last day. DB-only.
 - `global-fixtures` workflow: provider fixtures for today +2..+7 on every run
   (bounded), on top of the existing ±1 hot pass and the 09 UTC expansion.
@@ -81,9 +81,10 @@ measured here (no production access in this block).
 
 Match detail runs under the class floors of the central quota manager
 (`live` > `user_high` > `coverage` > `bootstrap`), daily kind cap 900. Planner
-(background) work may use at most `detailBackgroundShare` (60 %) of that cap;
-once reached only LIVE is planned, and LIVE, results and user opens keep the
-remainder. With an
+(background) work may use at most `detailBackgroundShare` (60 %) of that cap
+and planner LIVE work stops `detailUserReserveShare` (15 %) before it, so user
+opens and results always keep a reserve. A request that cannot be served in
+its share is never selected, so it cannot block a user open. With an
 unknown provider remaining, background classes are limited to a share of the
 blind budget; LIVE and results are not. Dev limits (24 detail / 16 squad) are
 not used.

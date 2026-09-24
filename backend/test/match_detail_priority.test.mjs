@@ -289,7 +289,10 @@ test('central quota: LIVE detail keeps its hard reserve and the per-kind safety 
   const db = await openDatabase();
   try {
     const { match } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -40 });
-    await db.query("insert into futbeat_private.match_detail_requests values($1,now(),now()+interval '10 minutes',1)", [match]);
+    // A user-opened LIVE match (planner LIVE work stops earlier, at the user
+    // reserve; see match_detail_coverage_planner.test.mjs).
+    await db.query(`insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count,source,user_requested_at)
+      values($1,now(),now()+interval '10 minutes',1,'user',now())`, [match]);
     // LIVE is the last class to stop: floor 20 (provider_quota_policy.class_floors.live).
     await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining)
       values('goal_api','live','test','SUCCEEDED',20)`);

@@ -33,15 +33,16 @@
 --     the section retry gap, and a match past kickoff+liveMaxHours counts
 --     misses so empty sections reach NO_DATA;
 --   * background work (planner sources) may use at most detailBackgroundShare
---     of the daily match-detail cap; LIVE, results and user opens keep the
---     rest, so background never locks out a user or a live match.
+--     of the daily match-detail cap and planner LIVE work stops
+--     detailUserReserveShare before the cap, so user opens and results always
+--     keep a reserve; a candidate that cannot be served is never selected.
 
 update futbeat_private.provider_quota_policy set
   kind_daily_caps=kind_daily_caps||'{"match-detail":900}',
   freshness=freshness||'{"prematchMinutes":90,"recentFinishedHours":36,"upcomingDetailHours":24,
     "historyCoverageDays":7,"detailPlannerBatch":4,"lineupWantedMinutesBeforeKickoff":90,
     "liveRetryMinutes":5,"nearRetryMinutes":15,"historyRetryHours":6,
-    "liveMaxHours":4,"detailBackgroundShare":0.6}',
+    "liveMaxHours":4,"detailBackgroundShare":0.6,"detailUserReserveShare":0.15}',
   updated_at=now()
 where provider='goal_api';
 
@@ -110,11 +111,14 @@ begin
       or ((sections->>'statisticsWanted')::boolean and coalesce(cov.statistics_state,'UNKNOWN')='UNKNOWN'));
 end $$;
 
--- Background share of the daily match-detail cap (planner sources only).
-create or replace function futbeat_private.detail_background_open()
+-- Share of the daily match-detail cap still open to planner work:
+-- 'background' (non-live planner sources) or 'live' (planner LIVE, which
+-- leaves detailUserReserveShare for user opens and results).
+create or replace function futbeat_private.detail_share_open(p_lane text)
 returns boolean language sql stable set search_path='' as $$
-  select coalesce((d->>'usedToday')::numeric<floor((d->>'safetyCap')::numeric
-    *futbeat_private.quota_setting('goal_api','detailBackgroundShare',0.6)),true)
+  select coalesce((d->>'usedToday')::numeric<floor((d->>'safetyCap')::numeric*case p_lane
+      when 'live' then 1-futbeat_private.quota_setting('goal_api','detailUserReserveShare',0.15)
+      else futbeat_private.quota_setting('goal_api','detailBackgroundShare',0.6) end),true)
   from (select futbeat_private.quota_decision('goal_api','match-detail','live') d) x
 $$;
 
@@ -150,8 +154,9 @@ declare lim integer:=greatest(1,least(coalesce(p_limit,
   upcoming interval:=make_interval(hours=>futbeat_private.quota_setting('goal_api','upcomingDetailHours',24)::integer);
   history interval:=make_interval(days=>futbeat_private.quota_setting('goal_api','historyCoverageDays',7)::integer);
   queued text[]:='{}'; cand record;
-  -- Background share exhausted: only LIVE (class live) is still planned.
-  bg_open boolean:=futbeat_private.detail_background_open();
+  -- Shares exhausted: background stops first, then planner LIVE.
+  bg_open boolean:=futbeat_private.detail_share_open('background');
+  live_open boolean:=futbeat_private.detail_share_open('live');
 begin
   perform pg_advisory_xact_lock(hashtext('futbeat-match-detail-enqueue'));
   -- Expired rows are replaced, never upserted (keeps each source's class).
@@ -180,7 +185,7 @@ begin
     left join futbeat_private.match_detail_coverage c on c.match_id=p.match_id
     left join futbeat_private.match_detail_cache d on d.match_id=p.match_id
     where coalesce(c.next_retry_at,'-infinity')<=now()
-      and (bg_open or p.bucket=1)
+      and case when p.bucket=1 then live_open else bg_open end
       -- Upcoming beyond the pre-match window: only a first fetch.
       and (p.bucket<>5 or d.match_id is null)
       -- Settled finished matches (both sections AVAILABLE/NO_DATA) are frozen.
@@ -299,7 +304,8 @@ declare
   v_class text;
   v_rank integer;
   v_allowed boolean;
-  v_source text;
+  v_bg_open boolean:=futbeat_private.detail_share_open('background');
+  v_live_open boolean:=futbeat_private.detail_share_open('live');
 begin
   if p_trigger_source is null or btrim(p_trigger_source)='' then
     raise exception 'trigger_source is required';
@@ -362,9 +368,13 @@ begin
   -- Best allowed candidate first; if none fits its class, the best due one
   -- explains the refusal.
   select match_id,external_id,status,quota_class,rank_value,
-    futbeat_private.quota_class_allowed('goal_api',quota_class,v_remaining),source
-  into v_match_id,v_external,v_status,v_class,v_rank,v_allowed,v_source
+    futbeat_private.quota_class_allowed('goal_api',quota_class,v_remaining)
+  into v_match_id,v_external,v_status,v_class,v_rank,v_allowed
   from ranked
+  -- Planner work only within its share: never picked when it cannot be
+  -- served, so it cannot block a user open or a result.
+  where source='user' or quota_class='results'
+    or (quota_class='live' and v_live_open) or (quota_class<>'live' and v_bg_open)
   order by 6 desc,rank_value,requested_at desc,match_id
   limit 1;
 
@@ -375,14 +385,6 @@ begin
       'quotaClass',v_class,
       'detailUsed',(v_cap->>'usedToday')::integer,'providerRemaining',v_remaining
     );
-  end if;
-
-  -- Planner work stops at its share of the daily cap; LIVE, results and
-  -- user opens keep the remainder.
-  if v_class not in ('live','results') and v_source<>'user'
-     and not futbeat_private.detail_background_open() then
-    return jsonb_build_object('allowed',false,'reason','background_share','quotaClass',v_class,
-      'matchId',v_match_id,'detailUsed',(v_cap->>'usedToday')::integer,'providerRemaining',v_remaining);
   end if;
 
   -- Full decision for the chosen class: when remaining is unknown, non-LIVE
@@ -436,7 +438,7 @@ revoke all on function
   futbeat_private.match_detail_status(text),
   futbeat_private.match_is_finished(text),
   futbeat_private.match_detail_needs_fetch(text),
-  futbeat_private.detail_background_open(),
+  futbeat_private.detail_share_open(text),
   futbeat_private.enqueue_stale_interested_match_detail()
 from public,anon,authenticated,service_role;
 revoke all on function public.futbeat_lineup_coverage_metrics() from public,anon,authenticated;
