@@ -104,6 +104,24 @@ const RESERVE_CALL_GRAPH = [
   'futbeat_private.sync_competition_metadata',
   'futbeat_private.normalize_canonical_event_contract',
   'futbeat_private.index_entity_search',
+  // Match-detail planning/reservation path (called through PostgREST).
+  'futbeat_private.reserve_match_detail_call',
+  'futbeat_private.plan_match_detail_coverage',
+  'futbeat_private.enqueue_stale_interested_match_detail',
+  'futbeat_private.track_match_detail_gain',
+  'futbeat_private.track_match_detail_sections',
+  'futbeat_private.track_match_detail_failure',
+  'futbeat_private.store_match_detail',
+  'futbeat_private.request_match_detail',
+  'futbeat_private.promote_bulk_lineup',
+  'public.futbeat_complete_provider_call',
+  // Calendar snapshot materialization path (called through PostgREST).
+  'public.futbeat_read_calendar_range',
+  'public.futbeat_plan_calendar_snapshots',
+  'public.futbeat_build_next_calendar_snapshot',
+  'futbeat_private.materialize_calendar_day',
+  'futbeat_private.enqueue_calendar_snapshot',
+  'futbeat_private.seed_calendar_snapshot_queue',
 ];
 
 test('safeupdate compat checker: flags a bare UPDATE without WHERE', () => {

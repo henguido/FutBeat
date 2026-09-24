@@ -298,3 +298,53 @@ test('low budget: background work stops above the user floor; user opens are sti
   assert.equal(r.allowed, true);
   assert.equal(r.quotaClass, 'live');
 }));
+
+test('I1. an older NO_DATA row without a recheck time is never queued (no frozen queue)', () => withDb(async (db) => {
+  await remaining(db, 900);
+  const ms = [];
+  for (let i = 0; i < 5; i++) {
+    const m = await seed(db, { minutes: -4 * 24 * 60 });
+    await store(db, m, { lineups }, 60 * 24);
+    // State written before this migration: NO_DATA with no recheck columns.
+    await db.query(`update futbeat_private.match_detail_coverage set statistics_state='NO_DATA',statistics_recheck_at=null
+      where match_id=$1`, [m.match]);
+    ms.push(m);
+  }
+  assert.equal(await due(db, ms[0]), false);
+  assert.deepEqual(await plan(db), []);
+  assert.equal(await paused(db), false);
+}));
+
+test('I2. LIVE attempts never block the post-match fetch nor result verification', () => withDb(async (db) => {
+  await remaining(db, 900);
+  const m = await seed(db, { status: 'FINISHED_PENDING_VERIFICATION', minutes: -150 });
+  await store(db, m, {}, 60);
+  await db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,metadata)
+    select 'goal_api','match-detail','test','SUCCEEDED',jsonb_build_object('matchId',$1::text,'source','prefetch','bucket','live')
+    from generate_series(1,6)`, [m.match]);
+  assert.equal(await due(db, m), true, 'results keep their own cadence');
+  await db.query(`update futbeat_private.entities set payload=payload||'{"status":"VERIFIED"}' where id=$1`, [m.match]);
+  await db.query(`update futbeat_private.match_detail_cache set fetched_at=now()-interval '140 minutes' where match_id=$1`, [m.match]);
+  assert.equal(await due(db, m), true, 'post-match fetch is a separate phase');
+}));
+
+test('I3. settled matches never crowd the candidate limit', () => withDb(async (db) => {
+  await remaining(db, 900);
+  for (let i = 0; i < 405; i++) {
+    const m = await seed(db, { minutes: -300 - (i % 60) });
+    await store(db, m, { lineups, statistics: stats }, 0);
+  }
+  const upcoming = await seed(db, { status: 'SCHEDULED', minutes: 600 });
+  assert.deepEqual(await plan(db), [upcoming.match]);
+}));
+
+test('M6. a completion without matchId never erases the reservation attribution', () => withDb(async (db) => {
+  await remaining(db, 900);
+  const m = await seed(db, { minutes: -480 });
+  await plan(db);
+  const r = await reserve(db);
+  await db.query(`select public.futbeat_complete_provider_call($1,'FAILED',null,500,'X',jsonb_build_object('matchId',null))`, [r.reservationId]);
+  const meta = (await db.query('select metadata from futbeat_private.provider_call_ledger where id=$1', [r.reservationId])).rows[0].metadata;
+  assert.equal(meta.matchId, m.match);
+  assert.equal(meta.bucket, 'recent');
+}));

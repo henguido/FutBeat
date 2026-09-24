@@ -138,7 +138,11 @@ const usefulTotal = Object.values(useful).reduce((a, b) => a + b, 0);
 const perDay = (v) => Math.round(v * 1440 / MINUTES);
 console.log(JSON.stringify({
   minutes: MINUTES, remainingStart: REMAINING_ARG, mix: MIX,
-  calls: total, callsPerDay: perDay(total), usefulCalls: usefulTotal, usefulPerDay: perDay(usefulTotal),
+  // Absolute counts are the result. The per-day figures are a naive linear
+  // upper bound: they ignore the 24 h per-match caps, daily bucket budgets
+  // and the 900 daily cap, which bind over a full day.
+  calls: total, usefulCalls: usefulTotal,
+  linearUpperBoundPerDay: { calls: perDay(total), useful: perDay(usefulTotal) },
   usefulCoveragePerCall: total ? +(usefulTotal / total).toFixed(2) : null,
   callsByBucket: calls, usefulByBucket: useful, emptyByBucket: empty, skips,
   queueDepth: depth,

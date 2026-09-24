@@ -41,7 +41,7 @@
 
 update futbeat_private.provider_quota_policy set
   freshness=freshness||'{"plannerLiveRefreshMinutes":30,"recentHotHours":6,"finalFetchAfterMinutes":120,
-    "plannerMaxFetchesPerMatchDay":4,"plannerMinRemaining":400,"plannerMaxPrematchFetches":3,"prematchRetryMinutes":20,"plannerQueueHighWater":12,"plannerQueueLowWater":4,
+    "plannerMaxFetchesPerMatchDay":4,"plannerMaxLiveFetches":6,"plannerRowTtlMinutes":60,"plannerMinRemaining":400,"plannerMaxPrematchFetches":3,"prematchRetryMinutes":20,"plannerQueueHighWater":12,"plannerQueueLowWater":4,
     "plannerMinIntervalSeconds":50,"noDataRecheckRecentHours":12,"noDataRecheckHistoryDays":30,
     "fairnessAgingMinutes":20,"plannerBatchAbundant":4,"plannerBatchNormal":2,"plannerBatchTight":1,
     "plannerBatchUnknown":1,"detailShareLive":0.25,"detailSharePrematch":0.15,"detailShareResults":0.15,
@@ -115,40 +115,47 @@ $$;
 create or replace function futbeat_private.match_detail_planner_due(p_match_id text,p_bucket text)
 returns boolean language plpgsql stable set search_path='' as $$
 declare cov futbeat_private.match_detail_coverage; fetched timestamptz; kickoff timestamptz;
-  sections jsonb; gap interval; final_after interval;
+  sections jsonb; gap interval; final_after interval; phase text; used integer;
 begin
-  if p_bucket not in ('live','results','prematch','upcoming','recent_hot','recent','history') then return false; end if;
-  select * into cov from futbeat_private.match_detail_coverage where match_id=p_match_id;
-  if cov.next_retry_at>now() then return false; end if;
-  -- Hard bound on background work per match and phase (user opens are not
-  -- counted): pre-match attempts never eat the post-match fetch.
-  if (select count(*) from futbeat_private.provider_call_ledger l
-      where l.call_kind='match-detail' and l.metadata->>'matchId'=p_match_id
-        and l.reserved_at>now()-interval '1 day' and coalesce(l.metadata->>'source','')<>'user'
-        and (coalesce(l.metadata->>'bucket','')='prematch')=(p_bucket='prematch'))
-     >=(case when p_bucket='prematch' then futbeat_private.quota_setting('goal_api','plannerMaxPrematchFetches',3)
-       else futbeat_private.quota_setting('goal_api','plannerMaxFetchesPerMatchDay',4) end) then
+  if p_bucket is null or p_bucket not in ('live','results','prematch','upcoming','recent_hot','recent','history') then
     return false;
   end if;
+  select * into cov from futbeat_private.match_detail_coverage where match_id=p_match_id;
+  if coalesce(cov.next_retry_at>now(),false) then return false; end if;
   select c.fetched_at into fetched from futbeat_private.match_detail_cache c where c.match_id=p_match_id;
+  -- Result verification is protected: its own cadence, no per-match cap.
+  if p_bucket='results' then
+    return fetched is null or futbeat_private.match_detail_due('FINISHED_PENDING_VERIFICATION',fetched);
+  end if;
+  -- Hard bound on background work per match and phase (user opens are not
+  -- counted): pre-match and LIVE attempts never eat the post-match fetch.
+  phase:=case p_bucket when 'prematch' then 'prematch' when 'live' then 'live' else 'finished' end;
+  select count(*) into used from futbeat_private.provider_call_ledger l
+  where l.call_kind='match-detail' and l.metadata->>'matchId'=p_match_id
+    and l.reserved_at>now()-interval '1 day' and coalesce(l.metadata->>'source','')<>'user'
+    and case coalesce(l.metadata->>'bucket','') when 'prematch' then 'prematch' when 'live' then 'live'
+      else 'finished' end=phase;
+  if used>=(case phase
+      when 'prematch' then futbeat_private.quota_setting('goal_api','plannerMaxPrematchFetches',3)
+      when 'live' then futbeat_private.quota_setting('goal_api','plannerMaxLiveFetches',6)
+      else futbeat_private.quota_setting('goal_api','plannerMaxFetchesPerMatchDay',4) end) then
+    return false;
+  end if;
   if fetched is null then return true; end if;
   if p_bucket='upcoming' then return false; end if;
-  if p_bucket='results' then
-    return futbeat_private.match_detail_due('FINISHED_PENDING_VERIFICATION',fetched);
-  end if;
   if p_bucket='live' then
-    return (coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN'
+    return coalesce((coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN'
         and fetched<now()-make_interval(mins=>futbeat_private.quota_setting('goal_api','liveRetryMinutes',5)::integer))
       -- Periodic refresh only while the provider budget is comfortable.
       or (fetched<now()-make_interval(mins=>futbeat_private.quota_setting('goal_api','plannerLiveRefreshMinutes',30)::integer)
-        and futbeat_private.detail_planner_band()->>'band' in ('abundant','normal'));
+        and futbeat_private.detail_planner_band()->>'band' in ('abundant','normal')),false);
   end if;
   sections:=futbeat_private.match_detail_sections(p_match_id);
   if sections is null then return false; end if;
   gap:=make_interval(secs=>(sections->>'retryGap')::double precision);
   if p_bucket='prematch' then
-    return (sections->>'lineupWanted')::boolean and coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN'
-      and fetched<now()-make_interval(mins=>futbeat_private.quota_setting('goal_api','prematchRetryMinutes',20)::integer);
+    return coalesce((sections->>'lineupWanted')::boolean and coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN'
+      and fetched<now()-make_interval(mins=>futbeat_private.quota_setting('goal_api','prematchRetryMinutes',20)::integer),false);
   end if;
   -- Finished: one post-match fetch, then only missing sections / due rechecks.
   select nullif(e.payload->>'startTime','')::timestamptz into kickoff
@@ -157,10 +164,11 @@ begin
   if kickoff is not null and now()>=kickoff+final_after and fetched<kickoff+final_after then
     return true;
   end if;
-  return fetched<now()-gap and (
+  return coalesce(fetched<now()-gap and (
     coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN' or coalesce(cov.statistics_state,'UNKNOWN')='UNKNOWN'
-    or (cov.lineup_state='NO_DATA' and cov.lineup_recheck_at<=now())
-    or (cov.statistics_state='NO_DATA' and cov.statistics_recheck_at<=now()));
+    -- A NO_DATA without a recheck time (older rows) is never rechecked.
+    or (cov.lineup_state='NO_DATA' and coalesce(cov.lineup_recheck_at,'infinity')<=now())
+    or (cov.statistics_state='NO_DATA' and coalesce(cov.statistics_recheck_at,'infinity')<=now())),false);
 end $$;
 
 -- Daily budget of a background bucket (blind-aware base cap).
@@ -176,7 +184,7 @@ returns boolean language sql stable set search_path='' as $$
       when 'history' then futbeat_private.quota_setting('goal_api','detailShareHistory',0.08)
       when 'upcoming' then futbeat_private.quota_setting('goal_api','detailShareUpcoming',0.03)
       else 0 end s)
-  select (select count(*) from futbeat_private.provider_call_ledger l
+  select p_bucket='results' or (select count(*) from futbeat_private.provider_call_ledger l
       where l.provider='goal_api' and l.call_kind='match-detail'
         and l.reserved_at>=date_trunc('day',now() at time zone 'UTC') at time zone 'UTC'
         and coalesce(l.metadata->>'source','')<>'user'
@@ -223,10 +231,12 @@ declare band jsonb:=futbeat_private.detail_planner_band();
   live_open boolean:=futbeat_private.detail_share_open('live');
   -- Background work (except results) stops above the user floor.
   floor_ok boolean:=futbeat_private.detail_planner_floor_ok();
-  urgent_queued integer:=0; cand record; per_bucket jsonb:='{}'; extra integer;
+  urgent_queued integer:=0; cand record; extra integer;
   prematch interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','prematchMinutes',90)::integer);
   upcoming interval:=make_interval(hours=>futbeat_private.quota_setting('goal_api','upcomingDetailHours',24)::integer);
   history interval:=make_interval(days=>futbeat_private.quota_setting('goal_api','historyCoverageDays',7)::integer);
+  final_after interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','finalFetchAfterMinutes',120)::integer);
+  row_ttl interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','plannerRowTtlMinutes',60)::integer);
 begin
   perform pg_advisory_xact_lock(hashtext('futbeat-match-detail-enqueue'));
   -- Cleanup: expired rows are replaced (not upserted); background rows that
@@ -237,22 +247,27 @@ begin
     where r.source<>'user' and (
       not exists(select 1 from futbeat_private.provider_entities pe
         where pe.provider='goal_api' and pe.kind='match' and pe.canonical_id=r.match_id)
-      or not futbeat_private.match_detail_planner_due(r.match_id,futbeat_private.match_detail_bucket(
+      or futbeat_private.match_detail_planner_due(r.match_id,futbeat_private.match_detail_bucket(
         futbeat_private.match_detail_status(r.match_id),
-        (select nullif(e.payload->>'startTime','')::timestamptz from futbeat_private.entities e where e.id=r.match_id))))
+        (select nullif(e.payload->>'startTime','')::timestamptz from futbeat_private.entities e where e.id=r.match_id)))
+        is not true)
     returning r.source
   )
   insert into futbeat_private.match_detail_queue_log(event,source) select 'dropped',source from dropped;
   -- Admission control with hysteresis on the background backlog.
+  -- Background depth only (LIVE and results rows never pause background).
   select count(*) into depth from futbeat_private.match_detail_requests r
-  where r.expires_at>now() and r.source in ('prematch','recent','bootstrap','prefetch');
+  where r.expires_at>now() and r.source<>'user'
+    and futbeat_private.match_detail_bucket(futbeat_private.match_detail_status(r.match_id),
+      (select nullif(e.payload->>'startTime','')::timestamptz from futbeat_private.entities e where e.id=r.match_id))
+      not in ('live','results');
   select background_paused into paused from futbeat_private.detail_planner_state for update;
   if not paused and depth>=high then
     paused:=true;
-    update futbeat_private.detail_planner_state set background_paused=true,paused_changed_at=now();
+    update futbeat_private.detail_planner_state set background_paused=true,paused_changed_at=now() where singleton;
   elsif paused and depth<=low then
     paused:=false;
-    update futbeat_private.detail_planner_state set background_paused=false,paused_changed_at=now();
+    update futbeat_private.detail_planner_state set background_paused=false,paused_changed_at=now() where singleton;
   end if;
   bg_lim:=case when paused then 0 else greatest(0,least(coalesce(p_limit,(band->>'batch')::integer),high-depth)) end;
   for cand in
@@ -271,8 +286,15 @@ begin
     left join futbeat_private.entities e on e.id=p.match_id
     left join futbeat_private.competition_editorial_metadata meta on meta.competition_id=e.payload->>'competitionId'
     left join futbeat_private.match_detail_coverage c on c.match_id=p.match_id
+    left join futbeat_private.match_detail_cache d on d.match_id=p.match_id
     where p.bucket in ('live','results','prematch','upcoming','recent_hot','recent','history')
       and coalesce(c.next_retry_at,'-infinity')<=now()
+      -- Cheap SQL prefilter so settled matches never crowd the candidate limit:
+      -- upcoming only without any detail; finished only when not settled.
+      and (p.bucket<>'upcoming' or d.match_id is null)
+      and not (p.bucket in ('recent_hot','recent','history') and d.fetched_at>=p.start_time+final_after
+        and coalesce(c.lineup_state,'UNKNOWN')<>'UNKNOWN' and coalesce(c.statistics_state,'UNKNOWN')<>'UNKNOWN'
+        and coalesce(c.lineup_recheck_at,'infinity')>now() and coalesce(c.statistics_recheck_at,'infinity')>now())
       and not exists(select 1 from futbeat_private.match_detail_requests r
         where r.match_id=p.match_id and r.expires_at>now())
     order by futbeat_private.match_detail_bucket_rank(p.bucket),coalesce(meta.relevance_score,0) desc,
@@ -288,24 +310,24 @@ begin
       continue when cand.bucket='history' and not (band->>'history')::boolean;
       continue when cand.bucket in ('recent','upcoming') and not (band->>'recent')::boolean;
     end if;
-    extra:=coalesce((per_bucket->>cand.bucket)::integer,0)
-      +(select count(*) from futbeat_private.match_detail_requests r
+    -- Cheapest checks first; open rows of this bucket (including the ones
+    -- queued in this run) count against its daily budget exactly once.
+    continue when futbeat_private.match_detail_planner_due(cand.match_id,cand.bucket) is not true
+      or futbeat_private.detail_inflight(cand.match_id);
+    extra:=(select count(*) from futbeat_private.match_detail_requests r
         where r.expires_at>now() and r.source<>'user'
           and futbeat_private.match_detail_bucket(futbeat_private.match_detail_status(r.match_id),
             (select nullif(x.payload->>'startTime','')::timestamptz from futbeat_private.entities x where x.id=r.match_id))
             =cand.bucket);
     continue when not futbeat_private.detail_bucket_budget_open(cand.bucket,extra);
-    continue when not futbeat_private.match_detail_planner_due(cand.match_id,cand.bucket)
-      or futbeat_private.detail_inflight(cand.match_id);
     insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count,source)
-    values(cand.match_id,now(),now()+interval '10 minutes',1,
+    values(cand.match_id,now(),now()+row_ttl,1,
       case cand.bucket when 'live' then 'prefetch' when 'results' then 'recent' when 'prematch' then 'prematch'
         when 'recent_hot' then 'recent' when 'recent' then 'recent' when 'upcoming' then 'prefetch'
         else 'bootstrap' end)
     on conflict(match_id) do nothing;
     if not found then continue; end if;
     insert into futbeat_private.match_detail_queue_log(event,bucket,source) values('enqueued',cand.bucket,'planner');
-    per_bucket:=per_bucket||jsonb_build_object(cand.bucket,coalesce((per_bucket->>cand.bucket)::integer,0)+1);
     if cand.bucket in ('live','results') then urgent_queued:=urgent_queued+1; else bg_queued:=bg_queued+1; end if;
     queued:=array_append(queued,cand.match_id);
   end loop;
@@ -325,7 +347,7 @@ begin
   if last_run>now()-make_interval(secs=>futbeat_private.quota_setting('goal_api','plannerMinIntervalSeconds',50)) then
     return null;
   end if;
-  update futbeat_private.detail_planner_state set last_planned_at=now();
+  update futbeat_private.detail_planner_state set last_planned_at=now() where singleton;
   return (futbeat_private.plan_match_detail_coverage(null))[1];
 end $$;
 
@@ -460,7 +482,7 @@ begin
          provider_remaining = p_provider_remaining,
          http_status = p_http_status,
          error_code = p_error_code,
-         metadata = coalesce(metadata,'{}'::jsonb)||p_metadata
+         metadata = coalesce(metadata,'{}'::jsonb)||jsonb_strip_nulls(p_metadata)
    where id = p_reservation_id
      and status = 'RESERVED';
   get diagnostics v_updated = row_count;
@@ -567,8 +589,8 @@ begin
     -- User opens keep the full freshness rules; background rows must still
     -- be due by the section-aware policy and fit their bucket budget.
     where case when source='user' then futbeat_private.match_detail_needs_fetch(match_id)
-      else futbeat_private.match_detail_planner_due(match_id,bucket)
-        and futbeat_private.detail_bucket_budget_open(bucket) end
+      else coalesce(futbeat_private.match_detail_planner_due(match_id,bucket)
+        and futbeat_private.detail_bucket_budget_open(bucket),false) end
   )
   -- Best allowed candidate first; if none fits its class, the best due one
   -- explains the refusal.

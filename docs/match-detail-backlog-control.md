@@ -39,8 +39,11 @@ All values live in `provider_quota_policy.freshness`.
 | recent_hot (< 6 h) / recent (< 36 h) / history (< 7 d) | one post-match fetch (`finalFetchAfterMinutes`), then only while a wanted section is UNKNOWN (retry gap by age) or a NO_DATA recheck is due |
 | old (> 7 d) | user opens only |
 
-- Per match and phase: at most `plannerMaxFetchesPerMatchDay` (4) background
-  calls per 24 h.
+- Per match and phase, background calls per 24 h: pre-match
+  `plannerMaxPrematchFetches` (3), LIVE `plannerMaxLiveFetches` (6), finished
+  `plannerMaxFetchesPerMatchDay` (4). Phases never eat each other's budget.
+- Result verification (pending verification) is protected: its own cadence,
+  no per-match cap and no bucket budget.
 - Complete matches (both sections AVAILABLE or NO_DATA) cost 0 calls.
 - User opens keep the full freshness rules (`match_detail_needs_fetch`) and
   promote a queued planner row in place (one row, no parallel work).
@@ -53,6 +56,8 @@ All values live in `provider_quota_policy.freshness`.
   admission until it falls to `plannerQueueLowWater` (4). LIVE and results
   are always admitted; user opens never pass through the planner.
 - Stale rows (expired, no longer due, unmapped) are dropped before planning.
+  Planner rows live `plannerRowTtlMinutes` (60) so fairness aging can act.
+  Settled matches are excluded in SQL before the candidate limit.
   A served planner row leaves the queue once its detail is stored; a failed
   call keeps it for its retry (with backoff).
 
@@ -71,7 +76,7 @@ All values live in `provider_quota_policy.freshness`.
   keep a reserve of their own.
 - Per-bucket daily budgets (`detailShare*`, fractions of the blind-aware
   match-detail cap): live 25 %, recent 25 %, prematch 15 %, results 15 %,
-  history 8 %, upcoming 3 %. The central shares (background ≤ 60 %,
+  history 8 %, upcoming 3 % (results exempt). The central shares (background ≤ 60 %,
   planner LIVE ≤ 85 %) and the 900 cap still apply.
 - Drain order: aged user opens, LIVE, results, pre-match, user, then
   background with fairness aging (`fairnessAgingMinutes`), never above a
@@ -100,15 +105,17 @@ PENDING is derived (open request or in-flight call), as Match Center reports.
   bucket and source, distinct matches and repeat calls (answers the 684
   question on real data); useful coverage per call; enqueue/reserve/drop
   rates for the last hour and `backlogGrowing`.
-- Ledger completion now merges its metadata into the reservation's, so the
-  bucket/source/class attribution survives completion.
+- Ledger completion now merges its (non-null) metadata into the
+  reservation's, so the bucket/source/class attribution survives completion.
+- All single-row state updates carry a WHERE (pg_safeupdate); the detail and
+  calendar RPC paths are in the safeupdate checker's call graph.
 
 ## After (same simulation)
 
 | Remaining | Calls | Useful | Useful/call | User opens waiting |
 |---|---|---|---|---|
 | ample, before | 480 | 57 | 0.12 | 0 |
-| ample, after | 457 | 233 | 0.51 | 4 (served next minute) |
+| ample, after | 480 | 236 | 0.49 | 2 (served next minute) |
 | 500, after | 130 | 66 | 0.51 | 0 |
 | unknown, before | 150 | 51 | 0.34 | 4 |
 | unknown, after | 113 | 82 | 0.73 | 0 |
@@ -116,10 +123,12 @@ PENDING is derived (open request or in-flight call), as Match Center reports.
 Queue: before ~160 background rows after 2 h (growing); after 2-10.
 
 Expected production volume: background is bounded by the per-bucket budgets
-(≈ 90 % of 900 at most on an abundant day, much less in normal/tight bands)
-instead of saturating the drain with LIVE refreshes; at the simulated
-usefulness (≈ 0.5), a full day yields roughly 3-4x more useful coverage per
-call than before.
+and the central 60 % background share (at most ~540 of the 900 cap on an
+abundant day; planner LIVE within its own 225-call bucket; nothing below
+`plannerMinRemaining`), instead of saturating the drain with LIVE
+refreshes. At the simulated usefulness (≈ 0.5 vs 0.12), the same number of
+calls buys about 4x more coverage; on a normal/tight day far fewer calls are
+spent.
 
 ## Risks
 
