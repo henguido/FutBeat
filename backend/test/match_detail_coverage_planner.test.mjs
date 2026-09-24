@@ -29,6 +29,9 @@ const reserve = (db) => db.query("select public.futbeat_reserve_match_detail_cal
 const source = (db, m) => db.query('select source from futbeat_private.match_detail_requests where match_id=$1', [m.match])
   .then((r) => r.rows[0]?.source);
 const clearQueue = (db) => db.query('delete from futbeat_private.match_detail_requests');
+// A known, abundant provider budget (history planning runs only then).
+const abundant = (db) => db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining)
+  values('goal_api','live','test','SUCCEEDED',50000)`);
 
 async function withDb(fn) {
   const db = await openDatabase();
@@ -72,6 +75,7 @@ test('14/18. recent finished without lineup is recovered; with lineup and stats 
 }));
 
 test('15. history: missing sections retried on the spaced cadence; opening it is handled on demand', () => withDb(async (db) => {
+  await abundant(db);
   const m = await seed(db, { status: 'VERIFIED', minutes: -4 * 24 * 60 });
   await store(db, m, { statistics: stats }, 7 * 60);
   assert.deepEqual(await plan(db), [m.match]);
@@ -157,11 +161,14 @@ test('lineup coverage metrics report the gaps generically', () => withDb(async (
 }));
 
 test('a LIVE status long past kickoff is not live evidence (no endless live-class polling)', () => withDb(async (db) => {
+  // Background LIVE refresh runs only with a comfortable known budget.
+  await abundant(db);
   const m = await seed(db, { status: 'LIVE', minutes: -3 * 24 * 60 });
   await store(db, m, { lineups, statistics: stats }, 10);
   assert.deepEqual(await plan(db, 5), []);
   const fresh = await seed(db, { status: 'LIVE', minutes: -40 });
-  await store(db, fresh, { lineups, statistics: stats }, 10);
+  // Complete LIVE detail: background refresh on plannerLiveRefreshMinutes.
+  await store(db, fresh, { lineups, statistics: stats }, 35);
   assert.deepEqual(await plan(db, 5), [fresh.match], 'a real live match keeps the live cadence');
   assert.equal((await reserve(db)).quotaClass, 'live');
 }));
