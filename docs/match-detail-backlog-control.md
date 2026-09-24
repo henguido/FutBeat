@@ -147,6 +147,14 @@ spent.
   who use the user cadence).
 - Simulation mix and provider truth are synthetic; the audit function gives
   the real breakdown after deploy.
+- The results budget is small with an unknown remaining (15 % of the blind
+  cap): late finals then fall back to the finished rules after the window
+  (delayed, not lost).
+- A user open of an old pending-verification final keeps the `results`
+  class (pre-existing rule); it is user-driven, not a loop.
+- Worst case per match on match day: prematch 3 + live 6 + results 2 +
+  finished 4 background calls; afterwards at most 4/day while a section is
+  missing, 0 after 7 days (user opens only).
 
 ## Deploy order
 

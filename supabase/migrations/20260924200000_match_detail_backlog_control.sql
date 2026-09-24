@@ -278,8 +278,12 @@ begin
   bg_lim:=case when paused then 0 else greatest(0,least(coalesce(p_limit,(band->>'batch')::integer),high-depth)) end;
   for cand in
     with window_matches as (
-      select cm.match_id,cm.start_time,futbeat_private.match_detail_status(cm.match_id) status
+      -- Indexed window on the calendar; the bucket uses the entity kickoff,
+      -- the same source as cleanup, planner_due and the reserve.
+      select cm.match_id,nullif(x.payload->>'startTime','')::timestamptz start_time,
+        futbeat_private.match_detail_status(cm.match_id) status
       from futbeat_private.calendar_matches cm
+      join futbeat_private.entities x on x.id=cm.match_id and x.kind='match'
       where cm.start_time between now()-history and now()+upcoming
     ), profiled as (
       select w.*,futbeat_private.match_detail_bucket(w.status,w.start_time) bucket
