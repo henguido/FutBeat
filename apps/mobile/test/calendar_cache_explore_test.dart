@@ -97,6 +97,7 @@ void main() {
     expect(values.last.matches.single.score, '1 - 1');
     expect(values.last.stale, false);
     expect(values.last.revalidating, false);
+    await repo.settleBackground();
     expect(
       Snapshot(
         jsonDecode((await db.readCalendarSnapshot('2026-08-20'))!)

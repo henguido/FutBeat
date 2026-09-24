@@ -29,13 +29,78 @@ class DemoRepository implements FootballRepository {
   Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail.empty(id);
 }
 
+/// Client calendar cache policy, in one place. Generic: rules depend only on
+/// the distance of a date to today, never on leagues, teams or fixed dates.
+class CalendarCachePolicy {
+  const CalendarCachePolicy({
+    this.todayTtl = const Duration(seconds: 20),
+    this.pastTtl = const Duration(minutes: 5),
+    this.futureTtl = const Duration(minutes: 10),
+    this.recoveringTtl = const Duration(seconds: 20),
+    this.prefetchRadius = 2,
+    this.windowBackDays = 2,
+    this.windowForwardDays = 7,
+    this.receiveTimeout = const Duration(seconds: 10),
+  });
+
+  final Duration todayTtl;
+  final Duration pastTtl;
+  final Duration futureTtl;
+
+  /// Partial or stale snapshots are revalidated sooner.
+  final Duration recoveringTtl;
+
+  /// Neighbours prepared around the visible date: D+1, D-1, D+2, D-2, ...
+  final int prefetchRadius;
+
+  /// Prefetch only inside this window around today (no history cascade).
+  final int windowBackDays;
+  final int windowForwardDays;
+  final Duration receiveTimeout;
+
+  Duration ttl(String date, String today, {required bool recovering}) =>
+      recovering
+      ? recoveringTtl
+      : date == today
+      ? todayTtl
+      : date.compareTo(today) < 0
+      ? pastTtl
+      : futureTtl;
+}
+
+/// One shared network request per date. Callers that pass a cancel token only
+/// stop waiting; the request itself is cancelled when no waiter remains, so a
+/// closed screen never cancels a prefetch (or another screen) of the same date.
+class _CalendarFlight {
+  final CancelToken token = CancelToken();
+  late final Future<Snapshot> future;
+  int _waiters = 0;
+  bool _pinned = false;
+
+  void pin() => _pinned = true;
+  void join() => _waiters++;
+  void leave() {
+    if (--_waiters <= 0 && !_pinned && !token.isCancelled) {
+      token.cancel('No calendar waiters');
+    }
+  }
+}
+
 class ApiRepository implements FootballRepository {
-  ApiRepository(this.dio, [this.database]);
+  ApiRepository(
+    this.dio, [
+    this.database,
+    this.calendarPolicy = const CalendarCachePolicy(),
+  ]);
   final Dio dio;
   final AppDatabase? database;
+  final CalendarCachePolicy calendarPolicy;
 
   final Map<String, DateTime> _calendarFetchedAt = {};
-  final Map<String, Future<Snapshot>> _calendarInFlight = {};
+  final Map<String, _CalendarFlight> _calendarInFlight = {};
+  final Set<Future<void>> _diskWrites = {};
+  Future<void> _prefetchTask = Future<void>.value();
+  int _prefetchGeneration = 0;
   final Set<String> _forcedDates = {};
   final Map<String, DateTime> _catalogFetchedAt = {};
   final Set<String> _detailRequested = {};
@@ -75,6 +140,7 @@ class ApiRepository implements FootballRepository {
     Map<String, dynamic>? queryParameters,
     int maxAttempts = 2,
     CancelToken? cancelToken,
+    Duration? receiveTimeout,
   }) async {
     Object? lastError;
     StackTrace? lastStack;
@@ -86,9 +152,11 @@ class ApiRepository implements FootballRepository {
           queryParameters: queryParameters,
           cancelToken: cancelToken,
           options: Options(
-            receiveTimeout: path == '/v1/match-detail'
-                ? const Duration(seconds: 3)
-                : null,
+            receiveTimeout:
+                receiveTimeout ??
+                (path == '/v1/match-detail'
+                    ? const Duration(seconds: 3)
+                    : null),
             headers: {if (attempt > 0) 'X-Retry-Count': '1'},
           ),
         );
@@ -148,39 +216,121 @@ class ApiRepository implements FootballRepository {
     if (_forcedDates.contains(value)) return false;
     final fetched = _calendarFetchedAt[value];
     if (fetched == null) return false;
-    final today = _dateParam(costaRicaNow());
     final snapshot = _snapshotCache['calendar:$value'];
     final recovering =
         snapshot?.coverage?['partial'] == true || snapshot?.stale == true;
-    final ttl = recovering
-        ? const Duration(seconds: 20)
-        : value.compareTo(today) < 0
-        ? const Duration(seconds: 30)
-        : value == today
-        ? const Duration(seconds: 20)
-        : const Duration(seconds: 30);
+    final ttl = calendarPolicy.ttl(
+      value,
+      _dateParam(costaRicaNow()),
+      recovering: recovering,
+    );
     return DateTime.now().toUtc().difference(fetched) < ttl;
   }
 
-  Future<Snapshot> _fetchDate(String value, {CancelToken? cancelToken}) {
-    return _calendarInFlight.putIfAbsent(value, () async {
+  /// Memory-only, synchronous lookup: a date switch paints the cached day in
+  /// the same frame instead of flashing a loading state.
+  Snapshot? peekDate(DateTime date) =>
+      _snapshotCache['calendar:${_dateParam(date)}'];
+
+  /// Waits for background prefetch and disk writes (tests and shutdown).
+  Future<void> settleBackground() async {
+    await _prefetchTask;
+    await Future.wait([..._diskWrites]);
+  }
+
+  Future<Snapshot?> _readStored(String value) async {
+    final key = 'calendar:$value';
+    final memory = _snapshotCache[key];
+    if (memory != null) return memory;
+    try {
+      final stored = await database?.readCalendarEntry(value);
+      if (stored == null) return null;
+      final snapshot = _canonical(jsonDecode(stored.payload) as Json);
+      _remember(key, snapshot);
+      _calendarFetchedAt[value] = stored.savedAt.toUtc();
+      return snapshot;
+    } catch (_) {
+      // An unreadable/corrupt local row is replaced by the next response.
+      return null;
+    }
+  }
+
+  void _persist(String value, Json raw) {
+    final db = database;
+    if (db == null) return;
+    // Never delays showing fresh data: memory already holds the snapshot.
+    late final Future<void> write;
+    write = db
+        .saveCalendarSnapshot(value, jsonEncode(raw))
+        .catchError((Object _) {})
+        .whenComplete(() => _diskWrites.remove(write));
+    _diskWrites.add(write);
+  }
+
+  _CalendarFlight _startFlight(String value) {
+    final flight = _CalendarFlight();
+    flight.future = () async {
       try {
         final raw = await _getJson(
           '/v1/calendar',
           queryParameters: {'date': value, 'timezone': 'America/Costa_Rica'},
-          cancelToken: cancelToken,
+          cancelToken: flight.token,
           maxAttempts: 1,
+          receiveTimeout: calendarPolicy.receiveTimeout,
         );
         final fresh = _canonical(raw);
         _remember('calendar:$value', fresh);
         _calendarFetchedAt[value] = DateTime.now().toUtc();
-        await database?.saveCalendarSnapshot(value, jsonEncode(raw));
         _forcedDates.remove(value);
+        _persist(value, raw);
         return fresh;
       } finally {
-        _calendarInFlight.remove(value);
+        if (identical(_calendarInFlight[value], flight)) {
+          _calendarInFlight.remove(value);
+        }
       }
+    }();
+    // Errors reach the waiters; an abandoned flight is never unhandled.
+    unawaited(flight.future.then((_) {}, onError: (Object _) {}));
+    return flight;
+  }
+
+  Future<Snapshot> _fetchDate(String value, {CancelToken? cancelToken}) {
+    if (cancelToken != null && cancelToken.isCancelled) {
+      return Future.error(cancelToken.cancelError!);
+    }
+    var flight = _calendarInFlight[value];
+    if (flight == null || flight.token.isCancelled) {
+      flight = _calendarInFlight[value] = _startFlight(value);
+    }
+    if (cancelToken == null) {
+      flight.pin();
+      return flight.future;
+    }
+    final current = flight..join();
+    var joined = true;
+    void leave() {
+      if (!joined) return;
+      joined = false;
+      current.leave();
+    }
+
+    final result = Completer<Snapshot>();
+    current.future.then(
+      (snapshot) {
+        leave();
+        if (!result.isCompleted) result.complete(snapshot);
+      },
+      onError: (Object error, StackTrace stack) {
+        leave();
+        if (!result.isCompleted) result.completeError(error, stack);
+      },
+    );
+    cancelToken.whenCancel.then((error) {
+      leave();
+      if (!result.isCompleted) result.completeError(error);
     });
+    return result.future;
   }
 
   @override
@@ -192,33 +342,19 @@ class ApiRepository implements FootballRepository {
     Duration retryDelay = const Duration(seconds: 3),
   }) async* {
     final value = _dateParam(date);
-    final key = 'calendar:$value';
-    Snapshot? cached = _snapshotCache[key];
-    if (cached == null) {
-      final stored = await database?.readCalendarEntry(value);
-      if (stored != null) {
-        try {
-          cached = _canonical(jsonDecode(stored.payload) as Json);
-          _remember(key, cached);
-          _calendarFetchedAt[value] = stored.savedAt.toUtc();
-        } catch (_) {
-          // A corrupt local row is replaced by the next successful response.
-        }
-      }
-    }
+    Snapshot? cached = await _readStored(value);
     final freshCache = cached != null && _freshDate(value);
     if (cached != null) yield cached.withFreshness(revalidating: !freshCache);
-    if (freshCache) return;
+    if (freshCache) {
+      _prefetchAround(date);
+      return;
+    }
     for (var attempt = 0; attempt < 3; attempt++) {
       if (cancelToken?.isCancelled == true) return;
       try {
         cached = await _fetchDate(value, cancelToken: cancelToken);
         yield cached;
-        // Only today's visible load may prefetch. Prefetch itself never recurses.
-        if (value == _dateParam(costaRicaNow())) {
-          unawaited(prefetchDate(date.subtract(const Duration(days: 1))));
-          unawaited(prefetchDate(date.add(const Duration(days: 1))));
-        }
+        _prefetchAround(date);
         return;
       } catch (error, stack) {
         if (cancelToken?.isCancelled == true) return;
@@ -235,13 +371,41 @@ class ApiRepository implements FootballRepository {
     }
   }
 
+  /// Prepares the neighbours of the visible date one at a time (D+1, D-1,
+  /// D+2, D-2, ...), only inside the window around today. A newer visible date
+  /// supersedes the previous chain; missing and expired days are both fetched.
+  void _prefetchAround(DateTime anchor) {
+    final generation = ++_prefetchGeneration;
+    final now = costaRicaNow();
+    final today = DateTime.utc(now.year, now.month, now.day);
+    final previous = _prefetchTask;
+    _prefetchTask = () async {
+      // Chains run one after another (never parallel bursts).
+      await previous;
+      for (var step = 1; step <= calendarPolicy.prefetchRadius; step++) {
+        for (final sign in const [1, -1]) {
+          if (generation != _prefetchGeneration) return;
+          final day = DateTime.utc(
+            anchor.year,
+            anchor.month,
+            anchor.day + sign * step,
+          );
+          final offset = day.difference(today).inDays;
+          if (offset < -calendarPolicy.windowBackDays ||
+              offset > calendarPolicy.windowForwardDays) {
+            continue;
+          }
+          await prefetchDate(DateTime(day.year, day.month, day.day));
+        }
+      }
+    }();
+  }
+
   Future<void> prefetchDate(DateTime date) async {
     final value = _dateParam(date);
-    if (_snapshotCache.containsKey('calendar:$value') ||
-        await database?.readCalendarSnapshot(value) != null) {
-      return;
-    }
     try {
+      await _readStored(value);
+      if (_freshDate(value)) return;
       await _fetchDate(value);
     } catch (_) {
       // Opportunistic, deduplicated and independent of the visible request.
@@ -393,11 +557,12 @@ final snapshotProvider = FutureProvider<Snapshot>(
 );
 
 final calendarSnapshotProvider = StreamProvider.autoDispose
-    .family<Snapshot, DateTime>((ref, date) async* {
+    .family<Snapshot, DateTime>((ref, date) {
+      // Watched synchronously so the view can peek the memory cache in the
+      // first frame of a date switch.
       final repository = ref.watch(repositoryProvider);
       if (repository is! ApiRepository) {
-        yield await repository.loadDate(date);
-        return;
+        return Stream.fromFuture(repository.loadDate(date));
       }
       final token = CancelToken();
       Timer? timer;
@@ -407,15 +572,17 @@ final calendarSnapshotProvider = StreamProvider.autoDispose
         token.cancel('Calendar date closed');
         timer?.cancel();
       });
-      try {
-        yield* repository.watchDate(date, cancelToken: token);
-      } finally {
-        // Revalidate while visible, including after exhausted network retries.
-        // Never overlap a slow request or keep polling after the screen closes.
-        if (!disposed) {
-          timer = Timer(const Duration(seconds: 30), ref.invalidateSelf);
+      return () async* {
+        try {
+          yield* repository.watchDate(date, cancelToken: token);
+        } finally {
+          // Revalidate while visible, including after exhausted network retries.
+          // Never overlap a slow request or keep polling after the screen closes.
+          if (!disposed) {
+            timer = Timer(const Duration(seconds: 30), ref.invalidateSelf);
+          }
         }
-      }
+      }();
     });
 
 final entitySnapshotProvider =
