@@ -61,10 +61,30 @@ returns text language sql stable set search_path='' as $$
   where e.id=futbeat_private.futbeat_resolve_entity_id('competition',p_competition_id) and e.kind='competition'
 $$;
 
+-- Season for an archived table: its own label, or - only when the rows
+-- carry none - the competition's current season, and only if that season had
+-- already started when the table was fetched (at a rollover the provider may
+-- still serve last season's final table: never file it as the new season).
+create or replace function futbeat_private.standings_season_key(
+  p_competition_id text,p_season text,p_fetched_at timestamptz)
+returns text language plpgsql stable set search_path='' as $$
+declare labelled text:=futbeat_private.normalize_season(p_season); current_key text;
+begin
+  if labelled<>'' then return labelled; end if;
+  current_key:=nullif(futbeat_private.competition_season_key(p_competition_id),'');
+  if current_key is null then return null; end if;
+  if exists(select 1 from futbeat_private.entities m where m.kind='match'
+      and m.payload->>'competitionId'=p_competition_id
+      and futbeat_private.normalize_season(m.payload->>'season')=current_key
+      and nullif(m.payload->>'startTime','')::timestamptz<=p_fetched_at) then
+    return current_key;
+  end if;
+  return null;
+end $$;
+
 create or replace function futbeat_private.archive_standings_snapshot()
 returns trigger language plpgsql security definer set search_path='' as $$
-declare key text:=coalesce(nullif(futbeat_private.normalize_season(new.season),''),
-  nullif(futbeat_private.competition_season_key(new.competition_id),''));
+declare key text:=futbeat_private.standings_season_key(new.competition_id,new.season,new.fetched_at);
 begin
   if key is null then return new; end if;
   insert into futbeat_private.standings_snapshots as s(
@@ -109,8 +129,7 @@ insert into futbeat_private.standings_snapshots(competition_id,season_key,season
 select sc.competition_id,k.key,coalesce(nullif(sc.season,''),k.key),sc.external_league_id,
   sc.table_payload||jsonb_build_object('season',coalesce(nullif(sc.season,''),k.key),'seasonKey',k.key),sc.fetched_at
 from futbeat_private.standings_cache sc
-cross join lateral (select coalesce(nullif(futbeat_private.normalize_season(sc.season),''),
-  nullif(futbeat_private.competition_season_key(sc.competition_id),'')) key) k
+cross join lateral (select futbeat_private.standings_season_key(sc.competition_id,sc.season,sc.fetched_at) key) k
 where k.key is not null
 on conflict(competition_id,season_key) do nothing;
 
@@ -133,7 +152,7 @@ begin
   v_key:=futbeat_private.normalize_season(m->>'season');
   if comp is null or v_key='' then
     return jsonb_build_object('standings','missing','standingsPending',false,'standingsStale',false,
-      'competitionId',comp,'seasonKey',nullif(v_key,''));
+      'competitionId',comp,'seasonKey',nullif(v_key,''),'due',false);
   end if;
   current_key:=futbeat_private.competition_season_key(comp);
   select pe.external_id into ext from futbeat_private.provider_entities pe
@@ -172,7 +191,7 @@ returns jsonb language plpgsql security definer set search_path='' as $$
 declare st jsonb:=futbeat_private.match_standings_state(p_match_id); comp text; key text; prev text;
 begin
   if st is null then return null; end if;
-  if not (st->>'due')::boolean then
+  if not coalesce((st->>'due')::boolean,false) then
     if st->>'standings'='available' then perform futbeat_private.bump_metric('standings_cache_hits'); end if;
     return st-'due'-'externalLeagueId'-'fetchable'-'demandStatus';
   end if;
@@ -194,6 +213,10 @@ end $$;
 
 -- Replace the development-era reservation (fixed caps, country priority).
 drop function if exists futbeat_private.futbeat_reserve_goal_standings_call(text);
+-- p_demand_only=true: the worker's demand lane (user demands, completed via
+-- futbeat_complete_standings_call). false (existing workflow/ingest path):
+-- coverage refresh only, so user demands are never served by a completion
+-- path that cannot book them.
 create function futbeat_private.futbeat_reserve_goal_standings_call(
   p_trigger_source text default 'github-actions',
   p_demand_only boolean default false
@@ -207,7 +230,7 @@ begin
 
   -- 1. Standings a user is waiting for (exact competition + season).
   decision:=futbeat_private.quota_decision('goal_api','standings','user_high');
-  if (decision->>'allowed')::boolean then
+  if p_demand_only and (decision->>'allowed')::boolean then
     select * into dem from futbeat_private.standings_demands d
     where d.status='QUEUED' and d.requested_at>window_start
       and coalesce(d.lease_until,'-infinity')<=now() and coalesce(d.next_retry_at,'-infinity')<=now()
@@ -289,8 +312,16 @@ begin
     and s.season_key=meta->>'seasonKey' and s.fetched_at>=now()-interval '15 minutes');
   if stored then return jsonb_build_object('status','AVAILABLE'); end if;
   v_status:=case when p_succeeded or p_http_status=404 then 'NO_DATA' else 'FETCH_FAILED' end;
+  if p_succeeded then
+    -- The provider answered but not for the demanded season (format or
+    -- rollover mismatch): make it visible instead of silently empty.
+    perform futbeat_private.bump_metric('standings_season_mismatch');
+  end if;
   update futbeat_private.standings_demands d set status=v_status,lease_until=null,failure_count=d.failure_count+1,
-    last_error=case when v_status='NO_DATA' then 'no table for this season' else 'fetch failed' end
+    last_error=case when v_status='NO_DATA' then left('no table for this season; latest stored: '||coalesce((
+      select string_agg(s.season_key,',' order by s.fetched_at desc) from futbeat_private.standings_snapshots s
+      where s.competition_id=meta->>'competitionId' and s.fetched_at>=now()-interval '15 minutes'),'none'),120)
+      else 'fetch failed' end
   where d.competition_id=meta->>'competitionId' and d.season_key=meta->>'seasonKey'
   returning d.failure_count into failures;
   update futbeat_private.standings_demands d set next_retry_at=now()+case when v_status='NO_DATA'
@@ -332,6 +363,7 @@ begin
 end $$;
 
 revoke all on function
+  futbeat_private.standings_season_key(text,text,timestamptz),
   futbeat_private.normalize_season(text),
   futbeat_private.competition_season_key(text),
   futbeat_private.archive_standings_snapshot(),

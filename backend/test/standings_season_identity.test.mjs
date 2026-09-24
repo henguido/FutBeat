@@ -187,7 +187,7 @@ test('worker demand lane: GOAL table for the exact season lands in Match Center;
     assert.equal((await request(db, m)).standings, 'pending');
     const goal = worker(db, (url) => {
       assert.equal(url.pathname, `/v1/standings/${comp.ext}`);
-      return goalOk(rows('wk', [10, 4]));
+      return goalOk(rows('wk', [10, 4]).map((row) => ({ ...row, season: '2026/2027' })));
     });
     const run = await goal.run();
     assert.deepEqual([run.standings.status, run.standings.demand], ['ok', 'AVAILABLE']);
@@ -206,3 +206,46 @@ test('worker demand lane: GOAL table for the exact season lands in Match Center;
     assert.equal(goal2.goalCalls().length, 1, 'negative cache: no retry loop');
   });
 });
+
+test('review: an unlabeled table at a season rollover is never filed as the new season', () => withDb(async (db) => {
+  // Competition already says the new season, no new-season match has started:
+  // an unlabeled table can only be last season's final table.
+  const comp = await competition(db, { season: '2026/2027' });
+  const m = await match(db, comp, { season: '2026/2027', offsetHours: 48 });
+  await storeTable(db, comp, '', 'prev', [50, 40]);
+  assert.deepEqual((await context(db, m)).standings, []);
+  // Once the new season has started, an unlabeled table is the current one.
+  await match(db, comp, { season: '2026/2027', status: 'VERIFIED', offsetHours: -24 });
+  await storeTable(db, comp, '', 'cur', [3, 0]);
+  assert.deepEqual(points(await context(db, m)), [[3, 0]]);
+}));
+
+test('review: match without season or competition never throws on open', () => withDb(async (db) => {
+  const comp = await competition(db);
+  const m = await match(db, comp, { season: undefined });
+  const st = await request(db, m);
+  assert.deepEqual([st.standings, st.standingsPending], ['missing', false]);
+}));
+
+test('review: the legacy workflow reservation never serves user demands (coverage only)', () => withDb(async (db) => {
+  const comp = await competition(db);
+  const m = await match(db, comp, { season: '2026/2027' });
+  await request(db, m);
+  const plan = (await db.query("select public.futbeat_reserve_goal_standings_call('github-actions') v")).rows[0].v;
+  assert.notEqual(plan.source, 'user');
+  const demand = (await db.query('select status,lease_until from futbeat_private.standings_demands')).rows[0];
+  assert.deepEqual(demand, { status: 'QUEUED', lease_until: null });
+  assert.equal((await db.query("select public.futbeat_reserve_standings_demand_call('t') v")).rows[0].v.source, 'user');
+}));
+
+test('review: a season mismatch is visible (metric + reason), not silently empty', () => withDb(async (db) => {
+  const comp = await competition(db, { season: '2026' });
+  const m = await match(db, comp, { season: '2026' });
+  await request(db, m);
+  const res = (await db.query("select public.futbeat_reserve_standings_demand_call('t') v")).rows[0].v;
+  await storeTable(db, comp, '2026/2027', 'x', [3, 0]);
+  assert.equal((await db.query('select public.futbeat_complete_standings_call($1,true,200,null) v', [res.reservationId])).rows[0].v.status, 'NO_DATA');
+  const row = (await db.query('select last_error from futbeat_private.standings_demands')).rows[0];
+  assert.match(row.last_error, /2026-2027/);
+  assert.equal((await db.query("select coalesce(sum(value),0)::int n from futbeat_private.demand_metrics where metric='standings_season_mismatch'")).rows[0].n, 1);
+}));

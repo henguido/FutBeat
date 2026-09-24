@@ -49,6 +49,15 @@ open match ─► /v1/match-context ─► futbeat_request_match_standings (exac
 | `lineup_state` / `statistics_state` | `AVAILABLE` if the stored detail has the section. `NO_DATA` once a finished match was fetched twice without it (the provider has none, so no more polling). `UNKNOWN` otherwise. |
 | `failure_count`, `next_retry_at` | Failed fetches back off 2 min·2ⁿ, up to 6 h. |
 
+- A miss only counts when it is at least 15 minutes after the previous
+  counted answer, so two answers seconds apart are one observation.
+- A match that kicked off more than a day ago and is not live counts as
+  finished even if its status is stale or unknown. It then follows the section
+  rules (6 h gap, `NO_DATA`), never the 30-minute window.
+- The legacy standings workflow (`standings-plan`) only refreshes coverage.
+  User demands are served only by the worker's demand lane, which books
+  failures and negative results.
+
 - **When a section is "wanted":** lineups from 60 minutes before kickoff;
   statistics after kickoff; never for cancelled or postponed matches.
 - **`match_detail_needs_fetch`:** true when the match is not in backoff and
@@ -80,8 +89,12 @@ open match ─► /v1/match-context ─► futbeat_request_match_standings (exac
 
 - **`standings_snapshots(competition_id, season_key)`:** the exact identity.
   - Every `standings_cache` write is archived there by trigger.
-  - `season_key = normalize_season(row season)`, or the competition's current
-    season when the rows carry none.
+  - `season_key = normalize_season(row season)`. When the rows carry no
+    season, the competition's current season is used, but only if that season
+    had already started when the table was fetched. At a rollover an unlabeled
+    table is never filed as the new season.
+  - A season mismatch is counted in `standings_season_mismatch`, and the
+    demand row records which season was actually stored.
   - `normalize_season` only normalizes format: `2026/27` and `2026-2027`
     become `2026-2027`, while `2026` stays distinct from `2026-2027`.
 - **Match Center shows only** the table for the match's competition and

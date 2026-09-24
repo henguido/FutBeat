@@ -522,6 +522,9 @@ final matchDetailMemoryProvider = Provider<Map<String, MatchDetail>>(
   (ref) => <String, MatchDetail>{},
 );
 
+/// Most recently opened matches kept in [matchDetailMemoryProvider].
+const matchDetailMemoryLimit = 30;
+
 final matchDetailProvider = StreamProvider.autoDispose
     .family<MatchDetail, String>((ref, id) async* {
       final repository = ref.watch(repositoryProvider);
@@ -538,7 +541,14 @@ final matchDetailProvider = StreamProvider.autoDispose
         if (waiting != null && !waiting.isCompleted) waiting.complete();
       });
       void remember(MatchDetail detail) {
-        if (detail.available) memory[id] = detail;
+        if (!detail.available) return;
+        // Small LRU: the most recently opened matches only.
+        memory
+          ..remove(id)
+          ..[id] = detail;
+        while (memory.length > matchDetailMemoryLimit) {
+          memory.remove(memory.keys.first);
+        }
       }
 
       // Cache-first: the last good detail (if any) is shown immediately.
@@ -546,7 +556,7 @@ final matchDetailProvider = StreamProvider.autoDispose
       yield current;
       if (disposed) return;
       try {
-        current =
+        final loaded =
             await (repository is ApiRepository
                     ? repository.loadMatchDetail(id, cancelToken: requestToken)
                     : repository.loadMatchDetail(id))
@@ -557,6 +567,10 @@ final matchDetailProvider = StreamProvider.autoDispose
                     throw TimeoutException('Initial detail deadline');
                   },
                 );
+        // Never replace remembered real data with an emptier answer.
+        current = loaded.available || !current.available
+            ? loaded
+            : MatchDetail({...current.json, 'pending': loaded.pending});
         remember(current);
       } catch (_) {
         // A failed read is not evidence that data is absent: keep what we

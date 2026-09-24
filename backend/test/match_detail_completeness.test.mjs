@@ -164,3 +164,19 @@ test('worker: an incomplete stored detail is completed on open and lineup player
     assert.equal(goal.goalCalls().length, 1, 'complete now: no further fetch');
   });
 });
+
+test('review: two answers seconds apart are one observation (no premature NO_DATA)', () => withDb(async (db) => {
+  const m = await seedMatch(db, { status: 'VERIFIED', startOffsetMinutes: -3000 });
+  await store(db, m, { statistics }, 1);
+  await store(db, m, { statistics, events: [] }, 0);
+  const cov = (await db.query('select lineup_state,lineup_misses from futbeat_private.match_detail_coverage where match_id=$1', [m.match])).rows[0];
+  assert.deepEqual(cov, { lineup_state: 'UNKNOWN', lineup_misses: 1 });
+}));
+
+test('review: unknown status long after kickoff can still reach NO_DATA (no endless 6 h polling)', () => withDb(async (db) => {
+  const m = await seedMatch(db, { status: 'SCHEDULED', startOffsetMinutes: -3 * 24 * 60 });
+  await store(db, m, { statistics }, 8 * 60);
+  await store(db, m, { statistics }, 7 * 60);
+  assert.equal((await read(db, m)).coverage.lineup, 'unavailable');
+  assert.equal(await needs(db, m), false);
+}));

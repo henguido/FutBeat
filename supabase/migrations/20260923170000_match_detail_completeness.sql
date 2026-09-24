@@ -44,9 +44,14 @@ create table if not exists futbeat_private.match_detail_coverage(
 alter table futbeat_private.match_detail_coverage enable row level security;
 revoke all on futbeat_private.match_detail_coverage from public,anon,authenticated;
 
-create or replace function futbeat_private.match_is_finished(p_status text)
-returns boolean language sql immutable set search_path='' as $$
-  select coalesce(p_status,'') in ('FINISHED_PENDING_VERIFICATION','VERIFIED','ABANDONED')
+-- Finished: a terminal status, or (unknown/stale status) kickoff over a day
+-- ago and not live. Lets a section reach NO_DATA even without a status.
+create or replace function futbeat_private.match_is_finished(p_match_id text)
+returns boolean language sql stable set search_path='' as $$
+  select coalesce(futbeat_private.match_detail_status(p_match_id),'') in ('FINISHED_PENDING_VERIFICATION','VERIFIED','ABANDONED')
+    or (coalesce(futbeat_private.match_detail_status(p_match_id),'') not in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES')
+      and exists(select 1 from futbeat_private.entities e where e.id=p_match_id and e.kind='match'
+        and nullif(e.payload->>'startTime','')::timestamptz<now()-interval '1 day'))
 $$;
 
 -- Section bookkeeping after every stored detail (the cache keeps the richer
@@ -54,26 +59,33 @@ $$;
 create or replace function futbeat_private.track_match_detail_sections()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare has_lineup boolean; has_stats boolean; finished boolean; miss_limit constant integer:=2;
+  -- Two answers seconds apart are one observation: misses must be spaced.
+  miss_spacing constant interval:=interval '15 minutes'; prior timestamptz; counts boolean;
 begin
   has_lineup:=exists(select 1 from futbeat_private.lineup_rows(new.payload));
   has_stats:=futbeat_private.detail_statistics_count(new.payload->'statistics')>0;
-  finished:=futbeat_private.match_is_finished(futbeat_private.match_detail_status(new.match_id));
+  finished:=futbeat_private.match_is_finished(new.match_id);
+  select last_fetch_at into prior from futbeat_private.match_detail_coverage where match_id=new.match_id;
+  counts:=finished and (prior is null or new.fetched_at>=prior+miss_spacing);
   insert into futbeat_private.match_detail_coverage as c(
     match_id,lineup_state,statistics_state,lineup_misses,statistics_misses,last_fetch_at)
   values(new.match_id,
     case when has_lineup then 'AVAILABLE' else 'UNKNOWN' end,
     case when has_stats then 'AVAILABLE' else 'UNKNOWN' end,
-    case when has_lineup or not finished then 0 else 1 end,
-    case when has_stats or not finished then 0 else 1 end,
+    case when has_lineup or not counts then 0 else 1 end,
+    case when has_stats or not counts then 0 else 1 end,
     new.fetched_at)
   on conflict(match_id) do update set
-    lineup_misses=case when has_lineup then 0 when finished then c.lineup_misses+1 else c.lineup_misses end,
-    statistics_misses=case when has_stats then 0 when finished then c.statistics_misses+1 else c.statistics_misses end,
+    lineup_misses=case when has_lineup then 0 when counts then c.lineup_misses+1 else c.lineup_misses end,
+    statistics_misses=case when has_stats then 0 when counts then c.statistics_misses+1 else c.statistics_misses end,
     lineup_state=case when has_lineup then 'AVAILABLE'
-      when finished and c.lineup_misses+1>=miss_limit then 'NO_DATA' else 'UNKNOWN' end,
+      when counts and c.lineup_misses+1>=miss_limit then 'NO_DATA'
+      when c.lineup_state='NO_DATA' then 'NO_DATA' else 'UNKNOWN' end,
     statistics_state=case when has_stats then 'AVAILABLE'
-      when finished and c.statistics_misses+1>=miss_limit then 'NO_DATA' else 'UNKNOWN' end,
-    last_fetch_at=new.fetched_at,failure_count=0,next_retry_at=null,last_error=null;
+      when counts and c.statistics_misses+1>=miss_limit then 'NO_DATA'
+      when c.statistics_state='NO_DATA' then 'NO_DATA' else 'UNKNOWN' end,
+    last_fetch_at=case when counts or c.last_fetch_at is null then new.fetched_at else c.last_fetch_at end,
+    failure_count=0,next_retry_at=null,last_error=null;
   return new;
 end $$;
 drop trigger if exists match_detail_sections on futbeat_private.match_detail_cache;
@@ -142,7 +154,15 @@ begin
   select * into cov from futbeat_private.match_detail_coverage where match_id=p_match_id;
   if cov.next_retry_at>now() then return false; end if;
   select fetched_at into fetched from futbeat_private.match_detail_cache where match_id=p_match_id;
-  if futbeat_private.match_detail_due(status,fetched) then return true; end if;
+  if fetched is null then return true; end if;
+  -- A match finished by time but still carrying a stale non-terminal status
+  -- is governed by the section rules below (6 h gap, NO_DATA), not by the
+  -- 30-minute non-terminal window, so it cannot be polled forever.
+  if not (futbeat_private.match_is_finished(p_match_id)
+          and coalesce(status,'') not in ('FINISHED_PENDING_VERIFICATION','VERIFIED','ABANDONED'))
+     and futbeat_private.match_detail_due(status,fetched) then
+    return true;
+  end if;
   sections:=futbeat_private.match_detail_sections(p_match_id);
   if sections is null then return false; end if;
   return fetched<now()-make_interval(secs=>(sections->>'retryGap')::double precision)
