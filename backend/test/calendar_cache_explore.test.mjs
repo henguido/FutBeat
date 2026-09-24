@@ -69,7 +69,8 @@ test('cache invalidates redirects, competition metadata, events, detail and cove
   assert.equal(await ttl(),600);
   await db.exec('update futbeat_private.calendar_coverage set results_complete=true');
   await calendar(db,'2020-01-02','America/Costa_Rica');
-  assert.equal(await ttl(),86400);
+  // Complete history is kept calendarHistoryCompleteDays (versioned by evidence).
+  assert.equal(await ttl(),30*86400);
   for(const role of ['anon','authenticated']) {
     assert.equal((await db.query("select has_function_privilege($1,'public.futbeat_read_explore()','execute') ok",[role])).rows[0].ok,false);
     assert.equal((await db.query("select has_table_privilege($1,'futbeat_private.compact_calendar_cache','select') ok",[role])).rows[0].ok,false);
@@ -144,7 +145,7 @@ test('future cache expires before the unversioned day and cannot reappear stale 
  try {
   // Freeze only the cache functions in this disposable DB; no production clock hook.
   const definitions=await Promise.all(['futbeat_private.bump_calendar_date(date)',
-    'public.futbeat_read_calendar_range(date,date,text)'].map(async(name)=>
+    'public.futbeat_read_calendar_range(date,date,text)','futbeat_private.materialize_calendar_day(date,text)'].map(async(name)=>
       (await db.query('select pg_get_functiondef($1::regprocedure) def',[name])).rows[0].def));
   const at=async(instant)=>{
     for(const definition of definitions) await db.exec(definition.replaceAll('now()',`'${instant}'::timestamptz`));
@@ -257,10 +258,12 @@ test('EXPLAIN benchmark on reproducible September fixtures (not a production aft
   for(const date of ['2026-09-20','2026-09-23']) {
     const args=`('${date}','${date}','America/Costa_Rica')`;
     const before=await explain('select futbeat_private.futbeat_read_calendar_range_before_cache'+args);
+    // A large cold day answers "pending" at once and is materialized by the queue.
     const cold=await explain('select public.futbeat_read_calendar_range'+args);
+    const drain=await explain('select futbeat_private.process_calendar_snapshot_queue(20)');
     const hit=await explain('select public.futbeat_read_calendar_range'+args);
     const current=await calendar(db,date,'America/Costa_Rica');
-    t.diagnostic(JSON.stringify({fixture:'synthetic',date,matches:current.matches.length,bytes:Buffer.byteLength(JSON.stringify(current)),before,cold,hit}));
+    t.diagnostic(JSON.stringify({fixture:'synthetic',date,matches:current.matches.length,bytes:Buffer.byteLength(JSON.stringify(current)),before,cold,drain,hit}));
     assert.equal(current.matches.length,date.endsWith('20')?1084:171);
   }
   const newSearch=(await db.query("select pg_get_functiondef('public.futbeat_search_catalog(text,text,integer)'::regprocedure) def")).rows[0].def;

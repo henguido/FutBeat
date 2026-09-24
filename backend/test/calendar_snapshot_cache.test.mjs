@@ -105,7 +105,9 @@ test('6/10. a date never opened before is built from stored data; no provider in
   assert.equal(snapshot.matches.length, 1);
   assert.equal((await db.query('select count(*)::int n from futbeat_private.provider_call_ledger')).rows[0].n, 0);
   const src = (await db.query("select prosrc from pg_proc where oid='public.futbeat_read_calendar_range(date,date,text)'::regprocedure")).rows[0].prosrc;
-  assert.doesNotMatch(src, /provider_call_ledger|wake_provider_worker|net\.http/);
+  // DB-only: no provider ledger or HTTP. (A large cold day may wake the worker,
+  // which only drains the DB snapshot queue for it; it never adds provider demand.)
+  assert.doesNotMatch(src, /provider_call_ledger|net\.http|provider_quota|reserve_/);
 }));
 
 test('security: warmer is service-only', () => withDb(async (db) => {
