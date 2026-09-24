@@ -73,6 +73,10 @@ test('equivalent 1083-match day measures compact bytes before and after',async(t
       'events',(select jsonb_agg(jsonb_build_object('id','event_'||i,'type','GOAL','minute',i,'teamId','fb_team_home_0')) from generate_series(1,8) i),
       'statistics',(select jsonb_agg(jsonb_build_object('label','Statistic '||i,'home',i,'away',i+1,'unit','%')) from generate_series(1,12) i),
       'venue','Stadium','season','2026') where kind='match'`);
+    // Large day: the first read is "pending"; the queue materializes it.
+    const pending=(await db.query("select public.futbeat_read_calendar_range('2026-08-20','2026-08-20','UTC') v")).rows[0].v;
+    assert.equal(pending.coverage.pending,true);
+    await db.query('select futbeat_private.process_calendar_snapshot_queue(20)');
     const after=(await db.query("select public.futbeat_read_calendar_range('2026-08-20','2026-08-20','UTC') v")).rows[0].v;
     // Execute the exact previous public RPC against the SAME database fixture.
     const previous=await readFile(new URL('../../supabase/migrations/20260921215519_stabilize_competition_editorial_contract.sql',import.meta.url),'utf8');

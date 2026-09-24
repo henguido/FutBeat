@@ -98,6 +98,9 @@ test('3. terminal observation older than a canonical rewrite is final', () => wi
   const fn = (sql) => sql.slice(sql.indexOf('create or replace function futbeat_private.match_read_model'),
     sql.indexOf('revoke all on function futbeat_private.match_read_model'));
   await db.exec(fn(previous));
+  // The calendar list uses the shared core; route it through the injected model.
+  await db.exec(`create or replace function futbeat_private.match_read_model_core(p_match jsonb,p_events boolean)
+    returns jsonb language sql stable set search_path='' as $f$ select futbeat_private.match_read_model(p_match) $f$`);
   assert.equal((await both(db)).status, 'SCHEDULED');
   // The migration's own cache invalidation must evict the stale cached day.
   await db.exec(fixed.slice(fixed.indexOf('create or replace function futbeat_private.match_read_model'),

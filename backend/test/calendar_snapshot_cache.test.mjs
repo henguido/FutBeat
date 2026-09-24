@@ -94,8 +94,12 @@ test('warmer follows the timezones readers use (generic, not a fixed country)', 
   await seedDay(db, day, { zone, hour: 20 });
   await read(db, day, zone);
   await db.query("delete from futbeat_private.compact_calendar_cache where timezone=$1 and calendar_date<>$2", [zone, day]);
-  const result = (await db.query('select public.futbeat_warm_calendar_window(2) v')).rows[0].v;
-  assert.ok(result.built.every((b) => b.timezone === zone));
+  // The configured default zone is always warmed; reader zones are added.
+  const zones = (await db.query('select futbeat_private.calendar_reader_zones() z')).rows[0].z;
+  assert.equal(zones.length, 2);
+  assert.ok(zones.includes(zone));
+  const result = (await db.query('select public.futbeat_warm_calendar_window(30) v')).rows[0].v;
+  assert.ok(result.built.some((b) => b.timezone === zone && b.date !== day), 'reader zone window warmed');
 }));
 
 test('6/10. a date never opened before is built from stored data; no provider in the request path', () => withDb(async (db) => {
@@ -105,7 +109,9 @@ test('6/10. a date never opened before is built from stored data; no provider in
   assert.equal(snapshot.matches.length, 1);
   assert.equal((await db.query('select count(*)::int n from futbeat_private.provider_call_ledger')).rows[0].n, 0);
   const src = (await db.query("select prosrc from pg_proc where oid='public.futbeat_read_calendar_range(date,date,text)'::regprocedure")).rows[0].prosrc;
-  assert.doesNotMatch(src, /provider_call_ledger|wake_provider_worker|net\.http/);
+  // DB-only: no provider ledger or HTTP. (A large cold day may wake the worker,
+  // which only drains the DB snapshot queue for it; it never adds provider demand.)
+  assert.doesNotMatch(src, /provider_call_ledger|net\.http|provider_quota|reserve_/);
 }));
 
 test('security: warmer is service-only', () => withDb(async (db) => {

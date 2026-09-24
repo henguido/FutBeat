@@ -320,6 +320,14 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
 
           if (loading) {
             feedItems.add(() => const LinearProgressIndicator());
+            if (data.calendarPending) {
+              feedItems.add(
+                () => const Padding(
+                  padding: EdgeInsets.only(top: 12),
+                  child: Text('Preparando los partidos de esta fecha…'),
+                ),
+              );
+            }
           } else if (failed) {
             feedItems.add(() => const Text('No pudimos cargar esta fecha'));
             feedItems.add(

@@ -451,6 +451,11 @@ class Snapshot {
   /// may grow shortly (bounded client retries).
   bool get pendingRemote => coverage?['pendingRemote'] == true;
 
+  /// The server is still materializing this calendar day (no data yet).
+  bool get calendarPending => coverage?['pending'] == true;
+  int get calendarRetryAfterSeconds =>
+      ((coverage?['retryAfterSeconds'] as num?)?.toInt() ?? 3).clamp(1, 30);
+
   /// The server is hydrating this profile; a refresh shortly shows more data.
   bool get enrichmentPending => coverage?['enrichmentPending'] == true;
 

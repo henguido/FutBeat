@@ -41,6 +41,12 @@ class CalendarCachePolicy {
     this.windowBackDays = 2,
     this.windowForwardDays = 7,
     this.receiveTimeout = const Duration(seconds: 10),
+    this.visibleDeadline = const Duration(seconds: 25),
+    this.maxAttempts = 3,
+    this.pendingPollMin = const Duration(seconds: 2),
+    this.pendingPollMax = const Duration(seconds: 8),
+    this.revalidateEvery = const Duration(seconds: 30),
+    this.revalidateMax = const Duration(minutes: 5),
   });
 
   final Duration todayTtl;
@@ -57,6 +63,29 @@ class CalendarCachePolicy {
   final int windowBackDays;
   final int windowForwardDays;
   final Duration receiveTimeout;
+
+  /// Total time a visible date may wait (requests, retries and "pending"
+  /// polls). After it, the date ends in data or in an error with Retry; it is
+  /// never an endless loading state.
+  final Duration visibleDeadline;
+  final int maxAttempts;
+
+  /// The server may answer "pending" while it materializes a large day; the
+  /// client polls on the server hint, clamped to this range.
+  final Duration pendingPollMin;
+  final Duration pendingPollMax;
+
+  /// Background revalidation of a visible date that has data; doubled per
+  /// consecutive failure up to [revalidateMax]. A date that never obtained a
+  /// snapshot is not revalidated on a timer (the user retries).
+  final Duration revalidateEvery;
+  final Duration revalidateMax;
+
+  Duration revalidateAfter(int failures) {
+    final factor = 1 << (failures.clamp(0, 10));
+    final delay = revalidateEvery * factor;
+    return delay > revalidateMax ? revalidateMax : delay;
+  }
 
   Duration ttl(String date, String today, {required bool recovering}) =>
       recovering
@@ -97,6 +126,7 @@ class ApiRepository implements FootballRepository {
   final CalendarCachePolicy calendarPolicy;
 
   final Map<String, DateTime> _calendarFetchedAt = {};
+  final Map<String, int> _calendarFailures = {};
   final Map<String, _CalendarFlight> _calendarInFlight = {};
   final Set<Future<void>> _diskWrites = {};
   Future<void> _prefetchTask = Future<void>.value();
@@ -222,6 +252,7 @@ class ApiRepository implements FootballRepository {
     final recovering =
         snapshot?.coverage?['partial'] == true ||
         snapshot?.stale == true ||
+        snapshot?.revalidating == true ||
         (snapshot?.matches.any((match) => match.isLive) ?? false);
     final ttl = calendarPolicy.ttl(
       value,
@@ -283,6 +314,8 @@ class ApiRepository implements FootballRepository {
           receiveTimeout: calendarPolicy.receiveTimeout,
         );
         final fresh = _canonical(raw);
+        // A "pending" answer (server still materializing) is never cached.
+        if (fresh.calendarPending) return fresh;
         _remember('calendar:$value', fresh);
         _calendarFetchedAt[value] = DateTime.now().toUtc();
         _forcedDates.remove(value);
@@ -340,12 +373,21 @@ class ApiRepository implements FootballRepository {
   @override
   Future<Snapshot> loadDate(DateTime date) => _fetchDate(_dateParam(date));
 
+  /// Delay before revalidating a visible date that has data (backoff after
+  /// consecutive failures).
+  Duration calendarRevalidateDelay(DateTime date) =>
+      calendarPolicy.revalidateAfter(_calendarFailures[_dateParam(date)] ?? 0);
+
+  /// Cache first, then the network, within [CalendarCachePolicy.visibleDeadline].
+  /// Terminal states: a snapshot (fresh, or the cached one marked stale) or
+  /// an error when nothing was ever available. Never an endless loop.
   Stream<Snapshot> watchDate(
     DateTime date, {
     CancelToken? cancelToken,
-    Duration retryDelay = const Duration(seconds: 3),
+    Duration retryDelay = const Duration(seconds: 1),
   }) async* {
     final value = _dateParam(date);
+    final deadline = DateTime.now().add(calendarPolicy.visibleDeadline);
     Snapshot? cached = await _readStored(value);
     final freshCache = cached != null && _freshDate(value);
     if (cached != null) yield cached.withFreshness(revalidating: !freshCache);
@@ -353,26 +395,84 @@ class ApiRepository implements FootballRepository {
       _prefetchAround(date);
       return;
     }
-    for (var attempt = 0; attempt < 3; attempt++) {
+    Future<bool> wait(Duration delay) async {
+      if (DateTime.now().add(delay).isAfter(deadline)) return false;
+      await Future.any([
+        Future<void>.delayed(delay),
+        if (cancelToken != null) cancelToken.whenCancel,
+      ]);
+      return cancelToken?.isCancelled != true;
+    }
+
+    var failures = 0;
+    var polls = 0;
+    Object? lastError;
+    StackTrace? lastStack;
+    while (true) {
       if (cancelToken?.isCancelled == true) return;
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        lastError ??= TimeoutException(
+          'Calendar date not loaded in time',
+          calendarPolicy.visibleDeadline,
+        );
+        lastStack ??= StackTrace.current;
+        break;
+      }
       try {
-        cached = await _fetchDate(value, cancelToken: cancelToken);
-        yield cached;
+        // The visible wait never outlives the deadline; the shared request
+        // itself continues for other waiters and fills the cache.
+        final snapshot = await _fetchDate(
+          value,
+          cancelToken: cancelToken,
+        ).timeout(remaining);
+        if (snapshot.calendarPending) {
+          // The server is materializing this day: show the preparing state
+          // (only without data) and poll on its hint, within the deadline.
+          if (cached == null) yield snapshot;
+          final hint = Duration(seconds: snapshot.calendarRetryAfterSeconds);
+          var delay = hint * (1 << polls.clamp(0, 3));
+          if (delay < calendarPolicy.pendingPollMin) {
+            delay = calendarPolicy.pendingPollMin;
+          }
+          if (delay > calendarPolicy.pendingPollMax) {
+            delay = calendarPolicy.pendingPollMax;
+          }
+          polls++;
+          if (await wait(delay)) continue;
+          if (cancelToken?.isCancelled == true) return;
+          lastError = TimeoutException(
+            'Calendar date is still being prepared',
+            calendarPolicy.visibleDeadline,
+          );
+          lastStack = StackTrace.current;
+          break;
+        }
+        _calendarFailures.remove(value);
+        yield snapshot;
         _prefetchAround(date);
         return;
       } catch (error, stack) {
         if (cancelToken?.isCancelled == true) return;
+        lastError = error;
+        lastStack = stack;
+        failures++;
         if (cached != null) yield cached.asStale();
-        if (attempt == 2) {
-          if (cached == null) Error.throwWithStackTrace(error, stack);
-          return;
+        if (failures >= calendarPolicy.maxAttempts) break;
+        if (!await wait(retryDelay * failures)) {
+          if (cancelToken?.isCancelled == true) return;
+          break;
         }
-        await Future.any([
-          Future<void>.delayed(retryDelay * (attempt + 1)),
-          if (cancelToken != null) cancelToken.whenCancel,
-        ]);
       }
     }
+    _calendarFailures[value] = (_calendarFailures[value] ?? 0) + 1;
+    if (cached != null) {
+      // Keep showing the data (already marked stale after a failure);
+      // background revalidation backs off.
+      if (failures == 0) yield cached.asStale();
+      return;
+    }
+    Error.throwWithStackTrace(lastError, lastStack);
   }
 
   /// Prepares the neighbours of the visible date one at a time (D+1, D-1,
@@ -577,17 +677,30 @@ final calendarSnapshotProvider = StreamProvider.autoDispose
         timer?.cancel();
       });
       return () async* {
+        var hasData = false;
         try {
-          yield* repository.watchDate(date, cancelToken: token);
+          await for (final snapshot in repository.watchDate(
+            date,
+            cancelToken: token,
+          )) {
+            if (!snapshot.calendarPending) hasData = true;
+            yield snapshot;
+          }
         } finally {
-          // Revalidate while visible, including after exhausted network retries.
-          // Never overlap a slow request or keep polling after the screen closes.
-          if (!disposed) {
-            timer = Timer(const Duration(seconds: 30), ref.invalidateSelf);
+          // Revalidate only a date that has data, with backoff after failures.
+          // A date that never got a snapshot ends in an error with Retry: it
+          // is not restarted on a timer (no endless loading loop).
+          if (!disposed && hasData) {
+            timer = Timer(
+              repository.calendarRevalidateDelay(date),
+              ref.invalidateSelf,
+            );
           }
         }
       }();
-    });
+      // The repository bounds its own retries (visible deadline); Riverpod's
+      // automatic error retry would restart a failed date forever.
+    }, retry: (_, _) => null);
 
 final entitySnapshotProvider =
     FutureProvider.family<Snapshot, ({String type, String id})>((

@@ -1015,10 +1015,25 @@ async function syncStandingsDemand() {
   }
 }
 
-// Keeps the calendar days around today prebuilt (DB-only snapshot builds,
-// no provider calls), so opening a date is a cache hit.
+// Keeps calendar snapshots materialized (DB-only, no provider calls): plan
+// once, then build ONE snapshot per RPC so every build is its own short
+// transaction (no lock held across builds), within a batch and time budget.
 async function syncCalendarWarm() {
-  return await rpc("futbeat_warm_calendar_window", {});
+  const plan = await rpc("futbeat_plan_calendar_snapshots", {}) as Record<
+    string,
+    unknown
+  >;
+  const batch = Math.max(0, Math.min(Number(plan?.batch ?? 4), 20));
+  const deadline = Date.now() + Math.max(0, Number(plan?.budgetMs ?? 20000));
+  const built: unknown[] = [];
+  for (let i = 0; i < batch && Date.now() < deadline; i++) {
+    const result = await rpc("futbeat_build_next_calendar_snapshot", {}) as
+      | Record<string, unknown>
+      | null;
+    if (!result || result.status === "idle") break;
+    built.push(result);
+  }
+  return { ...plan, built };
 }
 
 // User demand lane: match detail first (a Match Center is open), then player
@@ -1523,6 +1538,23 @@ Deno.serve(async (request) => {
           status: "ok",
           results: { status: "failed", stage: stage || "unknown", detail },
         });
+      }
+    }
+    if (trigger === "calendar") {
+      // DB-only calendar snapshot builds (woken by a large cold date).
+      if (Object.keys(body).some((key) => key !== "trigger")) {
+        return Response.json({ error: "calendar accepts only trigger" }, {
+          status: 400,
+        });
+      }
+      try {
+        return Response.json({ status: "ok", calendar: await syncCalendarWarm() });
+      } catch (error) {
+        console.error(
+          "calendar lane failed",
+          error instanceof Error ? error.message.slice(0, 200) : "unknown",
+        );
+        return Response.json({ status: "ok", calendar: { status: "failed" } });
       }
     }
     if (trigger === "detail-only" || trigger === "demand") {
