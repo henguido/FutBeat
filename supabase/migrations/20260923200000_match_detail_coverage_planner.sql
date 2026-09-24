@@ -112,14 +112,21 @@ begin
 end $$;
 
 -- Share of the daily match-detail cap still open to planner work:
--- 'background' (non-live planner sources) or 'live' (planner LIVE, which
--- leaves detailUserReserveShare for user opens and results).
+-- 'background' (non-live planner sources) or 'live' (planner LIVE/results,
+-- which leaves detailUserReserveShare for user opens). Measured against the
+-- cap that user opens actually face: with an unknown provider remaining that
+-- is the reduced blind budget (per kind and in total), not the kind cap.
 create or replace function futbeat_private.detail_share_open(p_lane text)
 returns boolean language sql stable set search_path='' as $$
   select coalesce((d->>'usedToday')::numeric<floor((d->>'safetyCap')::numeric*case p_lane
       when 'live' then 1-futbeat_private.quota_setting('goal_api','detailUserReserveShare',0.15)
-      else futbeat_private.quota_setting('goal_api','detailBackgroundShare',0.6) end),true)
-  from (select futbeat_private.quota_decision('goal_api','match-detail','live') d) x
+      else futbeat_private.quota_setting('goal_api','detailBackgroundShare',0.6) end)
+    and (d->>'providerRemaining' is not null
+      or (d->>'totalToday')::numeric<floor(futbeat_private.quota_setting('goal_api','unknownDailyCap',600)
+        *(1-futbeat_private.quota_setting('goal_api','detailUserReserveShare',0.15)))),true)
+  from (select futbeat_private.quota_decision('goal_api','match-detail',
+    case when p_lane='live' and futbeat_private.provider_remaining('goal_api') is not null
+      then 'live' else 'coverage' end) d) x
 $$;
 
 -- Section windows now come from the central policy.
@@ -170,6 +177,7 @@ begin
       select w.*,
         case
           when w.status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES') then 1
+          when w.status='FINISHED_PENDING_VERIFICATION' then 3
           when coalesce(w.status,'') not in ('FINISHED_PENDING_VERIFICATION','VERIFIED','ABANDONED','CANCELLED','POSTPONED')
             and w.start_time between now()-interval '3 hours' and now()+prematch then 2
           when w.start_time>now()-recent and w.start_time<=now() then 4
@@ -185,7 +193,7 @@ begin
     left join futbeat_private.match_detail_coverage c on c.match_id=p.match_id
     left join futbeat_private.match_detail_cache d on d.match_id=p.match_id
     where coalesce(c.next_retry_at,'-infinity')<=now()
-      and case when p.bucket=1 then live_open else bg_open end
+      and case when p.bucket in (1,3) then live_open else bg_open end
       -- Upcoming beyond the pre-match window: only a first fetch.
       and (p.bucket<>5 or d.match_id is null)
       -- Settled finished matches (both sections AVAILABLE/NO_DATA) are frozen.
@@ -203,7 +211,7 @@ begin
     end if;
     insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count,source)
     values(cand.match_id,now(),now()+interval '10 minutes',1,
-      case cand.bucket when 1 then 'prefetch' when 2 then 'prematch' when 4 then 'recent'
+      case cand.bucket when 1 then 'prefetch' when 2 then 'prematch' when 3 then 'recent' when 4 then 'recent'
         when 5 then 'prefetch' else 'bootstrap' end)
     on conflict(match_id) do update set requested_at=excluded.requested_at,expires_at=excluded.expires_at,
       request_count=futbeat_private.match_detail_requests.request_count+1,
@@ -304,14 +312,17 @@ declare
   v_class text;
   v_rank integer;
   v_allowed boolean;
-  v_bg_open boolean:=futbeat_private.detail_share_open('background');
-  v_live_open boolean:=futbeat_private.detail_share_open('live');
+  v_bg_open boolean;
+  v_live_open boolean;
 begin
   if p_trigger_source is null or btrim(p_trigger_source)='' then
     raise exception 'trigger_source is required';
   end if;
 
   perform futbeat_private.lock_provider_quota('goal_api');
+  -- Shares are read under the quota lock (concurrent reservers cannot overrun).
+  v_bg_open:=futbeat_private.detail_share_open('background');
+  v_live_open:=futbeat_private.detail_share_open('live');
 
   delete from futbeat_private.match_detail_requests
   where expires_at<=now();

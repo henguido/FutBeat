@@ -84,7 +84,10 @@ Match detail runs under the class floors of the central quota manager
 (background) work may use at most `detailBackgroundShare` (60 %) of that cap
 and planner LIVE work stops `detailUserReserveShare` (15 %) before it, so user
 opens and results always keep a reserve. A request that cannot be served in
-its share is never selected, so it cannot block a user open. With an
+its share is never selected, so it cannot block a user open. With an unknown
+provider remaining, the shares are measured against the reduced blind budget
+that user opens face. Pending-verification matches are planned in the LIVE
+lane (results class). With an
 unknown provider remaining, background classes are limited to a share of the
 blind budget; LIVE and results are not. Dev limits (24 detail / 16 squad) are
 not used.

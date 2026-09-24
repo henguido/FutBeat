@@ -227,3 +227,20 @@ test('planner LIVE work leaves a reserve of the daily cap for user opens and res
   assert.equal(r.matchId, opened.match);
   assert.equal(r.quotaClass, 'live');
 }));
+
+test('unknown provider remaining: planner work keeps a reserve of the blind budget for user opens', () => withDb(async (db) => {
+  // No remaining reported: user opens face the reduced blind kind cap.
+  await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status)
+    select 'goal_api','match-detail','test','SUCCEEDED' from generate_series(1,95)`);
+  const recent = await seed(db, { status: 'VERIFIED', minutes: -300 });
+  assert.deepEqual(await plan(db, 5), [], 'background share of the blind budget used');
+  await clearQueue(db);
+  await db.query('select public.futbeat_request_match_detail($1)', [recent.match]);
+  assert.equal((await reserve(db)).allowed, true, 'a user open still has budget');
+}));
+
+test('pending-verification matches are planned in the results lane', () => withDb(async (db) => {
+  const m = await seed(db, { status: 'FINISHED_PENDING_VERIFICATION', minutes: -150 });
+  assert.deepEqual(await plan(db), [m.match]);
+  assert.equal((await reserve(db)).quotaClass, 'results');
+}));
