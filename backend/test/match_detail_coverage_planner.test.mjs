@@ -252,10 +252,10 @@ test('a user open waiting past userAgingSeconds is served before planner LIVE wo
   const finished = await seed(db, { status: 'VERIFIED', minutes: -2 * 24 * 60 });
   await db.query('select public.futbeat_request_match_detail($1)', [finished.match]);
   // Fresh: the documented rank order still puts LIVE first.
-  assert.notEqual((await db.query("select public.futbeat_reserve_match_detail_call('test') v").then(async (r) => {
-    await db.query("select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,'{}')", [r.rows[0].v.reservationId]);
-    return r.rows[0].v;
-  })).matchId, finished.match);
+  const fresh = await reserve(db);
+  assert.equal(fresh.allowed, true);
+  assert.equal(fresh.quotaClass, 'live');
+  await db.query("select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,'{}')", [fresh.reservationId]);
   // After waiting past the aging threshold it goes first.
   await db.query("update futbeat_private.match_detail_requests set user_requested_at=now()-interval '2 minutes' where match_id=$1", [finished.match]);
   const first = await reserve(db);
@@ -263,4 +263,18 @@ test('a user open waiting past userAgingSeconds is served before planner LIVE wo
   assert.equal(first.quotaClass, 'user');
   // Planner LIVE requests are still served right after.
   assert.ok(lives.map((m) => m.match).includes((await reserve(db)).matchId));
+}));
+
+test('unknown budget: an aged user open over its blind cap never blocks a user-opened LIVE match', () => withDb(async (db) => {
+  await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status)
+    select 'goal_api','match-detail','test','SUCCEEDED' from generate_series(1,150)`);
+  const live = await seed(db, { status: 'LIVE', minutes: -30 });
+  const old = await seed(db, { status: 'VERIFIED', minutes: -2 * 24 * 60 });
+  await db.query('select public.futbeat_request_match_detail($1)', [live.match]);
+  await db.query('select public.futbeat_request_match_detail($1)', [old.match]);
+  await db.query("update futbeat_private.match_detail_requests set user_requested_at=now()-interval '5 minutes'");
+  const r = await reserve(db);
+  assert.equal(r.allowed, true);
+  assert.equal(r.matchId, live.match);
+  assert.equal(r.quotaClass, 'live');
 }));

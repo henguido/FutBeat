@@ -317,6 +317,7 @@ declare
   v_allowed boolean;
   v_bg_open boolean;
   v_live_open boolean;
+  v_class_ok jsonb;
 begin
   if p_trigger_source is null or btrim(p_trigger_source)='' then
     raise exception 'trigger_source is required';
@@ -326,6 +327,11 @@ begin
   -- Shares are read under the quota lock (concurrent reservers cannot overrun).
   v_bg_open:=futbeat_private.detail_share_open('background');
   v_live_open:=futbeat_private.detail_share_open('live');
+  -- Full quota decision per class (floors, kind caps and the blind budget),
+  -- so the chosen head is always servable when any candidate is.
+  select jsonb_object_agg(c,(futbeat_private.quota_decision('goal_api','match-detail',c)->>'allowed')::boolean)
+  into v_class_ok
+  from unnest(array['live','results','user_high','user','coverage','bootstrap']) c;
 
   delete from futbeat_private.match_detail_requests
   where expires_at<=now();
@@ -383,7 +389,7 @@ begin
   -- Best allowed candidate first; if none fits its class, the best due one
   -- explains the refusal.
   select match_id,external_id,status,quota_class,rank_value,
-    futbeat_private.quota_class_allowed('goal_api',quota_class,v_remaining)
+    coalesce((v_class_ok->>quota_class)::boolean,false)
   into v_match_id,v_external,v_status,v_class,v_rank,v_allowed
   from ranked
   -- Planner work only within its share: never picked when it cannot be
@@ -399,7 +405,9 @@ begin
   if v_match_id is null or not v_allowed then
     return jsonb_build_object(
       'allowed',false,
-      'reason',case when v_match_id is null then 'no_detail_due' else 'provider_remaining_reserve' end,
+      'reason',case when v_match_id is null then 'no_detail_due'
+        else coalesce(futbeat_private.quota_decision('goal_api','match-detail',v_class)->>'reason',
+          'provider_remaining_reserve') end,
       'quotaClass',v_class,
       'detailUsed',(v_cap->>'usedToday')::integer,'providerRemaining',v_remaining
     );
