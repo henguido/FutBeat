@@ -24,6 +24,14 @@ const _lineupEnrichmentRetryDelays = [
   Duration(seconds: 12),
 ];
 
+/// Bounded context refreshes while the exact competition+season table is
+/// being fetched on demand.
+const standingsRetryDelays = [
+  Duration(seconds: 8),
+  Duration(seconds: 20),
+  Duration(seconds: 40),
+];
+
 class MatchScreen extends ConsumerStatefulWidget {
   const MatchScreen({super.key, required this.id, this.initialData});
 
@@ -40,6 +48,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   late TabController _tabs;
   Timer? _lineupEnrichmentRetry;
   int _lineupEnrichmentAttempts = 0;
+  Timer? _standingsRetry;
+  int _standingsAttempts = 0;
   @override
   void initState() {
     super.initState();
@@ -77,10 +87,26 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     );
   }
 
+  void _scheduleStandingsRefresh() {
+    if (_standingsRetry != null ||
+        _standingsAttempts >= standingsRetryDelays.length) {
+      return;
+    }
+    _standingsRetry = Timer(standingsRetryDelays[_standingsAttempts], () {
+      if (!mounted) return;
+      setState(() {
+        _standingsAttempts++;
+        _standingsRetry = null;
+      });
+      ref.invalidate(matchContextSnapshotProvider(widget.id));
+    });
+  }
+
   @override
   void dispose() {
     _tabs.dispose();
     _lineupEnrichmentRetry?.cancel();
+    _standingsRetry?.cancel();
     super.dispose();
   }
 
@@ -91,14 +117,25 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         const <String, LiveMatchUpdate>{};
     ref.listen(matchDetailProvider(widget.id), (_, next) {
       // Ignore the refresh-in-progress state (it still carries old data).
-      if (!next.isLoading && next.asData?.value.lineupEnrichmentPending == true) {
+      if (!next.isLoading &&
+          next.asData?.value.lineupEnrichmentPending == true) {
         _scheduleLineupEnrichmentRefresh();
       }
     });
-    final refreshed =
+    final watchesContext =
         ref.watch(repositoryProvider) is ApiRepository ||
-            widget.initialData == null
-        ? ref.watch(matchContextSnapshotProvider(widget.id)).asData?.value
+        widget.initialData == null;
+    if (watchesContext) {
+      ref.listen(matchContextSnapshotProvider(widget.id), (_, next) {
+        if (!next.isLoading && next.value?.standingsPending == true) {
+          _scheduleStandingsRefresh();
+        }
+      });
+    }
+    // `.value` keeps the current context visible while a refresh is loading
+    // (no flash back to the list snapshot, tabs and scroll untouched).
+    final refreshed = watchesContext
+        ? ref.watch(matchContextSnapshotProvider(widget.id)).value
         : null;
     final initialData = refreshed ?? widget.initialData;
     if (initialData != null) {
@@ -189,6 +226,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
           (table['rows'] as List? ?? const []).isNotEmpty,
     );
     _syncTabs(hasTable);
+    final refreshing =
+        detail.pending ||
+        (data.standingsPending &&
+            _standingsAttempts < standingsRetryDelays.length);
 
     final tabBar = TabBar(
       controller: _tabs,
@@ -244,7 +285,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
             handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
             sliver: SliverPersistentHeader(
               pinned: true,
-              delegate: _TabBarHeader(tabBar),
+              delegate: _TabBarHeader(tabBar, refreshing: refreshing),
             ),
           ),
         ],
@@ -302,9 +343,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 }
 
 class _TabBarHeader extends SliverPersistentHeaderDelegate {
-  _TabBarHeader(this.tabBar);
+  _TabBarHeader(this.tabBar, {this.refreshing = false});
 
   final TabBar tabBar;
+
+  /// Discreet signal while missing data is being fetched.
+  final bool refreshing;
 
   @override
   double get minExtent => tabBar.preferredSize.height + 1;
@@ -322,12 +366,27 @@ class _TabBarHeader extends SliverPersistentHeaderDelegate {
       color: _headerBottom,
       border: Border(bottom: BorderSide(color: _cardBorder)),
     ),
-    child: Align(alignment: Alignment.centerLeft, child: tabBar),
+    child: Stack(
+      children: [
+        Align(alignment: Alignment.centerLeft, child: tabBar),
+        if (refreshing)
+          const Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: LinearProgressIndicator(
+              key: ValueKey('match-refreshing'),
+              minHeight: 2,
+              backgroundColor: Colors.transparent,
+            ),
+          ),
+      ],
+    ),
   );
 
   @override
   bool shouldRebuild(covariant _TabBarHeader oldDelegate) =>
-      oldDelegate.tabBar != tabBar;
+      oldDelegate.tabBar != tabBar || oldDelegate.refreshing != refreshing;
 }
 
 /// One scrollable tab body that cooperates with the collapsible header.
@@ -868,7 +927,7 @@ class Statistics extends StatelessWidget {
         ? detail!.statistics
         : match.statistics;
     if (stats.isEmpty) {
-      if (detail?.pending == true) {
+      if (detail?.statisticsPending == true) {
         return const _PendingSection('Cargando estadísticas…');
       }
       return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
@@ -1453,7 +1512,7 @@ class Lineups extends StatelessWidget {
     final hasPlayers =
         detail.homeStarters.isNotEmpty || detail.awayStarters.isNotEmpty;
     if (!hasPlayers) {
-      if (detail.pending) {
+      if (detail.lineupPending) {
         return const _PendingSection('Cargando alineaciones…');
       }
       return const _EmptySection(Icons.groups_outlined, 'Sin alineaciones');

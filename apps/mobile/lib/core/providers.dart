@@ -494,7 +494,8 @@ final matchContextSnapshotProvider = FutureProvider.autoDispose
       final value = await (repository is ApiRepository
           ? repository.loadMatchContext(id)
           : repository.load());
-      if (ref.mounted) _retainSettled(ref);
+      // Data still arriving is re-read, never pinned by the retention cache.
+      if (ref.mounted && !value.standingsPending) _retainSettled(ref);
       return value;
     });
 
@@ -502,21 +503,46 @@ final detailPollIntervalProvider = Provider<Duration>(
   (ref) => const Duration(seconds: 5),
 );
 
+/// Bounded, growing read-only refreshes while the server reports pending
+/// sections (5 s, 10 s, 20 s, 40 s by default), then stop.
+final detailPollScheduleProvider = Provider<List<Duration>>((ref) {
+  final base = ref.watch(detailPollIntervalProvider);
+  return [base, base * 2, base * 4, base * 8];
+});
+
+/// Upper bound for any single detail read.
+final detailReadTimeoutProvider = Provider<Duration>(
+  (ref) => const Duration(seconds: 5),
+);
+
+/// Last good detail per match for this app session. A refresh (retry,
+/// re-entry) starts from it instead of an empty "loading" state, so arriving
+/// data never flickers away and a failed refresh never erases a lineup.
+final matchDetailMemoryProvider = Provider<Map<String, MatchDetail>>(
+  (ref) => <String, MatchDetail>{},
+);
+
 final matchDetailProvider = StreamProvider.autoDispose
     .family<MatchDetail, String>((ref, id) async* {
       final repository = ref.watch(repositoryProvider);
+      final memory = ref.watch(matchDetailMemoryProvider);
+      final readTimeout = ref.read(detailReadTimeoutProvider);
       var disposed = false;
       Timer? timer;
       Completer<void>? waiting;
       var requestToken = CancelToken();
-      final window = Stopwatch()..start();
       ref.onDispose(() {
         disposed = true;
         timer?.cancel();
         requestToken.cancel('Match Center closed');
         if (waiting != null && !waiting.isCompleted) waiting.complete();
       });
-      var current = MatchDetail.waiting(id);
+      void remember(MatchDetail detail) {
+        if (detail.available) memory[id] = detail;
+      }
+
+      // Cache-first: the last good detail (if any) is shown immediately.
+      var current = memory[id] ?? MatchDetail.waiting(id);
       yield current;
       if (disposed) return;
       try {
@@ -525,16 +551,17 @@ final matchDetailProvider = StreamProvider.autoDispose
                     ? repository.loadMatchDetail(id, cancelToken: requestToken)
                     : repository.loadMatchDetail(id))
                 .timeout(
-                  const Duration(seconds: 5),
+                  readTimeout,
                   onTimeout: () {
                     requestToken.cancel('Initial detail deadline');
                     throw TimeoutException('Initial detail deadline');
                   },
                 );
+        remember(current);
       } catch (_) {
-        // A failed read is not evidence that enrichment is absent.
-        // Keep the finite pending window and try read-only cache refreshes.
-        current = MatchDetail.waiting(id);
+        // A failed read is not evidence that data is absent: keep what we
+        // had and try bounded read-only refreshes.
+        current = memory[id] ?? MatchDetail.waiting(id);
       }
       if (disposed) return;
       yield current;
@@ -546,38 +573,40 @@ final matchDetailProvider = StreamProvider.autoDispose
         return;
       }
 
-      for (var attempt = 0; attempt < 2 && current.pending; attempt++) {
-        final remaining = const Duration(seconds: 15) - window.elapsed;
-        final interval = ref.read(detailPollIntervalProvider);
-        if (remaining <= interval) break;
+      for (final delay in ref.read(detailPollScheduleProvider)) {
+        if (!current.pending) break;
         waiting = Completer<void>();
-        timer = Timer(interval, () => waiting!.complete());
+        timer = Timer(delay, () => waiting!.complete());
         await waiting.future;
         if (disposed) return;
         try {
           requestToken = CancelToken();
-          current = await repository
+          final next = await repository
               .readMatchDetail(id, cancelToken: requestToken)
               .timeout(
-                const Duration(seconds: 15) - window.elapsed,
+                readTimeout,
                 onTimeout: () {
-                  requestToken.cancel('Detail window expired');
-                  throw TimeoutException('Detail window expired');
+                  requestToken.cancel('Detail read deadline');
+                  throw TimeoutException('Detail read deadline');
                 },
               );
           if (disposed) return;
+          // Never replace real data with an emptier answer.
+          if (next.available || !current.available) current = next;
+          remember(current);
           yield current;
         } catch (_) {
-          // Retain the latest detail. Never restart or extend the polling budget.
+          // Retain the latest detail; the schedule stays bounded.
         }
       }
+      final complete = !current.pending;
       if (!disposed && current.pending) {
         current = MatchDetail({...current.json, 'pending': false});
         yield current;
       }
-      // Only real stored detail is retained; a failed/empty read retries on
+      // Retain only real, complete detail; an incomplete one is re-read on
       // the next visit.
-      if (!disposed && current.available) _retainSettled(ref);
+      if (!disposed && current.available && complete) _retainSettled(ref);
     });
 
 final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(

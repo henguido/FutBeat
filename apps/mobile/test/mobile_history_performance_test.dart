@@ -124,20 +124,22 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(find.text('Sin alineaciones'), findsNothing);
-      await tester.pump(const Duration(seconds: 5));
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 5));
+      // Bounded schedule: one read-only refresh per step (5, 10, 20, 40 s),
+      // then the pending state ends in simple empty states.
+      for (var second = 0; second < 90; second++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
       await tester.pumpAndSettle();
       expect(find.text('Sin alineaciones'), findsOneWidget);
       await tester.tap(find.text('Estadísticas'));
       await tester.pumpAndSettle();
       expect(find.text('Sin estadísticas'), findsOneWidget);
       expect(repo.loads, 1);
-      expect(repo.reads, 2);
+      expect(repo.reads, 4);
       await tester.pumpWidget(const SizedBox());
       container.dispose();
-      await tester.pump(const Duration(seconds: 20));
-      expect(repo.reads, 2);
+      await tester.pump(const Duration(seconds: 120));
+      expect(repo.reads, 4);
       await tester.runAsync(db.close);
     },
   );
@@ -237,9 +239,12 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           repositoryProvider.overrideWithValue(ApiRepository(dio)),
-          if (!slow)
-            detailPollIntervalProvider.overrideWithValue(
-              const Duration(milliseconds: 50),
+          detailPollIntervalProvider.overrideWithValue(
+            Duration(milliseconds: slow ? 100 : 50),
+          ),
+          if (slow)
+            detailReadTimeoutProvider.overrideWithValue(
+              const Duration(milliseconds: 300),
             ),
         ],
       );
@@ -259,20 +264,20 @@ void main() {
       expect(values, isNotEmpty);
       expect(values.every((value) => value.pending), true);
       await done.future.timeout(const Duration(seconds: 17));
-      expect(
-        reads,
-        slow ? 2 : 3,
-      ); // Initial cache read + at most two extra read-only reads.
+      // Initial read + one read-only refresh per bounded schedule step.
+      expect(reads, 5);
       expect(values.last.pending, false);
       expect(values.last.statistics, isEmpty);
       expect(values.last.homeStarters, isEmpty);
       if (slow) {
         expect(tokens.every((token) => token.isCancelled), true);
+        // Every slow read is cut at the read timeout; the schedule ends.
+        // 300 ms initial + (100+300) + (200+300) + (400+300) + (800+300).
         expect(
           elapsed.elapsed,
-          greaterThanOrEqualTo(const Duration(seconds: 14)),
+          greaterThanOrEqualTo(const Duration(milliseconds: 3000)),
         );
-        expect(elapsed.elapsed, lessThan(const Duration(seconds: 17)));
+        expect(elapsed.elapsed, lessThan(const Duration(seconds: 6)));
       }
       watch.close();
       container.dispose();
@@ -456,12 +461,12 @@ void main() {
         );
         await done.future.timeout(const Duration(seconds: 2));
         expect(demands, 1);
-        expect(requests, arrives ? 3 : 4);
+        expect(requests, arrives ? 3 : 6);
         expect(values.last.pending, false);
         expect(values.last.statistics.isNotEmpty, arrives);
         expect(values.last.homeStarters.isNotEmpty, arrives);
         await Future<void>.delayed(const Duration(milliseconds: 50));
-        expect(requests, arrives ? 3 : 4);
+        expect(requests, arrives ? 3 : 6);
         subscription.close();
         container.dispose();
         dio.close();
