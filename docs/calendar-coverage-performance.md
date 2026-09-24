@@ -87,7 +87,9 @@ opens and results always keep a reserve. A request that cannot be served in
 its share is never selected, so it cannot block a user open. With an unknown
 provider remaining, the shares are measured against the reduced blind budget
 that user opens face. Pending-verification matches are planned in the LIVE
-lane (results class). With an
+lane (results class). A user open waiting longer than `userAgingSeconds` (60 s)
+is served before any planner request, so a busy live slate cannot starve it.
+With an
 unknown provider remaining, background classes are limited to a share of the
 blind budget; LIVE and results are not. Dev limits (24 detail / 16 squad) are
 not used.

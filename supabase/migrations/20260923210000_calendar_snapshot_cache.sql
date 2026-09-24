@@ -104,9 +104,10 @@ declare lim integer:=greatest(1,least(coalesce(p_limit,
   tz text; offs integer; d date; built jsonb:='[]'; checked integer:=0; zones text[]; zone_builds integer;
 begin
   -- Timezones readers actually used in the last day (bounded), else the default.
-  select coalesce(array_agg(timezone order by n desc),'{}') into zones from (
+  -- Deterministic order (timezone tie-break): concurrent warmers lock dates alike.
+  select coalesce(array_agg(timezone order by n desc,timezone),'{}') into zones from (
     select timezone,count(*) n from futbeat_private.compact_calendar_cache
-    where built_at>now()-interval '1 day' group by timezone order by count(*) desc limit 3) z;
+    where built_at>now()-interval '1 day' group by timezone order by count(*) desc,timezone limit 3) z;
   if cardinality(zones)=0 then
     zones:=array[coalesce((select value from futbeat_private.runtime_settings where key='default_calendar_timezone'),'UTC')];
   end if;

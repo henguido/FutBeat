@@ -34,15 +34,18 @@
 --     misses so empty sections reach NO_DATA;
 --   * background work (planner sources) may use at most detailBackgroundShare
 --     of the daily match-detail cap and planner LIVE work stops
---     detailUserReserveShare before the cap, so user opens and results always
---     keep a reserve; a candidate that cannot be served is never selected.
+--     detailUserReserveShare before the cap (planner results share that LIVE
+--     lane), so user opens always keep a reserve; a candidate that cannot be
+--     served is never selected, and a user open waiting longer than
+--     userAgingSeconds is served before any planner request (aging: no
+--     starvation behind a busy live slate; fresh opens keep the rank order).
 
 update futbeat_private.provider_quota_policy set
   kind_daily_caps=kind_daily_caps||'{"match-detail":900}',
   freshness=freshness||'{"prematchMinutes":90,"recentFinishedHours":36,"upcomingDetailHours":24,
     "historyCoverageDays":7,"detailPlannerBatch":4,"lineupWantedMinutesBeforeKickoff":90,
     "liveRetryMinutes":5,"nearRetryMinutes":15,"historyRetryHours":6,
-    "liveMaxHours":4,"detailBackgroundShare":0.6,"detailUserReserveShare":0.15}',
+    "liveMaxHours":4,"detailBackgroundShare":0.6,"detailUserReserveShare":0.15,"userAgingSeconds":60}',
   updated_at=now()
 where provider='goal_api';
 
@@ -342,6 +345,7 @@ begin
       c.fetched_at,
       r.source,
       r.requested_at,
+      r.user_requested_at,
       nullif(e.payload->>'startTime','')::timestamptz start_time
     from futbeat_private.match_detail_requests r
     join futbeat_private.entities e on e.id=r.match_id and e.kind='match'
@@ -386,7 +390,10 @@ begin
   -- served, so it cannot block a user open or a result.
   where source='user' or quota_class='results'
     or (quota_class='live' and v_live_open) or (quota_class<>'live' and v_bg_open)
-  order by 6 desc,rank_value,requested_at desc,match_id
+  order by 6 desc,
+    (source='user' and coalesce(user_requested_at,requested_at)
+      <now()-make_interval(secs=>futbeat_private.quota_setting('goal_api','userAgingSeconds',60))) desc,
+    rank_value,requested_at desc,match_id
   limit 1;
 
   if v_match_id is null or not v_allowed then

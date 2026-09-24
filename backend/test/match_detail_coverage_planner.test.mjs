@@ -244,3 +244,23 @@ test('pending-verification matches are planned in the results lane', () => withD
   assert.deepEqual(await plan(db), [m.match]);
   assert.equal((await reserve(db)).quotaClass, 'results');
 }));
+
+test('a user open waiting past userAgingSeconds is served before planner LIVE work (no starvation)', () => withDb(async (db) => {
+  const lives = [];
+  for (let i = 0; i < 6; i++) lives.push(await seed(db, { status: 'LIVE', minutes: -20 - i }));
+  assert.equal((await plan(db, 6)).length, 6);
+  const finished = await seed(db, { status: 'VERIFIED', minutes: -2 * 24 * 60 });
+  await db.query('select public.futbeat_request_match_detail($1)', [finished.match]);
+  // Fresh: the documented rank order still puts LIVE first.
+  assert.notEqual((await db.query("select public.futbeat_reserve_match_detail_call('test') v").then(async (r) => {
+    await db.query("select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,'{}')", [r.rows[0].v.reservationId]);
+    return r.rows[0].v;
+  })).matchId, finished.match);
+  // After waiting past the aging threshold it goes first.
+  await db.query("update futbeat_private.match_detail_requests set user_requested_at=now()-interval '2 minutes' where match_id=$1", [finished.match]);
+  const first = await reserve(db);
+  assert.equal(first.matchId, finished.match);
+  assert.equal(first.quotaClass, 'user');
+  // Planner LIVE requests are still served right after.
+  assert.ok(lives.map((m) => m.match).includes((await reserve(db)).matchId));
+}));
