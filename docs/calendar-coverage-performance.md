@@ -26,22 +26,31 @@ Background work keeps the snapshots ready:
 
 | Profile | Calendar snapshot | Lineup/detail planner |
 |---|---|---|
-| LIVE / imminent (±kickoff window) | `calendarLiveSeconds` (15 s) + version bump on any change | bucket 1, retry `liveRetryMinutes` |
+| LIVE / imminent (±kickoff window) | `calendarLiveSeconds` (15 s) | bucket 1, retry `liveRetryMinutes`; a LIVE status older than `liveMaxHours` (4) is not live evidence |
 | Pre-match (`prematchMinutes`, 90) | today rules | bucket 2 (`prematch` source, user_high class) |
-| Today (touching UTC today) | `calendarTodaySeconds` (60 s), versioned | — |
+| Today (touching UTC today) | `calendarTodaySeconds` (60 s), unversioned (no hot version row) | — |
 | Recent finished (`recentFinishedHours`, 36) | past rules | bucket 4 (`recent`, coverage class) |
 | Upcoming (`upcomingDetailHours`, 24) | `calendarFutureHours` (6 h), versioned | bucket 5, one first fetch only |
 | History (`historyCoverageDays`, 7) | 1 day if complete, else `calendarHistoryIncompleteMinutes` | bucket 7, `historyRetryHours`; empty twice -> NO_DATA |
 | Far future | 6 h, versioned | never polled |
 
-Data changes bump the per-UTC-date revision (`calendar_cache_versions`), so a
-TTL only covers clock-driven transitions. Frozen history (lineup and
-statistics AVAILABLE/NO_DATA) costs 0 calls.
+Outside UTC today, data changes bump the per-UTC-date revision
+(`calendar_cache_versions`), so a TTL only covers clock-driven transitions.
+UTC today stays unversioned on purpose: versioning it would make every live
+ingest update one hot row (lock waits, cross-midnight deadlocks); its short
+TTL bounds staleness and live scores reach the app through realtime.
+
+Only LIVE and pending-verification matches follow a clock cadence. Any other
+match is fetched only while a wanted section (lineup/statistics) is UNKNOWN,
+on its retry gap; past kickoff + `liveMaxHours` misses are counted so empty
+sections settle to NO_DATA. Frozen history (both sections AVAILABLE/NO_DATA)
+costs 0 calls. Bulk live payload lineups are promoted only as a first lineup
+of a not-finished match without a stored detail.
 
 ## Mobile
 
 `CalendarCachePolicy` (providers.dart) centralizes client TTLs (today 20 s,
-past 5 min, future 10 min, partial/stale 20 s), the prefetch radius (2) and the
+past 5 min, future 10 min, partial/stale/live 20 s), the prefetch radius (2) and the
 window (today -2..+7).
 
 - Cached day painted first (memory peek in the same frame, then disk).
@@ -71,7 +80,10 @@ measured here (no production access in this block).
 ## Quota
 
 Match detail runs under the class floors of the central quota manager
-(`live` > `user_high` > `coverage` > `bootstrap`), daily kind cap 900. With an
+(`live` > `user_high` > `coverage` > `bootstrap`), daily kind cap 900. Planner
+(background) work may use at most `detailBackgroundShare` (60 %) of that cap;
+once reached only LIVE is planned, and LIVE, results and user opens keep the
+remainder. With an
 unknown provider remaining, background classes are limited to a share of the
 blind budget; LIVE and results are not. Dev limits (24 detail / 16 squad) are
 not used.

@@ -32,14 +32,16 @@ const read = (db, day, zone = tz) => db.query('select public.futbeat_read_calend
 const cacheRow = (db, day, zone = tz) => db.query(`select built_at,extract(epoch from expires_at-built_at)::int ttl
   from futbeat_private.compact_calendar_cache where calendar_date=$1 and timezone=$2`, [day, zone]).then((r) => r.rows[0]);
 
-test('1/9. today is served from one snapshot for many readers (dedupe) and changes are visible at once', () => withDb(async (db) => {
+test('1/9. today is served from one snapshot for many readers (dedupe); changes show when its short TTL ends', () => withDb(async (db) => {
   const today = await localDay(db);
   const m = await seedDay(db, today, { hour: 23 });
   await read(db, today);
   const first = await cacheRow(db, today);
   for (let i = 0; i < 25; i++) await read(db, today);
   assert.deepEqual(await cacheRow(db, today), first, 'one build for all readers');
+  assert.ok(first.ttl <= 60, 'today: calendarTodaySeconds or calendarLiveSeconds');
   await db.query(`update futbeat_private.entities set payload=payload||'{"status":"POSTPONED"}' where id=$1`, [m.match]);
+  await db.query("update futbeat_private.compact_calendar_cache set expires_at=now()-interval '1 second'");
   assert.equal((await read(db, today)).matches[0].status, 'POSTPONED');
 }));
 

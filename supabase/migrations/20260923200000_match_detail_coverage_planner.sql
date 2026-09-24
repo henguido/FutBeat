@@ -24,12 +24,24 @@
 -- NO_DATA), so complete matches cost nothing and nothing loops. Up to
 -- detailPlannerBatch matches are queued per run, deduplicated per match.
 -- One provider call per match detail; player hydration stays deduplicated.
+--
+-- Bounded by construction:
+--   * a LIVE status is live evidence only within liveMaxHours of kickoff; an
+--     older one is treated as unknown (no endless 5-minute polling);
+--   * only LIVE and pending-verification matches follow a clock cadence;
+--     everything else is fetched only while a wanted section is UNKNOWN, on
+--     the section retry gap, and a match past kickoff+liveMaxHours counts
+--     misses so empty sections reach NO_DATA;
+--   * background work (planner sources) may use at most detailBackgroundShare
+--     of the daily match-detail cap; LIVE, results and user opens keep the
+--     rest, so background never locks out a user or a live match.
 
 update futbeat_private.provider_quota_policy set
   kind_daily_caps=kind_daily_caps||'{"match-detail":900}',
   freshness=freshness||'{"prematchMinutes":90,"recentFinishedHours":36,"upcomingDetailHours":24,
     "historyCoverageDays":7,"detailPlannerBatch":4,"lineupWantedMinutesBeforeKickoff":90,
-    "liveRetryMinutes":5,"nearRetryMinutes":15,"historyRetryHours":6}',
+    "liveRetryMinutes":5,"nearRetryMinutes":15,"historyRetryHours":6,
+    "liveMaxHours":4,"detailBackgroundShare":0.6}',
   updated_at=now()
 where provider='goal_api';
 
@@ -48,6 +60,63 @@ begin
   end if;
   return new;
 end $$;
+
+-- A LIVE status far past kickoff is stale evidence, not a live match.
+create or replace function futbeat_private.match_detail_status(p_match_id text)
+returns text language sql stable set search_path='' as $$
+  with s as (
+    select coalesce(
+      (select l.status from public.live_match_updates l where l.match_id=p_match_id and l.provider='goal_api'),
+      (select e.payload->>'status' from futbeat_private.entities e where e.id=p_match_id and e.kind='match')) status,
+      (select nullif(e.payload->>'startTime','')::timestamptz from futbeat_private.entities e
+        where e.id=p_match_id and e.kind='match') kickoff
+  )
+  select case when status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES')
+      and kickoff<now()-make_interval(hours=>futbeat_private.quota_setting('goal_api','liveMaxHours',4)::integer)
+    then null else status end
+  from s
+$$;
+
+-- Finished for coverage: terminal status, or no live evidence and kickoff
+-- more than liveMaxHours ago (was one day), so empty sections settle.
+create or replace function futbeat_private.match_is_finished(p_match_id text)
+returns boolean language sql stable set search_path='' as $$
+  select coalesce(futbeat_private.match_detail_status(p_match_id),'') in ('FINISHED_PENDING_VERIFICATION','VERIFIED','ABANDONED')
+    or (coalesce(futbeat_private.match_detail_status(p_match_id),'') not in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES')
+      and exists(select 1 from futbeat_private.entities e where e.id=p_match_id and e.kind='match'
+        and nullif(e.payload->>'startTime','')::timestamptz
+          <now()-make_interval(hours=>futbeat_private.quota_setting('goal_api','liveMaxHours',4)::integer)))
+$$;
+
+-- Clock cadence only for live evidence and pending verification; every other
+-- match is fetched only while a wanted section is UNKNOWN (retry gap).
+create or replace function futbeat_private.match_detail_needs_fetch(p_match_id text)
+returns boolean language plpgsql stable set search_path='' as $$
+declare status text:=futbeat_private.match_detail_status(p_match_id); fetched timestamptz;
+  cov futbeat_private.match_detail_coverage; sections jsonb;
+begin
+  select * into cov from futbeat_private.match_detail_coverage where match_id=p_match_id;
+  if cov.next_retry_at>now() then return false; end if;
+  select fetched_at into fetched from futbeat_private.match_detail_cache where match_id=p_match_id;
+  if fetched is null then return true; end if;
+  if status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES','FINISHED_PENDING_VERIFICATION')
+     and futbeat_private.match_detail_due(status,fetched) then
+    return true;
+  end if;
+  sections:=futbeat_private.match_detail_sections(p_match_id);
+  if sections is null then return false; end if;
+  return fetched<now()-make_interval(secs=>(sections->>'retryGap')::double precision)
+    and (((sections->>'lineupWanted')::boolean and coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN')
+      or ((sections->>'statisticsWanted')::boolean and coalesce(cov.statistics_state,'UNKNOWN')='UNKNOWN'));
+end $$;
+
+-- Background share of the daily match-detail cap (planner sources only).
+create or replace function futbeat_private.detail_background_open()
+returns boolean language sql stable set search_path='' as $$
+  select coalesce((d->>'usedToday')::numeric<floor((d->>'safetyCap')::numeric
+    *futbeat_private.quota_setting('goal_api','detailBackgroundShare',0.6)),true)
+  from (select futbeat_private.quota_decision('goal_api','match-detail','live') d) x
+$$;
 
 -- Section windows now come from the central policy.
 create or replace function futbeat_private.match_detail_sections(p_match_id text)
@@ -81,8 +150,12 @@ declare lim integer:=greatest(1,least(coalesce(p_limit,
   upcoming interval:=make_interval(hours=>futbeat_private.quota_setting('goal_api','upcomingDetailHours',24)::integer);
   history interval:=make_interval(days=>futbeat_private.quota_setting('goal_api','historyCoverageDays',7)::integer);
   queued text[]:='{}'; cand record;
+  -- Background share exhausted: only LIVE (class live) is still planned.
+  bg_open boolean:=futbeat_private.detail_background_open();
 begin
   perform pg_advisory_xact_lock(hashtext('futbeat-match-detail-enqueue'));
+  -- Expired rows are replaced, never upserted (keeps each source's class).
+  delete from futbeat_private.match_detail_requests where expires_at<=now();
   for cand in
     with window_matches as (
       select cm.match_id,cm.start_time,futbeat_private.match_detail_status(cm.match_id) status
@@ -107,6 +180,7 @@ begin
     left join futbeat_private.match_detail_coverage c on c.match_id=p.match_id
     left join futbeat_private.match_detail_cache d on d.match_id=p.match_id
     where coalesce(c.next_retry_at,'-infinity')<=now()
+      and (bg_open or p.bucket=1)
       -- Upcoming beyond the pre-match window: only a first fetch.
       and (p.bucket<>5 or d.match_id is null)
       -- Settled finished matches (both sections AVAILABLE/NO_DATA) are frozen.
@@ -115,7 +189,8 @@ begin
       and not exists(select 1 from futbeat_private.match_detail_requests r
         where r.match_id=p.match_id and r.expires_at>now())
     order by p.bucket,abs(extract(epoch from p.start_time-now())),p.match_id
-    limit lim*10
+    -- Rows are checked lazily in order; bounded per run.
+    limit lim*50
   loop
     exit when cardinality(queued)>=lim;
     if not futbeat_private.match_detail_needs_fetch(cand.match_id) or futbeat_private.detail_inflight(cand.match_id) then
@@ -147,10 +222,13 @@ $$;
 create or replace function futbeat_private.promote_bulk_lineup()
 returns trigger language plpgsql security definer set search_path='' as $$
 begin
+  -- Only a first lineup for a match still in play or upcoming: never over a
+  -- stored detail (its freshness is not advanced) and never for a finished
+  -- match (a bulk payload is not a statistics answer).
   if new.canonical_match_id is null or jsonb_typeof(new.raw_payload)<>'object'
      or not exists(select 1 from futbeat_private.lineup_rows(new.raw_payload))
-     or exists(select 1 from futbeat_private.match_detail_coverage c
-       where c.match_id=new.canonical_match_id and c.lineup_state='AVAILABLE') then
+     or exists(select 1 from futbeat_private.match_detail_cache d where d.match_id=new.canonical_match_id)
+     or futbeat_private.match_is_finished(new.canonical_match_id) then
     return new;
   end if;
   begin
@@ -221,6 +299,7 @@ declare
   v_class text;
   v_rank integer;
   v_allowed boolean;
+  v_source text;
 begin
   if p_trigger_source is null or btrim(p_trigger_source)='' then
     raise exception 'trigger_source is required';
@@ -283,8 +362,8 @@ begin
   -- Best allowed candidate first; if none fits its class, the best due one
   -- explains the refusal.
   select match_id,external_id,status,quota_class,rank_value,
-    futbeat_private.quota_class_allowed('goal_api',quota_class,v_remaining)
-  into v_match_id,v_external,v_status,v_class,v_rank,v_allowed
+    futbeat_private.quota_class_allowed('goal_api',quota_class,v_remaining),source
+  into v_match_id,v_external,v_status,v_class,v_rank,v_allowed,v_source
   from ranked
   order by 6 desc,rank_value,requested_at desc,match_id
   limit 1;
@@ -296,6 +375,14 @@ begin
       'quotaClass',v_class,
       'detailUsed',(v_cap->>'usedToday')::integer,'providerRemaining',v_remaining
     );
+  end if;
+
+  -- Planner work stops at its share of the daily cap; LIVE, results and
+  -- user opens keep the remainder.
+  if v_class not in ('live','results') and v_source<>'user'
+     and not futbeat_private.detail_background_open() then
+    return jsonb_build_object('allowed',false,'reason','background_share','quotaClass',v_class,
+      'matchId',v_match_id,'detailUsed',(v_cap->>'usedToday')::integer,'providerRemaining',v_remaining);
   end if;
 
   -- Full decision for the chosen class: when remaining is unknown, non-LIVE
@@ -346,6 +433,10 @@ revoke all on function
   futbeat_private.promote_bulk_lineup(),
   futbeat_private.reset_expired_detail_request_source(),
   futbeat_private.match_detail_sections(text),
+  futbeat_private.match_detail_status(text),
+  futbeat_private.match_is_finished(text),
+  futbeat_private.match_detail_needs_fetch(text),
+  futbeat_private.detail_background_open(),
   futbeat_private.enqueue_stale_interested_match_detail()
 from public,anon,authenticated,service_role;
 revoke all on function public.futbeat_lineup_coverage_metrics() from public,anon,authenticated;

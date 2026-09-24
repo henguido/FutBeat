@@ -217,8 +217,12 @@ class ApiRepository implements FootballRepository {
     final fetched = _calendarFetchedAt[value];
     if (fetched == null) return false;
     final snapshot = _snapshotCache['calendar:$value'];
+    // Partial, stale or still-live days (e.g. yesterday just after midnight)
+    // revalidate on the short TTL.
     final recovering =
-        snapshot?.coverage?['partial'] == true || snapshot?.stale == true;
+        snapshot?.coverage?['partial'] == true ||
+        snapshot?.stale == true ||
+        (snapshot?.matches.any((match) => match.isLive) ?? false);
     final ttl = calendarPolicy.ttl(
       value,
       _dateParam(costaRicaNow()),

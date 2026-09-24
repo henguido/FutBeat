@@ -155,3 +155,56 @@ test('lineup coverage metrics report the gaps generically', () => withDb(async (
     assert.equal((await db.query("select has_function_privilege($1,'public.futbeat_lineup_coverage_metrics()','EXECUTE') ok", [role])).rows[0].ok, false);
   }
 }));
+
+test('a LIVE status long past kickoff is not live evidence (no endless live-class polling)', () => withDb(async (db) => {
+  const m = await seed(db, { status: 'LIVE', minutes: -3 * 24 * 60 });
+  await store(db, m, { lineups, statistics: stats }, 10);
+  assert.deepEqual(await plan(db, 5), []);
+  const fresh = await seed(db, { status: 'LIVE', minutes: -40 });
+  await store(db, fresh, { lineups, statistics: stats }, 10);
+  assert.deepEqual(await plan(db, 5), [fresh.match], 'a real live match keeps the live cadence');
+  assert.equal((await reserve(db)).quotaClass, 'live');
+}));
+
+test('no status after kickoff: fetched only while sections are unknown, then settles to NO_DATA', () => withDb(async (db) => {
+  const m = await seed(db, { status: 'SCHEDULED', minutes: -5 * 60 });
+  await store(db, m, { lineups }, 40);
+  // Lineup known, statistics unknown: spaced retries, then two misses settle it.
+  assert.deepEqual(await plan(db), [m.match]);
+  await clearQueue(db);
+  await store(db, m, { lineups }, 20);
+  await store(db, m, { lineups }, 0);
+  const cov = (await db.query('select statistics_state from futbeat_private.match_detail_coverage where match_id=$1', [m.match])).rows[0];
+  assert.equal(cov.statistics_state, 'NO_DATA');
+  assert.deepEqual(await plan(db), []);
+  // Before kickoff, a known lineup is not refetched on a clock.
+  const pre = await seed(db, { minutes: 60 });
+  await store(db, pre, { lineups }, 40);
+  assert.ok(!(await plan(db, 5)).includes(pre.match));
+}));
+
+test('a re-planned expired request keeps its source and quota class', () => withDb(async (db) => {
+  const pre = await seed(db, { minutes: 45 });
+  await plan(db);
+  await db.query("update futbeat_private.match_detail_requests set expires_at=now()-interval '1 second'");
+  await plan(db);
+  assert.equal(await source(db, pre), 'prematch');
+  assert.equal((await reserve(db)).quotaClass, 'user_high');
+}));
+
+test('background planning stops at its share of the daily cap; LIVE and user opens keep the rest', () => withDb(async (db) => {
+  // Known, abundant provider budget: only the background share applies.
+  await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining)
+    select 'goal_api','match-detail','test','SUCCEEDED',50000 from generate_series(1,540)`);
+  const recent = await seed(db, { status: 'VERIFIED', minutes: -300 });
+  const live = await seed(db, { status: 'LIVE', minutes: -30 });
+  assert.deepEqual(await plan(db, 5), [live.match], 'only LIVE is planned');
+  await db.query("insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count,source) values($1,now(),now()+interval '10 minutes',1,'recent')", [recent.match]);
+  const first = await reserve(db);
+  assert.equal(first.matchId, live.match);
+  await db.query("select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,'{}')", [first.reservationId]);
+  await store(db, live, { lineups, statistics: stats });
+  assert.equal((await reserve(db)).reason, 'background_share');
+  await db.query('select public.futbeat_request_match_detail($1)', [recent.match]);
+  assert.equal((await reserve(db)).allowed, true, 'a user open is not background');
+}));

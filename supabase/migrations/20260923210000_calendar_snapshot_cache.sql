@@ -8,11 +8,11 @@
 --   * nothing prepared the days around today before users opened them.
 --
 -- Now (TTLs in provider_quota_policy.freshness):
---   * UTC today is versioned like every other day (bump_calendar_date no
---     longer skips it), so any data change - including LIVE score/minute -
---     invalidates the day immediately; the TTL only covers clock-driven
---     transitions: calendarLiveSeconds when a match is live or within its
---     kickoff window, else calendarTodaySeconds for days touching UTC today;
+--   * days touching UTC today are cached too, on a short TTL:
+--     calendarLiveSeconds when a match is live or within its kickoff window,
+--     else calendarTodaySeconds. UTC today stays unversioned on purpose: every
+--     live ingest would otherwise update one hot version row (lock waits,
+--     cross-midnight deadlocks); live scores reach the app through realtime;
 --   * versioned past days: 1 day when results are complete, else
 --     calendarHistoryIncompleteMinutes; data changes bump the day's version;
 --   * versioned future days: calendarFutureHours (data changes bump the
@@ -31,15 +31,6 @@ update futbeat_private.provider_quota_policy set
     "calendarWarmBackDays":2,"calendarWarmForwardDays":7,"calendarWarmBatch":3}',
   updated_at=now()
 where provider='goal_api';
-
--- Version UTC today too: exact invalidation instead of per-request rebuilds.
-create or replace function futbeat_private.bump_calendar_date(p_date date)
-returns void language sql volatile set search_path='' as $$
-  insert into futbeat_private.calendar_cache_versions
-  select p_date,1 where p_date is not null
-  on conflict(utc_date) do update set revision=futbeat_private.calendar_cache_versions.revision+1
-$$;
-revoke all on function futbeat_private.bump_calendar_date(date) from public,anon,authenticated,service_role;
 
 insert into futbeat_private.runtime_settings(key,value)
 values('default_calendar_timezone','America/Costa_Rica')
@@ -63,8 +54,7 @@ begin
  v_utc_today:=(now() at time zone 'UTC')::date;
  v_first_utc:=(p_from_date::timestamp at time zone p_timezone at time zone 'UTC')::date;
  v_last_utc:=(((p_to_date+1)::timestamp at time zone p_timezone-interval '1 microsecond') at time zone 'UTC')::date;
- -- Days touching UTC today keep a short TTL for clock-driven transitions;
- -- their data changes are versioned like any other day.
+ -- Days touching UTC today are unversioned: served from a short-TTL snapshot.
  v_unversioned:=v_utc_today between v_first_utc and v_last_utc;
  v_version:=futbeat_private.calendar_cache_version(p_from_date,p_timezone);
  select payload into v_payload from futbeat_private.compact_calendar_cache
@@ -93,8 +83,8 @@ begin
      else make_interval(mins=>futbeat_private.quota_setting('goal_api','calendarHistoryIncompleteMinutes',10)::integer) end;
  else
    v_expiry:=now()+make_interval(hours=>futbeat_private.quota_setting('goal_api','calendarFutureHours',6)::integer);
-   -- Re-evaluated once the day starts (it then follows the "today" rules).
-   v_expiry:=least(v_expiry,(v_today+1)::timestamp at time zone p_timezone,v_first_utc::timestamp at time zone 'UTC');
+   -- Re-evaluated when the day enters the UTC-today (short TTL) window.
+   v_expiry:=least(v_expiry,v_first_utc::timestamp at time zone 'UTC');
  end if;
  if v_live then v_expiry:=least(v_expiry,now()+live_ttl); end if;
  insert into futbeat_private.compact_calendar_cache values(p_from_date,p_timezone,v_version,v_payload,now(),v_expiry)
@@ -134,7 +124,11 @@ begin
         continue;
       end if;
       perform public.futbeat_read_calendar_range(d,d,tz);
-      built:=built||jsonb_build_array(jsonb_build_object('date',d,'timezone',tz));
+      -- Count only real builds (a still-valid row is served, not rebuilt).
+      if exists(select 1 from futbeat_private.compact_calendar_cache c
+          where c.calendar_date=d and c.timezone=tz and c.built_at=now()) then
+        built:=built||jsonb_build_array(jsonb_build_object('date',d,'timezone',tz));
+      end if;
     end loop;
   end loop;
   if jsonb_array_length(built)>0 then perform futbeat_private.bump_metric('calendar_warm_builds',jsonb_array_length(built)); end if;
