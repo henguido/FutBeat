@@ -154,3 +154,14 @@ open match ─► /v1/match-context ─► futbeat_request_match_standings (exac
    `standings_cache_hits`, `match_detail_*`.
 4. Capture a real GOAL `/standings/{id}` response to confirm the row season
    field (unverified).
+
+## Hot-path performance (local EXPLAIN ANALYZE, 20k matches / 2k mapped competitions)
+
+| Query (per Match Center open) | Before | After |
+| --- | --- | --- |
+| Competition → GOAL mapping | index scan of all goal_api competition mappings + `resolve_entity_id` per row (≈100 ms) | alias ids via `entity_redirects(kind,canonical_id)` + `provider_entities_canonical_id_idx` (≈0.1 ms) |
+| Live match of the competition / provisional overlay / season started | sequential scan of `entities` (whole catalog) | `entities_match_competition_idx` (partial expression index, match rows only) |
+| `futbeat_read_match_context` | ≈131 ms | ≈4 ms |
+| `futbeat_request_match_standings` | ≈102 ms | ≈1.2 ms |
+
+Guarded by `backend/test/match_center_query_plans.test.mjs` (plan-based, not timing-based).

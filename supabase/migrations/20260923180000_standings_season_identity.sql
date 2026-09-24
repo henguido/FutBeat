@@ -145,6 +145,7 @@ create or replace function futbeat_private.match_standings_state(p_match_id text
 returns jsonb language plpgsql stable set search_path='' as $$
 declare m jsonb; comp text; v_key text; current_key text; ext text; snap futbeat_private.standings_snapshots;
   dem futbeat_private.standings_demands; fresh_for interval; active boolean; fetchable boolean; state text;
+  alias_ids text[];
 begin
   select payload into m from futbeat_private.entities where id=p_match_id and kind='match';
   if m is null then return null; end if;
@@ -155,9 +156,20 @@ begin
       'competitionId',comp,'seasonKey',nullif(v_key,''),'due',false);
   end if;
   current_key:=futbeat_private.competition_season_key(comp);
+  -- Mapping of this canonical competition or of any alias redirected to it.
+  -- Walks the redirects backwards from comp (indexed: entity_redirects
+  -- (kind,canonical_id), provider_entities(canonical_id)) instead of
+  -- resolving every mapped competition of the catalog.
+  with recursive ids(id,depth) as (
+    select comp,0
+    union
+    select r.alias_id,ids.depth+1 from futbeat_private.entity_redirects r
+    join ids on r.kind='competition' and r.canonical_id=ids.id
+    where ids.depth<8
+  )
+  select array_agg(id) into alias_ids from ids;
   select pe.external_id into ext from futbeat_private.provider_entities pe
-  where pe.provider='goal_api' and pe.kind='competition'
-    and futbeat_private.futbeat_resolve_entity_id('competition',pe.canonical_id)=comp
+  where pe.canonical_id=any(alias_ids) and pe.provider='goal_api' and pe.kind='competition'
   order by pe.external_id limit 1;
   -- GOAL serves the competition's current table: other seasons are only
   -- available if they were archived while current.
