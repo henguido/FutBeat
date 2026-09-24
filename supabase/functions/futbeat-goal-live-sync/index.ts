@@ -6,6 +6,11 @@ import {
   normalizeGoalPlayerSearch,
   normalizeGoalPlayerStatistics,
 } from "../_shared/goal_players.ts";
+import {
+  GOAL_STANDINGS_ENDPOINT,
+  goalStandingsRows,
+  goalStandingsSeason,
+} from "../_shared/goal_standings.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -955,6 +960,61 @@ async function syncPlayerDemand(maxCalls = 2) {
   return results;
 }
 
+// Standings a user is waiting for: exactly one (competition, season) per
+// reservation, stored through the existing standings store (which archives
+// it under its exact season) and completed with demand bookkeeping.
+async function syncStandingsDemand() {
+  const plan = await rpc("futbeat_reserve_standings_demand_call", {
+    p_trigger_source: "supabase-cron",
+  });
+  if (!plan?.allowed) {
+    return { status: "skipped", reason: plan?.reason ?? "unknown" };
+  }
+  const reservationId = Number(plan.reservationId);
+  let remaining: number | null = null;
+  try {
+    const goalKey = await readGoalKey();
+    const response = await fetchGoal(
+      goalKey,
+      GOAL_STANDINGS_ENDPOINT(clean(plan.externalLeagueId)),
+      30000,
+      true,
+    );
+    remaining = response.remaining;
+    const rows = goalStandingsRows(response.payload);
+    if (rows.length >= 2) {
+      await rpc("futbeat_store_goal_standings", {
+        p_competition_id: clean(plan.competitionId),
+        p_external_league_id: clean(plan.externalLeagueId),
+        p_received_at: new Date().toISOString(),
+        p_season: goalStandingsSeason(rows),
+        p_rows: rows,
+      }, 30000);
+    }
+    const completed = await rpc("futbeat_complete_standings_call", {
+      p_reservation_id: reservationId,
+      p_succeeded: true,
+      p_http_status: 200,
+      p_provider_remaining: remaining,
+    });
+    return { status: "ok", rows: rows.length, demand: completed?.status ?? null };
+  } catch (error) {
+    const reported = (error as { remaining?: unknown })?.remaining;
+    if (typeof reported === "number") remaining = reported;
+    try {
+      await rpc("futbeat_complete_standings_call", {
+        p_reservation_id: reservationId,
+        p_succeeded: false,
+        p_http_status: httpStatusOf(error),
+        p_provider_remaining: remaining,
+      });
+    } catch {
+      console.error("standings failure completion failed");
+    }
+    return { status: "failed", httpStatus: httpStatusOf(error) };
+  }
+}
+
 // User demand lane: match detail first (a Match Center is open), then player
 // discovery/hydration. Woken by the database right after demand is recorded
 // and also run by the per-minute cron, so a lost wake-up only adds latency.
@@ -984,7 +1044,17 @@ async function syncDemand() {
     );
     players = { status: "failed" };
   }
-  return { detail, players };
+  let standings: unknown;
+  try {
+    standings = await syncStandingsDemand();
+  } catch (error) {
+    console.error(
+      "GOAL standings demand sync failed",
+      error instanceof Error ? error.message : "unknown",
+    );
+    standings = { status: "failed" };
+  }
+  return { detail, players, standings };
 }
 
 type SquadAttempt = {

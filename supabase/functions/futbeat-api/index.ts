@@ -190,6 +190,14 @@ export default {
       );
       if (demandError) console.warn('terminal result demand unavailable');
 
+      // Exact (competition, season) standings: cache hit, or one deduplicated
+      // demand. The read below reports coverage.standings/standingsPending.
+      const { error: standingsError } = await ctx.supabaseAdmin.rpc(
+        'futbeat_request_match_standings',
+        { p_match_id: id },
+      );
+      if (standingsError) console.warn('standings demand unavailable');
+
       const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
         'futbeat_read_match_context',
         { p_match_id: id },
@@ -205,6 +213,10 @@ export default {
         return reply(503, { error: 'Partido temporalmente no disponible' });
       }
 
+      // Data still arriving: never let an edge cache pin this partial answer.
+      if (asRecord(snapshot.coverage).standingsPending === true) {
+        return replyNoStore(200, snapshot);
+      }
       return reply(200, snapshot);
     }
 

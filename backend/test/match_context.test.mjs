@@ -60,6 +60,7 @@ async function seedMatchContext(db) {
       awayTeamId: away,
       startTime: '2026-09-19T20:00:00.000Z',
       status: 'SCHEDULED',
+      season: '2026',
       score: null,
       venue: '',
       events: [],
