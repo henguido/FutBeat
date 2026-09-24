@@ -94,8 +94,12 @@ test('warmer follows the timezones readers use (generic, not a fixed country)', 
   await seedDay(db, day, { zone, hour: 20 });
   await read(db, day, zone);
   await db.query("delete from futbeat_private.compact_calendar_cache where timezone=$1 and calendar_date<>$2", [zone, day]);
-  const result = (await db.query('select public.futbeat_warm_calendar_window(2) v')).rows[0].v;
-  assert.ok(result.built.every((b) => b.timezone === zone));
+  // The configured default zone is always warmed; reader zones are added.
+  const zones = (await db.query('select futbeat_private.calendar_reader_zones() z')).rows[0].z;
+  assert.equal(zones.length, 2);
+  assert.ok(zones.includes(zone));
+  const result = (await db.query('select public.futbeat_warm_calendar_window(30) v')).rows[0].v;
+  assert.ok(result.built.some((b) => b.timezone === zone && b.date !== day), 'reader zone window warmed');
 }));
 
 test('6/10. a date never opened before is built from stored data; no provider in the request path', () => withDb(async (db) => {

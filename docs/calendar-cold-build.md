@@ -44,20 +44,29 @@ JSON already carries only the fields the Partidos screen uses.
 ## Materialization
 
 ```
-fixture/result/detail/redirect ingest
-  -> invalidate trigger -> bump_calendar_date(utc date)
-  -> mark_calendar_dirty: local dates (reader timezones) intersecting it
-  -> calendar_snapshot_queue (date, timezone) pending, priority 5
-worker lane each minute (futbeat_warm_calendar_window, DB-only):
-  enqueue hot window (2 today, 3 +/-1, 4 window), seed known dates
-  without a snapshot (6, -90..+120 days), drain queue within
-  calendarBuildBatch / calendarBuildBudgetMs
+ingest (unchanged): invalidation triggers bump calendar_cache_versions
+worker, each minute (and on a 'calendar' wake):
+  futbeat_plan_calendar_snapshots   (one short transaction)
+    hot window (2 today, 3 +/-1, 4 window)
+    dirty: snapshots whose per-date version changed (5)
+    seed known dates without a snapshot, -90..+120 days (6)
+  futbeat_build_next_calendar_snapshot, one per RPC / transaction,
+    within calendarBuildBatch and calendarBuildBudgetMs
 ```
+
+Concurrency model:
+
+- ingest writes nothing new (dirty days are derived from versions, so no new
+  lock or deadlock cycle between ingest transactions);
+- readers enqueue with skip-locked writes and never wait on a builder;
+- each build is its own transaction (no lock held across builds);
+- a 'calendar' wake (own 5 s debounce) runs only the calendar lane, never
+  behind the provider demand lane.
 
 Queue: one row per (date, timezone); an enqueue only writes on a
 state/priority transition, so 100 changes of a date are one row and one
-build. `for update skip locked`, lease, attempts and exponential backoff (max
-1 h, `failed` after 5). No provider calls.
+build. Attempts with exponential backoff (max 1 h, `failed` after 5, cleaned
+after a day). No provider calls.
 
 Read path (`futbeat_read_calendar_range`):
 
@@ -91,10 +100,13 @@ UTC-today days 60 s / 15 s live (unversioned by design).
 
 ## Deploy order
 
-1. Migration `20260924100000_calendar_snapshot_materialization.sql`.
-2. No edge-function change is required (the worker already calls the lane;
-   the API passes `coverage.pending` through).
-3. Mobile build.
+1. Worker `futbeat-goal-live-sync` FIRST (plan + one build per call,
+   'calendar' trigger). Before the migration its calendar lane fails safely
+   (caught) and nothing sends the 'calendar' trigger yet. Deploying the
+   migration first would let a 'calendar' wake reach the old worker, whose
+   unknown-trigger path is the full provider sync.
+2. Migration `20260924100000_calendar_snapshot_materialization.sql`.
+3. Mobile build. The API passes `coverage.pending` through unchanged.
 
 ## Risks
 
@@ -102,7 +114,8 @@ UTC-today days 60 s / 15 s live (unversioned by design).
   `futbeat_calendar_snapshot_status()` and the metrics
   `calendar_snapshot_builds`, `calendar_pending_responses`,
   `calendar_stale_served`, `calendar_snapshot_build_failures`.
-- The worker lane runs its builds in one transaction; date locks are held
-  until it commits (bounded by batch and time budget).
-- UTC-date granularity: a change dirties the (usually two) local dates that
-  intersect its UTC date.
+- Dirty detection is per UTC date: a change can rebuild the (usually two)
+  local dates that intersect it. Catalog-only changes (team/competition
+  metadata) are rebuilt lazily on read (stale-while-revalidate for big days).
+- The compatibility `futbeat_warm_calendar_window` still drains in one
+  transaction; only the old worker (pre-deploy) uses it.

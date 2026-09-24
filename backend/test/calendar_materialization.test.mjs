@@ -58,12 +58,29 @@ const ledger = (db) => db.query('select count(*)::int n from futbeat_private.pro
 const registerZone = (db) => db.query(`insert into futbeat_private.calendar_snapshot_zones values($1,now())
   on conflict(timezone) do update set last_seen_at=now()`, [tz]);
 
+// The previous read model and builder, verbatim from their migrations, as
+// *_before functions (the builder is pointed at the old read model).
 async function legacyBuilder(db) {
+  const model = await readFile(new URL('../../supabase/migrations/20260922220000_terminal_evidence_read_model.sql', import.meta.url), 'utf8');
+  await db.exec(model.slice(model.indexOf('create or replace function futbeat_private.match_read_model('),
+    model.indexOf('revoke all on function futbeat_private.match_read_model'))
+    .replace('futbeat_private.match_read_model(', 'futbeat_private.match_read_model_before('));
   const sql = await readFile(new URL('../../supabase/migrations/20260922002909_calendar_cache_explore.sql', import.meta.url), 'utf8');
   await db.exec(sql.slice(sql.indexOf('create or replace function futbeat_private.build_compact_calendar('),
     sql.indexOf('revoke all on function futbeat_private.build_compact_calendar'))
-    .replace('futbeat_private.build_compact_calendar(', 'futbeat_private.build_compact_calendar_before('));
+    .replace('futbeat_private.build_compact_calendar(', 'futbeat_private.build_compact_calendar_before(')
+    .replaceAll('futbeat_private.match_read_model(', 'futbeat_private.match_read_model_before('));
 }
+// Match Center: the full model must equal the previous one for every match.
+async function assertMatchCenterEqual(db) {
+  const rows = (await db.query(`select e.id,futbeat_private.match_read_model(e.payload) a,
+    futbeat_private.match_read_model_before(e.payload) b from futbeat_private.entities e where e.kind='match'`)).rows;
+  assert.ok(rows.length > 0);
+  for (const r of rows) assert.deepEqual(r.a, r.b, r.id);
+}
+const plan = (db) => db.query('select public.futbeat_plan_calendar_snapshots() v').then((r) => r.rows[0].v);
+const dirtyRows = (db) => db.query(`select calendar_date::text d from futbeat_private.calendar_snapshot_queue
+  where priority=5 and status='pending' order by 1`).then((r) => r.rows.map((x) => x.d));
 
 test('1. dense historical cold build: lean list projection is byte-identical and faster', () => withDb(async (db) => {
   await legacyBuilder(db);
@@ -74,6 +91,7 @@ test('1. dense historical cold build: lean list projection is byte-identical and
   const [after, afterMs] = await timeIt(() => db.query('select futbeat_private.build_compact_calendar($1,$1,$2) v', [day, tz]).then((r) => r.rows[0].v));
   assert.deepEqual(after, before);
   assert.equal(after.matches.length, 300);
+  await assertMatchCenterEqual(db);
   console.log(JSON.stringify({ matches: 300, beforeMs: Math.round(beforeMs), afterMs: Math.round(afterMs) }));
 }));
 
@@ -88,6 +106,7 @@ test('lean projection keeps LIVE latestEvent, redirects and played evidence iden
   const before = (await db.query('select futbeat_private.build_compact_calendar_before($1,$1,$2) v', [day, tz])).rows[0].v;
   const after = (await db.query('select futbeat_private.build_compact_calendar($1,$1,$2) v', [day, tz])).rows[0].v;
   assert.deepEqual(after, before);
+  await assertMatchCenterEqual(db);
   assert.ok(after.matches.some((m) => m.latestEvent), 'live matches keep their latest event');
   assert.ok(after.matches.some((m) => m.homeTeamId === `fb_team_${p}_1`), 'redirect resolved once');
 }));
@@ -118,9 +137,9 @@ test('3/8. arbitrary complete history is frozen; new evidence rebuilds only that
   await db.query('delete from futbeat_private.calendar_snapshot_queue');
   // New evidence for one match of that day (a late correction).
   await db.query(`update futbeat_private.entities set payload=payload||'{"score":{"home":3,"away":3}}' where id=$1`, [`fb_match_${p}_2`]);
-  assert.equal((await queueRow(db, day)).priority, 5, 'affected date marked dirty');
-  assert.equal(await queueRow(db, other), undefined, 'other dates untouched');
-  await drain(db);
+  await plan(db);
+  assert.deepEqual(await dirtyRows(db), [day], 'only the affected date is dirty');
+  await drain(db, 50);
   const rebuilt = await cacheRow(db, day);
   assert.notEqual(rebuilt.version, first.version);
   assert.deepEqual((await read(db, day)).matches.find((m) => m.id === `fb_match_${p}_2`).score, { home: 3, away: 3 });
@@ -131,25 +150,23 @@ test('5/6. ingest marks only the affected date; 100 changes of one date -> one b
   const day = await localDay(db, 12);
   await registerZone(db);
   const p = await seedDay(db, day, 10, { status: 'SCHEDULED', events: 0 });
+  await read(db, day);
+  const first = await cacheRow(db, day);
   await db.query('delete from futbeat_private.calendar_snapshot_queue');
   for (let i = 0; i < 100; i++) {
     await db.query(`update futbeat_private.entities set payload=payload||jsonb_build_object('venue','V'||$2::int) where id=$1`,
       [`fb_match_${p}_${1 + (i % 10)}`, i]);
   }
-  // Exactly the local dates intersecting the changed UTC date (versions are
-  // per UTC date), each once; nothing else.
-  const expected = (await db.query(`select array_agg(distinct (x at time zone $2)::date::text order by (x at time zone $2)::date::text) d
-    from (select start_time from futbeat_private.calendar_matches where match_id like $1) m,
-    lateral unnest(array[(m.start_time at time zone 'UTC')::date::timestamp at time zone 'UTC',
-      ((m.start_time at time zone 'UTC')::date+1)::timestamp at time zone 'UTC'-interval '1 microsecond']) x`,
-    [`fb_match_${p}_%`, tz])).rows[0].d;
-  const rows = (await db.query(`select calendar_date::text d,status from futbeat_private.calendar_snapshot_queue
-    order by calendar_date`)).rows;
-  assert.deepEqual(rows.map((r) => r.d), expected);
-  assert.ok(rows.every((r) => r.status === 'pending') && rows.map((r) => r.d).includes(day));
-  const result = await drain(db);
-  assert.equal(result.built.length, expected.length);
-  assert.equal((await drain(db)).built.length, 0, 'nothing left: deduplicated');
+  // Ingest wrote no queue rows; the planner finds the day once.
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.calendar_snapshot_queue')).rows[0].n, 0);
+  await plan(db);
+  await plan(db);
+  assert.deepEqual(await dirtyRows(db), [day]);
+  const built = (await drain(db, 50)).built.filter((b) => b.date === day);
+  assert.equal(built.length, 1, 'one rebuild for 100 changes');
+  assert.notEqual((await cacheRow(db, day)).version, first.version);
+  await plan(db);
+  assert.deepEqual(await dirtyRows(db), [], 'nothing left: deduplicated');
 }));
 
 test('7. the visible date outranks today, window, dirty and background work', () => withDb(async (db) => {
@@ -175,9 +192,10 @@ test('9. a reschedule invalidates both the old and the new date', () => withDb(a
   await db.query('delete from futbeat_private.calendar_snapshot_queue');
   await db.query(`update futbeat_private.entities set payload=payload||jsonb_build_object('startTime',
     ($2::date+interval '15 hours')::timestamp at time zone $3) where id=$1`, [`fb_match_${p}_1`, newDay, tz]);
-  assert.equal((await queueRow(db, oldDay))?.status, 'pending');
-  assert.equal((await queueRow(db, newDay))?.status, 'pending');
-  await drain(db);
+  await plan(db);
+  const dirty = await dirtyRows(db);
+  assert.ok(dirty.includes(oldDay) && dirty.includes(newDay), dirty.join(','));
+  await drain(db, 50);
   assert.equal((await read(db, oldDay)).matches.length, 2);
   assert.equal((await read(db, newDay)).matches.length, 1);
 }));

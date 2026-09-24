@@ -288,4 +288,20 @@ void main() {
     );
     expect(count, 1084);
   });
+
+  test('a hanging request cannot outlive the visible deadline', () async {
+    final dio = Dio();
+    dio.interceptors.add(InterceptorsWrapper(onRequest: (o, h) {}));
+    final watch = Stopwatch()..start();
+    await expectLater(
+      ApiRepository(
+        dio,
+        null,
+        fastPolicy,
+      ).watchDate(DateTime(2026, 8, 20)).toList(),
+      throwsA(isA<TimeoutException>()),
+    );
+    expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+    dio.close(force: true);
+  });
 }

@@ -410,8 +410,22 @@ class ApiRepository implements FootballRepository {
     StackTrace? lastStack;
     while (true) {
       if (cancelToken?.isCancelled == true) return;
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) {
+        lastError ??= TimeoutException(
+          'Calendar date not loaded in time',
+          calendarPolicy.visibleDeadline,
+        );
+        lastStack ??= StackTrace.current;
+        break;
+      }
       try {
-        final snapshot = await _fetchDate(value, cancelToken: cancelToken);
+        // The visible wait never outlives the deadline; the shared request
+        // itself continues for other waiters and fills the cache.
+        final snapshot = await _fetchDate(
+          value,
+          cancelToken: cancelToken,
+        ).timeout(remaining);
         if (snapshot.calendarPending) {
           // The server is materializing this day: show the preparing state
           // (only without data) and poll on its hint, within the deadline.

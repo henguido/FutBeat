@@ -17,17 +17,18 @@
 --   * build_compact_calendar resolves redirects once (in the model).
 --   * calendar_snapshot_queue: deduplicated (date,timezone) builds with a
 --     priority (1 visible request, 2 today, 3 yesterday/tomorrow, 4 hot
---     window, 5 dirty after ingest, 6 background seeding), lease, attempts
---     and retry backoff. DB-only: never a provider call.
---   * Ingest marks only the affected local dates dirty (bump_calendar_date).
---   * The worker lane (futbeat_warm_calendar_window, unchanged name) enqueues
---     the hot window, seeds every known date (-calendarSeedBackDays ..
---     +calendarSeedForwardDays) without a snapshot, and drains the queue
---     within a batch/time budget.
---   * The read path never blocks on a heavy build: stale snapshot ->
---     served at once + priority-1 rebuild; no snapshot and a large day
---     (> calendarSyncBuildMaxMatches) -> a "pending" snapshot + priority-1
---     build + worker wake; small days are still built inline (fast).
+--     window, 5 dirty after ingest, 6 background seeding), attempts and
+--     retry backoff. DB-only: never a provider call.
+--   * The worker plans (futbeat_plan_calendar_snapshots: hot window, days
+--     whose own data changed since their snapshot, known days without one)
+--     and then builds ONE snapshot per transaction
+--     (futbeat_build_next_calendar_snapshot) within a batch/time budget.
+--     Ingest writes nothing new (dirty days are derived from versions).
+--   * The read path never blocks on a heavy build nor waits on a lock:
+--     stale snapshot -> served at once + priority-1 rebuild; no snapshot
+--     and a large day (> calendarSyncBuildMaxMatches) -> a "pending"
+--     snapshot + priority-1 build + a dedicated 'calendar' worker wake;
+--     small days are still built inline (fast).
 --   * Complete history is kept for calendarHistoryCompleteDays (versioned:
 --     any new evidence bumps the day and rebuilds it); future days keep
 --     calendarFutureHours and are rebuilt when their fixtures change.
@@ -257,17 +258,24 @@ create or replace function futbeat_private.build_compact_calendar(
 $$;
 
 -- ---------------------------------------------------------------------------
--- Build queue, reader timezones, dirty marking.
+-- Build queue and reader timezones.
+--
+-- Concurrency model (no new lock on any ingest or read path):
+--   * ingest writes nothing new: dirty days are found by the planner, which
+--     compares each snapshot's per-date version with calendar_cache_versions
+--     (already maintained by the existing invalidation triggers);
+--   * readers enqueue with skip-locked writes and never wait on a builder;
+--   * the worker plans in one short transaction and then builds ONE snapshot
+--     per transaction (futbeat_build_next_calendar_snapshot), so no lock is
+--     held across builds.
 -- ---------------------------------------------------------------------------
 create table futbeat_private.calendar_snapshot_queue (
   calendar_date date not null,
   timezone text not null,
   priority smallint not null check(priority between 1 and 9),
   sort_key integer not null default 0,
-  status text not null default 'pending' check(status in ('pending','building','done','failed')),
+  status text not null default 'pending' check(status in ('pending','done','failed')),
   requested_at timestamptz not null default now(),
-  dirty_since timestamptz,
-  lease_until timestamptz,
   attempt_count integer not null default 0,
   next_retry_at timestamptz,
   last_error text,
@@ -276,7 +284,7 @@ create table futbeat_private.calendar_snapshot_queue (
 );
 create index calendar_snapshot_queue_ready_idx
   on futbeat_private.calendar_snapshot_queue(priority,sort_key,requested_at)
-  where status in ('pending','building');
+  where status='pending';
 alter table futbeat_private.calendar_snapshot_queue enable row level security;
 revoke all on futbeat_private.calendar_snapshot_queue from public,anon,authenticated;
 
@@ -287,74 +295,58 @@ create table futbeat_private.calendar_snapshot_zones (
 );
 alter table futbeat_private.calendar_snapshot_zones enable row level security;
 revoke all on futbeat_private.calendar_snapshot_zones from public,anon,authenticated;
--- Seed from snapshots readers built recently (no fixed zone is assumed).
 insert into futbeat_private.calendar_snapshot_zones(timezone,last_seen_at)
 select timezone,max(built_at) from futbeat_private.compact_calendar_cache
 where built_at>now()-interval '7 days' group by timezone
 on conflict do nothing;
 
+-- The configured default zone always, plus up to two other recent readers.
 create or replace function futbeat_private.calendar_reader_zones()
 returns text[] language sql stable set search_path='' as $$
-  select coalesce(nullif(array(select z.timezone from futbeat_private.calendar_snapshot_zones z
-      where z.last_seen_at>now()-interval '7 days' order by z.last_seen_at desc,z.timezone limit 3),'{}'),
-    array[coalesce((select value from futbeat_private.runtime_settings where key='default_calendar_timezone'),'UTC')])
+  with d as (
+    select coalesce((select value from futbeat_private.runtime_settings
+      where key='default_calendar_timezone'),'UTC') tz
+  )
+  select array[d.tz]||array(select z.timezone from futbeat_private.calendar_snapshot_zones z
+    where z.last_seen_at>now()-interval '7 days' and z.timezone<>d.tz
+    order by z.last_seen_at desc,z.timezone limit 2)
+  from d
 $$;
 
--- Deduplicated enqueue. Writes only on a state/priority transition, so many
--- changes (or readers) of one date never contend on its row.
+-- Deduplicated, non-blocking enqueue: a row held by a builder (or another
+-- enqueuer) is skipped, never waited on. Backoff of a failing date is kept.
 create or replace function futbeat_private.enqueue_calendar_snapshot(
   p_date date,p_timezone text,p_priority integer,p_sort_key integer default 0)
 returns void language plpgsql security definer set search_path='' as $$
+declare q futbeat_private.calendar_snapshot_queue;
 begin
   if p_date is null or p_timezone is null then return; end if;
-  if exists(select 1 from futbeat_private.calendar_snapshot_queue q
-      where q.calendar_date=p_date and q.timezone=p_timezone
-        and q.status='pending' and q.priority<=p_priority) then
+  select * into q from futbeat_private.calendar_snapshot_queue
+  where calendar_date=p_date and timezone=p_timezone for update skip locked;
+  if found then
+    if q.status='pending' and q.priority<=p_priority then return; end if;
+    update futbeat_private.calendar_snapshot_queue set
+      status='pending',
+      priority=case when q.status='pending' then least(q.priority,p_priority) else p_priority end,
+      sort_key=case when q.status='pending' and q.priority<=p_priority then q.sort_key else p_sort_key end,
+      requested_at=now(),
+      attempt_count=case when q.status='pending' then q.attempt_count else 0 end,
+      next_retry_at=case when q.status='pending' then q.next_retry_at end
+    where calendar_date=p_date and timezone=p_timezone;
     return;
   end if;
-  update futbeat_private.calendar_snapshot_queue q set
-    status='pending',
-    priority=case when q.status='pending' then least(q.priority,p_priority) else p_priority end,
-    sort_key=case when q.status='pending' and q.priority<=p_priority then q.sort_key else p_sort_key end,
-    requested_at=now(),
-    dirty_since=coalesce(q.dirty_since,now()),
-    next_retry_at=case when p_priority=1 then null else q.next_retry_at end,
-    attempt_count=case when q.status in ('done','failed') then 0 else q.attempt_count end
-  where q.calendar_date=p_date and q.timezone=p_timezone
-    and (q.status<>'pending' or q.priority>p_priority);
-  if not found then
-    insert into futbeat_private.calendar_snapshot_queue(calendar_date,timezone,priority,sort_key,dirty_since)
-    values(p_date,p_timezone,p_priority,p_sort_key,now())
-    on conflict do nothing;
+  -- Locked by a builder right now: that build serves this request.
+  if exists(select 1 from futbeat_private.calendar_snapshot_queue
+      where calendar_date=p_date and timezone=p_timezone) then
+    return;
   end if;
-end $$;
-
--- Local dates (per reader timezone) intersecting a UTC date become dirty.
-create or replace function futbeat_private.mark_calendar_dirty(p_utc_date date)
-returns void language plpgsql security definer set search_path='' as $$
-declare tz text; d date;
-begin
-  foreach tz in array futbeat_private.calendar_reader_zones() loop
-    for d in select distinct (x at time zone tz)::date
-      from unnest(array[p_utc_date::timestamp at time zone 'UTC',
-        (p_utc_date+1)::timestamp at time zone 'UTC'-interval '1 microsecond']) x order by 1 loop
-      perform futbeat_private.enqueue_calendar_snapshot(d,tz,5);
-    end loop;
-  end loop;
-end $$;
-
-create or replace function futbeat_private.bump_calendar_date(p_date date)
-returns void language plpgsql volatile security definer set search_path='' as $$
-begin
-  -- UTC today stays unversioned (short-TTL snapshot, no hot row).
-  if p_date is null or p_date=(now() at time zone 'UTC')::date then return; end if;
-  insert into futbeat_private.calendar_cache_versions values(p_date,1)
-  on conflict(utc_date) do update set revision=futbeat_private.calendar_cache_versions.revision+1;
-  perform futbeat_private.mark_calendar_dirty(p_date);
+  insert into futbeat_private.calendar_snapshot_queue(calendar_date,timezone,priority,sort_key)
+  values(p_date,p_timezone,p_priority,p_sort_key)
+  on conflict do nothing;
 end $$;
 
 -- ---------------------------------------------------------------------------
--- Materialization (shared by the read path and the queue).
+-- Materialization (shared by the read path and the builder).
 -- ---------------------------------------------------------------------------
 create or replace function futbeat_private.materialize_calendar_day(p_date date,p_timezone text)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
@@ -396,54 +388,111 @@ begin
  insert into futbeat_private.compact_calendar_cache values(p_date,p_timezone,v_version,v_payload,now(),v_expiry)
  on conflict(calendar_date,timezone) do update set version=excluded.version,payload=excluded.payload,
    built_at=excluded.built_at,expires_at=excluded.expires_at;
- perform futbeat_private.bump_metric('calendar_snapshot_builds');
  return v_payload;
 end $$;
 
--- Drains the queue within a batch and a wall-clock budget. DB-only.
+-- Builds the next queued snapshot. The worker calls it once per transaction.
+create or replace function public.futbeat_build_next_calendar_snapshot()
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
+declare r futbeat_private.calendar_snapshot_queue; v_version text; v_built boolean:=false;
+begin
+  select * into r from futbeat_private.calendar_snapshot_queue q
+  where q.status='pending' and coalesce(q.next_retry_at,'-infinity')<=now()
+  order by q.priority,q.sort_key,q.requested_at,q.calendar_date,q.timezone
+  limit 1 for update skip locked;
+  if not found then return jsonb_build_object('status','idle'); end if;
+  begin
+    -- Already valid (a reader built it): nothing to do.
+    v_version:=futbeat_private.calendar_cache_version(r.calendar_date,r.timezone);
+    if not exists(select 1 from futbeat_private.compact_calendar_cache c
+        where c.calendar_date=r.calendar_date and c.timezone=r.timezone
+          and c.version=v_version and c.expires_at>now()+interval '5 seconds') then
+      perform futbeat_private.materialize_calendar_day(r.calendar_date,r.timezone);
+      v_built:=true;
+    end if;
+    update futbeat_private.calendar_snapshot_queue set status='done',built_at=now(),
+      next_retry_at=null,last_error=null
+    where calendar_date=r.calendar_date and timezone=r.timezone;
+  exception when others then
+    update futbeat_private.calendar_snapshot_queue set
+      status=case when attempt_count+1>=5 then 'failed' else 'pending' end,
+      attempt_count=attempt_count+1,
+      next_retry_at=now()+least(interval '1 hour',interval '1 minute'*power(2,least(attempt_count,6))),
+      last_error=left(sqlerrm,200)
+    where calendar_date=r.calendar_date and timezone=r.timezone;
+    perform futbeat_private.bump_metric('calendar_snapshot_build_failures');
+    return jsonb_build_object('status','failed','date',r.calendar_date,'timezone',r.timezone);
+  end;
+  if v_built then perform futbeat_private.bump_metric('calendar_snapshot_builds'); end if;
+  return jsonb_build_object('status',case when v_built then 'built' else 'fresh' end,
+    'date',r.calendar_date,'timezone',r.timezone,'priority',r.priority);
+end $$;
+
+-- Local/test convenience: drain several builds in ONE transaction. The worker
+-- never uses it (it calls futbeat_build_next_calendar_snapshot per build).
 create or replace function futbeat_private.process_calendar_snapshot_queue(p_limit integer default null)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare lim integer:=greatest(1,least(coalesce(p_limit,
-    futbeat_private.quota_setting('goal_api','calendarBuildBatch',4)::integer),20));
-  deadline timestamptz:=clock_timestamp()+make_interval(secs=>
-    futbeat_private.quota_setting('goal_api','calendarBuildBudgetMs',20000)/1000.0);
-  r record; built jsonb:='[]'; failed integer:=0; v_version text;
+    futbeat_private.quota_setting('goal_api','calendarBuildBatch',4)::integer),50));
+  r jsonb; built jsonb:='[]'; failed integer:=0; i integer;
 begin
-  loop
-    exit when jsonb_array_length(built)+failed>=lim or clock_timestamp()>deadline;
-    select q.calendar_date,q.timezone,q.priority into r from futbeat_private.calendar_snapshot_queue q
-    where (q.status='pending' and coalesce(q.next_retry_at,'-infinity')<=now())
-       or (q.status='building' and q.lease_until<now())
-    order by q.priority,q.sort_key,q.requested_at,q.calendar_date,q.timezone
-    limit 1 for update skip locked;
-    exit when not found;
-    update futbeat_private.calendar_snapshot_queue q set status='building',
-      lease_until=now()+interval '2 minutes',attempt_count=q.attempt_count+1
-    where q.calendar_date=r.calendar_date and q.timezone=r.timezone;
-    begin
-      -- Already valid (a reader built it): nothing to do.
-      v_version:=futbeat_private.calendar_cache_version(r.calendar_date,r.timezone);
-      if not exists(select 1 from futbeat_private.compact_calendar_cache c
-          where c.calendar_date=r.calendar_date and c.timezone=r.timezone
-            and c.version=v_version and c.expires_at>now()+interval '5 seconds') then
-        perform futbeat_private.materialize_calendar_day(r.calendar_date,r.timezone);
-        built:=built||jsonb_build_array(jsonb_build_object('date',r.calendar_date,'timezone',r.timezone,
-          'priority',r.priority));
-      end if;
-      update futbeat_private.calendar_snapshot_queue q set status='done',built_at=now(),
-        dirty_since=null,lease_until=null,next_retry_at=null,last_error=null
-      where q.calendar_date=r.calendar_date and q.timezone=r.timezone and q.status='building';
-    exception when others then
-      failed:=failed+1;
-      update futbeat_private.calendar_snapshot_queue q set
-        status=case when q.attempt_count>=5 then 'failed' else 'pending' end,lease_until=null,
-        next_retry_at=now()+least(interval '1 hour',interval '1 minute'*power(2,least(q.attempt_count,6))),
-        last_error=left(sqlerrm,200)
-      where q.calendar_date=r.calendar_date and q.timezone=r.timezone;
-      perform futbeat_private.bump_metric('calendar_snapshot_build_failures');
-    end;
+  for i in 1..lim loop
+    r:=public.futbeat_build_next_calendar_snapshot();
+    exit when r->>'status'='idle';
+    if r->>'status'='built' then built:=built||jsonb_build_array(r-'status');
+    elsif r->>'status'='failed' then failed:=failed+1; end if;
   end loop;
   return jsonb_build_object('built',built,'failed',failed);
+end $$;
+
+-- Plans the worker's builds (short transaction): hot window, days whose
+-- per-date data changed since their snapshot, and known days without one.
+create or replace function public.futbeat_plan_calendar_snapshots()
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
+declare back integer:=futbeat_private.quota_setting('goal_api','calendarWarmBackDays',2)::integer;
+  forward integer:=futbeat_private.quota_setting('goal_api','calendarWarmForwardDays',7)::integer;
+  seed_back integer:=futbeat_private.quota_setting('goal_api','calendarSeedBackDays',90)::integer;
+  seed_forward integer:=futbeat_private.quota_setting('goal_api','calendarSeedForwardDays',120)::integer;
+  tz text; offs integer; rank integer; d date; checked integer:=0; dirty integer:=0; seeded integer;
+  c record;
+begin
+  foreach tz in array futbeat_private.calendar_reader_zones() loop
+    if not exists(select 1 from pg_catalog.pg_timezone_names where name=tz) then continue; end if;
+    -- Hot window: today, +1, -1, +2, -2, ...
+    for offs,rank in select g,abs(g)*2-case when g>0 then 1 else 0 end from generate_series(-back,forward) g loop
+      d:=(now() at time zone tz)::date+offs;
+      checked:=checked+1;
+      if exists(select 1 from futbeat_private.compact_calendar_cache s where s.calendar_date=d and s.timezone=tz
+          and s.version=futbeat_private.calendar_cache_version(d,tz) and s.expires_at>now()+interval '5 seconds') then
+        continue;
+      end if;
+      perform futbeat_private.enqueue_calendar_snapshot(d,tz,
+        case when offs=0 then 2 when abs(offs)=1 then 3 else 4 end,rank);
+    end loop;
+    -- Dirty: the day's own data changed (per-date part of the version). A
+    -- catalog-only change is rebuilt lazily by the next read.
+    for c in select s.calendar_date,
+        split_part(s.version,':',2) is distinct from
+          split_part(futbeat_private.calendar_cache_version(s.calendar_date,tz),':',2) changed
+      from futbeat_private.compact_calendar_cache s
+      where s.timezone=tz and s.calendar_date between (now() at time zone tz)::date-seed_back
+        and (now() at time zone tz)::date+seed_forward loop
+      continue when not c.changed;
+      perform futbeat_private.enqueue_calendar_snapshot(c.calendar_date,tz,5,
+        abs(c.calendar_date-(now() at time zone tz)::date));
+      dirty:=dirty+1;
+    end loop;
+  end loop;
+  seeded:=futbeat_private.seed_calendar_snapshot_queue(null);
+  -- Bounded retention.
+  delete from futbeat_private.compact_calendar_cache where built_at<now()-make_interval(
+    days=>futbeat_private.quota_setting('goal_api','calendarRetentionDays',120)::integer);
+  delete from futbeat_private.calendar_snapshot_queue
+  where (status='done' and built_at<now()-interval '1 day')
+     or (status='failed' and requested_at<now()-interval '1 day');
+  return jsonb_build_object('checked',checked,'dirty',dirty,'seeded',seeded,
+    'batch',futbeat_private.quota_setting('goal_api','calendarBuildBatch',4)::integer,
+    'budgetMs',futbeat_private.quota_setting('goal_api','calendarBuildBudgetMs',20000)::integer);
 end $$;
 
 -- Seeds every known date (fixtures or coverage) that has no snapshot yet:
@@ -458,24 +507,71 @@ declare lim integer:=greatest(0,least(coalesce(p_limit,
 begin
   if lim=0 then return 0; end if;
   foreach tz in array futbeat_private.calendar_reader_zones() loop
-    -- Nearest dates first.
+    if not exists(select 1 from pg_catalog.pg_timezone_names where name=tz) then continue; end if;
+    -- Nearest dates first; index probes only.
     for d in select (now() at time zone tz)::date+g from generate_series(-back,forward) g order by abs(g),g loop
       exit when queued>=lim;
       continue when exists(select 1 from futbeat_private.compact_calendar_cache c
         where c.calendar_date=d and c.timezone=tz);
       continue when exists(select 1 from futbeat_private.calendar_snapshot_queue q
-        where q.calendar_date=d and q.timezone=tz and q.status in ('pending','building','failed'));
+        where q.calendar_date=d and q.timezone=tz and q.status in ('pending','failed'));
       continue when not exists(select 1 from futbeat_private.calendar_matches m
         where m.start_time>=d::timestamp at time zone tz and m.start_time<(d+1)::timestamp at time zone tz);
-      perform futbeat_private.enqueue_calendar_snapshot(d,tz,6,abs((d-(now() at time zone tz)::date)));
+      perform futbeat_private.enqueue_calendar_snapshot(d,tz,6,abs(d-(now() at time zone tz)::date));
       queued:=queued+1;
     end loop;
   end loop;
   return queued;
 end $$;
 
+-- A dedicated, DB-only wake for calendar builds (own debounce): never waits
+-- behind the provider demand lane.
+create or replace function futbeat_private.wake_provider_worker(p_trigger text default 'demand')
+returns text language plpgsql security definer set search_path='' as $$
+declare debounce interval:=make_interval(secs=>case when p_trigger='calendar'
+    then futbeat_private.quota_setting('goal_api','calendarWakeDebounceSeconds',5)
+    else futbeat_private.quota_setting('goal_api','wakeDebounceSeconds',15) end);
+  last_wake timestamptz; url text; result text;
+begin
+  if p_trigger is null or p_trigger not in ('demand','results-only','calendar') then raise exception 'Invalid wake trigger'; end if;
+  select w.last_wake_at into last_wake from futbeat_private.worker_wakeups w
+  where w.trigger=p_trigger for update skip locked;
+  if not found then
+    if exists(select 1 from futbeat_private.worker_wakeups where trigger=p_trigger) then
+      perform futbeat_private.bump_metric('wake_debounced');
+      return 'debounced';
+    end if;
+    insert into futbeat_private.worker_wakeups(trigger,last_wake_at,wake_count)
+    values(p_trigger,now(),1) on conflict(trigger) do nothing;
+    if not found then
+      perform futbeat_private.bump_metric('wake_debounced');
+      return 'debounced';
+    end if;
+  elsif last_wake>now()-debounce then
+    perform futbeat_private.bump_metric('wake_debounced');
+    return 'debounced';
+  else
+    update futbeat_private.worker_wakeups set last_wake_at=now(),wake_count=wake_count+1 where trigger=p_trigger;
+  end if;
+  select value into url from futbeat_private.runtime_settings where key='goal_worker_url';
+  if to_regnamespace('net') is null or to_regnamespace('vault') is null or url is null then
+    result:='unavailable';
+  else
+    execute $q$select net.http_post(
+        url:=$1,
+        headers:=jsonb_build_object('Content-Type','application/json','x-futbeat-cron-token',(
+          select decrypted_secret from vault.decrypted_secrets
+          where name='futbeat_goal_live_cron_token' order by updated_at desc nulls last,created_at desc limit 1)),
+        body:=jsonb_build_object('trigger',$2),
+        timeout_milliseconds:=30000)$q$ using url,p_trigger;
+    result:='queued';
+  end if;
+  update futbeat_private.worker_wakeups set last_result=result where trigger=p_trigger;
+  return result;
+end $$;
+
 -- ---------------------------------------------------------------------------
--- Read path: never blocks on a heavy build.
+-- Read path: never blocks on a heavy build and never waits on a lock.
 -- ---------------------------------------------------------------------------
 create or replace function public.futbeat_read_calendar_range(
  p_from_date date,p_to_date date,p_timezone text default 'America/Costa_Rica')
@@ -490,11 +586,16 @@ begin
  if p_from_date<>p_to_date then
    return futbeat_private.build_compact_calendar(p_from_date,p_to_date,p_timezone);
  end if;
- -- Remember reader timezones (at most one write per zone per hour).
+ -- Remember reader timezones: at most hourly, skip-locked (never waits).
  if not exists(select 1 from futbeat_private.calendar_snapshot_zones z
      where z.timezone=p_timezone and z.last_seen_at>now()-interval '1 hour') then
-   insert into futbeat_private.calendar_snapshot_zones(timezone,last_seen_at) values(p_timezone,now())
-   on conflict(timezone) do update set last_seen_at=excluded.last_seen_at;
+   update futbeat_private.calendar_snapshot_zones z set last_seen_at=now()
+   where z.timezone in (select y.timezone from futbeat_private.calendar_snapshot_zones y
+     where y.timezone=p_timezone for update skip locked);
+   if not found and not exists(select 1 from futbeat_private.calendar_snapshot_zones where timezone=p_timezone) then
+     insert into futbeat_private.calendar_snapshot_zones(timezone,last_seen_at) values(p_timezone,now())
+     on conflict do nothing;
+   end if;
  end if;
  v_version:=futbeat_private.calendar_cache_version(p_from_date,p_timezone);
  select * into v_row from futbeat_private.compact_calendar_cache
@@ -511,7 +612,7 @@ begin
  end if;
  perform futbeat_private.enqueue_calendar_snapshot(p_from_date,p_timezone,1);
  begin
-   perform futbeat_private.wake_provider_worker('demand');
+   perform futbeat_private.wake_provider_worker('calendar');
  exception when others then
    null; -- the per-minute worker still drains the queue
  end;
@@ -531,37 +632,18 @@ begin
    'players','[]'::jsonb,'standings','[]'::jsonb);
 end $$;
 
--- Worker lane (name kept): hot window + dirty + seeding, drained in budget.
+-- Compatibility lane (older worker builds): plan + a bounded drain in one
+-- call. The current worker plans once and builds one snapshot per call.
 create or replace function public.futbeat_warm_calendar_window(p_limit integer default null)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
-declare back integer:=futbeat_private.quota_setting('goal_api','calendarWarmBackDays',2)::integer;
-  forward integer:=futbeat_private.quota_setting('goal_api','calendarWarmForwardDays',7)::integer;
-  tz text; offs integer; d date; checked integer:=0; seeded integer; result jsonb; rank integer;
+declare plan jsonb; result jsonb;
 begin
-  foreach tz in array futbeat_private.calendar_reader_zones() loop
-    if not exists(select 1 from pg_catalog.pg_timezone_names where name=tz) then continue; end if;
-    -- today, +1, -1, +2, -2, ... within the window.
-    for offs,rank in select g,abs(g)*2-case when g>0 then 1 else 0 end from generate_series(-back,forward) g loop
-      d:=(now() at time zone tz)::date+offs;
-      checked:=checked+1;
-      if exists(select 1 from futbeat_private.compact_calendar_cache c where c.calendar_date=d and c.timezone=tz
-          and c.version=futbeat_private.calendar_cache_version(d,tz) and c.expires_at>now()+interval '5 seconds') then
-        continue;
-      end if;
-      perform futbeat_private.enqueue_calendar_snapshot(d,tz,
-        case when offs=0 then 2 when abs(offs)=1 then 3 else 4 end,rank);
-    end loop;
-  end loop;
-  seeded:=futbeat_private.seed_calendar_snapshot_queue(null);
+  plan:=public.futbeat_plan_calendar_snapshots();
   result:=futbeat_private.process_calendar_snapshot_queue(p_limit);
   if jsonb_array_length(result->'built')>0 then
     perform futbeat_private.bump_metric('calendar_warm_builds',jsonb_array_length(result->'built'));
   end if;
-  -- Bounded retention of snapshots and finished queue rows.
-  delete from futbeat_private.compact_calendar_cache where built_at<now()-make_interval(
-    days=>futbeat_private.quota_setting('goal_api','calendarRetentionDays',120)::integer);
-  delete from futbeat_private.calendar_snapshot_queue where status='done' and built_at<now()-interval '1 day';
-  return result||jsonb_build_object('checked',checked,'seeded',seeded);
+  return result||plan;
 end $$;
 
 -- Operational view of the queue (service role).
@@ -569,30 +651,34 @@ create or replace function public.futbeat_calendar_snapshot_status()
 returns jsonb language sql stable security definer set search_path='' as $$
   select jsonb_build_object(
     'pending',(select count(*) from futbeat_private.calendar_snapshot_queue where status='pending'),
-    'building',(select count(*) from futbeat_private.calendar_snapshot_queue where status='building'),
     'failed',(select count(*) from futbeat_private.calendar_snapshot_queue where status='failed'),
     'snapshots',(select count(*) from futbeat_private.compact_calendar_cache),
     'oldestPending',(select min(requested_at) from futbeat_private.calendar_snapshot_queue where status='pending'),
     'zones',to_jsonb(futbeat_private.calendar_reader_zones()))
 $$;
 
+update futbeat_private.provider_quota_policy set
+  freshness=freshness||'{"calendarWakeDebounceSeconds":5}',updated_at=now()
+where provider='goal_api';
+
 revoke all on function
   futbeat_private.match_read_model_core(jsonb,boolean),
   futbeat_private.calendar_reader_zones(),
   futbeat_private.enqueue_calendar_snapshot(date,text,integer,integer),
-  futbeat_private.mark_calendar_dirty(date),
-  futbeat_private.bump_calendar_date(date),
   futbeat_private.materialize_calendar_day(date,text),
   futbeat_private.process_calendar_snapshot_queue(integer),
   futbeat_private.seed_calendar_snapshot_queue(integer),
-  futbeat_private.build_compact_calendar(date,date,text)
+  futbeat_private.build_compact_calendar(date,date,text),
+  futbeat_private.wake_provider_worker(text)
 from public,anon,authenticated,service_role;
 revoke all on function futbeat_private.match_read_model(jsonb) from public,anon,authenticated;
-revoke all on function public.futbeat_read_calendar_range(date,date,text) from public,anon,authenticated;
-grant execute on function public.futbeat_read_calendar_range(date,date,text) to service_role;
-revoke all on function public.futbeat_warm_calendar_window(integer) from public,anon,authenticated;
-grant execute on function public.futbeat_warm_calendar_window(integer) to service_role;
-revoke all on function public.futbeat_calendar_snapshot_status() from public,anon,authenticated;
-grant execute on function public.futbeat_calendar_snapshot_status() to service_role;
+do $$ declare f text; begin
+  foreach f in array array['public.futbeat_read_calendar_range(date,date,text)',
+    'public.futbeat_warm_calendar_window(integer)','public.futbeat_calendar_snapshot_status()',
+    'public.futbeat_plan_calendar_snapshots()','public.futbeat_build_next_calendar_snapshot()'] loop
+    execute format('revoke all on function %s from public,anon,authenticated',f);
+    execute format('grant execute on function %s to service_role',f);
+  end loop;
+end $$;
 
 notify pgrst,'reload schema';
