@@ -41,7 +41,7 @@
 
 update futbeat_private.provider_quota_policy set
   freshness=freshness||'{"plannerLiveRefreshMinutes":30,"recentHotHours":6,"finalFetchAfterMinutes":120,
-    "plannerMaxFetchesPerMatchDay":4,"plannerMaxLiveFetches":6,"plannerRowTtlMinutes":60,"plannerMinRemaining":400,"plannerMaxPrematchFetches":3,"prematchRetryMinutes":20,"plannerQueueHighWater":12,"plannerQueueLowWater":4,
+    "plannerMaxFetchesPerMatchDay":4,"plannerMaxLiveFetches":6,"plannerMaxResultFetches":2,"resultsWindowHours":4,"plannerRowTtlMinutes":60,"plannerMinRemaining":400,"plannerMaxPrematchFetches":3,"prematchRetryMinutes":20,"plannerQueueHighWater":12,"plannerQueueLowWater":4,
     "plannerMinIntervalSeconds":50,"noDataRecheckRecentHours":12,"noDataRecheckHistoryDays":30,
     "fairnessAgingMinutes":20,"plannerBatchAbundant":4,"plannerBatchNormal":2,"plannerBatchTight":1,
     "plannerBatchUnknown":1,"detailShareLive":0.25,"detailSharePrematch":0.15,"detailShareResults":0.15,
@@ -95,7 +95,11 @@ returns text language sql stable set search_path='' as $$
   select case
     when p_start is null or coalesce(p_status,'') in ('CANCELLED','POSTPONED') then 'none'
     when p_status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES') then 'live'
-    when p_status='FINISHED_PENDING_VERIFICATION' then 'results'
+    -- GOAL finals stay FINISHED_PENDING_VERIFICATION (nothing sets VERIFIED):
+    -- only a short window after kickoff is "results"; later it is finished.
+    when p_status='FINISHED_PENDING_VERIFICATION'
+      and p_start>now()-make_interval(hours=>futbeat_private.quota_setting('goal_api','resultsWindowHours',4)::integer)
+      then 'results'
     when p_start>now()+make_interval(mins=>futbeat_private.quota_setting('goal_api','prematchMinutes',90)::integer) then
       case when p_start<=now()+make_interval(hours=>futbeat_private.quota_setting('goal_api','upcomingDetailHours',24)::integer)
         then 'upcoming' else 'future' end
@@ -123,25 +127,27 @@ begin
   select * into cov from futbeat_private.match_detail_coverage where match_id=p_match_id;
   if coalesce(cov.next_retry_at>now(),false) then return false; end if;
   select c.fetched_at into fetched from futbeat_private.match_detail_cache c where c.match_id=p_match_id;
-  -- Result verification is protected: its own cadence, no per-match cap.
-  if p_bucket='results' then
-    return fetched is null or futbeat_private.match_detail_due('FINISHED_PENDING_VERIFICATION',fetched);
-  end if;
   -- Hard bound on background work per match and phase (user opens are not
-  -- counted): pre-match and LIVE attempts never eat the post-match fetch.
-  phase:=case p_bucket when 'prematch' then 'prematch' when 'live' then 'live' else 'finished' end;
+  -- counted): pre-match, LIVE and results attempts never eat the post-match
+  -- fetch, and each phase has its own cap.
+  phase:=case p_bucket when 'prematch' then 'prematch' when 'live' then 'live'
+    when 'results' then 'results' else 'finished' end;
   select count(*) into used from futbeat_private.provider_call_ledger l
   where l.call_kind='match-detail' and l.metadata->>'matchId'=p_match_id
     and l.reserved_at>now()-interval '1 day' and coalesce(l.metadata->>'source','')<>'user'
     and case coalesce(l.metadata->>'bucket','') when 'prematch' then 'prematch' when 'live' then 'live'
-      else 'finished' end=phase;
+      when 'results' then 'results' else 'finished' end=phase;
   if used>=(case phase
       when 'prematch' then futbeat_private.quota_setting('goal_api','plannerMaxPrematchFetches',3)
       when 'live' then futbeat_private.quota_setting('goal_api','plannerMaxLiveFetches',6)
+      when 'results' then futbeat_private.quota_setting('goal_api','plannerMaxResultFetches',2)
       else futbeat_private.quota_setting('goal_api','plannerMaxFetchesPerMatchDay',4) end) then
     return false;
   end if;
   if fetched is null then return true; end if;
+  if p_bucket='results' then
+    return futbeat_private.match_detail_due('FINISHED_PENDING_VERIFICATION',fetched);
+  end if;
   if p_bucket='upcoming' then return false; end if;
   if p_bucket='live' then
     return coalesce((coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN'
@@ -184,7 +190,7 @@ returns boolean language sql stable set search_path='' as $$
       when 'history' then futbeat_private.quota_setting('goal_api','detailShareHistory',0.08)
       when 'upcoming' then futbeat_private.quota_setting('goal_api','detailShareUpcoming',0.03)
       else 0 end s)
-  select p_bucket='results' or (select count(*) from futbeat_private.provider_call_ledger l
+  select (select count(*) from futbeat_private.provider_call_ledger l
       where l.provider='goal_api' and l.call_kind='match-detail'
         and l.reserved_at>=date_trunc('day',now() at time zone 'UTC') at time zone 'UTC'
         and coalesce(l.metadata->>'source','')<>'user'
@@ -292,7 +298,8 @@ begin
       -- Cheap SQL prefilter so settled matches never crowd the candidate limit:
       -- upcoming only without any detail; finished only when not settled.
       and (p.bucket<>'upcoming' or d.match_id is null)
-      and not (p.bucket in ('recent_hot','recent','history') and d.fetched_at>=p.start_time+final_after
+      and not (p.bucket in ('recent_hot','recent','history')
+        and d.fetched_at>=nullif(e.payload->>'startTime','')::timestamptz+final_after
         and coalesce(c.lineup_state,'UNKNOWN')<>'UNKNOWN' and coalesce(c.statistics_state,'UNKNOWN')<>'UNKNOWN'
         and coalesce(c.lineup_recheck_at,'infinity')>now() and coalesce(c.statistics_recheck_at,'infinity')>now())
       and not exists(select 1 from futbeat_private.match_detail_requests r
@@ -566,7 +573,7 @@ begin
     select *,
       case
         when status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES') then case when source='user' then 1 else 2 end
-        when status='FINISHED_PENDING_VERIFICATION' then 2
+        when status='FINISHED_PENDING_VERIFICATION' and (source='user' or bucket='results') then 2
         when source='prematch' then 3
         when source='user' and coalesce(status,'SCHEDULED') not in ('VERIFIED','CANCELLED','ABANDONED','POSTPONED')
           and start_time>now()-interval '3 hours' then 3
@@ -577,7 +584,7 @@ begin
       end rank_value,
       case
         when status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES') then 'live'
-        when status='FINISHED_PENDING_VERIFICATION' then 'results'
+        when status='FINISHED_PENDING_VERIFICATION' and (source='user' or bucket='results') then 'results'
         when source='prematch' then 'user_high'
         when source='user' and coalesce(status,'SCHEDULED') not in ('VERIFIED','CANCELLED','ABANDONED','POSTPONED')
           and start_time>now()-interval '3 hours' then 'user_high'

@@ -348,3 +348,26 @@ test('M6. a completion without matchId never erases the reservation attribution'
   assert.equal(meta.matchId, m.match);
   assert.equal(meta.bucket, 'recent');
 }));
+
+test('C-1. pending-verification finals (GOAL never verifies) are not refetched every 30 minutes forever', () => withDb(async (db) => {
+  await remaining(db, 900);
+  // Old final: finished rules (complete -> 0 calls), not the results cadence.
+  const old = await seed(db, { status: 'FINISHED_PENDING_VERIFICATION', minutes: -2 * 24 * 60 });
+  await store(db, old, { lineups, statistics: stats }, 60 * 30);
+  assert.equal((await db.query("select futbeat_private.match_detail_bucket('FINISHED_PENDING_VERIFICATION',now()-interval '2 days') b")).rows[0].b, 'history');
+  assert.equal(await due(db, old), false);
+  // Fresh final: results window, capped at plannerMaxResultFetches.
+  const fresh = await seed(db, { status: 'FINISHED_PENDING_VERIFICATION', minutes: -130 });
+  await store(db, fresh, { lineups, statistics: stats }, 40);
+  assert.equal(await due(db, fresh), true);
+  await db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,metadata)
+    select 'goal_api','match-detail','test','SUCCEEDED',jsonb_build_object('matchId',$1::text,'source','recent','bucket','results')
+    from generate_series(1,2)`, [fresh.match]);
+  assert.equal(await due(db, fresh), false, 'results phase capped');
+  // Planner FPV rows outside the window are background work (shares apply).
+  const mid = await seed(db, { status: 'FINISHED_PENDING_VERIFICATION', minutes: -12 * 60 });
+  await plan(db);
+  const r = await reserve(db);
+  assert.equal(r.matchId, mid.match);
+  assert.equal(r.quotaClass, 'coverage');
+}));

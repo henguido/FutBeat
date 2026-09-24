@@ -11,20 +11,23 @@ provider, stationary mix: 25 live, 30 pre-match, 80 upcoming, 60 finished
 < 6 h, 250 finished < 36 h, 900 history; the worker runs the planner before
 each reservation and serves up to 4 per minute, as in production).
 
-Before, with ample quota, over 2 simulated hours:
+Finished GOAL matches stay `FINISHED_PENDING_VERIFICATION` (nothing sets
+`VERIFIED`); the simulation mirrors that. Before (main), ample quota, 2
+simulated hours:
 
-- 480 calls, 57 useful (a new lineup, statistics or events): **0.12 useful
-  per call**;
-- **446 of 480 calls (93 %) were planner LIVE refreshes** (every mapped live
-  match on the 5-minute user cadence); only 24 added anything;
+- 480 calls (the drain limit), 156 useful (a new lineup, statistics or
+  events): **0.33 useful per call**;
+- **341 calls re-fetched finished matches every 30 minutes**: the "results"
+  cadence applied to every pending-verification final in the 36 h / 7 d
+  window, uncapped (GOAL never verifies them);
+- **138 calls were planner LIVE refreshes** (every mapped live match on the
+  5-minute user cadence), only 13 useful;
 - the planner ran before every reservation (4x per minute) and queued up to
-  4 rows each time, while at most 4 were drained: the queue grew to 105
-  `recent` + 30 `prematch` rows that were never served (LIVE outranked them);
-- with an unknown remaining the blind budget ran out and user opens waited.
+  4 rows each time: the queue grew to ~160 rows (105 `recent`, 30
+  `prematch` never served); user opens waited up to 26 minutes.
 
-This matches production: calls concentrate on repeated refreshes of the same
-matches (684 calls vs 279 matches with any detail), and a `recent` backlog
-builds up that the drain never reaches.
+This matches production: 684 calls vs 279 matches with any detail (repeat
+refreshes), a `recent` backlog of 60, and user opens competing with it.
 
 ## Policy
 
@@ -33,7 +36,7 @@ All values live in `provider_quota_policy.freshness`.
 | Bucket | Background need (`match_detail_planner_due`) |
 |---|---|
 | live | lineup missing: every `liveRetryMinutes` (5); otherwise every `plannerLiveRefreshMinutes` (30), only in abundant/normal bands |
-| results (pending verification) | results cadence (30 min) |
+| results (pending verification, < `resultsWindowHours` 4 h after kickoff) | results cadence (30 min), at most `plannerMaxResultFetches` (2); afterwards the finished rules apply |
 | prematch (< `prematchMinutes`) | lineup missing, every `prematchRetryMinutes` (20), at most `plannerMaxPrematchFetches` (3) |
 | upcoming (< 24 h) | first fetch only |
 | recent_hot (< 6 h) / recent (< 36 h) / history (< 7 d) | one post-match fetch (`finalFetchAfterMinutes`), then only while a wanted section is UNKNOWN (retry gap by age) or a NO_DATA recheck is due |
@@ -42,8 +45,10 @@ All values live in `provider_quota_policy.freshness`.
 - Per match and phase, background calls per 24 h: pre-match
   `plannerMaxPrematchFetches` (3), LIVE `plannerMaxLiveFetches` (6), finished
   `plannerMaxFetchesPerMatchDay` (4). Phases never eat each other's budget.
-- Result verification (pending verification) is protected: its own cadence,
-  no per-match cap and no bucket budget.
+- Result verification is a short window with its own phase cap and a 15 %
+  budget; planner rows for older pending-verification finals are ordinary
+  background work (`coverage` class, shares apply). User opens of such
+  matches keep the `results` class.
 - Complete matches (both sections AVAILABLE or NO_DATA) cost 0 calls.
 - User opens keep the full freshness rules (`match_detail_needs_fetch`) and
   promote a queued planner row in place (one row, no parallel work).
@@ -76,7 +81,7 @@ All values live in `provider_quota_policy.freshness`.
   keep a reserve of their own.
 - Per-bucket daily budgets (`detailShare*`, fractions of the blind-aware
   match-detail cap): live 25 %, recent 25 %, prematch 15 %, results 15 %,
-  history 8 %, upcoming 3 % (results exempt). The central shares (background ≤ 60 %,
+  history 8 %, upcoming 3 %. The central shares (background ≤ 60 %,
   planner LIVE ≤ 85 %) and the 900 cap still apply.
 - Drain order: aged user opens, LIVE, results, pre-match, user, then
   background with fairness aging (`fairnessAgingMinutes`), never above a
@@ -110,17 +115,20 @@ PENDING is derived (open request or in-flight call), as Match Center reports.
 - All single-row state updates carry a WHERE (pg_safeupdate); the detail and
   calendar RPC paths are in the safeupdate checker's call graph.
 
-## After (same simulation)
+## After (same simulation, main vs branch)
 
-| Remaining | Calls | Useful | Useful/call | User opens waiting |
-|---|---|---|---|---|
-| ample, before | 480 | 57 | 0.12 | 0 |
-| ample, after | 480 | 236 | 0.49 | 2 (served next minute) |
-| 500, after | 130 | 66 | 0.51 | 0 |
-| unknown, before | 150 | 51 | 0.34 | 4 |
-| unknown, after | 113 | 82 | 0.73 | 0 |
+| Remaining | Build | Calls | Useful | Useful/call | User wait avg/max | Queue |
+|---|---|---|---|---|---|---|
+| ample | main | 480 | 156 | 0.33 | 2.4 / 26 min | ~160 |
+| ample | branch | 480 | 258 | 0.54 | 0.1 / 1 min | 12 |
+| 500 | main | 480 | 150 | 0.31 | 1.2 / 17 min | ~160 |
+| 500 | branch | 151 | 82 | 0.54 | 0.1 / 1 min | 4 |
+| unknown | main | 177 | 130 | 0.73 | 0.2 / 1 min | 4 |
+| unknown | branch | 119 | 88 | 0.74 | 0.1 / 1 min | 4 |
 
-Queue: before ~160 background rows after 2 h (growing); after 2-10.
+(`node backend/bench/detail_backlog_sim.mjs 120 <remaining>`; "main" runs the
+same bench against the main migrations. With ample quota both runs are
+drain-limited, so calls are equal and usefulness is the difference.)
 
 Expected production volume: background is bounded by the per-bucket budgets
 and the central 60 % background share (at most ~540 of the 900 cap on an

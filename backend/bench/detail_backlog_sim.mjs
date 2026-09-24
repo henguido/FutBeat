@@ -45,8 +45,9 @@ for (const [profile, count] of Object.entries(MIX)) {
     n++;
     const id = `fb_match_sim${n}`;
     const offset = between(RANGES[profile]);
+    // GOAL finals stay FINISHED_PENDING_VERIFICATION (nothing sets VERIFIED).
     const status = profile === 'live' ? 'LIVE'
-      : ['recentHot', 'recent', 'history'].includes(profile) ? 'VERIFIED' : 'SCHEDULED';
+      : ['recentHot', 'recent', 'history'].includes(profile) ? 'FINISHED_PENDING_VERIFICATION' : 'SCHEDULED';
     truth.set(id, { profile, offset, lineup: rand() < 0.55, stats: rand() < 0.65, events: rand() < 0.8, ext: `sim-${n}` });
     await q(`insert into futbeat_private.entities values($1,'match',jsonb_build_object('id',$1::text,
       'competitionId','fb_comp_sim','homeTeamId','fb_team_sim_h','awayTeamId','fb_team_sim_a',
