@@ -204,7 +204,25 @@ class MatchDetail {
   String? get stadium => _optional(json['stadium']);
   String? get round => _optional(json['round']);
   Json? get coverage => _nullableMap(json['coverage']);
-  bool get lineupEnrichmentPending => coverage?['lineupEnrichmentPending'] == true;
+  bool get lineupEnrichmentPending =>
+      coverage?['lineupEnrichmentPending'] == true;
+
+  /// Server section state: available | pending | unavailable | missing, or
+  /// null for older servers (then the global [pending] flag applies).
+  String? sectionState(String section) {
+    final value = coverage?[section];
+    return value is String ? value : null;
+  }
+
+  /// A section is only pending while the detail as a whole is: once the
+  /// bounded refresh ends (pending=false) nothing keeps spinning.
+  bool _sectionPending(String section) {
+    final state = sectionState(section);
+    return pending && (state == null || state == 'pending');
+  }
+
+  bool get lineupPending => _sectionPending('lineup');
+  bool get statisticsPending => _sectionPending('statistics');
 
   Json get home => _map(json['home']);
   Json get away => _map(json['away']);
@@ -435,6 +453,9 @@ class Snapshot {
 
   /// The server is hydrating this profile; a refresh shortly shows more data.
   bool get enrichmentPending => coverage?['enrichmentPending'] == true;
+
+  /// Match Center: the exact competition+season table is being fetched.
+  bool get standingsPending => coverage?['standingsPending'] == true;
   final bool stale;
   final bool revalidating;
   final DateTime updatedAt;

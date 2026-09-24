@@ -115,7 +115,7 @@ test('object lineup: canonical players, canonical photo first, fallback and empt
   assert.equal((await api(db)).home.starters[0].image, cdn('h1'));
 
   const actual = JSON.stringify({ matchId: detail.matchId, available: detail.available, pending: detail.pending,
-    detailLevel: detail.detailLevel, home: detail.home, away: detail.away, statistics: detail.statistics,
+    detailLevel: detail.detailLevel, coverage: detail.coverage, home: detail.home, away: detail.away, statistics: detail.statistics,
     incidents: detail.incidents, videos: detail.videos }, function (key, value) {
     // Canonical ids are random: pin them to a stable, still-valid form.
     if (key !== 'canonicalId' || value === null) return value;
