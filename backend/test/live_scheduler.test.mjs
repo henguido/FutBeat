@@ -356,6 +356,8 @@ test('GOAL quota priority preserves LIVE while allowing bounded Match Center det
   assert.equal(detail.quotaClass,'live');
   assert.equal(detail.priority,1);
   await db.query("select public.futbeat_complete_provider_call($1,'FAILED',null,500,'test','{}')",[detail.reservationId]);
+  // A failed fetch backs off (no retry loop); simulate the backoff elapsing.
+  await db.query("update futbeat_private.match_detail_coverage set next_retry_at=now()-interval '1 second'");
 
   await db.query(
    "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining) values('goal_api','global-ingest','test',now(),now(),'SUCCEEDED',70)"
@@ -366,6 +368,7 @@ test('GOAL quota priority preserves LIVE while allowing bounded Match Center det
   assert.equal(lowDetail.allowed,true);
   assert.equal(lowDetail.quotaClass,'live');
   await db.query("select public.futbeat_complete_provider_call($1,'FAILED',null,500,'test','{}')",[lowDetail.reservationId]);
+  await db.query("update futbeat_private.match_detail_coverage set next_retry_at=now()-interval '1 second'");
 
   const live=(await db.query(
    "select public.futbeat_reserve_goal_live_call('test') value"
@@ -471,7 +474,7 @@ test('Standings v2 stores canonical GOAL rows and exposes them in competition de
  } finally {await db.close();}
 });
 
-test('Standings v2 plan is generic, prioritizes Costa Rica, and respects GOAL reserve',async()=>{
+test('Standings v2 plan is generic, prioritizes real interest (never a hardcoded country) and uses the quota manager',async()=>{
  const db=await openDatabase();
  try {
   const now=new Date();
@@ -499,6 +502,9 @@ test('Standings v2 plan is generic, prioritizes Costa Rica, and respects GOAL re
    ]);
   }
 
+  // Interest decides, whatever the country: the lower-named competition wins
+  // only because users follow it.
+  await db.query("insert into futbeat_private.coverage_interests(subject_type,subject_id,priority_score,depth) values('competition','fb_comp_cr_v2',50,'BASE')");
   await db.query(
    "insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining) values('goal_api','live-goal','test',now()-interval '10 minutes',now()-interval '10 minutes','SUCCEEDED',500)"
   );
@@ -519,7 +525,8 @@ test('Standings v2 plan is generic, prioritizes Costa Rica, and respects GOAL re
   )).rows[0].value;
   assert.equal(blocked.allowed,false);
   assert.equal(blocked.reason,'provider_remaining_reserve');
-  assert.equal(blocked.reserve,350);
+  assert.equal(blocked.class,'coverage');
+  assert.equal(blocked.floor,300);
  } finally {await db.close();}
 });
 

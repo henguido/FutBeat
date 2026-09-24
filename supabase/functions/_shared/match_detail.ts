@@ -366,12 +366,29 @@ export function normalizeMatchDetail(
   if (!home.formation) home.formation = cleanText(payload.homeTeamSystem) || null;
   if (!away.formation) away.formation = cleanText(payload.awayTeamSystem) || null;
 
+  // Server-side completeness (read_match_detail.coverage) is authoritative:
+  // a cached row is not a complete detail. Older envelopes fall back to the
+  // previous rule.
+  const completeness = asRecord(envelope.coverage);
+  const sectionState = (value: unknown) =>
+    ['available', 'pending', 'unavailable', 'missing'].includes(cleanText(value))
+      ? cleanText(value)
+      : null;
+  const coverage = Object.keys(completeness).length === 0 ? null : {
+    detail: sectionState(completeness.detail),
+    lineup: sectionState(completeness.lineup),
+    statistics: sectionState(completeness.statistics),
+    stale: completeness.stale === true,
+  };
+
   return {
     matchId: cleanText(envelope.matchId),
     available: envelope.available === true,
-    pending:
-      envelope.requestedAt != null &&
-      cleanText(envelope.detailLevel) !== 'full',
+    pending: coverage
+      ? completeness.pending === true
+      : envelope.requestedAt != null &&
+        cleanText(envelope.detailLevel) !== 'full',
+    ...(coverage ? { coverage } : {}),
     detailLevel: cleanText(envelope.detailLevel) || 'none',
     fetchedAt: envelope.fetchedAt ?? null,
     provider: envelope.provider ?? null,

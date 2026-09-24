@@ -3,6 +3,12 @@
   "available": true,
   "pending": false,
   "detailLevel": "full",
+  "coverage": {
+    "detail": "available",
+    "lineup": "available",
+    "statistics": "available",
+    "stale": false
+  },
   "home": {
     "formation": "4-4-2",
     "starters": [
