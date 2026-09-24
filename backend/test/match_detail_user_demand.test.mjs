@@ -88,7 +88,7 @@ test('priority: LIVE opened by user > system LIVE > upcoming user > historical u
   }
   assert.deepEqual(order, [
     [userLive, 'live', 1], [systemLive, 'live', 2], [upcoming, 'user_high', 3], [historical, 'user', 4],
-    [prefetch, 'coverage', 5],
+    [prefetch, 'coverage', 6],
   ]);
 }));
 

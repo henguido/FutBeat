@@ -143,6 +143,8 @@ test('strong or fresh canonical states are not overridden by older finals', () =
   // A fresh LIVE canonical newer than the final keeps the strict ordering.
   assert.equal((await both(db, today)).status, 'LIVE');
   await db.query(`update futbeat_private.entities set payload=payload||'{"status":"SUSPENDED"}'::jsonb where id=$1`, [MATCH]);
+  // UTC today is a short-TTL snapshot (unversioned): read after it expires.
+  await db.exec("update futbeat_private.compact_calendar_cache set expires_at=now()-interval '1 second'");
   assert.equal((await both(db, today)).status, 'SUSPENDED');
 }));
 

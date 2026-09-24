@@ -203,8 +203,22 @@ class CalendarDataView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(effectiveCalendarSnapshotProvider(date));
+    // Before the stream's first event, paint the day already held in memory
+    // (no loading flash on a date switch). Only when the repository is live.
+    final repository = ref.exists(repositoryProvider)
+        ? ref.read(repositoryProvider)
+        : null;
+    final memory = state.hasValue || repository is! ApiRepository
+        ? null
+        : repository
+              .peekDate(date)
+              ?.withLiveUpdates(
+                ref.watch(liveMatchUpdatesProvider).asData?.value ??
+                    const <String, LiveMatchUpdate>{},
+              );
+    final cached = state.value ?? memory;
     final data =
-        state.asData?.value ??
+        cached ??
         Snapshot({
           'schemaVersion': 1,
           'demo': false,
@@ -226,7 +240,16 @@ class CalendarDataView extends ConsumerWidget {
               'Los datos pueden estar desactualizados. Desliza para actualizar.',
             ),
           ),
-        Expanded(child: builder(data, state.isLoading, state.hasError)),
+        Expanded(
+          child: builder(
+            data,
+            // Loading only without any snapshot to show, or while an empty
+            // cached day is being revalidated (never a false "no matches").
+            (cached == null && !state.hasError) ||
+                (data.matches.isEmpty && data.revalidating),
+            cached == null && state.hasError,
+          ),
+        ),
       ],
     );
   }

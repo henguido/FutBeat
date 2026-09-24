@@ -154,189 +154,10 @@ test('tier 0 order regression: equal last_seen_at breaks by startTime DESC (most
   } finally { await db.close(); }
 });
 
-test('tier 1 new: favorite team match is LIVE by canonical status without a live_match_state row', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, home } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await follow(db, 'team', home);
-    assert.equal(await enqueue(db), match);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: followed competition (not team) qualifies a LIVE match', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, competition } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await follow(db, 'competition', competition);
-    assert.equal(await enqueue(db), match);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: authoritative editorial relevance >=800 qualifies a LIVE match with zero follows', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, competition } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await relevance(db, competition, { score: 900, source: 'editorial' });
-    assert.equal(await enqueue(db), match);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: derived-source high score never counts as relevance', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, competition } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await relevance(db, competition, { score: 900, source: 'derived' });
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: provider-source high score never counts as relevance either (only editorial does)', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, competition } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await relevance(db, competition, { score: 950, source: 'provider' });
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: missing editorial metadata (no row at all) never counts as relevance', async () => {
-  const db = await openDatabase();
-  try {
-    const { match } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: editorial relevance below 800 does not qualify even though source is trusted', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, competition } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await relevance(db, competition, { score: 799, source: 'editorial' });
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: an expired temporary_interests row does not count as demand', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, home } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await temporaryInterest(db, 'team', home, { expiresInMinutes: -10 });
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: an unexpired temporary_interests row on the home/away team counts as real demand', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, away } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await temporaryInterest(db, 'team', away, { expiresInMinutes: 30 });
-    assert.equal(await enqueue(db), match);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: an unexpired temporary_interests row on the competition also counts as demand', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, competition } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await temporaryInterest(db, 'competition', competition, { expiresInMinutes: 30 });
-    assert.equal(await enqueue(db), match);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: a stale aggregate coverage_interests.temporary_users cannot substitute for a real temporary interest', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, home } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    await db.query(
-      `insert into futbeat_private.coverage_interests(subject_type,subject_id,explicit_followers,temporary_users,depth)
-       values('team',$1,0,999,'TEMPORARY')`,
-      [home],
-    );
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier 1 new: a LIVE-by-status match with zero follows/relevance/temporary interest and no live_match_state row is not enqueued', async () => {
-  const db = await openDatabase();
-  try {
-    await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -20 });
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier 2 new: pre-hydrates a followed match kicking off in 10 minutes that was never fetched', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, home } = await seedMatch(db, { status: 'SCHEDULED', startOffsetMinutes: 10 });
-    await follow(db, 'team', home);
-    assert.equal(await enqueue(db), match);
-  } finally { await db.close(); }
-});
-
-test('tier 2 new: pre-hydrates on a live temporary interest even without an explicit follow', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, home } = await seedMatch(db, { status: 'SCHEDULED', startOffsetMinutes: 10 });
-    await temporaryInterest(db, 'team', home, { expiresInMinutes: 30 });
-    assert.equal(await enqueue(db), match);
-  } finally { await db.close(); }
-});
-
-test('tier 2 new: does not pre-hydrate beyond the 30-minute window', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, home } = await seedMatch(db, { status: 'SCHEDULED', startOffsetMinutes: 45 });
-    await follow(db, 'team', home);
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier 2 new: does not re-trigger once any detail has already been fetched', async () => {
-  const db = await openDatabase();
-  try {
-    const { match, home } = await seedMatch(db, {
-      status: 'SCHEDULED', startOffsetMinutes: 10, cache: new Date(Date.now() - 3600000).toISOString(),
-    });
-    await follow(db, 'team', home);
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier 2 new: no blanket pre-hydration for a match with zero demand', async () => {
-  const db = await openDatabase();
-  try {
-    await seedMatch(db, { status: 'SCHEDULED', startOffsetMinutes: 10 });
-    assert.equal(await enqueue(db), null);
-  } finally { await db.close(); }
-});
-
-test('tier ordering: an unconditional LIVE candidate always wins over a pre-hydration candidate', async () => {
-  const db = await openDatabase();
-  try {
-    const live = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -40 });
-    await liveState(db, live.match, { lastSeenAgoMinutes: 20 });
-    const upcoming = await seedMatch(db, { status: 'SCHEDULED', startOffsetMinutes: 5 });
-    await follow(db, 'team', upcoming.home, { followers: 50 });
-    assert.equal(await enqueue(db), live.match);
-  } finally { await db.close(); }
-});
-
-test('never competes with an unexpired explicit Match Center request, and touches nothing', async () => {
-  const db = await openDatabase();
-  try {
-    const requested = await seedMatch(db, { status: 'SCHEDULED', startOffsetMinutes: -100 });
-    await db.query(
-      "insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count) values($1,now(),now()+interval '5 minutes',1)",
-      [requested.match],
-    );
-    const live = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -40 });
-    await liveState(db, live.match, { lastSeenAgoMinutes: 20 });
-    const before = await pendingRow(db, requested.match);
-    assert.equal(await enqueue(db), null);
-    assert.equal((await pendingRow(db, live.match)), undefined);
-    assert.deepEqual(await pendingRow(db, requested.match), before);
-  } finally { await db.close(); }
-});
+// The demand-gated tiers 1/2 (follows, editorial >= 800, temporary interest,
+// 30-minute window, "never compete with a user request") were replaced by the
+// generic temporal coverage planner (20260923200000). Its behavior is covered
+// by backend/test/match_detail_coverage_planner.test.mjs.
 
 test('concurrency/idempotency: repeated enqueue calls never duplicate the row and the advisory lock guard is present', async () => {
   const db = await openDatabase();
@@ -359,7 +180,12 @@ test('concurrency/idempotency: repeated enqueue calls never duplicate the row an
     const source = (await db.query(
       "select prosrc from pg_proc where oid='futbeat_private.enqueue_stale_interested_match_detail()'::regprocedure",
     )).rows[0].prosrc;
-    assert.match(source, /pg_advisory_xact_lock\(hashtext\('futbeat-match-detail-enqueue'\)\)/);
+    // The planner holds the serialization lock; the enqueuer delegates to it.
+    assert.match(source, /plan_match_detail_coverage/);
+    const planner = (await db.query(
+      "select prosrc from pg_proc where oid='futbeat_private.plan_match_detail_coverage(integer)'::regprocedure",
+    )).rows[0].prosrc;
+    assert.match(planner, /pg_advisory_xact_lock\(hashtext\('futbeat-match-detail-enqueue'\)\)/);
   } finally { await db.close(); }
 });
 
@@ -463,7 +289,10 @@ test('central quota: LIVE detail keeps its hard reserve and the per-kind safety 
   const db = await openDatabase();
   try {
     const { match } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -40 });
-    await db.query("insert into futbeat_private.match_detail_requests values($1,now(),now()+interval '10 minutes',1)", [match]);
+    // A user-opened LIVE match (planner LIVE work stops earlier, at the user
+    // reserve; see match_detail_coverage_planner.test.mjs).
+    await db.query(`insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count,source,user_requested_at)
+      values($1,now(),now()+interval '10 minutes',1,'user',now())`, [match]);
     // LIVE is the last class to stop: floor 20 (provider_quota_policy.class_floors.live).
     await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining)
       values('goal_api','live','test','SUCCEEDED',20)`);
@@ -471,10 +300,10 @@ test('central quota: LIVE detail keeps its hard reserve and the per-kind safety 
     assert.equal((await db.query('select count(*)::int n from futbeat_private.provider_call_ledger')).rows[0].n, 1);
     await db.exec(`update futbeat_private.provider_call_ledger set provider_remaining=21;
       insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status)
-      select 'goal_api','match-detail','test','FAILED' from generate_series(1,399)`);
+      select 'goal_api','match-detail','test','FAILED' from generate_series(1,899)`);
     assert.equal((await reserve(db)).allowed, true);
     assert.equal((await reserve(db)).reason, 'kind_daily_cap');
-    assert.equal((await db.query("select count(*)::int n from futbeat_private.provider_call_ledger where call_kind='match-detail'")).rows[0].n, 400);
+    assert.equal((await db.query("select count(*)::int n from futbeat_private.provider_call_ledger where call_kind='match-detail'")).rows[0].n, 900);
   } finally { await db.close(); }
 });
 

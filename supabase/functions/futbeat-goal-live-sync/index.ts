@@ -1015,12 +1015,20 @@ async function syncStandingsDemand() {
   }
 }
 
+// Keeps the calendar days around today prebuilt (DB-only snapshot builds,
+// no provider calls), so opening a date is a cache hit.
+async function syncCalendarWarm() {
+  return await rpc("futbeat_warm_calendar_window", {});
+}
+
 // User demand lane: match detail first (a Match Center is open), then player
 // discovery/hydration. Woken by the database right after demand is recorded
 // and also run by the per-minute cron, so a lost wake-up only adds latency.
 async function syncDemand() {
   const detail: unknown[] = [];
-  for (let i = 0; i < 2; i++) {
+  // Up to three details per run (per-minute cron + debounced wake-ups); the
+  // central quota manager still decides every one.
+  for (let i = 0; i < 3; i++) {
     try {
       const result = await syncOneMatchDetail() as Record<string, unknown>;
       detail.push(result);
@@ -1054,7 +1062,17 @@ async function syncDemand() {
     );
     standings = { status: "failed" };
   }
-  return { detail, players, standings };
+  let calendar: unknown;
+  try {
+    calendar = await syncCalendarWarm();
+  } catch (error) {
+    console.error(
+      "calendar warm failed",
+      error instanceof Error ? error.message : "unknown",
+    );
+    calendar = { status: "failed" };
+  }
+  return { detail, players, standings, calendar };
 }
 
 type SquadAttempt = {

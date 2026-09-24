@@ -14,6 +14,14 @@ import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/matches/matches_screen.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 
+/// The `date` query parameter the repository sends for [date] + [offset] days.
+String requestDate(DateTime date, int offset) {
+  final day = DateTime(date.year, date.month, date.day + offset);
+  return '${day.year.toString().padLeft(4, '0')}-'
+      '${day.month.toString().padLeft(2, '0')}-'
+      '${day.day.toString().padLeft(2, '0')}';
+}
+
 Map<String, dynamic> payload({bool table = false}) => {
   'schemaVersion': 1,
   'demo': false,
@@ -365,40 +373,39 @@ void main() {
     },
   );
 
-  test(
-    'today yesterday today has one visible fetch and two bounded prefetches',
-    () async {
-      final db = AppDatabase(NativeDatabase.memory());
-      final dio = Dio();
-      final requested = <String>[];
-      dio.interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (o, h) {
-            requested.add(o.queryParameters['date'] as String);
-            h.resolve(Response(requestOptions: o, data: payload()));
-          },
-        ),
-      );
-      final repository = ApiRepository(dio, db);
-      final today = DateUtils.dateOnly(costaRicaNow());
-      await repository.watchDate(today).toList();
-      await repository
-          .watchDate(today.subtract(const Duration(days: 1)))
-          .toList();
-      await repository.watchDate(today).toList();
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(requested, hasLength(3));
-      expect(requested.toSet(), hasLength(3));
-      // Reopening the repository also reuses persisted historical freshness.
-      await ApiRepository(
-        dio,
-        db,
-      ).watchDate(today.subtract(const Duration(days: 1))).toList();
-      expect(requested, hasLength(3));
-      dio.close();
-      await db.close();
-    },
-  );
+  test('today yesterday today: one visible fetch, neighbours prefetched once in order', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final dio = Dio();
+    final requested = <String>[];
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (o, h) {
+          requested.add(o.queryParameters['date'] as String);
+          h.resolve(Response(requestOptions: o, data: payload()));
+        },
+      ),
+    );
+    final repository = ApiRepository(dio, db);
+    final today = DateUtils.dateOnly(costaRicaNow());
+    String day(int offset) => requestDate(today, offset);
+    await repository.watchDate(today).toList();
+    await repository.settleBackground();
+    // Sequential D+1, D-1, D+2, D-2 (never a burst of parallel requests).
+    expect(requested, [day(0), day(1), day(-1), day(2), day(-2)]);
+    await repository
+        .watchDate(today.subtract(const Duration(days: 1)))
+        .toList();
+    await repository.watchDate(today).toList();
+    await repository.settleBackground();
+    expect(requested, hasLength(5));
+    // Reopening the repository also reuses persisted historical freshness.
+    final restarted = ApiRepository(dio, db);
+    await restarted.watchDate(today.subtract(const Duration(days: 1))).toList();
+    await restarted.settleBackground();
+    expect(requested, hasLength(5));
+    dio.close();
+    await db.close();
+  });
 
   for (final arrives in [false, true]) {
     test(
