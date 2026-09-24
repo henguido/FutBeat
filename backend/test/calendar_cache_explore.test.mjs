@@ -65,7 +65,8 @@ test('cache invalidates redirects, competition metadata, events, detail and cove
     values('goal_api','2020-01-02',now()),('goal_api','2020-01-03',now())`);
   assert.equal((await calendar(db,'2020-01-02','America/Costa_Rica')).coverage.partial,false);
   const ttl=async()=>(await db.query("select extract(epoch from expires_at-built_at)::int ttl from futbeat_private.compact_calendar_cache where timezone='America/Costa_Rica'")).rows[0].ttl;
-  assert.equal(await ttl(),30);
+  // Past day with incomplete results: calendarHistoryIncompleteMinutes (policy).
+  assert.equal(await ttl(),600);
   await db.exec('update futbeat_private.calendar_coverage set results_complete=true');
   await calendar(db,'2020-01-02','America/Costa_Rica');
   assert.equal(await ttl(),86400);
@@ -75,27 +76,29 @@ test('cache invalidates redirects, competition metadata, events, detail and cove
   }
  } finally {await db.close();}
 });
-test('today bypasses persistent cache and fresh LIVE changes remain visible',async()=>{
+test('today is served from a short-lived snapshot and LIVE changes are visible immediately (versioned)',async()=>{
  const db=await openDatabase();
  try {
   const today=(await db.query("select (now() at time zone 'UTC')::date::text d")).rows[0].d;
   await seed(db,1,today);
-  assert.equal((await db.query('select count(*)::int n from futbeat_private.calendar_cache_versions')).rows[0].n,0);
-  // A revision created when this date was future must also remain untouched.
-  await db.query('insert into futbeat_private.calendar_cache_versions values($1,42)',[today]);
   await db.exec(`update futbeat_private.entities set payload=payload||jsonb_build_object('startTime',now(),
     'status','LIVE','minute',20,'score',jsonb_build_object('home',0,'away',0),'provenance',jsonb_build_object('receivedAt',now())) where id='fb_match_cache_0'`);
   assert.equal((await calendar(db,today)).matches[0].minute,20);
+  // Served from the snapshot while nothing changes...
+  const built=async()=>(await db.query("select built_at,extract(epoch from expires_at-built_at)::int ttl from futbeat_private.compact_calendar_cache where calendar_date=$1",[today])).rows[0];
+  const first=await built();
+  await calendar(db,today);
+  assert.deepEqual(await built(),first);
+  assert.equal(first.ttl,15,'live day: calendarLiveSeconds');
+  // ...and a LIVE change bumps today's version: visible on the very next read.
   await db.exec(`update futbeat_private.entities set payload=payload||'{"minute":25,"score":{"home":1,"away":0}}' where id='fb_match_cache_0'`);
   const latest=await calendar(db,today);
   assert.deepEqual(latest.matches[0].score,{home:1,away:0});
   assert.equal(latest.matches[0].minute,25);
-  assert.equal((await db.query('select revision::int n from futbeat_private.calendar_cache_versions where utc_date=$1',[today])).rows[0].n,42);
-  assert.equal((await db.query('select count(*)::int n from futbeat_private.compact_calendar_cache')).rows[0].n,0);
  } finally {await db.close();}
 });
 
-test('UTC-today exclusion preserves history/future revisions and bypasses offset civil days',async()=>{
+test('history/future revisions invalidate cached days and offset civil days around UTC today are cached too',async()=>{
  const db=await openDatabase();
  try {
   const {today,past,future}=(await db.query(`select (now() at time zone 'UTC')::date::text today,
@@ -110,9 +113,9 @@ test('UTC-today exclusion preserves history/future revisions and bypasses offset
     assert.ok(await revision()>before);
     assert.equal((await calendar(db,date)).matches[0].status,'CANCELLED');
   }
-  assert.equal((await db.query(`select expires_at<=utc_date::timestamp at time zone 'UTC' ok
-    from futbeat_private.compact_calendar_cache c join futbeat_private.calendar_cache_versions v
-      on v.utc_date=c.calendar_date where c.calendar_date=$1`,[future])).rows[0].ok,true);
+  // A future day is re-evaluated once it starts (then "today" rules apply).
+  assert.equal((await db.query(`select expires_at<=calendar_date::timestamp at time zone 'UTC' ok
+    from futbeat_private.compact_calendar_cache c where c.calendar_date=$1 and c.timezone='UTC'`,[future])).rows[0].ok,true);
   // UTC bucket boundaries, including non-local-today dates in both directions.
   for(const timezone of ['America/Costa_Rica','Pacific/Kiritimati']) {
     const days=(await db.query(`select distinct (instant at time zone $2)::date::text d
@@ -121,16 +124,17 @@ test('UTC-today exclusion preserves history/future revisions and bypasses offset
     for(const {d} of days) {
       await calendar(db,d,timezone);
       assert.equal((await db.query(`select count(*)::int n from futbeat_private.compact_calendar_cache
-        where calendar_date=$1 and timezone=$2`,[d,timezone])).rows[0].n,0);
+        where calendar_date=$1 and timezone=$2`,[d,timezone])).rows[0].n,1);
     }
   }
   await db.exec(`set timezone='Pacific/Kiritimati'`);
+  // UTC today is versioned now: a bump is recorded regardless of the session zone.
   await db.query('select futbeat_private.bump_calendar_date($1)',[today]);
-  assert.equal((await db.query('select count(*)::int n from futbeat_private.calendar_cache_versions where utc_date=$1',[today])).rows[0].n,0);
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.calendar_cache_versions where utc_date=$1',[today])).rows[0].n,1);
  } finally {await db.close();}
 });
 
-test('future cache expires before the unversioned day and cannot reappear stale as history',async()=>{
+test('future cache expires when the day starts, today changes are versioned, and it never reappears stale as history',async()=>{
  const db=await openDatabase();
  try {
   // Freeze only the cache functions in this disposable DB; no production clock hook.
@@ -149,7 +153,8 @@ test('future cache expires before the unversioned day and cannot reappear stale 
   const before=await revision();
   await at('2030-01-02T12:00:00Z');
   await db.exec(`update futbeat_private.entities set payload=payload||'{"status":"CANCELLED"}' where id='fb_match_cache_0'`);
-  assert.equal(await revision(),before);
+  // UTC today is versioned: the change bumps the day's revision.
+  assert.ok(await revision()>before);
   assert.equal((await calendar(db,'2030-01-02')).matches[0].status,'CANCELLED');
   await at('2030-01-03T00:00:01Z');
   assert.equal((await calendar(db,'2030-01-02')).matches[0].status,'CANCELLED');

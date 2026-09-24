@@ -195,6 +195,20 @@ jobs:
           })
           $planDates = @($plan.dates)
 
+          # Keep the near future warm on every run, not only once a day: the
+          # plan returns only missing/stale dates, so quota use stays bounded.
+          if ($planDates.Count -eq 0) {
+            $nearToday = [DateTime]::UtcNow.Date
+            $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+              action = "calendar-plan"
+              fromDate = $nearToday.AddDays(2).ToString("yyyy-MM-dd")
+              toDate = $nearToday.AddDays(7).ToString("yyyy-MM-dd")
+              requestedOnly = $false
+              limit = 6
+            })
+            $planDates = @($plan.dates)
+          }
+
           if ($planDates.Count -eq 0 -and $shouldExpand) {
             $todayUtc = [DateTime]::UtcNow.Date
             $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
