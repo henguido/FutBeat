@@ -53,13 +53,15 @@ where provider='goal_api';
 -- Provider request units. A reservation may cover several real provider
 -- requests (pagination); the worker stores the count as
 -- metadata.providerRequests. Rows without it (every non-paginated kind, old
--- rows, reservations still in flight) count conservatively as 1. Invalid
--- values count as 1; a single call is bounded to 1000 units.
+-- rows) count conservatively as 1. A LIVE reservation in flight carries its
+-- whole pageBudget; completion replaces it with the real count. Invalid
+-- values count as 1; a single call is bounded to 1000 units (clamped as
+-- numeric before the cast, so a huge value never overflows integer).
 -- ---------------------------------------------------------------------------
 create or replace function futbeat_private.provider_call_units(p_metadata jsonb)
 returns integer language sql immutable set search_path='' as $$
   select case when jsonb_typeof(p_metadata->'providerRequests')='number'
-    then least(greatest(floor((p_metadata->>'providerRequests')::numeric)::integer,1),1000)
+    then least(greatest(floor((p_metadata->>'providerRequests')::numeric),1),1000)::integer
     else 1 end
 $$;
 revoke all on function futbeat_private.provider_call_units(jsonb) from public,anon,authenticated,service_role;
@@ -351,7 +353,10 @@ begin
     jsonb_build_object('activeMatches',(v_need->>'active')::integer,
       'liveMatches',(v_need->>'live')::integer,
       'overdueScheduled',(v_need->>'overdueScheduled')::integer,
-      'pageBudget',v_page_budget,'startOffset',v_start_offset))
+      'pageBudget',v_page_budget,'startOffset',v_start_offset,
+      -- Conservative in-flight units: the whole page budget is committed
+      -- until completion merges the real count (completion values win).
+      'providerRequests',v_page_budget))
   returning id into v_id;
   if (v_need->>'overdueScheduled')::integer>0 then
     perform futbeat_private.bump_metric('live_polls_with_overdue_scheduled');
@@ -362,8 +367,8 @@ begin
     'reservationId',v_id,
     'pageBudget',v_page_budget,
     'startOffset',v_start_offset,
-    'usedToday',(v_decision->>'totalToday')::integer+1,
-    'liveUsed',(v_decision->>'usedToday')::integer+1);
+    'usedToday',(v_decision->>'totalToday')::integer+v_page_budget,
+    'liveUsed',(v_decision->>'usedToday')::integer+v_page_budget);
 end
 $$;
 

@@ -79,7 +79,8 @@ test('quota: heavy match-detail use never cuts LIVE while remaining allows the l
   await remaining(db, 60);
   const r = await reserve(db);
   assert.equal(r.allowed, true);
-  assert.equal(r.usedToday, 902, 'total calls are reported, not used as a cutoff');
+  assert.equal(r.pageBudget, 10);
+  assert.equal(r.usedToday, 901 + r.pageBudget, 'total units (in-flight page budget included) are reported, not used as a cutoff');
 }));
 
 test('quota: the live-goal safety cap is independent of match-detail', () => withDb(async (db) => {

@@ -40,7 +40,12 @@ units, not rows:
 - The worker records `metadata.providerRequests`: every attempted request,
   the failed one included (LIVE and results-date). Non-paginated kinds and
   old rows have no value and count as 1 (`provider_call_units`; invalid
-  values → 1, bounded to 1000).
+  values → 1, bounded to 1000, clamped as numeric before the integer cast so
+  a huge value never overflows).
+- In flight, a LIVE reservation is stored with `providerRequests = pageBudget`:
+  every other reserver sees the whole committed budget, not 1. Completion
+  merges the real count over it (completion values win), releasing unused
+  pages; a failure records the requests spent (≥ 1). No double counting.
 - `quota_decision` sums units for kind caps and for the blind (unknown
   remaining) total; the results-date background guard does too (thresholds
   unchanged). `x-ratelimit-remaining` stays the primary truth; units are the

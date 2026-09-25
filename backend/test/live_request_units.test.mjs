@@ -102,7 +102,13 @@ test('4. rows without providerRequests (old or non-paginated) count conservative
   assert.equal(await v('{"providerRequests":0}'), 1);
   assert.equal(await v('{"providerRequests":"7"}'), 1, 'non-numeric is not trusted');
   assert.equal(await v('{"providerRequests":3}'), 3);
+  assert.equal(await v('{"providerRequests":-5}'), 1);
   assert.equal(await v('{"providerRequests":1e9}'), 1000, 'bounded');
+  // Clamped as numeric before the integer cast: never "integer out of range".
+  assert.equal(await v('{"providerRequests":1e20}'), 1000);
+  assert.equal(await v('{"providerRequests":99999999999999999999999999999999999999}'), 1000);
+  assert.equal(await v('{"providerRequests":1e300}'), 1000);
+  assert.equal(await v('{"providerRequests":-1e300}'), 1);
   // Existing kinds keep their contract: one row = one unit.
   await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status)
     select 'goal_api','match-detail','test','SUCCEEDED' from generate_series(1,5)`);
@@ -120,6 +126,27 @@ test('5. unknown remaining: the live-goal safety cap is evaluated in request uni
   // The blind total also counts units for background classes.
   const bg = (await db.query("select futbeat_private.quota_decision('goal_api','match-detail','coverage') v")).rows[0].v;
   assert.equal(bg.totalToday, 400);
+}));
+
+test('an in-flight LIVE poll commits its whole page budget; completion releases the unused pages', () => withDb(async (db) => {
+  await seedLive(db, 1);
+  const decision = async (kind, cls) => (await db.query('select futbeat_private.quota_decision($1,$2,$3) v', ['goal_api', kind, cls])).rows[0].v;
+  // Unknown remaining and an empty ledger: room for the full page budget.
+  const r = (await db.query("select public.futbeat_reserve_goal_live_call('test') v")).rows[0].v;
+  assert.equal(r.allowed, true);
+  assert.ok(r.pageBudget > 1, `pageBudget ${r.pageBudget}`);
+  assert.equal(r.liveUsed, r.pageBudget);
+  // Before completion every other reserver sees every committed unit, not 1.
+  assert.equal((await decision('live-goal', 'live')).usedToday, r.pageBudget);
+  assert.equal((await decision('match-detail', 'coverage')).totalToday, r.pageBudget);
+  // The poll used 2 pages: completion values win, no double counting.
+  await db.query(`select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,'{"providerRequests":2}'::jsonb)`, [r.reservationId]);
+  assert.equal((await decision('live-goal', 'live')).usedToday, 2);
+  assert.equal((await decision('match-detail', 'coverage')).totalToday, 2);
+  assert.equal(await units(db, 'live-goal'), 2);
+  const [row] = await liveRows(db);
+  assert.equal(row.metadata.providerRequests, 2);
+  assert.equal(row.metadata.pageBudget, r.pageBudget, 'the budget stays for observability');
 }));
 
 test('6. a failure after several pages keeps every request spent and the reported remaining', () => withDb(async (db) => {
