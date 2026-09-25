@@ -132,7 +132,7 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(find.text('Sin alineaciones'), findsNothing);
-      // Bounded schedule: one read-only refresh per step (5, 10, 20, 40 s),
+      // Bounded schedule: one read-only refresh per step (2, 4, 8, 15, 30 s),
       // then the pending state ends in simple empty states.
       for (var second = 0; second < 90; second++) {
         await tester.pump(const Duration(seconds: 1));
@@ -143,11 +143,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Sin estadísticas'), findsOneWidget);
       expect(repo.loads, 1);
-      expect(repo.reads, 4);
+      expect(repo.reads, 5);
       await tester.pumpWidget(const SizedBox());
       container.dispose();
       await tester.pump(const Duration(seconds: 120));
-      expect(repo.reads, 4);
+      expect(repo.reads, 5);
       await tester.runAsync(db.close);
     },
   );
@@ -224,13 +224,15 @@ void main() {
     test('initial detail failure keeps finite pending window (slow=$slow)', () async {
       final dio = Dio();
       var reads = 0;
+      var central = 0;
       final tokens = <CancelToken>[];
       final elapsed = Stopwatch()..start();
       dio.interceptors.add(
         InterceptorsWrapper(
           onRequest: (o, h) {
             reads++;
-            expect(o.queryParameters['request'], '0');
+            // One request-aware open, then read-only rechecks only.
+            if (o.queryParameters['request'] != '0') central++;
             if (slow) {
               tokens.add(o.cancelToken!);
               return; // Simulate a read that never completes, until cancelled.
@@ -272,20 +274,22 @@ void main() {
       expect(values, isNotEmpty);
       expect(values.every((value) => value.pending), true);
       await done.future.timeout(const Duration(seconds: 17));
-      // Initial read + one read-only refresh per bounded schedule step.
-      expect(reads, 5);
+      // Initial open + one read-only refresh per bounded schedule step.
+      expect(reads, 6);
+      expect(central, 1, reason: 'rechecks never request the provider');
       expect(values.last.pending, false);
       expect(values.last.statistics, isEmpty);
       expect(values.last.homeStarters, isEmpty);
       if (slow) {
         expect(tokens.every((token) => token.isCancelled), true);
         // Every slow read is cut at the read timeout; the schedule ends.
-        // 300 ms initial + (100+300) + (200+300) + (400+300) + (800+300).
+        // 300 ms initial + (100+300) + (200+300) + (400+300) + (750+300)
+        // + (1500+300).
         expect(
           elapsed.elapsed,
-          greaterThanOrEqualTo(const Duration(milliseconds: 3000)),
+          greaterThanOrEqualTo(const Duration(milliseconds: 4500)),
         );
-        expect(elapsed.elapsed, lessThan(const Duration(seconds: 6)));
+        expect(elapsed.elapsed, lessThan(const Duration(seconds: 8)));
       }
       watch.close();
       container.dispose();
