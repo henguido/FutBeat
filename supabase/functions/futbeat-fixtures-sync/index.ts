@@ -1,3 +1,8 @@
+// DEPRECATED (legacy, unscheduled). This API-Football path predates the
+// Provider Hub: it uses the old reservations and the name-based identity
+// resolver. No cron calls it (20260918194000 / 20260925071000 unschedule
+// every legacy job). It is superseded by futbeat-provider-hub-sync (#102
+// Phase 1B) and must not be scheduled again; removal is a separate cleanup.
 import { createApiFootballProvider, normalizeApiFootballFixtures } from "../../../backend/providers/api_football.mjs";
 
 const url = Deno.env.get("SUPABASE_URL")!;

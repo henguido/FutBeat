@@ -131,6 +131,9 @@ const RESERVE_CALL_GRAPH = [
   'public.futbeat_reserve_provider_hub_call',
   'public.futbeat_bind_provider_entity',
   'public.futbeat_match_provider_fixture',
+  // Provider Hub Phase 1B.
+  'public.futbeat_record_secondary_observation',
+  'public.futbeat_provider_hub_preview',
   // Standings coverage NO_DATA (Issue #116).
   'public.futbeat_record_standings_no_data',
   'futbeat_private.clear_standings_coverage_no_data',

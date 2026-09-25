@@ -159,25 +159,35 @@ export function createApiFootballProvider({
   if (typeof apiKey !== 'string' || !apiKey.trim()) throw new Error('API-Football key is required');
   const defaultLeagueIds = [...new Set(leagueIds.map(String))];
 
-  const requestFixtures = async (endpoint, params) => {
+  // One provider request. Returns the envelope plus transport facts
+  // (x-ratelimit-requests-remaining, HTTP status, latency); errors carry the
+  // same facts in `details` and never the key.
+  const request = async (endpoint, params) => {
     budget.reserve();
     const started = performance.now();
     const query = new URLSearchParams(params);
     let response;
+    let providerRemaining = null;
     try {
       response = await fetcher(`${baseUrl}/fixtures?${query}`, {
         headers: { 'x-apisports-key': apiKey, accept: 'application/json' },
         signal: AbortSignal.timeout(15000),
       });
+      providerRemaining = remainingHeader(response);
       const durationMs = Math.round(performance.now() - started);
       if (!response.ok) throw new ProviderResponseError(`API-Football HTTP ${response.status}`, {
-        endpoint, params, httpStatus: response.status, durationMs,
+        endpoint, params, httpStatus: response.status, durationMs, providerRemaining,
       });
       try {
-        return assertApiEnvelope(await response.json(), { redact: [apiKey] });
+        return {
+          envelope: assertApiEnvelope(await response.json(), { redact: [apiKey] }),
+          providerRemaining,
+          httpStatus: response.status,
+          durationMs,
+        };
       } catch (error) {
         if (error instanceof ProviderResponseError) {
-          error.details = { endpoint, params, httpStatus: response.status, durationMs, ...error.details };
+          error.details = { endpoint, params, httpStatus: response.status, durationMs, providerRemaining, ...error.details };
         }
         throw error;
       }
@@ -186,10 +196,12 @@ export function createApiFootballProvider({
       throw new ProviderResponseError('API-Football network error', {
         endpoint, params, httpStatus: response?.status ?? null,
         durationMs: Math.round(performance.now() - started),
+        providerRemaining,
         providerErrors: error?.name === 'TimeoutError' ? 'timeout' : 'network_error',
       });
     }
   };
+  const requestFixtures = async (endpoint, params) => (await request(endpoint, params)).envelope;
 
   return Object.freeze({
     descriptor: apiFootballDescriptor,
@@ -205,7 +217,102 @@ export function createApiFootballProvider({
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Fixture date requires an ISO date');
       return requestFixtures('fixtures_by_date', { date, timezone });
     },
+
+    /**
+     * Exact fixture (`/fixtures?id=<id>`): ONE request, the preferred
+     * secondary verification call (the provider includes its events).
+     * Validated before spending quota.
+     */
+    async fetchFixture({ fixtureId }) {
+      if (!/^\d+$/.test(String(fixtureId ?? ''))) throw new Error('Fixture id must be numeric');
+      return request('fixture_by_id', { id: String(fixtureId) });
+    },
   });
+}
+
+function remainingHeader(response) {
+  const raw = response?.headers?.get?.('x-ratelimit-requests-remaining');
+  if (raw == null || !/^\d+$/.test(String(raw).trim())) return null;
+  return Number(String(raw).trim());
+}
+
+/**
+ * Stable, safe error code for a failed API-Football call (never the key or
+ * a raw provider message). The suspended-account envelope (`errors.access`
+ * mentioning a suspended account) is an availability failure: provider
+ * health becomes UNAVAILABLE and nothing retries it automatically.
+ */
+export function classifyApiFootballError(error) {
+  const details = error?.details ?? {};
+  const providerErrors = details.providerErrors;
+  const text = (value) => (typeof value === 'string' ? value : JSON.stringify(value ?? '')).toLowerCase();
+  if (providerErrors && typeof providerErrors === 'object' && !Array.isArray(providerErrors)) {
+    if (/suspend/.test(text(providerErrors.access))) return 'API_FOOTBALL_ACCOUNT_SUSPENDED';
+    if (providerErrors.token || providerErrors.access) return 'API_FOOTBALL_AUTH';
+    if (providerErrors.requests || providerErrors.rateLimit) return 'API_FOOTBALL_RATE_LIMITED';
+  }
+  if (providerErrors === 'timeout') return 'API_FOOTBALL_TIMEOUT';
+  if (providerErrors === 'network_error') return 'API_FOOTBALL_NETWORK';
+  const status = details.httpStatus;
+  if (status === 401 || status === 403) return 'API_FOOTBALL_AUTH';
+  if (status === 429) return 'API_FOOTBALL_RATE_LIMITED';
+  if (Number.isInteger(status) && status >= 500) return 'API_FOOTBALL_HTTP_5XX';
+  if (/payload missing|invalid provider response/i.test(String(error?.message ?? ''))) return 'API_FOOTBALL_INVALID_PAYLOAD';
+  if (providerErrors) return 'API_FOOTBALL_API_ERROR';
+  return 'API_FOOTBALL_FAILED';
+}
+
+/** Codes meaning "do not call again until a human fixes the account/key". */
+export const apiFootballUnavailableCodes = Object.freeze(['API_FOOTBALL_ACCOUNT_SUSPENDED', 'API_FOOTBALL_AUTH']);
+
+/**
+ * One exact API-Football fixture -> a Provider Hub secondary observation
+ * with provider external ids only (canonical resolution happens through
+ * strict mappings). Unknown statuses are not guessed (null). Substitution
+ * roles follow API-Football's documented `player` (out) / `assist` (in)
+ * fields: UNVERIFIED against a live response.
+ */
+export function apiFootballFixtureObservation(item, receivedAt) {
+  const externalMatchId = Number.isInteger(item?.fixture?.id) && item.fixture.id > 0 ? String(item.fixture.id) : null;
+  if (!externalMatchId) throw new ProviderResponseError('API-Football fixture id missing', {});
+  const homeExternalId = item?.teams?.home?.id == null ? null : String(item.teams.home.id);
+  const awayExternalId = item?.teams?.away?.id == null ? null : String(item.teams.away.id);
+  let status = null;
+  try { status = mapStatus(item?.fixture?.status?.short); } catch { status = null; }
+  const home = Number.isInteger(item?.goals?.home) && item.goals.home >= 0 ? item.goals.home : null;
+  const away = Number.isInteger(item?.goals?.away) && item.goals.away >= 0 ? item.goals.away : null;
+  const events = [];
+  for (const event of Array.isArray(item?.events) ? item.events : []) {
+    const teamExternalId = event?.team?.id == null ? null : String(event.team.id);
+    const type = mapEventType(event?.type, event?.detail);
+    const player = event?.player?.id == null ? null : String(event.player.id);
+    const assist = event?.assist?.id == null ? null : String(event.assist.id);
+    events.push({
+      provenance: { provider: 'api_football', eventId: stableEventId(externalMatchId, event) },
+      type,
+      minute: Number.isInteger(event?.time?.elapsed) ? event.time.elapsed : null,
+      extraMinute: Number.isInteger(event?.time?.extra) ? event.time.extra : null,
+      side: teamExternalId !== null && teamExternalId === homeExternalId ? 'home'
+        : teamExternalId !== null && teamExternalId === awayExternalId ? 'away' : null,
+      playerExternalId: type === 'SUBSTITUTION' ? null : player,
+      outPlayerExternalId: type === 'SUBSTITUTION' ? player : null,
+      inPlayerExternalId: type === 'SUBSTITUTION' ? assist : null,
+    });
+  }
+  return {
+    provider: 'api_football',
+    externalMatchId,
+    receivedAt,
+    startTime: item?.fixture?.date ?? null,
+    competitionExternalId: item?.league?.id == null ? null : String(item.league.id),
+    homeExternalId,
+    awayExternalId,
+    providerStatus: item?.fixture?.status?.short ?? null,
+    status,
+    minute: Number.isInteger(item?.fixture?.status?.elapsed) ? item.fixture.status.elapsed : null,
+    score: home === null || away === null ? null : { home, away },
+    events,
+  };
 }
 
 export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {

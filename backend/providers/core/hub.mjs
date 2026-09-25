@@ -57,17 +57,25 @@ export const healthRules = Object.freeze({
  * Deterministic health from config + ledger stats (last 24 h):
  *   DISABLED     enabled=false
  *   UNSEEN       enabled, no completed call in the window
- *   UNAVAILABLE  last completion failed with 401/403 (auth), or the last
- *                `unavailableStreak` completions all failed
+ *   UNAVAILABLE  last completion failed with 401/403 or an availability
+ *                error code (`*_AUTH`, `*_ACCOUNT_SUSPENDED`; a provider may
+ *                report a suspended account inside an HTTP 200 envelope), or
+ *                the last `unavailableStreak` completions all failed
  *   DEGRADED     failure share >= degradedFailureRate, or p95 >= degradedP95Ms
  *   HEALTHY      otherwise
  * Never based on a provider's name.
  */
+/** Error codes that mean the account/key is unusable until a human acts. */
+export function availabilityErrorCode(code) {
+  return typeof code === 'string' && /_(AUTH|ACCOUNT_SUSPENDED)$/.test(code);
+}
+
 export function providerHealth(config, stats = {}) {
   if (!config?.enabled) return ProviderHealth.disabled;
   const completed = (stats.successCount ?? 0) + (stats.failedCount ?? 0);
   if (completed === 0) return ProviderHealth.unseen;
-  if ([401, 403].includes(stats.lastFailureHttpStatus) && stats.lastCompletionFailed) return ProviderHealth.unavailable;
+  if (stats.lastCompletionFailed && ([401, 403].includes(stats.lastFailureHttpStatus)
+    || availabilityErrorCode(stats.lastFailureCode))) return ProviderHealth.unavailable;
   if ((stats.failureStreak ?? 0) >= healthRules.unavailableStreak) return ProviderHealth.unavailable;
   if ((stats.failedCount ?? 0) / completed >= healthRules.degradedFailureRate) return ProviderHealth.degraded;
   if ((stats.p95LatencyMs ?? 0) >= healthRules.degradedP95Ms) return ProviderHealth.degraded;
