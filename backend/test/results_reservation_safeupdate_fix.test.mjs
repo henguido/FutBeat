@@ -115,6 +115,9 @@ const RESERVE_CALL_GRAPH = [
   'futbeat_private.request_match_detail',
   'futbeat_private.promote_bulk_lineup',
   'public.futbeat_complete_provider_call',
+  // GOAL LIVE reservation (Issue #111).
+  'futbeat_private.futbeat_reserve_goal_live_call',
+  'futbeat_private.live_poll_need',
   // Calendar snapshot materialization path (called through PostgREST).
   'public.futbeat_read_calendar_range',
   'public.futbeat_plan_calendar_snapshots',

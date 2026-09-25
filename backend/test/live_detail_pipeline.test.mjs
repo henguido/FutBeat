@@ -12,9 +12,15 @@ test('GOAL LIVE reservation tolerates five-minute scheduler jitter', async () =>
       ) def
     `)).rows[0];
 
-    assert.match(row.def, /interval '4 minutes'/);
-    assert.match(row.def, /240-extract\(epoch/);
-    assert.doesNotMatch(row.def, /v_last>v_now-interval '5 minutes'/);
+    // The interval is central policy (liveMinIntervalSeconds), below the
+    // five-minute cron so jitter never skips a cycle; behaviour is covered in
+    // live_quota_lifecycle.test.mjs.
+    assert.match(row.def, /liveMinIntervalSeconds/);
+    assert.match(row.def, /quota_decision\('goal_api','live-goal','live'\)/);
+    const interval = (await db.query(
+      "select futbeat_private.quota_setting('goal_api','liveMinIntervalSeconds',0) v",
+    )).rows[0].v;
+    assert.ok(Number(interval) > 0 && Number(interval) < 300);
   } finally {
     await db.close();
   }
