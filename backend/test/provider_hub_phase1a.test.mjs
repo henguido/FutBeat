@@ -188,8 +188,9 @@ test('no activation anywhere: no workflow, worker or ingest references the new p
   }
   assert.deepEqual(offenders, []);
   // The legacy API-Football edge functions (futbeat-live-sync /
-  // futbeat-fixtures-sync) stay unscheduled: their cron was removed in
-  // 20260918194000 and no later migration schedules them again.
+  // futbeat-fixtures-sync) stay unscheduled: 20260918194000 removed the live
+  // job, 20260925071000 removes every legacy job for good, and no later
+  // migration schedules them again (mentioning them to unschedule is fine).
   const migrations = (await readdir(new URL('../../supabase/migrations/', import.meta.url))).sort();
   const unscheduledAt = migrations.indexOf('20260918194000_rebalance_goal_live_quota.sql');
   assert.ok(unscheduledAt >= 0);
@@ -197,6 +198,7 @@ test('no activation anywhere: no workflow, worker or ingest references the new p
   assert.match(unschedule, /jobname='futbeat-live-sync-free-tier'[\s\S]*cron\.unschedule/);
   for (const name of migrations.slice(unscheduledAt + 1)) {
     const text = await readFile(new URL(`../../supabase/migrations/${name}`, import.meta.url), 'utf8');
-    assert.doesNotMatch(text, /functions\/v1\/futbeat-(live|fixtures)-sync|futbeat-live-sync-free-tier/, name);
+    assert.doesNotMatch(text, /http_post\(\s*url\s*:=\s*'[^']*\/functions\/v1\/futbeat-(live|fixtures)-sync'/, name);
+    assert.doesNotMatch(text, /cron\.(schedule|alter_job)\([^;]{0,200}futbeat-(live-sync|fixtures-(today|tomorrow|yesterday|three-day-window))/, name);
   }
 });
