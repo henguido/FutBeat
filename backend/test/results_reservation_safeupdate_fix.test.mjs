@@ -126,6 +126,9 @@ const RESERVE_CALL_GRAPH = [
   'futbeat_private.archive_standings_snapshot',
   'public.futbeat_request_match_standings',
   'public.futbeat_complete_standings_call',
+  // Standings coverage NO_DATA (Issue #116).
+  'public.futbeat_record_standings_no_data',
+  'futbeat_private.clear_standings_coverage_no_data',
   // Calendar snapshot materialization path (called through PostgREST).
   'public.futbeat_read_calendar_range',
   'public.futbeat_plan_calendar_snapshots',

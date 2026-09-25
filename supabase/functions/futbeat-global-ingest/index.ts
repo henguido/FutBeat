@@ -9,6 +9,7 @@ import {
   collectGoalApiPlayerIdentities,
   normalizeGoalApiSquad,
 } from "../../../backend/providers/goal_api_players.mjs";
+import { isGoalStandingsNoData } from "../_shared/goal_standings.ts";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -292,6 +293,7 @@ Deno.serve(async (request) => {
     players?: unknown;
     reservationId?: number;
     errorCode?: string;
+    providerCode?: string;
     httpStatus?: number | null;
     matchId?: string;
     externalMatchId?: string;
@@ -708,12 +710,61 @@ Deno.serve(async (request) => {
           mode: "standings",
           competitionId: input.competitionId ?? null,
           externalLeagueId: input.externalLeagueId ?? null,
+          providerCode: typeof input.providerCode === "string"
+            ? clean(input.providerCode).slice(0, 80) || null
+            : null,
           transport: "github-actions-oidc",
         },
       });
       return Response.json({ status: "ok" });
     } catch {
       return Response.json({ error: "Standings failure not recorded" }, {
+        status: 502,
+      });
+    }
+  }
+
+  // #116: the provider answered that this league has no standings. Recorded
+  // as a successful call with a bounded negative cache (coverage lane only);
+  // the server re-checks the classification, so a real failure can never be
+  // reported as "no data".
+  if (input.action === "standings-no-data") {
+    const httpStatus = input.httpStatus ?? null;
+    const providerCode = typeof input.providerCode === "string"
+      ? clean(input.providerCode).slice(0, 80)
+      : "";
+    if (
+      !Number.isInteger(input.reservationId) ||
+      Number(input.reservationId) < 1 ||
+      typeof input.competitionId !== "string" ||
+      !input.competitionId.startsWith("fb_comp") ||
+      (httpStatus != null && !Number.isInteger(httpStatus)) ||
+      !isGoalStandingsNoData(httpStatus, providerCode) ||
+      (
+        input.providerRemaining != null &&
+        (!Number.isInteger(input.providerRemaining) ||
+          input.providerRemaining < 0)
+      )
+    ) {
+      return Response.json({ error: "Invalid standings no-data report" }, {
+        status: 400,
+      });
+    }
+    try {
+      const result = await rpc("futbeat_record_standings_no_data", {
+        p_reservation_id: input.reservationId,
+        p_http_status: httpStatus,
+        p_provider_code: providerCode,
+        p_provider_remaining: input.providerRemaining ?? null,
+        p_competition_id: input.competitionId,
+      });
+      return Response.json({ ...result, status: "no_data" });
+    } catch (error) {
+      console.error(
+        "standings no-data record failed",
+        error instanceof Error ? error.message.slice(0, 300) : "unknown",
+      );
+      return Response.json({ error: "Standings no-data not recorded" }, {
         status: 502,
       });
     }

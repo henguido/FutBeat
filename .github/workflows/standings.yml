@@ -63,41 +63,100 @@ jobs:
             exit 0
           }
 
+          # BEGIN standings-outcome
+          # Mirrors classifyGoalStandingsResponse in
+          # supabase/functions/_shared/goal_standings.ts (same cases tested
+          # against both in backend/test/standings_coverage_no_data.test.mjs).
+          # Generic: no league id or name is special-cased.
+          function Get-GoalProviderCode([object]$Body) {
+            if ($null -eq $Body -or $Body -is [System.Array]) { return "" }
+            $nested = $null
+            if ($Body.error -is [System.Management.Automation.PSCustomObject]) { $nested = $Body.error.code }
+            foreach ($value in @($Body.code, $Body.errorCode, $nested)) {
+              if ($value -is [string] -and -not [string]::IsNullOrWhiteSpace($value)) {
+                return $value.Trim().ToUpperInvariant()
+              }
+            }
+            return ""
+          }
+
+          # Status 0 = no HTTP response (network error or timeout).
+          function Get-StandingsOutcome([int]$Status, [object]$Body) {
+            $code = Get-GoalProviderCode $Body
+            if ($Status -lt 100) { return @{ action = "standings-fail"; code = "GOAL_STANDINGS_NETWORK" } }
+            if ($Status -eq 401 -or $Status -eq 403) { return @{ action = "standings-fail"; code = "GOAL_STANDINGS_AUTH" } }
+            if ($Status -eq 429) { return @{ action = "standings-fail"; code = "GOAL_STANDINGS_RATE_LIMITED" } }
+            if ($Status -ge 500) { return @{ action = "standings-fail"; code = "GOAL_STANDINGS_HTTP_5XX" } }
+            $success2xx = $Status -ge 200 -and $Status -lt 300
+            if ($code -eq "STANDINGS_NOT_FOUND" -and ($Status -eq 404 -or $success2xx)) {
+              return @{ action = "standings-no-data"; code = "STANDINGS_NOT_FOUND" }
+            }
+            if (-not $success2xx) { return @{ action = "standings-fail"; code = "GOAL_STANDINGS_HTTP_$Status" } }
+            if ($null -eq $Body -or $Body -is [System.Array] -or -not ($Body.success -is [bool] -and $Body.success) -or
+                -not ($Body.data -is [System.Array])) {
+              return @{ action = "standings-fail"; code = "GOAL_STANDINGS_INVALID_PAYLOAD" }
+            }
+            if (@($Body.data).Count -ge 2) { return @{ action = "standings-ingest"; code = "OK" } }
+            return @{ action = "standings-no-data"; code = "EMPTY_STANDINGS" }
+          }
+          # END standings-outcome
+
           $reservationId = [int]$plan.reservation.reservationId
           $competitionId = [string]$plan.reservation.competitionId
           $externalLeagueId = [string]$plan.reservation.externalLeagueId
           $remaining = $null
+          $status = 0
+          $body = $null
+          $transportError = ""
 
+          # Invoke-WebRequest -SkipHttpErrorCheck keeps the HTTP status, the
+          # JSON body and X-RateLimit-Remaining for 4xx/5xx answers too
+          # (Invoke-RestMethod threw before the body could be read).
           try {
-            $responseHeaders = $null
             $uri = "https://api.goal-api.com/v1/standings/$externalLeagueId"
-            $response = Invoke-RestMethod -Uri $uri `
+            $response = Invoke-WebRequest -Uri $uri `
               -Headers @{
                 Authorization = "Bearer $env:GOAL_API_KEY"
                 Accept = "application/json"
               } `
-              -ResponseHeadersVariable responseHeaders `
+              -SkipHttpErrorCheck `
               -TimeoutSec 30
-
-            if (-not $response.success -or -not ($response.data -is [System.Array])) {
-              throw "GOAL API returned an invalid standings payload"
+            $status = [int]$response.StatusCode
+            $rawRemaining = @($response.Headers["X-RateLimit-Remaining"])[0]
+            if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
+              $remaining = [int]$rawRemaining
             }
+            try { $body = [string]$response.Content | ConvertFrom-Json } catch { $body = $null }
+          } catch {
+            $status = 0
+            $transportError = $_.Exception.Message
+          }
 
-            if ($null -ne $responseHeaders) {
-              $rawRemaining = @($responseHeaders["X-RateLimit-Remaining"])[0]
-              if (-not [string]::IsNullOrWhiteSpace([string]$rawRemaining)) {
-                $remaining = [int]$rawRemaining
-              }
-            }
+          $outcome = Get-StandingsOutcome $status $body
+          $httpStatus = $null
+          if ($status -ge 100) { $httpStatus = $status }
 
+          if ($outcome.action -eq "standings-no-data") {
+            $result = Invoke-FutBeatEndpoint ([ordered]@{
+              action = "standings-no-data"
+              reservationId = $reservationId
+              competitionId = $competitionId
+              externalLeagueId = $externalLeagueId
+              providerRemaining = $remaining
+              httpStatus = $httpStatus
+              providerCode = $outcome.code
+            })
+            Write-Output "STANDINGS_NO_DATA competition=$competitionId code=$($outcome.code) status=$status retryAt=$($result.retryAt) remaining=$remaining"
+            exit 0
+          }
+
+          if ($outcome.action -eq "standings-ingest") {
             $season = ""
-            if (@($response.data).Count -gt 0) {
-              $first = @($response.data)[0]
-              foreach ($field in @("season","leagueSeason","overallLeagueSeason")) {
-                if (-not [string]::IsNullOrWhiteSpace([string]$first.$field)) {
-                  $season = [string]$first.$field
-                  break
-                }
+            $first = @($body.data)[0]
+            foreach ($field in @("season","leagueSeason","overallLeagueSeason")) {
+              if (-not [string]::IsNullOrWhiteSpace([string]$first.$field)) {
+                $season = [string]$first.$field
+                break
               }
             }
 
@@ -108,23 +167,26 @@ jobs:
               externalLeagueId = $externalLeagueId
               season = $season
               providerRemaining = $remaining
-              rows = @($response.data)
+              rows = @($body.data)
             })
 
             Write-Output "STANDINGS_OK competition=$competitionId rows=$($result.rows) remaining=$remaining"
-          } catch {
-            try {
-              Invoke-FutBeatEndpoint ([ordered]@{
-                action = "standings-fail"
-                reservationId = $reservationId
-                competitionId = $competitionId
-                externalLeagueId = $externalLeagueId
-                providerRemaining = $remaining
-                errorCode = "GOAL_STANDINGS_FETCH_FAILED"
-                httpStatus = $null
-              }) | Out-Null
-            } catch {
-              Write-Warning "STANDINGS_FAILURE_RECORD_FAILED"
-            }
-            throw
+            exit 0
           }
+
+          # Real failure: recorded as FAILED and the run stays red.
+          try {
+            Invoke-FutBeatEndpoint ([ordered]@{
+              action = "standings-fail"
+              reservationId = $reservationId
+              competitionId = $competitionId
+              externalLeagueId = $externalLeagueId
+              providerRemaining = $remaining
+              errorCode = $outcome.code
+              providerCode = (Get-GoalProviderCode $body)
+              httpStatus = $httpStatus
+            }) | Out-Null
+          } catch {
+            Write-Warning "STANDINGS_FAILURE_RECORD_FAILED"
+          }
+          throw "GOAL standings request failed code=$($outcome.code) status=$status $transportError"
