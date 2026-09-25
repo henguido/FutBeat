@@ -17,9 +17,10 @@ the shared budget ~10 h before the reported kickoffs.
 
 - Quota: `quota_decision('goal_api','live-goal','live')`.
   - Reserve = `class_floors.live` (20), the single source of truth.
-  - Safety cap `kind_daily_caps['live-goal']` = 400, independent of
-    match-detail and background kinds (max cadence is one poll per
-    `liveMinIntervalSeconds` = 240 s, i.e. 360/day).
+  - Safety cap `kind_daily_caps['live-goal']` = 400 request units,
+    independent of match-detail and background kinds (max cadence is one poll
+    per `liveMinIntervalSeconds` = 240 s, i.e. 360 polls/day of usually one
+    page each).
   - Unknown remaining: no blind cutoff for LIVE (class `live` is exempt from
     the unknown-budget caps); only its safety cap applies.
 - Priority as the budget falls (unchanged floors, one policy row):
@@ -30,6 +31,37 @@ the shared budget ~10 h before the reported kickoffs.
   `[now − liveMaxHours, now + liveWindowLeadMinutes]` and a non-terminal
   canonical status, classified as `live`, `upcoming` or `overdueScheduled`.
   No active match → no reservation.
+
+## Provider request units
+
+A reservation can cover several real requests (pagination). Quota counts
+units, not rows:
+
+- The worker records `metadata.providerRequests`: every attempted request,
+  the failed one included (LIVE and results-date). Non-paginated kinds and
+  old rows have no value and count as 1 (`provider_call_units`; invalid
+  values → 1, bounded to 1000).
+- `quota_decision` sums units for kind caps and for the blind (unknown
+  remaining) total; the results-date background guard does too (thresholds
+  unchanged). `x-ratelimit-remaining` stays the primary truth; units are the
+  defence for unknown remaining, safety caps and observability.
+- A failed page keeps the `remaining` reported by the provider.
+
+## Paging near the LIVE reserve
+
+- The reservation returns `pageBudget = min(livePageLimit 10, remaining −
+  live floor, live-goal cap − units used)` (≥ 1 when allowed).
+- The worker also stops as soon as the observed remaining reaches the floor.
+- A truncated batch records `paginationTruncated`, `resumeOffset` and the
+  requests made; the next poll starts at `resumeOffset` (restarting at 0 once
+  if that page is empty). Matches on unread pages are left untouched: nothing
+  interprets absence as evidence (stale-overlay pruning is time based).
+- results-date is not truncated (a partial date would go through date
+  finalization); it only counts real units.
+
+`futbeat_provider_quota_status()` adds `requestUnitsByKind` and
+`live.{pollCyclesToday, providerRequestsToday, averagePagesPerPoll,
+paginationTruncatedToday, lastProviderRequests}`.
 
 ## Overdue SCHEDULED
 
