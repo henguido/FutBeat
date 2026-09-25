@@ -107,9 +107,20 @@ test('timeout / network errors are sanitized', async () => {
     token: TOKEN,
     budget: budget(),
     timeoutMs: 5,
-    fetcher: async (url, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => {
-      const error = new Error(`aborted ${TOKEN}`); error.name = 'TimeoutError'; reject(error);
-    })),
+    // AbortSignal.timeout does not keep the event loop alive (Node 22): the
+    // guard timer does, and fails the test for real if the adapter's signal
+    // never fires (instead of leaving a pending promise / cancelled test).
+    fetcher: async (_url, { signal }) => new Promise((_, reject) => {
+      const guard = setTimeout(() => {
+        reject(new Error('AbortSignal timeout did not fire'));
+      }, 500);
+      signal.addEventListener('abort', () => {
+        clearTimeout(guard);
+        const error = new Error(`aborted ${TOKEN}`);
+        error.name = 'TimeoutError';
+        reject(error);
+      }, { once: true });
+    }),
   });
   await assert.rejects(provider.fetchLivescores(), (error) => {
     assert.ok(error instanceof ProviderResponseError);
