@@ -447,24 +447,46 @@ async function syncLive() {
   const reservationId = Number(plan.reservationId);
   const fixtures: Record<string, unknown>[] = [];
   const seen = new Set<string>();
-  let offset = 0;
+  // Page budget from the central reservation (never through the protected
+  // LIVE reserve nor past the live-goal cap); 10 is the historical hard max.
+  const pageBudget = Math.min(Math.max(nonNegativeInteger(plan.pageBudget) ?? 10, 1), 10);
+  const floor = nonNegativeInteger(plan.reserve);
+  const startOffset = nonNegativeInteger(plan.startOffset) ?? 0;
+  let offset = startOffset;
+  let restarted = false;
+  // Every attempted request counts (a failed page still spent a request).
   let providerRequests = 0;
   let providerTotal: number | null = null;
   let remaining: number | null = null;
+  let paginationTruncated = false;
+  let resumeOffset: number | null = null;
 
   try {
     const goalKey = await readGoalKey();
-    for (let page = 0; page < 10; page += 1) {
-      const response = await fetchGoal(
-        goalKey,
-        `/fixtures/live?limit=100&offset=${offset}`,
-      );
-      remaining = response.remaining ?? remaining;
+    for (let page = 0; page < pageBudget; page += 1) {
       providerRequests += 1;
+      let response: Awaited<ReturnType<typeof fetchGoal>>;
+      try {
+        response = await fetchGoal(
+          goalKey,
+          `/fixtures/live?limit=100&offset=${offset}`,
+        );
+      } catch (error) {
+        const errorRemaining = (error as { remaining?: unknown })?.remaining;
+        if (typeof errorRemaining === "number") remaining = errorRemaining;
+        throw error;
+      }
+      remaining = response.remaining ?? remaining;
 
       const data = response.payload.data;
       if (!Array.isArray(data)) {
         throw new Error("GOAL live payload data must be an array");
+      }
+      // A resumed offset past the (shrunk) live list: start over once.
+      if (data.length === 0 && offset > 0 && !restarted) {
+        restarted = true;
+        offset = 0;
+        continue;
       }
 
       for (const item of data) {
@@ -488,8 +510,14 @@ async function syncLive() {
 
       const pageLimit = nonNegativeInteger(paginationRow?.limit) ?? 100;
       offset += Math.max(pageLimit, 1);
-      if (page === 9) {
-        throw new Error("GOAL live pagination exceeded safety limit");
+      // Stop at the page budget or when the provider reports the protected
+      // reserve: a partial batch is recorded as partial and the next poll
+      // resumes here. Unread pages are never treated as evidence.
+      const atFloor = floor != null && remaining != null && remaining <= floor;
+      if (page + 1 >= pageBudget || atFloor) {
+        paginationTruncated = true;
+        resumeOffset = offset;
+        break;
       }
     }
 
@@ -515,11 +543,15 @@ async function syncLive() {
       p_error_code: null,
       p_metadata: {
         mode: "live",
+        providerRequests,
+        pageBudget,
+        startOffset,
+        paginationTruncated,
+        resumeOffset,
         liveMatches: observations.length,
         linkedMatches: linkResult?.linked ?? 0,
         alreadyLinkedMatches: linkResult?.alreadyLinked ?? 0,
         unmappedMatches: linkResult?.unmappedCount ?? 0,
-        providerRequests,
         providerTotal: providerTotal ?? observations.length,
         insertedObservations: persistence?.insertedObservations ?? 0,
         duplicates: persistence?.duplicates ?? 0,
@@ -530,6 +562,7 @@ async function syncLive() {
 
     return {
       status: "ok",
+      paginationTruncated,
       liveMatches: observations.length,
       linkedMatches: linkResult?.linked ?? 0,
       unmappedMatches: linkResult?.unmappedCount ?? 0,
@@ -543,6 +576,10 @@ async function syncLive() {
       "GOAL_LIVE_FETCH_FAILED",
       {
         mode: "live",
+        // Requests already spent, including the one that failed.
+        providerRequests: Math.max(providerRequests, 1),
+        pageBudget,
+        startOffset,
         detail: error instanceof Error ? error.message.slice(0, 300) : "unknown",
       },
       remaining,
@@ -596,13 +633,21 @@ async function syncOneResultsDate() {
     let offset = 0;
     stage = "provider_fetch";
     for (let page = 0; page < 5; page += 1) {
-      const response = await fetchGoal(
-        goalKey,
-        `/results/date/${providerDate}?limit=500&offset=${offset}`,
-      );
+      // Every attempted request counts (a failed page still spent one).
+      providerRequests += 1;
+      let response: Awaited<ReturnType<typeof fetchGoal>>;
+      try {
+        response = await fetchGoal(
+          goalKey,
+          `/results/date/${providerDate}?limit=500&offset=${offset}`,
+        );
+      } catch (error) {
+        const errorRemaining = (error as { remaining?: unknown })?.remaining;
+        if (typeof errorRemaining === "number") remaining = errorRemaining;
+        throw error;
+      }
       httpStatus = response.status;
       remaining = response.remaining ?? remaining;
-      providerRequests += 1;
       const data = response.payload.data;
       if (!Array.isArray(data)) {
         throw new Error("GOAL results payload data must be an array");
