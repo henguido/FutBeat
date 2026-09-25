@@ -33,6 +33,10 @@
 --     standingsNoDataDays; opening the match never requeues it early.
 --   * QUEUED demands whose season is no longer current are closed as NO_DATA
 --     (they can never be fetched), so nothing is pending forever.
+--   * The provider mapping is revalidated at reservation time (canonical
+--     competition + aliases redirected to it, never by name): a changed
+--     mapping updates the demand in place, a removed mapping closes it as
+--     NO_DATA ("provider mapping unavailable") without any provider call.
 --   * match_standings_state returns exactly one of available | pending |
 --     unavailable | missing, plus standingsStale / standingsPending. A stale
 --     exact table stays "available" (shown) while it is revalidated.
@@ -45,7 +49,7 @@ create index if not exists standings_demands_queued_idx
   on futbeat_private.standings_demands(queued_at) where status='QUEUED';
 
 update futbeat_private.provider_quota_policy set
-  freshness=freshness||'{"standingsDemandAgingMinutes":30,"standingsMaxAutoRetries":5}',
+  freshness=freshness||'{"standingsDemandAgingMinutes":30,"standingsMaxAutoRetries":5,"standingsUnmappedRetryMinutes":60}',
   updated_at=now()
 where provider='goal_api';
 
@@ -60,12 +64,28 @@ returns interval language sql stable set search_path='' as $$
     else make_interval(hours=>futbeat_private.quota_setting('goal_api','standingsHours',6)::integer) end
 $$;
 
+-- Current GOAL league id of a canonical competition: its own mapping or the
+-- mapping of any alias redirected to it (walks the redirects backwards,
+-- indexed). Never by name. Null when unmapped.
+create or replace function futbeat_private.standings_provider_league_id(p_competition_id text)
+returns text language sql stable set search_path='' as $$
+  with recursive ids(id,depth) as (
+    select p_competition_id,0
+    union
+    select r.alias_id,ids.depth+1 from futbeat_private.entity_redirects r
+    join ids on r.kind='competition' and r.canonical_id=ids.id
+    where ids.depth<8
+  )
+  select pe.external_id from futbeat_private.provider_entities pe
+  where pe.canonical_id=any(array(select id from ids)) and pe.provider='goal_api' and pe.kind='competition'
+  order by pe.external_id limit 1
+$$;
+
 -- Exact-identity standings state for one match (read-only).
 create or replace function futbeat_private.match_standings_state(p_match_id text)
 returns jsonb language plpgsql stable set search_path='' as $$
 declare m jsonb; comp text; v_key text; current_key text; ext text; snap futbeat_private.standings_snapshots;
   dem futbeat_private.standings_demands; fresh_for interval; fetchable boolean; queued boolean; state text;
-  alias_ids text[];
 begin
   select payload into m from futbeat_private.entities where id=p_match_id and kind='match';
   if m is null then return null; end if;
@@ -77,17 +97,7 @@ begin
   end if;
   current_key:=futbeat_private.competition_season_key(comp);
   -- Mapping of this canonical competition or of any alias redirected to it.
-  with recursive ids(id,depth) as (
-    select comp,0
-    union
-    select r.alias_id,ids.depth+1 from futbeat_private.entity_redirects r
-    join ids on r.kind='competition' and r.canonical_id=ids.id
-    where ids.depth<8
-  )
-  select array_agg(id) into alias_ids from ids;
-  select pe.external_id into ext from futbeat_private.provider_entities pe
-  where pe.canonical_id=any(alias_ids) and pe.provider='goal_api' and pe.kind='competition'
-  order by pe.external_id limit 1;
+  ext:=futbeat_private.standings_provider_league_id(comp);
   -- GOAL serves the competition's current table only: other seasons are
   -- available only if they were archived while current.
   fetchable:=ext is not null and v_key=coalesce(current_key,'');
@@ -152,7 +162,7 @@ end $$;
 -- current can never be fetched and are closed as NO_DATA.
 create or replace function futbeat_private.reconcile_standings_demands()
 returns jsonb language plpgsql security definer set search_path='' as $$
-declare v_satisfied integer; v_closed integer;
+declare v_satisfied integer; v_closed integer; v_remapped integer; v_unmapped integer;
 begin
   with done as (
     update futbeat_private.standings_demands d set status='AVAILABLE',lease_until=null,failure_count=0,
@@ -172,9 +182,32 @@ begin
       and futbeat_private.competition_season_key(d.competition_id)<>''
     returning 1)
   select count(*) into v_closed from closed;
+  -- Provider mapping is revalidated, never trusted from the demand row: a
+  -- changed mapping is updated in place (same demand), a removed one closes
+  -- the demand without spending quota. Short retry: once remapped, reopening
+  -- the match can queue it again.
+  with m as (
+    select d.competition_id,d.season_key,futbeat_private.standings_provider_league_id(d.competition_id) ext
+    from futbeat_private.standings_demands d
+    where d.status='QUEUED' and coalesce(d.lease_until,'-infinity')<=now()
+  ), remapped as (
+    update futbeat_private.standings_demands d set external_league_id=m.ext
+    from m where d.competition_id=m.competition_id and d.season_key=m.season_key
+      and m.ext is not null and m.ext<>d.external_league_id
+    returning 1
+  ), unmapped as (
+    update futbeat_private.standings_demands d set status='NO_DATA',lease_until=null,
+      last_error='provider mapping unavailable',
+      next_retry_at=now()+make_interval(mins=>futbeat_private.quota_setting('goal_api','standingsUnmappedRetryMinutes',60)::integer)
+    from m where d.competition_id=m.competition_id and d.season_key=m.season_key and m.ext is null
+    returning 1
+  )
+  select (select count(*) from remapped),(select count(*) from unmapped) into v_remapped,v_unmapped;
   if v_satisfied>0 then perform futbeat_private.bump_metric('standings_demands_reconciled',v_satisfied); end if;
+  if v_remapped>0 then perform futbeat_private.bump_metric('standings_demands_remapped',v_remapped); end if;
+  if v_unmapped>0 then perform futbeat_private.bump_metric('standings_demands_unmapped',v_unmapped); end if;
   if v_closed>0 then perform futbeat_private.bump_metric('standings_demands_season_closed',v_closed); end if;
-  return jsonb_build_object('satisfied',v_satisfied,'closed',v_closed);
+  return jsonb_build_object('satisfied',v_satisfied,'closed',v_closed,'remapped',v_remapped,'unmapped',v_unmapped);
 end $$;
 
 -- p_demand_only=true: the worker's demand lane (user demands, completed via
@@ -187,7 +220,7 @@ create or replace function futbeat_private.futbeat_reserve_goal_standings_call(
 declare lease interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','leaseMinutes',10)::integer);
   aging interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','standingsDemandAgingMinutes',30)::integer);
   decision jsonb; dem futbeat_private.standings_demands; v_id bigint; cand record; last_lane text;
-  prefer_aged boolean; v_lane text; reconciled jsonb;
+  prefer_aged boolean; v_lane text; reconciled jsonb; v_ext text;
 begin
   if p_trigger_source is null or btrim(p_trigger_source)='' then raise exception 'trigger_source is required'; end if;
   perform futbeat_private.lock_provider_quota('goal_api');
@@ -225,15 +258,21 @@ begin
         'providerRemaining',decision->'providerRemaining','reconciled',reconciled);
     end if;
     v_lane:=case when dem.queued_at<=now()-aging then 'aged' else 'recent' end;
-    update futbeat_private.standings_demands set lease_until=now()+lease,last_attempt_at=now()
+    -- Always the current mapping (reconciled above, under the quota lock).
+    v_ext:=futbeat_private.standings_provider_league_id(dem.competition_id);
+    if v_ext is null then
+      return jsonb_build_object('allowed',false,'reason','no_standings_demand',
+        'providerRemaining',decision->'providerRemaining','reconciled',reconciled);
+    end if;
+    update futbeat_private.standings_demands set lease_until=now()+lease,last_attempt_at=now(),external_league_id=v_ext
     where competition_id=dem.competition_id and season_key=dem.season_key;
     insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,metadata)
     values('goal_api','standings',left(p_trigger_source,40),now(),jsonb_build_object('competitionId',dem.competition_id,
-      'externalLeagueId',dem.external_league_id,'seasonKey',dem.season_key,'source','user','lane',v_lane,
+      'externalLeagueId',v_ext,'seasonKey',dem.season_key,'source','user','lane',v_lane,
       'queuedAt',dem.queued_at))
     returning id into v_id;
     return decision||jsonb_build_object('allowed',true,'reservationId',v_id,'competitionId',dem.competition_id,
-      'externalLeagueId',dem.external_league_id,'seasonKey',dem.season_key,'source','user','lane',v_lane,
+      'externalLeagueId',v_ext,'seasonKey',dem.season_key,'source','user','lane',v_lane,
       'reconciled',reconciled);
   end if;
 
@@ -325,6 +364,7 @@ end $$;
 
 revoke all on function
   futbeat_private.standings_fresh_for(text),
+  futbeat_private.standings_provider_league_id(text),
   futbeat_private.match_standings_state(text),
   futbeat_private.reconcile_standings_demands(),
   futbeat_private.futbeat_reserve_goal_standings_call(text,boolean)

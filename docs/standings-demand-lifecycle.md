@@ -11,7 +11,7 @@
 - `MatchScreen` only created the **Tabla** tab when rows already existed, so
   pending / NO_DATA / missing tables had no tab and no explanation.
 
-## Queue (migration `20260926100000_standings_demand_lifecycle.sql`)
+## Queue (migration `20260925030000_standings_demand_lifecycle.sql`)
 
 - Identity stays exactly `(competition_id, season_key)`; `normalize_season`
   is format-only. Never another season, a same-name competition, the latest
@@ -29,6 +29,12 @@
   demands already answered by a **fresh** exact snapshot (a stale snapshot
   never satisfies its own revalidation) and closes as `NO_DATA` the demands
   whose season is no longer current (never fetchable).
+- Provider mapping is revalidated at reservation time through
+  `standings_provider_league_id` (canonical competition + aliases redirected
+  to it, never by name). A changed mapping updates the same demand and the
+  reservation uses the current id; a removed mapping closes the demand as
+  `NO_DATA` (`provider mapping unavailable`, retry after
+  `standingsUnmappedRetryMinutes`) with no provider call and no pending.
 - Completion: exact season stored → `AVAILABLE`; answered without that season
   or 404 → `NO_DATA` for `standingsNoDataDays`; transient failure → back to
   `QUEUED` with exponential backoff, `FETCH_FAILED` after
@@ -48,8 +54,12 @@
 - Tabla is always the 4th tab (one TabController, no tab jumps).
 - Rows → table (a stale table stays, with "Actualizando tabla…" while the
   bounded refresh runs). Pending → "Cargando tabla…" during the 8/20/40 s
-  refreshes, then "Tabla aún no disponible" (no endless spinner).
-  Unavailable / missing → "Sin tabla disponible".
+  refreshes, then "Tabla aún no disponible" + **Reintentar** (one in-place
+  read, deduplicated server-side), plus two silent revalidations at +90 s
+  and +180 s so a durable demand answered later still appears in place.
+  Finite: 5 automatic reads at most; stops as soon as nothing is pending.
+- Unavailable (NO_DATA negative cache) / missing → "Sin tabla disponible",
+  no polling and no retry action.
 
 ## Production checks
 

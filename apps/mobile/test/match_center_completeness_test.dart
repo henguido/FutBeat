@@ -413,7 +413,7 @@ void main() {
     );
 
     testWidgets(
-      '7. bounded retries: a table that never arrives settles (no spinner)',
+      '7. bounded retries: a table that never arrives settles (finite, no spinner)',
       (tester) async {
         final server = _Server(
           detail: (_) => _detail(lineup: true, stats: true),
@@ -421,13 +421,134 @@ void main() {
         );
         final container = await _open(tester, server);
         await _tab(tester, 'Tabla');
-        await _elapse(tester, const Duration(minutes: 3));
-        expect(server.contextReads, 1 + standingsRetryDelays.length);
+        await _elapse(tester, const Duration(minutes: 7));
+        final total =
+            1 + standingsRetryDelays.length + standingsSilentRetryDelays.length;
+        expect(server.contextReads, total);
         expect(find.text('Cargando tabla…'), findsNothing);
         expect(find.text('Tabla aún no disponible'), findsOneWidget);
         expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
-        await _elapse(tester, const Duration(minutes: 3));
+        await _elapse(tester, const Duration(minutes: 10));
+        expect(server.contextReads, total, reason: 'no endless polling');
+        await _close(tester, container);
+      },
+    );
+
+    testWidgets(
+      '9. pending past the visible retries: settled state + Reintentar',
+      (tester) async {
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (_) => _context(standingsPending: true),
+        );
+        final container = await _open(tester, server);
+        await _tab(tester, 'Tabla');
+        expect(find.text('Cargando tabla…'), findsOneWidget);
+        await _elapse(
+          tester,
+          standingsRetryDelays.fold(Duration.zero, (a, b) => a + b) +
+              const Duration(seconds: 2),
+        );
         expect(server.contextReads, 1 + standingsRetryDelays.length);
+        expect(find.text('Cargando tabla…'), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+        expect(find.text('Tabla aún no disponible'), findsOneWidget);
+        expect(find.text('Reintentar'), findsOneWidget);
+        await _close(tester, container);
+      },
+    );
+
+    testWidgets(
+      '10. Reintentar re-reads in place; an AVAILABLE answer shows the rows',
+      (tester) async {
+        var available = false;
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (_) => available
+              ? _context(standings: true)
+              : _context(standingsPending: true),
+        );
+        final container = await _open(tester, server);
+        await _tab(tester, 'Tabla');
+        await _elapse(
+          tester,
+          standingsRetryDelays.fold(Duration.zero, (a, b) => a + b) +
+              const Duration(seconds: 2),
+        );
+        final reads = server.contextReads;
+        available = true;
+        final retry = find.byKey(const ValueKey('standings-retry'));
+        await tester.ensureVisible(retry);
+        await tester.tap(retry);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(server.contextReads, reads + 1, reason: 'one read per tap');
+        expect(find.text('Clasificación'), findsOneWidget);
+        expect(find.text('Reintentar'), findsNothing);
+        expect(_selectedTab(tester), 'Tabla');
+        await _elapse(tester, const Duration(minutes: 5));
+        expect(
+          server.contextReads,
+          reads + 1,
+          reason: 'available: nothing else',
+        );
+        await _close(tester, container);
+      },
+    );
+
+    testWidgets(
+      '11. a table answered during a silent revalidation appears by itself',
+      (tester) async {
+        // Pending through every visible refresh; available from the first
+        // silent revalidation (read index 4, ~158 s after opening).
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (i) => i < 1 + standingsRetryDelays.length
+              ? _context(standingsPending: true)
+              : _context(standings: true),
+        );
+        final container = await _open(tester, server);
+        await _tab(tester, 'Tabla');
+        final controller = tester
+            .widget<TabBar>(find.byType(TabBar))
+            .controller;
+        await _elapse(
+          tester,
+          standingsRetryDelays.fold(Duration.zero, (a, b) => a + b) +
+              const Duration(seconds: 2),
+        );
+        expect(find.text('Tabla aún no disponible'), findsOneWidget);
+        await _elapse(
+          tester,
+          standingsSilentRetryDelays.first + const Duration(seconds: 2),
+        );
+        expect(find.text('Clasificación'), findsOneWidget);
+        expect(find.text('Tabla aún no disponible'), findsNothing);
+        final bar = tester.widget<TabBar>(find.byType(TabBar));
+        expect(bar.controller, same(controller));
+        expect(_selectedTab(tester), 'Tabla');
+        expect(server.contextReads, 2 + standingsRetryDelays.length);
+        await _elapse(tester, const Duration(minutes: 5));
+        expect(server.contextReads, 2 + standingsRetryDelays.length);
+        await _close(tester, container);
+      },
+    );
+
+    testWidgets(
+      '12. NO_DATA: no silent polling and no Reintentar over the negative cache',
+      (tester) async {
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (_) => _context(standingsState: 'unavailable'),
+        );
+        final container = await _open(tester, server);
+        await _tab(tester, 'Tabla');
+        expect(find.text('Sin tabla disponible'), findsOneWidget);
+        expect(find.text('Reintentar'), findsNothing);
+        await _elapse(tester, const Duration(minutes: 10));
+        expect(server.contextReads, 1);
+        expect(find.text('Reintentar'), findsNothing);
         await _close(tester, container);
       },
     );
@@ -494,11 +615,14 @@ void main() {
         context: (_) => _context(standingsPending: true),
       );
       final container = await _open(tester, server);
-      await _elapse(tester, const Duration(minutes: 3));
+      await _elapse(tester, const Duration(minutes: 7));
       final detailReads = server.detailReads;
       final contextReads = server.contextReads;
       expect(detailReads, lessThanOrEqualTo(6));
-      expect(contextReads, 1 + standingsRetryDelays.length);
+      expect(
+        contextReads,
+        1 + standingsRetryDelays.length + standingsSilentRetryDelays.length,
+      );
       await _tab(tester, 'Alineación');
       expect(find.text('Sin alineaciones'), findsOneWidget);
       expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);

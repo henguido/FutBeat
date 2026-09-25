@@ -301,3 +301,67 @@ test('quota regression: the demand lane stays user_high; LIVE and coverage untou
   const live = (await db.query("select futbeat_private.quota_decision('goal_api','live-goal','live') v")).rows[0].v;
   assert.equal(live.floor, 20);
 }));
+
+test('mapping changed after queueing: the reservation uses the current external id, same demand', () => withDb(async (db) => {
+  const comp = await competition(db);
+  const m = await match(db, comp);
+  await request(db, m);
+  assert.equal((await db.query('select external_league_id e from futbeat_private.standings_demands')).rows[0].e, comp.ext);
+  await db.query("update futbeat_private.provider_entities set external_id='dl-league-remapped' where canonical_id=$1", [comp.id]);
+  const r = await reserve(db);
+  assert.equal(r.allowed, true);
+  assert.equal(r.externalLeagueId, 'dl-league-remapped');
+  assert.equal(r.reconciled.remapped, 1);
+  const stored = await db.query('select external_league_id e,status from futbeat_private.standings_demands');
+  assert.deepEqual(stored.rows, [{ e: 'dl-league-remapped', status: 'QUEUED' }], 'updated in place, no second demand');
+  const ledger = (await db.query("select metadata->>'externalLeagueId' e from futbeat_private.provider_call_ledger where call_kind='standings'")).rows;
+  assert.deepEqual(ledger, [{ e: 'dl-league-remapped' }]);
+  // The worker calls GOAL with the current mapping.
+  await db.query("update futbeat_private.standings_demands set lease_until=now()-interval '1 second'");
+  await db.query("update futbeat_private.provider_entities set external_id='dl-league-v3' where canonical_id=$1", [comp.id]);
+  const w = worker(db, (url) => {
+    assert.equal(url.pathname, '/v1/standings/dl-league-v3');
+    return goalOk(rows('rm', [6, 3], '2026/2027'));
+  });
+  assert.equal((await w.run()).standings.demand, 'AVAILABLE');
+}));
+
+test('mapping removed after queueing: no provider call, the demand stops being pending', () => withDb(async (db) => {
+  const comp = await competition(db);
+  const m = await match(db, comp);
+  assert.equal((await request(db, m)).standings, 'pending');
+  await db.query('delete from futbeat_private.provider_entities where canonical_id=$1', [comp.id]);
+  const w = worker(db, () => { throw new Error('GOAL must not be called'); });
+  const run = await w.run();
+  assert.equal(run.standings.status, 'skipped');
+  assert.equal(w.goalCalls().filter((u) => u.includes('/standings/')).length, 0);
+  assert.equal(await standingsCalls(db), 0, 'no provider_call_ledger row');
+  const [d] = await demands(db);
+  assert.equal(d.status, 'NO_DATA');
+  assert.equal((await db.query('select last_error from futbeat_private.standings_demands')).rows[0].last_error, 'provider mapping unavailable');
+  // Stable in Match Center: never pending, reopening does not requeue.
+  for (let i = 0; i < 3; i++) {
+    const st = await request(db, m);
+    assert.equal(st.standingsPending, false);
+    assert.ok(['unavailable', 'missing'].includes(st.standings), st.standings);
+  }
+  const ctx = await context(db, m);
+  assert.deepEqual([ctx.standings, ctx.coverage.standingsPending], [[], false]);
+  assert.equal((await demands(db))[0].status, 'NO_DATA');
+  assert.equal((await reserve(db)).allowed, false);
+  assert.equal(await standingsCalls(db), 0);
+}));
+
+test('mapping held by an alias redirected to the canonical competition stays fetchable', () => withDb(async (db) => {
+  const canonical = await competition(db, { mapped: false });
+  const aliasId = `${canonical.id}_alias`;
+  await db.query("insert into futbeat_private.entities values($1,'competition',$2)",
+    [aliasId, JSON.stringify({ id: aliasId, name: 'Alias Name', country: 'Nowhere', season: '2026/2027' })]);
+  await db.query("insert into futbeat_private.entity_redirects(alias_id,canonical_id,kind,reason) values($1,$2,'competition','test')", [aliasId, canonical.id]);
+  await db.query("insert into futbeat_private.provider_entities values('goal_api','competition','dl-alias-league',$1)", [aliasId]);
+  const m = await match(db, canonical);
+  const st = await request(db, m);
+  assert.deepEqual([st.standings, st.standingsPending], ['pending', true]);
+  const r = await reserve(db);
+  assert.deepEqual([r.allowed, r.competitionId, r.externalLeagueId], [true, canonical.id, 'dl-alias-league']);
+}));

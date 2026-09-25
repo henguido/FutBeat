@@ -25,11 +25,24 @@ const _lineupEnrichmentRetryDelays = [
 ];
 
 /// Bounded context refreshes while the exact competition+season table is
-/// being fetched on demand.
+/// being fetched on demand ("Cargando tabla…" is shown during these).
 const standingsRetryDelays = [
   Duration(seconds: 8),
   Duration(seconds: 20),
   Duration(seconds: 40),
+];
+
+/// After the visible refreshes: a few slow, silent revalidations (no
+/// spinner) so a durable server demand answered later still appears in
+/// place. Finite: no endless polling.
+const standingsSilentRetryDelays = [
+  Duration(seconds: 90),
+  Duration(seconds: 180),
+];
+
+const _standingsSchedule = [
+  ...standingsRetryDelays,
+  ...standingsSilentRetryDelays,
 ];
 
 class MatchScreen extends ConsumerStatefulWidget {
@@ -50,6 +63,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   int _lineupEnrichmentAttempts = 0;
   Timer? _standingsRetry;
   int _standingsAttempts = 0;
+  bool _standingsManualRetry = false;
   @override
   void initState() {
     super.initState();
@@ -79,10 +93,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 
   void _scheduleStandingsRefresh() {
     if (_standingsRetry != null ||
-        _standingsAttempts >= standingsRetryDelays.length) {
+        _standingsAttempts >= _standingsSchedule.length) {
       return;
     }
-    _standingsRetry = Timer(standingsRetryDelays[_standingsAttempts], () {
+    _standingsRetry = Timer(_standingsSchedule[_standingsAttempts], () {
       if (!mounted) return;
       setState(() {
         _standingsAttempts++;
@@ -90,6 +104,21 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       });
       ref.invalidate(matchContextSnapshotProvider(widget.id));
     });
+  }
+
+  /// "Reintentar": one more read of the same context in this screen. The
+  /// server deduplicates the demand, so repeated taps never add provider
+  /// calls; the button is disabled while the read is in flight.
+  Future<void> _retryStandings() async {
+    if (_standingsManualRetry) return;
+    setState(() => _standingsManualRetry = true);
+    ref.invalidate(matchContextSnapshotProvider(widget.id));
+    try {
+      await ref.read(matchContextSnapshotProvider(widget.id).future);
+    } catch (_) {
+      // Keep the settled state; the user can try again.
+    }
+    if (mounted) setState(() => _standingsManualRetry = false);
   }
 
   @override
@@ -117,8 +146,13 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         widget.initialData == null;
     if (watchesContext) {
       ref.listen(matchContextSnapshotProvider(widget.id), (_, next) {
-        if (!next.isLoading && next.value?.standingsPending == true) {
+        if (next.isLoading || next.value == null) return;
+        if (next.value!.standingsPending) {
           _scheduleStandingsRefresh();
+        } else {
+          // Answered (or settled server-side): no further revalidation.
+          _standingsRetry?.cancel();
+          _standingsRetry = null;
         }
       });
     }
@@ -320,7 +354,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
               MatchStandingsTab(
                 data,
                 match.competitionId,
-                refreshing: standingsRefreshing,
+                refreshing: standingsRefreshing || _standingsManualRetry,
+                onRetry: _retryStandings,
               ),
             ]),
           ],
@@ -851,13 +886,17 @@ class MatchStandingsTab extends StatelessWidget {
     this.competitionId, {
     super.key,
     required this.refreshing,
+    this.onRetry,
   });
 
   final Snapshot data;
   final String competitionId;
 
-  /// A bounded refresh for this table is still scheduled.
+  /// A visible refresh for this table is running (bounded or manual).
   final bool refreshing;
+
+  /// Manual refresh offered once a pending table settled.
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -885,13 +924,25 @@ class MatchStandingsTab extends StatelessWidget {
       );
     }
     if (data.standingsPending || data.standingsState == 'pending') {
-      return refreshing
-          ? const _PendingSection('Cargando tabla…')
-          : const _EmptySection(
-              Icons.table_rows_outlined,
-              'Tabla aún no disponible',
-            );
+      if (refreshing) return const _PendingSection('Cargando tabla…');
+      // Settled: no spinner. Slow silent revalidations may still bring it.
+      return Column(
+        children: [
+          const _EmptySection(
+            Icons.table_rows_outlined,
+            'Tabla aún no disponible',
+          ),
+          if (onRetry != null)
+            OutlinedButton.icon(
+              key: const ValueKey('standings-retry'),
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Reintentar'),
+            ),
+        ],
+      );
     }
+    // NO_DATA negative cache, missing or not fetchable: no retry action.
     // unavailable (provider has no table), missing or not fetchable.
     return const _EmptySection(
       Icons.table_rows_outlined,
