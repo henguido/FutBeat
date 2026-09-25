@@ -22,8 +22,10 @@ rechecking late, and from settled history not staying frozen.
   `/v1/match-detail?id=` (server returns persisted data at once, enqueues a
   deduplicated demand only if needed, never waits for GOAL). Re-entries are
   read-only unless the server says `hydrationNeeded`.
-- Rechecks (read-only, never a provider call): 2, 4, 8, 15, 30 s (was 5, 10,
-  20, 40 s), then a stable state. The session memory still paints first.
+- Rechecks (read-only, never a provider call): 2, 4, 8, 15, 40 s (was 5, 10,
+  20, 40 s): the last read lands ~69 s after the open, after the 1-minute
+  cron fallback. Then a stable state. Rechecks follow `pending`, never
+  `hydrationNeeded`. The session memory still paints first.
 
 ## Frozen history
 

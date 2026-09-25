@@ -132,7 +132,7 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(find.text('Sin alineaciones'), findsNothing);
-      // Bounded schedule: one read-only refresh per step (2, 4, 8, 15, 30 s),
+      // Bounded schedule: one read-only refresh per step (2, 4, 8, 15, 40 s),
       // then the pending state ends in simple empty states.
       for (var second = 0; second < 90; second++) {
         await tester.pump(const Duration(seconds: 1));
@@ -284,10 +284,10 @@ void main() {
         expect(tokens.every((token) => token.isCancelled), true);
         // Every slow read is cut at the read timeout; the schedule ends.
         // 300 ms initial + (100+300) + (200+300) + (400+300) + (750+300)
-        // + (1500+300).
+        // + (2000+300).
         expect(
           elapsed.elapsed,
-          greaterThanOrEqualTo(const Duration(milliseconds: 4500)),
+          greaterThanOrEqualTo(const Duration(milliseconds: 5000)),
         );
         expect(elapsed.elapsed, lessThan(const Duration(seconds: 8)));
       }

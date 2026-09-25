@@ -235,13 +235,23 @@ Future<void> _elapse(WidgetTester tester, Duration total) async {
   }
 }
 
-final _scheduleLength = [
-  const Duration(seconds: 2),
-  const Duration(seconds: 4),
-  const Duration(seconds: 8),
-  const Duration(seconds: 15),
-  const Duration(seconds: 30),
-].length;
+/// Default read-only recheck schedule (detailPollScheduleProvider).
+const _schedule = [
+  Duration(seconds: 2),
+  Duration(seconds: 4),
+  Duration(seconds: 8),
+  Duration(seconds: 15),
+  Duration(seconds: 40),
+];
+final _scheduleLength = _schedule.length;
+
+Map<String, dynamic> _waiting() => _detail(
+  available: false,
+  level: 'none',
+  pending: true,
+  lineupState: 'pending',
+  statsState: 'pending',
+);
 
 void main() {
   testWidgets('1. a partial historical detail paints immediately', (
@@ -317,18 +327,97 @@ void main() {
     await _close(tester, container);
   });
 
+  test('the default schedule really covers the 1-minute cron fallback', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final schedule = container.read(detailPollScheduleProvider);
+    expect(schedule, _schedule);
+    final total = schedule.fold(Duration.zero, (a, b) => a + b);
+    expect(total, greaterThan(const Duration(seconds: 65)));
+    expect(schedule.length, 5);
+  });
+
+  testWidgets(
+    'cron fallback: detail finished after ~60 s is found by the last read, '
+    'in place, then nothing more',
+    (tester) async {
+      // Reads 1-4 (2, 6, 14, 29 s) still pending; the provider completes at
+      // ~61 s (next cron + GOAL); read 5 (69 s) finds it.
+      final server = _Server((read, _) => read < 5 ? _waiting() : _full());
+      final container = await _open(tester, server);
+      await _tab(tester, 'Alineación');
+      await _elapse(tester, const Duration(seconds: 60));
+      expect(server.detailCalls, [true, false, false, false, false]);
+      expect(find.text('Cargando alineaciones…'), findsOneWidget);
+      await _elapse(tester, const Duration(seconds: 10));
+      expect(server.detailCalls.length, 6);
+      expect(find.text('AS'), findsWidgets, reason: 'appears without reopen');
+      expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
+      await _elapse(tester, const Duration(minutes: 3));
+      expect(server.detailCalls.length, 6, reason: 'no reads after complete');
+      expect(server.requestAware, 1);
+      await _close(tester, container);
+    },
+  );
+
+  testWidgets(
+    'pending keeps rechecking even when hydrationNeeded=false (demand queued)',
+    (tester) async {
+      // Request-aware open of a partial: the demand now exists, so
+      // hydrationNeeded=false, but pending=true until the detail lands.
+      final server = _Server(
+        (read, _) =>
+            read < 2 ? (_partial()..['hydrationNeeded'] = false) : _full(),
+      );
+      final container = await _open(tester, server);
+      expect(find.text('Estadio Parcial'), findsWidgets);
+      await _elapse(tester, const Duration(seconds: 7));
+      expect(server.detailCalls, [true, false, false]);
+      await _tab(tester, 'Alineación');
+      expect(find.text('AS'), findsWidgets);
+      await _elapse(tester, const Duration(minutes: 2));
+      expect(server.detailCalls.length, 3);
+      await _close(tester, container);
+    },
+  );
+
+  test(
+    'an expired demand is requested again from the same repository (once)',
+    () async {
+      // 0: request-aware open -> demand queued (pending, not needed).
+      // 1-5: bounded read-only rechecks, still pending (quota/backoff).
+      // Later re-entry: the demand expired -> read says hydrationNeeded.
+      var expired = false;
+      final server = _Server((read, request) {
+        if (request) return _partial()..['hydrationNeeded'] = false;
+        return expired
+            ? (_partial(pending: false)..['hydrationNeeded'] = true)
+            : (_partial()..['hydrationNeeded'] = false);
+      });
+      final repo = ApiRepository(server.dio());
+      await repo.loadMatchDetail(_match);
+      for (var i = 0; i < _scheduleLength; i++) {
+        expect((await repo.readMatchDetail(_match)).pending, true);
+      }
+      expect(server.requestAware, 1);
+      // Re-entry while the demand is still queued: read-only only.
+      await repo.loadMatchDetail(_match);
+      expect(server.requestAware, 1);
+      expired = true;
+      // Re-entry after expiry/backoff: exactly one new request-aware call,
+      // even with two concurrent opens (in-flight dedupe kept).
+      await Future.wait([
+        repo.loadMatchDetail(_match),
+        repo.loadMatchDetail(_match),
+      ]);
+      expect(server.requestAware, 2);
+    },
+  );
+
   testWidgets('6. read-only rechecks are bounded and end in a stable state', (
     tester,
   ) async {
-    final server = _Server(
-      (_, _) => _detail(
-        available: false,
-        level: 'none',
-        pending: true,
-        lineupState: 'pending',
-        statsState: 'pending',
-      ),
-    );
+    final server = _Server((_, _) => _waiting());
     final container = await _open(tester, server);
     await _elapse(tester, const Duration(minutes: 2));
     expect(server.requestAware, 1);

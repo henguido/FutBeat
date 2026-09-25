@@ -272,3 +272,70 @@ test('benchmark: warm read, cold persisted-only read, request/enqueue, simulated
   }
   assert.equal((await read(db, cold)).detailLevel, 'full');
 }));
+
+test('available / hydrationNeeded / pending are distinct (DB and normalized API)', () => withDb(async (db) => {
+  await remaining(db);
+  const m = await seed(db, { days: 9 });
+  await observe(db, m);
+  const states = (d) => [d.available, d.hydrationNeeded, d.pending];
+  // Before any demand: displayable, demand would help, nothing awaited.
+  assert.deepEqual(states(await read(db, m)), [true, true, false]);
+  // Request-aware open: demand exists -> not needed any more, but awaited.
+  const opened = await open(db, m);
+  assert.deepEqual(states(opened), [true, false, true]);
+  assert.deepEqual(states(normalizeMatchDetail(opened)), [true, false, true], 'API keeps both');
+  assert.deepEqual(states(await read(db, m)), [true, false, true]);
+  // Reserved (in flight): still awaited, still not needed.
+  const r = await reserve(db);
+  assert.equal(r.matchId, m.match);
+  assert.deepEqual(states(await read(db, m)), [true, false, true]);
+  // Stored: complete.
+  await store(db, m, { lineups, statistics, events: goalEvents });
+  await db.query("select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,'{}')", [r.reservationId]);
+  assert.deepEqual(states(await read(db, m)), [true, false, false]);
+}));
+
+test('an expired demand / finished backoff says hydrationNeeded again and a reopen re-enqueues once', () => withDb(async (db) => {
+  await remaining(db);
+  const m = await seed(db, { days: 9 });
+  await observe(db, m);
+  await open(db, m);
+  const r = await reserve(db);
+  await db.query("select public.futbeat_complete_provider_call($1,'FAILED',null,500,'X','{}')", [r.reservationId]);
+  assert.deepEqual([(await read(db, m)).hydrationNeeded, (await read(db, m)).pending], [false, false], 'backoff');
+  // Backoff over and the user demand expired.
+  await db.query("update futbeat_private.match_detail_coverage set next_retry_at=now()-interval '1 second' where match_id=$1", [m.match]);
+  await db.query("update futbeat_private.match_detail_requests set expires_at=now()-interval '1 second' where match_id=$1", [m.match]);
+  const again = await read(db, m);
+  assert.deepEqual([again.hydrationNeeded, again.pending], [true, false]);
+  const reopened = await open(db, m);
+  assert.deepEqual([reopened.hydrationNeeded, reopened.pending], [false, true]);
+  await open(db, m); // a second open is deduplicated
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.match_detail_requests where match_id=$1 and expires_at>now()', [m.match])).rows[0].n, 1);
+  assert.equal((await reserve(db)).matchId, m.match);
+  assert.equal(await calls(db), 2);
+}));
+
+test('FPV boundary: inside resultsWindowHours = results class; just outside = user class', () => withDb(async (db) => {
+  await remaining(db);
+  const windowHours = Number((await db.query(
+    "select futbeat_private.quota_setting('goal_api','resultsWindowHours',4) v")).rows[0].v);
+  const classOf = async (minutesAgo) => {
+    await db.query("delete from futbeat_private.match_detail_requests where true");
+    await db.query("delete from futbeat_private.provider_call_ledger where call_kind='match-detail'");
+    const m = await seed(db, { days: minutesAgo / (24 * 60) });
+    await open(db, m);
+    const src = (await requests(db, m))[0]?.source;
+    const r = await reserve(db);
+    assert.equal(r.matchId, m.match);
+    return { source: src, quotaClass: r.quotaClass, bucket: r.bucket };
+  };
+  const inside = await classOf(windowHours * 60 - 5);
+  assert.deepEqual(inside, { source: 'user', quotaClass: 'results', bucket: 'results' }, 'recent result keeps its protected class');
+  const outside = await classOf(windowHours * 60 + 5);
+  assert.equal(outside.source, 'user');
+  assert.equal(outside.quotaClass, 'user', 'history never borrows the results floor');
+  assert.notEqual(outside.bucket, 'results');
+  const old = await classOf(30 * 24 * 60);
+  assert.deepEqual([old.source, old.quotaClass], ['user', 'user']);
+}));

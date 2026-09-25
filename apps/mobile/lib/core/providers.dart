@@ -801,9 +801,11 @@ final detailPollIntervalProvider = Provider<Duration>(
 /// sections (5 s, 10 s, 20 s, 40 s by default), then stop.
 final detailPollScheduleProvider = Provider<List<Duration>>((ref) {
   final base = ref.watch(detailPollIntervalProvider);
-  // 2, 4, 8, 15, 30 s by default (~59 s, covering the worker's 1-minute cron
-  // fallback), then a stable state. Finite.
-  return [base, base * 2, base * 4, base * 7.5, base * 15];
+  // 2, 4, 8, 15, 40 s by default: the last read lands ~69 s after the open,
+  // clearly after the worker's 1-minute cron fallback (+ ~1 s GOAL + write
+  // latency) when a debounced wake-up was skipped. Then a stable state.
+  // Finite: 5 read-only rechecks at most.
+  return [base, base * 2, base * 4, base * 7.5, base * 20];
 });
 
 /// Upper bound for any single detail read.
