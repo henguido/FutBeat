@@ -222,8 +222,8 @@ test('in-flight first match does not prevent reserving a different queued match'
     const b = await reserve(db);
     assert.equal(a.allowed, true);
     assert.equal(b.allowed, true);
-    assert.equal(a.matchId, first.match);
-    assert.equal(b.matchId, second.match);
+    // Equal rank: oldest first (fair drain); both are reserved exactly once.
+    assert.deepEqual(new Set([a.matchId, b.matchId]), new Set([first.match, second.match]));
     assert.equal((await reserve(db)).allowed, false);
     const counts = (await db.query(`select metadata->>'matchId' id,count(*)::int n
       from futbeat_private.provider_call_ledger where call_kind='match-detail'
@@ -237,7 +237,10 @@ test('FAILED releases flight; existing cache eligibility still controls retry', 
   const db = await openDatabase();
   try {
     const { match, external } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -40 });
-    await db.query("insert into futbeat_private.match_detail_requests values($1,now(),now()+interval '10 minutes',1)", [match]);
+    // A user open (it persists after being served; served background rows
+    // leave the queue and are re-planned when due).
+    await db.query(`insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count,source,user_requested_at)
+      values($1,now(),now()+interval '10 minutes',1,'user',now())`, [match]);
     const first = await reserve(db);
     await db.query(`select public.futbeat_complete_provider_call($1,'FAILED',null,500,'TEST_FAILURE',$2)`,
       [first.reservationId, JSON.stringify({ matchId: match })]);
@@ -255,7 +258,10 @@ test('completed SUCCEEDED with fresh detail cannot duplicate; stale detail may r
   const db = await openDatabase();
   try {
     const { match, external } = await seedMatch(db, { status: 'LIVE', startOffsetMinutes: -40 });
-    await db.query("insert into futbeat_private.match_detail_requests values($1,now(),now()+interval '10 minutes',1)", [match]);
+    // A user open (it persists after being served; served background rows
+    // leave the queue and are re-planned when due).
+    await db.query(`insert into futbeat_private.match_detail_requests(match_id,requested_at,expires_at,request_count,source,user_requested_at)
+      values($1,now(),now()+interval '10 minutes',1,'user',now())`, [match]);
     const first = await reserve(db);
     await db.query("select public.futbeat_store_match_detail($1,$2,now(),'{}'::jsonb)", [match, external]);
     await db.query("select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,$2)",

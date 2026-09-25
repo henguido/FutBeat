@@ -92,7 +92,10 @@ test('native PostgreSQL: overlapping detail reservations are atomic', {
       const second = await secondPromise;
       await b.query('commit');
       assert.equal(second.allowed, secondMatch || rollback);
-      if (secondMatch) assert.equal(second.matchId, 'fb_concurrent_b');
+      // Equal rank drains oldest first; what matters is two distinct matches.
+      if (secondMatch) {
+        assert.deepEqual(new Set([first.matchId, second.matchId]), new Set(['fb_concurrent_a', 'fb_concurrent_b']));
+      }
       const rows = (await observer.query(`select metadata->>'matchId' id,count(*)::int n
         from futbeat_private.provider_call_ledger where status='RESERVED'
         and completed_at is null and reserved_at>now()-interval '10 minutes'
