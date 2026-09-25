@@ -15,8 +15,13 @@
 --     horizon (historyHorizonDays, default 90, unchanged behaviour). Single
 --     definition used by request_match_detail and the read model.
 --   * FPV clock cadence only inside resultsWindowHours after kickoff (the same
---     window #112 uses for the 'results' bucket). Later, only the section
---     rules apply: lineup/statistics AVAILABLE or NO_DATA = frozen.
+--     window #112 uses for the 'results' bucket). Later, a cache taken before
+--     kickoff + finalFetchAfterMinutes gets ONE final post-match capture (the
+--     planner's rule, now also for user opens); then only the section rules
+--     apply: lineup/statistics AVAILABLE or NO_DATA = frozen. No events state
+--     and no events retry loop: an empty final capture still freezes.
+--   * coverage.stale = the stored detail would be refreshed (needs_fetch), not
+--     the raw FPV clock (which called every old GOAL final stale forever).
 --   * read_match_detail adds `hydrationNeeded` (top level and in coverage):
 --     true only when the match is fetchable, a fetch is needed and nothing is
 --     queued/in flight for it. It is the single server-side answer to "should
@@ -45,13 +50,14 @@ returns boolean language sql stable set search_path='' as $$
           and now()+interval '24 hours')
 $$;
 
--- Clock cadence only for live evidence and for a final inside the results
--- window; every other match is fetched only while a wanted section is
--- UNKNOWN (retry gap). A settled historical detail is frozen.
+-- Decision order: backoff -> no cache -> LIVE cadence -> FPV cadence inside
+-- the results window -> ONE final post-match capture -> UNKNOWN sections.
+-- A settled detail captured after the final threshold is frozen.
 create or replace function futbeat_private.match_detail_needs_fetch(p_match_id text)
 returns boolean language plpgsql stable set search_path='' as $$
 declare status text:=futbeat_private.match_detail_status(p_match_id); fetched timestamptz;
-  cov futbeat_private.match_detail_coverage; sections jsonb; kickoff timestamptz;
+  cov futbeat_private.match_detail_coverage; sections jsonb; kickoff timestamptz; in_results boolean;
+  final_at timestamptz;
 begin
   select * into cov from futbeat_private.match_detail_coverage where match_id=p_match_id;
   if cov.next_retry_at>now() then return false; end if;
@@ -61,12 +67,21 @@ begin
      and futbeat_private.match_detail_due(status,fetched) then
     return true;
   end if;
-  if status='FINISHED_PENDING_VERIFICATION' and futbeat_private.match_detail_due(status,fetched) then
-    select nullif(e.payload->>'startTime','')::timestamptz into kickoff
-    from futbeat_private.entities e where e.id=p_match_id and e.kind='match';
-    if kickoff>now()-make_interval(hours=>futbeat_private.quota_setting('goal_api','resultsWindowHours',4)::integer) then
-      return true;
-    end if;
+  select nullif(e.payload->>'startTime','')::timestamptz into kickoff
+  from futbeat_private.entities e where e.id=p_match_id and e.kind='match';
+  in_results:=status='FINISHED_PENDING_VERIFICATION'
+    and kickoff>now()-make_interval(hours=>futbeat_private.quota_setting('goal_api','resultsWindowHours',4)::integer);
+  if in_results and futbeat_private.match_detail_due(status,fetched) then
+    return true;
+  end if;
+  -- One final post-match capture (same threshold as match_detail_planner_due):
+  -- a cache taken before kickoff + finalFetchAfterMinutes is not final yet.
+  -- The results window keeps its own cadence instead.
+  final_at:=kickoff+make_interval(mins=>futbeat_private.quota_setting('goal_api','finalFetchAfterMinutes',120)::integer);
+  if not in_results
+     and coalesce(status,'') not in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES','CANCELLED','POSTPONED')
+     and now()>=final_at and fetched<final_at then
+    return true;
   end if;
   sections:=futbeat_private.match_detail_sections(p_match_id);
   if sections is null then return false; end if;
@@ -96,7 +111,8 @@ begin
   detail:=case when payload is not null then 'available' when active then 'pending' else 'missing' end;
   return jsonb_build_object(
     'detail',detail,'lineup',lineup,'statistics',stats,
-    'stale',payload is not null and futbeat_private.match_detail_due(futbeat_private.match_detail_status(p_match_id),fetched),
+    -- Stale = the stored detail would be refreshed (a frozen history is not).
+    'stale',payload is not null and needs,
     'pending','pending' in (detail,lineup,stats),
     -- Displayable is not complete: registering demand would help (fetchable,
     -- needed, nothing queued or in flight). Server-side single source.

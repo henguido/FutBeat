@@ -339,3 +339,88 @@ test('FPV boundary: inside resultsWindowHours = results class; just outside = us
   const old = await classOf(30 * 24 * 60);
   assert.deepEqual([old.source, old.quotaClass], ['user', 'user']);
 }));
+
+// Final post-match capture (#115 review): a cache taken before
+// kickoff + finalFetchAfterMinutes is not frozen until one capture after it.
+const finalAfter = (db) => db.query("select futbeat_private.quota_setting('goal_api','finalFetchAfterMinutes',120)::int v")
+  .then((r) => r.rows[0].v);
+const needsFetch = (db, m) => db.query('select futbeat_private.match_detail_needs_fetch($1) v', [m.match]).then((r) => r.rows[0].v);
+// Cache fetched `minutesAfterKickoff` after the kickoff of a match `days` ago.
+const storeAtKickoffPlus = async (db, m, days, minutesAfterKickoff, payload) =>
+  store(db, m, payload, Math.round(days * 24 * 60) - minutesAfterKickoff);
+
+test('A. settled but pre-final cache: one user final capture, then frozen', () => withDb(async (db) => {
+  await remaining(db);
+  const fa = await finalAfter(db);
+  const m = await seed(db, { days: 10 });
+  await storeAtKickoffPlus(db, m, 10, fa - 30, { lineups, statistics, events: goalEvents });
+  const cov = (await db.query('select lineup_state,statistics_state from futbeat_private.match_detail_coverage where match_id=$1', [m.match])).rows[0];
+  assert.deepEqual(cov, { lineup_state: 'AVAILABLE', statistics_state: 'AVAILABLE' });
+  assert.equal(await needsFetch(db, m), true);
+  const before = await read(db, m);
+  assert.deepEqual([before.hydrationNeeded, before.pending, before.coverage.stale], [true, false, true]);
+  await open(db, m);
+  await open(db, m);
+  assert.deepEqual(await requests(db, m), [{ n: 2, source: 'user' }], 'one deduplicated demand');
+  const r = await reserve(db);
+  assert.deepEqual([r.matchId, (await db.query("select metadata->>'source' s from futbeat_private.provider_call_ledger where id=$1", [r.reservationId])).rows[0].s, r.quotaClass],
+    [m.match, 'user', 'user']);
+  await store(db, m, { lineups, statistics, events: goalEvents });
+  await db.query("select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,'{}')", [r.reservationId]);
+  assert.equal(await needsFetch(db, m), false);
+  const after = await open(db, m);
+  assert.deepEqual([after.hydrationNeeded, after.pending, after.coverage.stale], [false, false, false]);
+  assert.equal((await reserve(db)).allowed, false);
+  assert.equal(await calls(db), 1);
+}));
+
+test('B. settled post-final cache: frozen at once, not stale, no demand', () => withDb(async (db) => {
+  const fa = await finalAfter(db);
+  const m = await seed(db, { days: 10 });
+  await storeAtKickoffPlus(db, m, 10, fa + 30, { lineups, statistics, events: goalEvents });
+  assert.equal(await needsFetch(db, m), false);
+  const d = await open(db, m);
+  assert.deepEqual([d.hydrationNeeded, d.pending, d.coverage.stale], [false, false, false]);
+  assert.deepEqual(await requests(db, m), []);
+  assert.equal(await calls(db), 0);
+}));
+
+test('C. pre-final cache with empty events: one final capture allowed, then frozen even if still empty', () => withDb(async (db) => {
+  await remaining(db);
+  const fa = await finalAfter(db);
+  const m = await seed(db, { days: 10 });
+  await storeAtKickoffPlus(db, m, 10, fa - 30, { lineups, statistics });
+  assert.equal(await needsFetch(db, m), true);
+  await open(db, m);
+  const w = worker(db, detailGoal(m, { lineups, statistics }));
+  await w.run();
+  assert.equal(detailCalls(w), 1);
+  assert.equal(await needsFetch(db, m), false, 'no events retry loop');
+  await open(db, m);
+  await w.run();
+  assert.equal(detailCalls(w), 1);
+  assert.equal(normalizeMatchDetail(await read(db, m)).incidents.length, 0);
+}));
+
+test('D. >90 days with a pre-final cache: hydrationNeeded=false, no demand, no provider call', () => withDb(async (db) => {
+  const fa = await finalAfter(db);
+  const m = await seed(db, { days: 100 });
+  await storeAtKickoffPlus(db, m, 100, fa - 30, { lineups, statistics });
+  const d = await open(db, m);
+  assert.deepEqual([d.available, d.hydrationNeeded, d.pending], [true, false, false]);
+  assert.deepEqual(await requests(db, m), []);
+  assert.equal(await calls(db), 0);
+}));
+
+test('E. recent FPV inside resultsWindowHours: results bucket and class, unaffected by the final rule', () => withDb(async (db) => {
+  await remaining(db);
+  const fa = await finalAfter(db);
+  const windowHours = Number((await db.query("select futbeat_private.quota_setting('goal_api','resultsWindowHours',4) v")).rows[0].v);
+  const days = (windowHours * 60 - 20) / (24 * 60);
+  const m = await seed(db, { days });
+  await storeAtKickoffPlus(db, m, days, fa - 30, { lineups, statistics });
+  assert.equal(await needsFetch(db, m), true);
+  await open(db, m);
+  const r = await reserve(db);
+  assert.deepEqual([r.matchId, r.quotaClass, r.bucket], [m.match, 'results', 'results']);
+}));

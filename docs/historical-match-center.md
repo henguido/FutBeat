@@ -30,8 +30,13 @@ rechecking late, and from settled history not staying frozen.
 ## Frozen history
 
 - GOAL finals stay `FINISHED_PENDING_VERIFICATION`; the 30-minute FPV clock
-  cadence now only applies inside `resultsWindowHours` after kickoff. After
-  that, lineup/statistics `AVAILABLE` or `NO_DATA` = frozen (0 calls).
+  cadence now only applies inside `resultsWindowHours` after kickoff.
+- A cache taken before `kickoff + finalFetchAfterMinutes` gets ONE final
+  post-match capture (the planner's rule, now also for user opens). After it,
+  lineup/statistics `AVAILABLE` or `NO_DATA` = frozen (0 calls), even if the
+  provider still has no events (no events state, no retry loop).
+- `coverage.stale` = the detail would be refreshed (`needs_fetch`); a frozen
+  history is not stale.
 - A user open of an older FPV final is `user` demand (it borrowed the
   protected `results` class before). Planner logic is unchanged; nothing
   pre-fetches history; >90 days never calls the provider.
