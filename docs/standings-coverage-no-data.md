@@ -38,8 +38,14 @@ reported NO_DATA (`isGoalStandingsNoData`) and refuses anything else.
 - `futbeat_record_standings_no_data`: completes the coverage reservation as
   `SUCCEEDED` (real HTTP status, `metadata.outcome = NO_DATA`,
   `metadata.providerCode`), identity taken from the reservation.
-- Coverage planner skips the competition while the NO_DATA is valid **for its
-  current mapping**; a new external league id retries at once.
+- Identity: canonical `competition_id` + `external_league_id` + the
+  competition's current `season_key` at record time (server-side
+  `competition_season_key`, `''` when unknown, never invented).
+- Coverage planner skips the competition only while a NO_DATA is valid for
+  that same competition, mapping **and** current season. A new external
+  league id, a season rollover, or a season that becomes known retries at
+  once (the old row stays but no longer blocks; the next NO_DATA upserts the
+  same row with the new season and a new TTL).
 - Any `standings_cache` write for the competition clears the state.
 - #98 user demand (`standings_demands`, exact season) is untouched: the
   coverage state never blocks or marks it, and a user reservation cannot be

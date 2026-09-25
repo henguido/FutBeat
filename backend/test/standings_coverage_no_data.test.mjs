@@ -393,3 +393,98 @@ test('security: the no-data RPC and state table are service-only', () => withDb(
   assert.equal(await table('anon'), false);
   assert.equal(await table('authenticated'), false);
 }));
+
+// Identity of the coverage negative cache: canonical competition + provider
+// mapping + current season_key (resolved server-side).
+const setSeason = (db, comp, season) => db.query(
+  "update futbeat_private.entities set payload=case when $2::text is null then payload-'season' else payload||jsonb_build_object('season',$2::text) end where id=$1",
+  [comp.id, season]);
+const seasonState = (db, comp) => db.query(
+  'select season_key,external_league_id,next_retry_at,last_attempt_at from futbeat_private.standings_coverage_state where competition_id=$1', [comp.id])
+  .then((r) => r.rows[0]);
+
+test('season rollover (same mapping) retries at once; a new NO_DATA is stored for the new season with a new TTL', () => withDb(async (db) => {
+  await remaining(db);
+  const comp = await competition(db, { season: '2026' });
+  const call = ingest(db);
+  const first = (await call({ action: 'standings-plan' })).value;
+  const recorded = (await call(notFound(first))).value;
+  assert.equal(recorded.seasonKey, '2026');
+  const before = await seasonState(db, comp);
+  assert.deepEqual([before.season_key, before.external_league_id], ['2026', comp.ext]);
+  assert.equal((await call({ action: 'standings-plan' })).value.status, 'skipped', 'NO_DATA active for season A');
+  // Only the season changes (A -> B); the mapping stays exactly the same.
+  await setSeason(db, comp, '2027');
+  const rollover = (await call({ action: 'standings-plan' })).value;
+  assert.deepEqual([rollover.reservation.competitionId, rollover.reservation.externalLeagueId], [comp.id, comp.ext],
+    'eligible immediately, without waiting for next_retry_at');
+  assert.ok(new Date(before.next_retry_at) > new Date(), 'the old TTL had not expired');
+  // Season B also has no table: same row, new season, new TTL.
+  await db.query("update futbeat_private.standings_coverage_state set next_retry_at=next_retry_at-interval '1 hour' where competition_id=$1", [comp.id]);
+  const shifted = await seasonState(db, comp);
+  await call(notFound(rollover));
+  const after = await seasonState(db, comp);
+  assert.equal(after.season_key, '2027');
+  assert.ok(new Date(after.next_retry_at) > new Date(shifted.next_retry_at), 'new TTL');
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.standings_coverage_state')).rows[0].n, 1);
+  assert.equal((await call({ action: 'standings-plan' })).value.status, 'skipped', 'NO_DATA active for season B');
+}));
+
+test('season rollover then a table for the new season: stored and the negative cache disappears', () => withDb(async (db) => {
+  await remaining(db);
+  const comp = await competition(db, { season: '2026' });
+  const call = ingest(db);
+  await call(notFound((await call({ action: 'standings-plan' })).value));
+  await setSeason(db, comp, '2027');
+  const plan = (await call({ action: 'standings-plan' })).value;
+  assert.equal(plan.reservation.competitionId, comp.id);
+  const res = await call({ action: 'standings-ingest', reservationId: plan.reservation.reservationId, competitionId: comp.id,
+    externalLeagueId: comp.ext, season: '2027', providerRemaining: 400, rows: goalRows().map((r) => ({ ...r, season: '2027' })) });
+  assert.equal(res.status, 200);
+  assert.equal(await coverageState(db, comp), undefined);
+  assert.equal((await db.query("select count(*)::int n from futbeat_private.standings_snapshots where competition_id=$1 and season_key='2027'", [comp.id])).rows[0].n, 1);
+}));
+
+test('unknown season is stored consistently; a season that becomes known retries at once', () => withDb(async (db) => {
+  await remaining(db);
+  const comp = await competition(db);
+  await setSeason(db, comp, null);
+  const call = ingest(db);
+  const recorded = (await call(notFound((await call({ action: 'standings-plan' })).value))).value;
+  assert.equal(recorded.seasonKey, '');
+  assert.equal((await seasonState(db, comp)).season_key, '', 'no season invented');
+  assert.equal((await call({ action: 'standings-plan' })).value.status, 'skipped', 'unknown season: NO_DATA holds');
+  await setSeason(db, comp, '2026/27');
+  const plan = (await call({ action: 'standings-plan' })).value;
+  assert.equal(plan.reservation.competitionId, comp.id, 'known season = new identity');
+  await call(notFound(plan));
+  assert.equal((await seasonState(db, comp)).season_key, '2026-2027', 'normalized season stored');
+}));
+
+test('mapping and season invalidate independently', () => withDb(async (db) => {
+  await remaining(db);
+  const call = ingest(db);
+  // Mapping changes, same season -> retry.
+  const a = await competition(db, { season: '2026' });
+  await call(notFound((await call({ action: 'standings-plan' })).value));
+  assert.equal((await call({ action: 'standings-plan' })).value.status, 'skipped');
+  await db.query("update futbeat_private.provider_entities set external_id=$2 where canonical_id=$1 and kind='competition'", [a.id, `${a.ext}-v2`]);
+  const byMapping = (await call({ action: 'standings-plan' })).value;
+  assert.deepEqual([byMapping.reservation.competitionId, byMapping.reservation.externalLeagueId], [a.id, `${a.ext}-v2`]);
+  await call(notFound(byMapping));
+  assert.deepEqual(Object.values(await seasonState(db, a)).slice(0, 2), ['2026', `${a.ext}-v2`]);
+  assert.equal((await call({ action: 'standings-plan' })).value.status, 'skipped');
+  // Season changes, same mapping -> retry.
+  await setSeason(db, a, '2027');
+  const bySeason = (await call({ action: 'standings-plan' })).value;
+  assert.deepEqual([bySeason.reservation.competitionId, bySeason.reservation.externalLeagueId], [a.id, `${a.ext}-v2`]);
+  // #98 user demand for the exact current season is never blocked by the
+  // coverage state (recorded again for season 2027 here).
+  await call(notFound(bySeason));
+  assert.equal((await seasonState(db, a)).season_key, '2027');
+  await db.query("update futbeat_private.entities set payload=payload||'{\"season\":\"2027\"}' where id=$1", [a.match]);
+  const st = (await db.query('select public.futbeat_request_match_standings($1) v', [a.match])).rows[0].v;
+  assert.deepEqual([st.standings, st.standingsPending], ['pending', true]);
+  const demand = (await db.query("select public.futbeat_reserve_standings_demand_call('t') v")).rows[0].v;
+  assert.deepEqual([demand.allowed, demand.competitionId, demand.seasonKey, demand.source], [true, a.id, '2027', 'user']);
+}));

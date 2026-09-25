@@ -12,8 +12,12 @@
 -- standings_demands is untouched):
 --   * standings_coverage_state(competition_id canonical): NO_DATA with
 --     next_retry_at = now + standingsNoDataDays (central setting, default 3,
---     the same TTL as user-demand NO_DATA). It records the external league id
---     that answered "no table": a different current mapping retries at once.
+--     the same TTL as user-demand NO_DATA). Its identity is the canonical
+--     competition + the external league id that answered "no table" + the
+--     competition's current season_key at that moment (resolved server-side
+--     by competition_season_key, '' when unknown). A different current
+--     mapping OR a different current season (rollover, or a season that
+--     becomes known) makes the competition eligible again at once.
 --   * futbeat_record_standings_no_data completes a coverage reservation as
 --     SUCCEEDED (the provider answered correctly: no such resource) with the
 --     real HTTP status and the provider code in metadata, and writes the state.
@@ -26,6 +30,9 @@ create table if not exists futbeat_private.standings_coverage_state(
   competition_id text primary key references futbeat_private.entities(id) on delete cascade,
   status text not null check(status in ('NO_DATA')),
   external_league_id text not null,
+  -- normalize_season of the competition's season when NO_DATA was recorded
+  -- ('' = unknown; a season that becomes known is a new identity).
+  season_key text not null default '',
   provider_error_code text,
   http_status integer check(http_status is null or http_status between 100 and 599),
   last_attempt_at timestamptz not null default now(),
@@ -62,15 +69,18 @@ begin
   returning metadata into meta;
   if meta is null then raise exception 'Unknown or completed standings coverage reservation'; end if;
   insert into futbeat_private.standings_coverage_state as s(
-    competition_id,status,external_league_id,provider_error_code,http_status,last_attempt_at,next_retry_at,updated_at)
-  values(meta->>'competitionId','NO_DATA',meta->>'externalLeagueId',code,
+    competition_id,status,external_league_id,season_key,provider_error_code,http_status,last_attempt_at,next_retry_at,updated_at)
+  values(meta->>'competitionId','NO_DATA',meta->>'externalLeagueId',
+    coalesce(futbeat_private.competition_season_key(meta->>'competitionId'),''),code,
     case when p_http_status between 100 and 599 then p_http_status end,now(),retry_at,now())
   on conflict(competition_id) do update set status='NO_DATA',external_league_id=excluded.external_league_id,
-    provider_error_code=excluded.provider_error_code,http_status=excluded.http_status,
+    season_key=excluded.season_key,provider_error_code=excluded.provider_error_code,http_status=excluded.http_status,
     last_attempt_at=now(),next_retry_at=excluded.next_retry_at,updated_at=now();
   perform futbeat_private.bump_metric('standings_coverage_no_data');
   return jsonb_build_object('status','NO_DATA','competitionId',meta->>'competitionId',
-    'externalLeagueId',meta->>'externalLeagueId','providerCode',code,'retryAt',retry_at);
+    'externalLeagueId',meta->>'externalLeagueId',
+    'seasonKey',coalesce(futbeat_private.competition_season_key(meta->>'competitionId'),''),
+    'providerCode',code,'retryAt',retry_at);
 end $$;
 
 -- A stored table (any writer) ends the negative cache for the competition.
@@ -170,11 +180,13 @@ begin
       and coalesce(a.payload->>'status','') not in ('FINISHED_PENDING_VERIFICATION','VERIFIED','POSTPONED','ABANDONED','CANCELLED')
       and now() between (a.payload->>'startTime')::timestamptz-interval '5 minutes'
         and (a.payload->>'startTime')::timestamptz+interval '135 minutes')
-    -- #116: the provider said this league has no table (for this mapping):
-    -- skip it until the negative cache expires. A new mapping retries.
+    -- #116: the provider said this league has no table for this mapping and
+    -- this season: skip it until the negative cache expires. A new mapping
+    -- or a new current season (rollover / season now known) retries at once.
     and not exists(select 1 from futbeat_private.standings_coverage_state ns
       where ns.competition_id=pe.canonical_id and ns.status='NO_DATA'
-        and ns.next_retry_at>now() and ns.external_league_id=pe.external_id)
+        and ns.next_retry_at>now() and ns.external_league_id=pe.external_id
+        and ns.season_key=coalesce(futbeat_private.competition_season_key(pe.canonical_id),''))
   order by coalesce(ci.priority_score,0) desc,sc.fetched_at nulls first,e.payload->>'name',pe.canonical_id
   limit 1;
   if cand.competition_id is null then
