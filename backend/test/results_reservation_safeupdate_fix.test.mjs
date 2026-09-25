@@ -118,6 +118,14 @@ const RESERVE_CALL_GRAPH = [
   // GOAL LIVE reservation (Issue #111).
   'futbeat_private.futbeat_reserve_goal_live_call',
   'futbeat_private.live_poll_need',
+  // Standings demand lane (Issue #98).
+  'futbeat_private.futbeat_reserve_goal_standings_call',
+  'futbeat_private.reconcile_standings_demands',
+  'futbeat_private.standings_fresh_for',
+  'futbeat_private.match_standings_state',
+  'futbeat_private.archive_standings_snapshot',
+  'public.futbeat_request_match_standings',
+  'public.futbeat_complete_standings_call',
   // Calendar snapshot materialization path (called through PostgREST).
   'public.futbeat_read_calendar_range',
   'public.futbeat_plan_calendar_snapshots',

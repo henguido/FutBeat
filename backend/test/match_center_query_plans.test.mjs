@@ -44,7 +44,11 @@ test('hot predicates are index-served (matches by competition, mapping by canoni
 test('match_standings_state never resolves every mapped competition of the catalog', () => withDb(async (db) => {
   const def = (await db.query(`select pg_get_functiondef('futbeat_private.match_standings_state(text)'::regprocedure) d`)).rows[0].d;
   assert.doesNotMatch(def, /futbeat_resolve_entity_id\('competition',\s*pe\.canonical_id\)/);
-  assert.match(def, /canonical_id=any\(alias_ids\)/);
+  // The indexed alias walk lives in one helper shared with the reservation (#98).
+  assert.match(def, /standings_provider_league_id\(comp\)/);
+  const helper = (await db.query(`select pg_get_functiondef('futbeat_private.standings_provider_league_id(text)'::regprocedure) d`)).rows[0].d;
+  assert.doesNotMatch(helper, /futbeat_resolve_entity_id/);
+  assert.match(helper, /canonical_id=any\(array\(select id from ids\)\)/);
 }));
 
 test('the indexed mapping still finds a provider id attached to a redirected alias', () => withDb(async (db) => {

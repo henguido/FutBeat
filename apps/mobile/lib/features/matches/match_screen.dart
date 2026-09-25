@@ -25,11 +25,24 @@ const _lineupEnrichmentRetryDelays = [
 ];
 
 /// Bounded context refreshes while the exact competition+season table is
-/// being fetched on demand.
+/// being fetched on demand ("Cargando tabla…" is shown during these).
 const standingsRetryDelays = [
   Duration(seconds: 8),
   Duration(seconds: 20),
   Duration(seconds: 40),
+];
+
+/// After the visible refreshes: a few slow, silent revalidations (no
+/// spinner) so a durable server demand answered later still appears in
+/// place. Finite: no endless polling.
+const standingsSilentRetryDelays = [
+  Duration(seconds: 90),
+  Duration(seconds: 180),
+];
+
+const _standingsSchedule = [
+  ...standingsRetryDelays,
+  ...standingsSilentRetryDelays,
 ];
 
 class MatchScreen extends ConsumerStatefulWidget {
@@ -50,23 +63,14 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   int _lineupEnrichmentAttempts = 0;
   Timer? _standingsRetry;
   int _standingsAttempts = 0;
+  bool _standingsManualRetry = false;
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    // Stable structure: Tabla always exists (its content reports the state),
+    // so tabs never appear/disappear while data arrives.
+    _tabs = TabController(length: 4, vsync: this);
     Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
-  }
-
-  void _syncTabs(bool hasTable) {
-    final length = hasTable ? 4 : 3;
-    if (_tabs.length == length) return;
-    final previous = _tabs;
-    _tabs = TabController(
-      length: length,
-      vsync: this,
-      initialIndex: previous.index.clamp(0, length - 1),
-    );
-    previous.dispose();
   }
 
   void _scheduleLineupEnrichmentRefresh() {
@@ -89,10 +93,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 
   void _scheduleStandingsRefresh() {
     if (_standingsRetry != null ||
-        _standingsAttempts >= standingsRetryDelays.length) {
+        _standingsAttempts >= _standingsSchedule.length) {
       return;
     }
-    _standingsRetry = Timer(standingsRetryDelays[_standingsAttempts], () {
+    _standingsRetry = Timer(_standingsSchedule[_standingsAttempts], () {
       if (!mounted) return;
       setState(() {
         _standingsAttempts++;
@@ -100,6 +104,21 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       });
       ref.invalidate(matchContextSnapshotProvider(widget.id));
     });
+  }
+
+  /// "Reintentar": one more read of the same context in this screen. The
+  /// server deduplicates the demand, so repeated taps never add provider
+  /// calls; the button is disabled while the read is in flight.
+  Future<void> _retryStandings() async {
+    if (_standingsManualRetry) return;
+    setState(() => _standingsManualRetry = true);
+    ref.invalidate(matchContextSnapshotProvider(widget.id));
+    try {
+      await ref.read(matchContextSnapshotProvider(widget.id).future);
+    } catch (_) {
+      // Keep the settled state; the user can try again.
+    }
+    if (mounted) setState(() => _standingsManualRetry = false);
   }
 
   @override
@@ -127,8 +146,13 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         widget.initialData == null;
     if (watchesContext) {
       ref.listen(matchContextSnapshotProvider(widget.id), (_, next) {
-        if (!next.isLoading && next.value?.standingsPending == true) {
+        if (next.isLoading || next.value == null) return;
+        if (next.value!.standingsPending) {
           _scheduleStandingsRefresh();
+        } else {
+          // Answered (or settled server-side): no further revalidation.
+          _standingsRetry?.cancel();
+          _standingsRetry = null;
         }
       });
     }
@@ -219,17 +243,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final hasStats =
         detail.statistics.isNotEmpty || match.statistics.isNotEmpty;
 
-    // Only real standings earn a tab; an empty table is never shown.
-    final hasTable = data.standings.any(
-      (table) =>
-          table['competitionId'] == match.competitionId &&
-          (table['rows'] as List? ?? const []).isNotEmpty,
-    );
-    _syncTabs(hasTable);
-    final refreshing =
-        detail.pending ||
-        (data.standingsPending &&
-            _standingsAttempts < standingsRetryDelays.length);
+    // Bounded: once the retries are spent a pending table settles into a
+    // stable state (no endless spinner).
+    final standingsRefreshing =
+        data.standingsPending &&
+        _standingsAttempts < standingsRetryDelays.length;
+    final refreshing = detail.pending || standingsRefreshing;
 
     final tabBar = TabBar(
       controller: _tabs,
@@ -258,7 +277,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         const Tab(text: 'Resumen', height: 42),
         const Tab(text: 'Estadísticas', height: 42),
         const Tab(text: 'Alineación', height: 42),
-        if (hasTable) const Tab(text: 'Tabla', height: 42),
+        const Tab(text: 'Tabla', height: 42),
       ],
     );
 
@@ -330,11 +349,15 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
               if (data.demo) const DemoNotice(),
               Lineups(data, match, detail),
             ]),
-            if (hasTable)
-              _MatchTabList('tabla', [
-                if (data.demo) const DemoNotice(),
-                Standings(data, match.competitionId),
-              ]),
+            _MatchTabList('tabla', [
+              if (data.demo) const DemoNotice(),
+              MatchStandingsTab(
+                data,
+                match.competitionId,
+                refreshing: standingsRefreshing || _standingsManualRetry,
+                onRetry: _retryStandings,
+              ),
+            ]),
           ],
         ),
       ),
@@ -853,6 +876,79 @@ class _PendingSection extends StatelessWidget {
       ],
     ),
   );
+}
+
+/// Match Center Tabla content: the exact competition+season table, or one
+/// stable state (loading while the bounded refresh runs, then settled).
+class MatchStandingsTab extends StatelessWidget {
+  const MatchStandingsTab(
+    this.data,
+    this.competitionId, {
+    super.key,
+    required this.refreshing,
+    this.onRetry,
+  });
+
+  final Snapshot data;
+  final String competitionId;
+
+  /// A visible refresh for this table is running (bounded or manual).
+  final bool refreshing;
+
+  /// Manual refresh offered once a pending table settled.
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasRows = data.standings.any(
+      (table) =>
+          table['competitionId'] == competitionId &&
+          (table['rows'] as List? ?? const []).isNotEmpty,
+    );
+    if (hasRows) {
+      // A stale table stays on screen while it is revalidated.
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (refreshing)
+            const Padding(
+              key: ValueKey('standings-updating'),
+              padding: EdgeInsets.only(bottom: 4),
+              child: Text(
+                'Actualizando tabla…',
+                style: TextStyle(color: muted, fontSize: 12),
+              ),
+            ),
+          Standings(data, competitionId),
+        ],
+      );
+    }
+    if (data.standingsPending || data.standingsState == 'pending') {
+      if (refreshing) return const _PendingSection('Cargando tabla…');
+      // Settled: no spinner. Slow silent revalidations may still bring it.
+      return Column(
+        children: [
+          const _EmptySection(
+            Icons.table_rows_outlined,
+            'Tabla aún no disponible',
+          ),
+          if (onRetry != null)
+            OutlinedButton.icon(
+              key: const ValueKey('standings-retry'),
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Reintentar'),
+            ),
+        ],
+      );
+    }
+    // NO_DATA negative cache, missing or not fetchable: no retry action.
+    // unavailable (provider has no table), missing or not fetchable.
+    return const _EmptySection(
+      Icons.table_rows_outlined,
+      'Sin tabla disponible',
+    );
+  }
 }
 
 class _EmptySection extends StatelessWidget {

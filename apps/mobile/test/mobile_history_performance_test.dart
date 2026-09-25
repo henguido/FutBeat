@@ -547,7 +547,7 @@ void main() {
 
   for (final selected in [1, 2]) {
     testWidgets(
-      'table changes preserve tab $selected and safely remove active table',
+      'table changes preserve tab $selected; Tabla stays while its table goes',
       (tester) async {
         final db = AppDatabase(NativeDatabase.memory());
         await tester.runAsync(() async {
@@ -602,11 +602,14 @@ void main() {
         hasTable = false;
         container.invalidate(matchContextSnapshotProvider('fb_match_test'));
         await tester.pumpAndSettle();
-        expect(tester.widget<TabBar>(find.byType(TabBar)).controller!.index, 2);
+        // Stable structure: the tab and the selection stay, the content
+        // reports the state.
+        expect(tester.widget<TabBar>(find.byType(TabBar)).controller!.index, 3);
         expect(
           tester.widget<TabBar>(find.byType(TabBar)).controller!.length,
-          3,
+          4,
         );
+        expect(find.text('Sin tabla disponible'), findsOneWidget);
         expect(detailStarts, 1);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
@@ -617,7 +620,7 @@ void main() {
   }
 
   testWidgets(
-    'missing enrichment ends in empty states, summary stays visible and table is dynamic',
+    'missing enrichment ends in empty states, summary stays visible and Tabla content follows the data',
     (tester) async {
       final db = AppDatabase(NativeDatabase.memory());
       final context = StreamController<Snapshot>();
@@ -654,7 +657,7 @@ void main() {
       expect(find.text('2 - 1'), findsOneWidget);
       expect(find.text('MARCADOR PARCIAL'), findsOneWidget);
       expect(find.text('PROGRAMADO'), findsNothing);
-      expect(find.text('Tabla'), findsNothing);
+      expect(find.text('Tabla'), findsOneWidget);
       await tester.tap(find.text('Estadísticas'));
       await tester.pumpAndSettle();
       expect(find.text('Sin estadísticas'), findsOneWidget);

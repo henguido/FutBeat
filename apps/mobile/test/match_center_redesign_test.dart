@@ -376,12 +376,22 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('tabs are dynamic: Tabla only with real standings', (
+  testWidgets('tabs are stable: Tabla exists without standings (empty state)', (
     tester,
   ) async {
     await _pumpMatch(tester, _payload());
-    expect(_tabLabels(tester), ['Resumen', 'Estadísticas', 'Alineación']);
-    expect(find.text('Tabla no disponible'), findsNothing);
+    expect(_tabLabels(tester), [
+      'Resumen',
+      'Estadísticas',
+      'Alineación',
+      'Tabla',
+    ]);
+    await tester.ensureVisible(find.text('Tabla'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tabla'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sin tabla disponible'), findsOneWidget);
+    expect(find.text('Clasificación'), findsNothing);
   });
 
   testWidgets('table tab appears and renders when standings exist', (
