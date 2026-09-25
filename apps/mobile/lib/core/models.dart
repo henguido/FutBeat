@@ -196,8 +196,15 @@ class MatchDetail {
   final Json json;
 
   String get matchId => json['matchId'] as String? ?? '';
+
+  /// Something persisted is displayable (score, events, metadata, a partial
+  /// provider observation...). It does NOT mean the detail is complete.
   bool get available => json['available'] == true;
   bool get pending => json['pending'] == true;
+
+  /// Server-side answer to "would registering demand still help?" (fetchable,
+  /// needed, nothing queued or in flight). Never inferred on the phone.
+  bool get hydrationNeeded => json['hydrationNeeded'] == true;
   String get detailLevel => json['detailLevel'] as String? ?? 'none';
   String? get fetchedAt => json['fetchedAt'] as String?;
   String? get referee => _optional(json['referee']);

@@ -379,6 +379,7 @@ export function normalizeMatchDetail(
     lineup: sectionState(completeness.lineup),
     statistics: sectionState(completeness.statistics),
     stale: completeness.stale === true,
+    hydrationNeeded: completeness.hydrationNeeded === true,
   };
 
   return {
@@ -388,6 +389,10 @@ export function normalizeMatchDetail(
       ? completeness.pending === true
       : envelope.requestedAt != null &&
         cleanText(envelope.detailLevel) !== 'full',
+    // Displayable (`available`) is not complete: the server says whether
+    // registering demand would still help (fetchable, needed, not queued).
+    hydrationNeeded: envelope.hydrationNeeded === true ||
+      completeness.hydrationNeeded === true,
     ...(coverage ? { coverage } : {}),
     detailLevel: cleanText(envelope.detailLevel) || 'none',
     fetchedAt: envelope.fetchedAt ?? null,

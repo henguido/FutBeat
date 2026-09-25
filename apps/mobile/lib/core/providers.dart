@@ -598,8 +598,15 @@ class ApiRepository implements FootballRepository {
     String id, {
     CancelToken? cancelToken,
   }) async {
-    final cached = await readMatchDetail(id, cancelToken: cancelToken);
-    if (cached.available || _detailRequested.contains(id)) return cached;
+    // First open this session: ONE request-aware call. The server returns the
+    // persisted detail at once (partial or full) and only registers demand
+    // when hydration is actually needed (deduplicated, never waits for the
+    // provider). `available` (displayable) is not "complete".
+    // Later opens are read-only unless the server says demand would help.
+    if (_detailRequested.contains(id)) {
+      final cached = await readMatchDetail(id, cancelToken: cancelToken);
+      if (!cached.hydrationNeeded) return cached;
+    }
     return _detailRequestInFlight.putIfAbsent(id, () async {
       try {
         final detail = MatchDetail(
@@ -783,15 +790,22 @@ final matchContextSnapshotProvider = FutureProvider.autoDispose
       return value;
     });
 
+/// First read-only recheck after the open. The provider usually answers in
+/// ~1 s once the worker is woken, so rechecks start early (reads only: never
+/// a provider request).
 final detailPollIntervalProvider = Provider<Duration>(
-  (ref) => const Duration(seconds: 5),
+  (ref) => const Duration(seconds: 2),
 );
 
 /// Bounded, growing read-only refreshes while the server reports pending
 /// sections (5 s, 10 s, 20 s, 40 s by default), then stop.
 final detailPollScheduleProvider = Provider<List<Duration>>((ref) {
   final base = ref.watch(detailPollIntervalProvider);
-  return [base, base * 2, base * 4, base * 8];
+  // 2, 4, 8, 15, 40 s by default: the last read lands ~69 s after the open,
+  // clearly after the worker's 1-minute cron fallback (+ ~1 s GOAL + write
+  // latency) when a debounced wake-up was skipped. Then a stable state.
+  // Finite: 5 read-only rechecks at most.
+  return [base, base * 2, base * 4, base * 7.5, base * 20];
 });
 
 /// Upper bound for any single detail read.
@@ -897,7 +911,8 @@ final matchDetailProvider = StreamProvider.autoDispose
           // Retain the latest detail; the schedule stays bounded.
         }
       }
-      final complete = !current.pending;
+      // Complete by the server's own view (not just "displayable").
+      final complete = !current.pending && !current.hydrationNeeded;
       if (!disposed && current.pending) {
         current = MatchDetail({...current.json, 'pending': false});
         yield current;

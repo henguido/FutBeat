@@ -377,6 +377,12 @@ test('C-1. pending-verification finals (GOAL never verifies) are not refetched e
   assert.equal(await bucketAt(4 * 60 + 1), 'recent_hot');
   // A LIVE match stays LIVE; a user open of an old final keeps its user path.
   assert.equal((await db.query("select futbeat_private.match_detail_bucket('LIVE',now()-interval '30 minutes') b")).rows[0].b, 'live');
+  // #101: a settled old final is frozen (no demand); an incomplete one keeps
+  // its user path.
   await db.query('select public.futbeat_request_match_detail($1)', [old.match]);
-  assert.equal((await db.query('select source from futbeat_private.match_detail_requests where match_id=$1', [old.match])).rows[0].source, 'user');
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.match_detail_requests where match_id=$1', [old.match])).rows[0].n, 0);
+  const partial = await seed(db, { status: 'FINISHED_PENDING_VERIFICATION', minutes: -2 * 24 * 60 });
+  await store(db, partial, { statistics: stats }, 60 * 30);
+  await db.query('select public.futbeat_request_match_detail($1)', [partial.match]);
+  assert.equal((await db.query('select source from futbeat_private.match_detail_requests where match_id=$1', [partial.match])).rows[0].source, 'user');
 }));
