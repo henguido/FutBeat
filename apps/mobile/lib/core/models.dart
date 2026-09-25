@@ -461,6 +461,13 @@ class Snapshot {
 
   /// Match Center: the exact competition+season table is being fetched.
   bool get standingsPending => coverage?['standingsPending'] == true;
+
+  /// Match Center: server-side table state for the exact competition+season,
+  /// one of available | pending | unavailable | missing (null when unknown).
+  String? get standingsState => coverage?['standings'] as String?;
+
+  /// Match Center: the exact table shown is older than its freshness window.
+  bool get standingsStale => coverage?['standingsStale'] == true;
   final bool stale;
   final bool revalidating;
   final DateTime updatedAt;

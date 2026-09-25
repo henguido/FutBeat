@@ -16,16 +16,19 @@ const _match = 'fb_match_mc';
 Map<String, dynamic> _context({
   bool standings = false,
   bool standingsPending = false,
+  bool standingsStale = false,
+  String? standingsState,
 }) => {
   'schemaVersion': 1,
   'demo': false,
   'updatedAt': '2026-09-01T21:00:00Z',
   'coverage': {
     'partial': false,
-    'standings': standings
-        ? 'available'
-        : (standingsPending ? 'pending' : 'missing'),
+    'standings':
+        standingsState ??
+        (standings ? 'available' : (standingsPending ? 'pending' : 'missing')),
     'standingsPending': standingsPending,
+    'standingsStale': standingsStale,
   },
   'competitions': [
     {'id': 'fb_comp_mc', 'name': 'Liga Sintética'},
@@ -256,7 +259,7 @@ void main() {
   });
 
   testWidgets(
-    '23. standings that arrive later add the Tabla tab; current tab kept',
+    '23. standings that arrive later appear in place; current tab kept',
     (tester) async {
       final server = _Server(
         detail: (_) => _detail(lineup: true, stats: true),
@@ -265,24 +268,201 @@ void main() {
             : _context(standings: true),
       );
       final container = await _open(tester, server);
-      expect(find.text('Tabla'), findsNothing);
+      expect(find.text('Tabla'), findsOneWidget, reason: 'stable tab');
       await _tab(tester, 'Alineación');
       await _elapse(
         tester,
         standingsRetryDelays.first + const Duration(seconds: 2),
       );
-      expect(find.text('Tabla'), findsOneWidget);
       expect(_selectedTab(tester), 'Alineación');
       expect(
         server.contextReads,
         2,
         reason: 'stops once standings are available',
       );
+      await _tab(tester, 'Tabla');
+      expect(find.text('Clasificación'), findsOneWidget);
       await _elapse(tester, const Duration(minutes: 2));
       expect(server.contextReads, 2);
       await _close(tester, container);
     },
   );
+
+  group('#98 Tabla is a stable state tab', () {
+    testWidgets('1. AVAILABLE: Tabla tab with the exact rows', (tester) async {
+      final server = _Server(
+        detail: (_) => _detail(lineup: true, stats: true),
+        context: (_) => _context(standings: true),
+      );
+      final container = await _open(tester, server);
+      await _tab(tester, 'Tabla');
+      expect(find.text('Clasificación'), findsOneWidget);
+      expect(find.text('Local Sintético'), findsWidgets);
+      expect(find.text('Visita Sintética'), findsWidgets);
+      expect(find.text('Sin tabla disponible'), findsNothing);
+      expect(server.contextReads, 1, reason: 'nothing pending: no refresh');
+      await _close(tester, container);
+    });
+
+    testWidgets('2. PENDING without a table: tab visible + loading state', (
+      tester,
+    ) async {
+      final server = _Server(
+        detail: (_) => _detail(lineup: true, stats: true),
+        context: (_) => _context(standingsPending: true),
+      );
+      final container = await _open(tester, server);
+      await _tab(tester, 'Tabla');
+      expect(find.text('Cargando tabla…'), findsOneWidget);
+      expect(find.byKey(const ValueKey('match-refreshing')), findsOneWidget);
+      await _elapse(tester, const Duration(minutes: 2));
+      await _close(tester, container);
+    });
+
+    testWidgets('3. UNAVAILABLE: tab visible + "Sin tabla disponible"', (
+      tester,
+    ) async {
+      final server = _Server(
+        detail: (_) => _detail(lineup: true, stats: true),
+        context: (_) => _context(standingsState: 'unavailable'),
+      );
+      final container = await _open(tester, server);
+      await _tab(tester, 'Tabla');
+      expect(find.text('Sin tabla disponible'), findsOneWidget);
+      expect(find.text('Cargando tabla…'), findsNothing);
+      await _elapse(tester, const Duration(minutes: 1));
+      expect(server.contextReads, 1, reason: 'no refresh for NO_DATA');
+      await _close(tester, container);
+    });
+
+    testWidgets('4. MISSING / not fetchable: stable empty state', (
+      tester,
+    ) async {
+      final server = _Server(
+        detail: (_) => _detail(lineup: true, stats: true),
+        context: (_) => _context(),
+      );
+      final container = await _open(tester, server);
+      await _tab(tester, 'Tabla');
+      expect(find.text('Sin tabla disponible'), findsOneWidget);
+      expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
+      await _elapse(tester, const Duration(minutes: 1));
+      expect(server.contextReads, 1);
+      await _close(tester, container);
+    });
+
+    testWidgets(
+      '5. stale + pending: the table stays visible while it refreshes',
+      (tester) async {
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (i) => i == 0
+              ? _context(
+                  standings: true,
+                  standingsPending: true,
+                  standingsStale: true,
+                )
+              : _context(standings: true),
+        );
+        final container = await _open(tester, server);
+        await _tab(tester, 'Tabla');
+        expect(find.text('Clasificación'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('standings-updating')),
+          findsOneWidget,
+        );
+        for (var step = 0; step < 24; step++) {
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(
+            find.text('Clasificación'),
+            findsOneWidget,
+            reason: 'never hidden at step $step',
+          );
+        }
+        expect(find.byKey(const ValueKey('standings-updating')), findsNothing);
+        expect(server.contextReads, 2);
+        expect(_selectedTab(tester), 'Tabla');
+        await _close(tester, container);
+      },
+    );
+
+    testWidgets(
+      '6. pending then AVAILABLE on Tabla: rows appear without reopening',
+      (tester) async {
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (i) => i < 2
+              ? _context(standingsPending: true)
+              : _context(standings: true),
+        );
+        final container = await _open(tester, server);
+        await _tab(tester, 'Tabla');
+        expect(find.text('Cargando tabla…'), findsOneWidget);
+        await _elapse(
+          tester,
+          standingsRetryDelays[0] +
+              standingsRetryDelays[1] +
+              const Duration(seconds: 2),
+        );
+        expect(find.text('Cargando tabla…'), findsNothing);
+        expect(find.text('Clasificación'), findsOneWidget);
+        expect(_selectedTab(tester), 'Tabla');
+        expect(server.contextReads, 3);
+        await _close(tester, container);
+      },
+    );
+
+    testWidgets(
+      '7. bounded retries: a table that never arrives settles (no spinner)',
+      (tester) async {
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (_) => _context(standingsPending: true),
+        );
+        final container = await _open(tester, server);
+        await _tab(tester, 'Tabla');
+        await _elapse(tester, const Duration(minutes: 3));
+        expect(server.contextReads, 1 + standingsRetryDelays.length);
+        expect(find.text('Cargando tabla…'), findsNothing);
+        expect(find.text('Tabla aún no disponible'), findsOneWidget);
+        expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
+        await _elapse(tester, const Duration(minutes: 3));
+        expect(server.contextReads, 1 + standingsRetryDelays.length);
+        await _close(tester, container);
+      },
+    );
+
+    testWidgets(
+      '8. state transitions keep the TabController and the selected tab',
+      (tester) async {
+        final states = [
+          _context(standingsPending: true),
+          _context(standings: true, standingsPending: true),
+          _context(standingsState: 'unavailable'),
+        ];
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (i) => states[i.clamp(0, states.length - 1)],
+        );
+        final container = await _open(tester, server);
+        await _tab(tester, 'Tabla');
+        final controller = tester
+            .widget<TabBar>(find.byType(TabBar))
+            .controller;
+        for (final wait in standingsRetryDelays.take(2)) {
+          await _elapse(tester, wait + const Duration(seconds: 1));
+          final bar = tester.widget<TabBar>(find.byType(TabBar));
+          expect(bar.controller, same(controller));
+          expect(bar.controller!.length, 4);
+          expect(_selectedTab(tester), 'Tabla');
+          expect(tester.takeException(), isNull);
+        }
+        expect(server.contextReads, 3);
+        expect(find.text('Sin tabla disponible'), findsOneWidget);
+        await _close(tester, container);
+      },
+    );
+  });
 
   testWidgets('a failed refresh never erases a lineup already on screen', (
     tester,

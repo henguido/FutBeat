@@ -53,20 +53,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    // Stable structure: Tabla always exists (its content reports the state),
+    // so tabs never appear/disappear while data arrives.
+    _tabs = TabController(length: 4, vsync: this);
     Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
-  }
-
-  void _syncTabs(bool hasTable) {
-    final length = hasTable ? 4 : 3;
-    if (_tabs.length == length) return;
-    final previous = _tabs;
-    _tabs = TabController(
-      length: length,
-      vsync: this,
-      initialIndex: previous.index.clamp(0, length - 1),
-    );
-    previous.dispose();
   }
 
   void _scheduleLineupEnrichmentRefresh() {
@@ -219,17 +209,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final hasStats =
         detail.statistics.isNotEmpty || match.statistics.isNotEmpty;
 
-    // Only real standings earn a tab; an empty table is never shown.
-    final hasTable = data.standings.any(
-      (table) =>
-          table['competitionId'] == match.competitionId &&
-          (table['rows'] as List? ?? const []).isNotEmpty,
-    );
-    _syncTabs(hasTable);
-    final refreshing =
-        detail.pending ||
-        (data.standingsPending &&
-            _standingsAttempts < standingsRetryDelays.length);
+    // Bounded: once the retries are spent a pending table settles into a
+    // stable state (no endless spinner).
+    final standingsRefreshing =
+        data.standingsPending &&
+        _standingsAttempts < standingsRetryDelays.length;
+    final refreshing = detail.pending || standingsRefreshing;
 
     final tabBar = TabBar(
       controller: _tabs,
@@ -258,7 +243,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         const Tab(text: 'Resumen', height: 42),
         const Tab(text: 'Estadísticas', height: 42),
         const Tab(text: 'Alineación', height: 42),
-        if (hasTable) const Tab(text: 'Tabla', height: 42),
+        const Tab(text: 'Tabla', height: 42),
       ],
     );
 
@@ -330,11 +315,14 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
               if (data.demo) const DemoNotice(),
               Lineups(data, match, detail),
             ]),
-            if (hasTable)
-              _MatchTabList('tabla', [
-                if (data.demo) const DemoNotice(),
-                Standings(data, match.competitionId),
-              ]),
+            _MatchTabList('tabla', [
+              if (data.demo) const DemoNotice(),
+              MatchStandingsTab(
+                data,
+                match.competitionId,
+                refreshing: standingsRefreshing,
+              ),
+            ]),
           ],
         ),
       ),
@@ -853,6 +841,63 @@ class _PendingSection extends StatelessWidget {
       ],
     ),
   );
+}
+
+/// Match Center Tabla content: the exact competition+season table, or one
+/// stable state (loading while the bounded refresh runs, then settled).
+class MatchStandingsTab extends StatelessWidget {
+  const MatchStandingsTab(
+    this.data,
+    this.competitionId, {
+    super.key,
+    required this.refreshing,
+  });
+
+  final Snapshot data;
+  final String competitionId;
+
+  /// A bounded refresh for this table is still scheduled.
+  final bool refreshing;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasRows = data.standings.any(
+      (table) =>
+          table['competitionId'] == competitionId &&
+          (table['rows'] as List? ?? const []).isNotEmpty,
+    );
+    if (hasRows) {
+      // A stale table stays on screen while it is revalidated.
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (refreshing)
+            const Padding(
+              key: ValueKey('standings-updating'),
+              padding: EdgeInsets.only(bottom: 4),
+              child: Text(
+                'Actualizando tabla…',
+                style: TextStyle(color: muted, fontSize: 12),
+              ),
+            ),
+          Standings(data, competitionId),
+        ],
+      );
+    }
+    if (data.standingsPending || data.standingsState == 'pending') {
+      return refreshing
+          ? const _PendingSection('Cargando tabla…')
+          : const _EmptySection(
+              Icons.table_rows_outlined,
+              'Tabla aún no disponible',
+            );
+    }
+    // unavailable (provider has no table), missing or not fetchable.
+    return const _EmptySection(
+      Icons.table_rows_outlined,
+      'Sin tabla disponible',
+    );
+  }
 }
 
 class _EmptySection extends StatelessWidget {
