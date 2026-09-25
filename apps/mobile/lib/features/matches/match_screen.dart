@@ -274,7 +274,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ),
       dividerColor: Colors.transparent,
       tabs: [
-        const Tab(text: 'Resumen', height: 42),
+        const Tab(text: 'Previa', height: 42),
         const Tab(text: 'Estadísticas', height: 42),
         const Tab(text: 'Alineación', height: 42),
         const Tab(text: 'Tabla', height: 42),
@@ -311,8 +311,18 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         body: TabBarView(
           controller: _tabs,
           children: [
-            _MatchTabList('resumen', [
+            _MatchTabList('previa', [
               if (data.demo) const DemoNotice(),
+              // Before kickoff the match facts lead; afterwards the story.
+              if (match.showKickoff) ...[
+                const _SectionTitle('Información del partido'),
+                MatchInfoCard(
+                  match: match,
+                  competition: competition,
+                  detail: detail,
+                  venue: venue,
+                ),
+              ],
               if (detail.videos.isNotEmpty) ...[
                 const _SectionTitle('Resumen oficial'),
                 PostMatchVideos(detail),
@@ -331,13 +341,15 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                   ),
                 ),
               ],
-              const _SectionTitle('Información del partido'),
-              MatchInfoCard(
-                match: match,
-                competition: competition,
-                detail: detail,
-                venue: venue,
-              ),
+              if (!match.showKickoff) ...[
+                const _SectionTitle('Información del partido'),
+                MatchInfoCard(
+                  match: match,
+                  competition: competition,
+                  detail: detail,
+                  venue: venue,
+                ),
+              ],
             ]),
             _MatchTabList('estadisticas', [
               if (data.demo) const DemoNotice(),
@@ -354,6 +366,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
               MatchStandingsTab(
                 data,
                 match.competitionId,
+                homeTeamId: match.homeId,
+                awayTeamId: match.awayId,
                 refreshing: standingsRefreshing || _standingsManualRetry,
                 onRetry: _retryStandings,
               ),
@@ -496,6 +510,7 @@ class MatchHero extends StatelessWidget {
     final time = localTime(context, match.startTime);
 
     return Container(
+      key: const ValueKey('match-hero'),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -503,69 +518,79 @@ class MatchHero extends StatelessWidget {
           colors: [_headerTop, _headerBottom],
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 14),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(999),
-            onTap: () => context.push('/competition/${competition.id}'),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.emoji_events_outlined,
-                    size: 14,
-                    color: muted,
-                  ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      [
-                        competition.name,
-                        if (round.isNotEmpty) 'Jornada $round',
-                      ].join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+          // Competition first, clearly separated from the teams.
+          Material(
+            color: Colors.white.withValues(alpha: .06),
+            shape: const StadiumBorder(),
+            child: InkWell(
+              customBorder: const StadiumBorder(),
+              onTap: () => context.push('/competition/${competition.id}'),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 30),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.emoji_events_outlined,
+                        size: 14,
+                        color: lime,
                       ),
-                    ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          [
+                            competition.name,
+                            if (round.isNotEmpty) 'Jornada $round',
+                          ].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 16,
+                        color: muted,
+                      ),
+                    ],
                   ),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    size: 16,
-                    color: muted,
-                  ),
-                ],
+                ),
               ),
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: _HeaderTeam(home)),
-              SizedBox(width: 116, child: _HeaderCenter(match)),
-              Expanded(child: _HeaderTeam(away)),
+              Expanded(child: _HeaderTeam(home, accent: lime)),
+              SizedBox(width: 112, child: _HeaderCenter(match)),
+              Expanded(child: _HeaderTeam(away, accent: awaySideColor)),
             ],
           ),
-          const SizedBox(height: 10),
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 14,
-            runSpacing: 4,
-            children: [
-              if (!match.showKickoff)
-                _InfoChip(Icons.calendar_today_rounded, '$date · $time'),
-              if (venue.trim().isNotEmpty)
-                _InfoChip(Icons.location_on_outlined, venue.trim()),
-            ],
-          ),
+          if (!match.showKickoff || venue.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                if (!match.showKickoff)
+                  _InfoChip(Icons.calendar_today_rounded, '$date · $time'),
+                if (venue.trim().isNotEmpty)
+                  _InfoChip(Icons.location_on_outlined, venue.trim()),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -573,32 +598,56 @@ class MatchHero extends StatelessWidget {
 }
 
 class _HeaderTeam extends StatelessWidget {
-  const _HeaderTeam(this.team);
+  const _HeaderTeam(this.team, {required this.accent});
 
   final Entity team;
 
+  /// Side color (home lime / away blue), shared with the standings highlight.
+  final Color accent;
+
   @override
-  Widget build(BuildContext context) => InkWell(
-    borderRadius: BorderRadius.circular(14),
-    onTap: () => context.push('/team/${team.id}'),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-      child: Column(
-        children: [
-          EntityAvatar(team, size: 54),
-          const SizedBox(height: 7),
-          Text(
-            team.name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 14,
-              height: 1.15,
-              fontWeight: FontWeight.w800,
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: team.name,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => context.push('/team/${team.id}'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: .05),
+                border: Border.all(color: Colors.white.withValues(alpha: .08)),
+              ),
+              child: EntityAvatar(team, size: 46),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              team.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13.5,
+                height: 1.15,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Container(
+              width: 18,
+              height: 3,
+              decoration: BoxDecoration(
+                color: accent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );
@@ -613,7 +662,7 @@ class _HeaderCenter extends StatelessWidget {
   Widget build(BuildContext context) {
     final (color, _) = matchStatusTone(match);
     return Padding(
-      padding: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.only(top: 10),
       child: Column(
         children: [
           if (match.showKickoff) ...[
@@ -639,7 +688,7 @@ class _HeaderCenter extends StatelessWidget {
               child: Text(
                 match.score,
                 style: TextStyle(
-                  fontSize: 40,
+                  fontSize: 38,
                   height: 1.05,
                   letterSpacing: 1,
                   fontWeight: FontWeight.w900,
@@ -665,20 +714,27 @@ class _InfoChip extends StatelessWidget {
   final String text;
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Icon(icon, size: 13, color: muted),
-      const SizedBox(width: 4),
-      Flexible(
-        child: Text(
-          text,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: muted, fontSize: 12),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .05),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: muted),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
         ),
-      ),
-    ],
+      ],
+    ),
   );
 }
 
@@ -886,11 +942,17 @@ class MatchStandingsTab extends StatelessWidget {
     this.competitionId, {
     super.key,
     required this.refreshing,
+    this.homeTeamId,
+    this.awayTeamId,
     this.onRetry,
   });
 
   final Snapshot data;
   final String competitionId;
+
+  /// The selected match's sides, highlighted in the table.
+  final String? homeTeamId;
+  final String? awayTeamId;
 
   /// A visible refresh for this table is running (bounded or manual).
   final bool refreshing;
@@ -919,7 +981,14 @@ class MatchStandingsTab extends StatelessWidget {
                 style: TextStyle(color: muted, fontSize: 12),
               ),
             ),
-          Standings(data, competitionId),
+          Standings(
+            data,
+            competitionId,
+            selectableView: true,
+            highlightedTeams: {?homeTeamId: lime, ?awayTeamId: awaySideColor},
+            // In-play evidence from the snapshot itself (never the clock).
+            liveTeamIds: liveTeamIds(data, competitionId),
+          ),
         ],
       );
     }

@@ -381,7 +381,7 @@ void main() {
   ) async {
     await _pumpMatch(tester, _payload());
     expect(_tabLabels(tester), [
-      'Resumen',
+      'Previa',
       'Estadísticas',
       'Alineación',
       'Tabla',
@@ -399,7 +399,7 @@ void main() {
   ) async {
     await _pumpMatch(tester, _payload(table: true));
     expect(_tabLabels(tester), [
-      'Resumen',
+      'Previa',
       'Estadísticas',
       'Alineación',
       'Tabla',
