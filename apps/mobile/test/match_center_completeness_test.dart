@@ -642,7 +642,7 @@ void main() {
           context: (_) => _context(standingsPending: true),
         );
         final container = await _open(tester, server, width: width);
-        for (final tab in ['Estadísticas', 'Alineación', 'Resumen']) {
+        for (final tab in ['Estadísticas', 'Alineación', 'Previa']) {
           await _tab(tester, tab);
           expect(tester.takeException(), isNull);
         }
