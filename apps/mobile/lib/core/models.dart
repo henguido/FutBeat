@@ -621,3 +621,90 @@ class Snapshot {
           .toList()
         ..sort((a, b) => a.startTime.compareTo(b.startTime));
 }
+
+/// Result of a finished match from one team's perspective.
+enum TeamResult { win, draw, loss }
+
+/// WIN/DRAW/LOSS for [teamId] in a compact match (`homeTeamId`,
+/// `awayTeamId`, `score.home/away`), by canonical id only. Null without a
+/// complete score or when the team did not play it: never a guessed result.
+TeamResult? teamMatchResult(Json match, String teamId) {
+  final score = match['score'];
+  if (score is! Map) return null;
+  final home = score['home'];
+  final away = score['away'];
+  if (home is! num || away is! num) return null;
+  final (own, other) = match['homeTeamId'] == teamId
+      ? (home, away)
+      : match['awayTeamId'] == teamId
+      ? (away, home)
+      : (null, null);
+  if (own == null || other == null) return null;
+  return own > other
+      ? TeamResult.win
+      : own == other
+      ? TeamResult.draw
+      : TeamResult.loss;
+}
+
+/// Recent form + head-to-head of one match (`/v1/match-preview`), separate
+/// from the match context and from [MatchDetail]. States are `available`,
+/// `partial` (form only) or `none`: nothing here is ever "pending".
+class MatchPreview {
+  MatchPreview(this.json) {
+    for (final item in _list('matches')) {
+      final id = item['matchId'];
+      if (id is String) _matches[id] = item;
+    }
+    for (final item in _list('teams')) {
+      final id = item['id'];
+      if (id is String && item['name'] is String) _teams[id] = Entity(item);
+    }
+    for (final item in _list('competitions')) {
+      final id = item['id'];
+      if (id is String && item['name'] is String) _competitions[id] = item;
+    }
+  }
+
+  factory MatchPreview.empty(String matchId) =>
+      MatchPreview({'schemaVersion': 1, 'matchId': matchId});
+
+  final Json json;
+  final Map<String, Json> _matches = {};
+  final Map<String, Entity> _teams = {};
+  final Map<String, Json> _competitions = {};
+
+  List<Json> _list(String key) => [
+    for (final item in json[key] as List? ?? const [])
+      if (item is Map) Map<String, dynamic>.from(item),
+  ];
+
+  Json _section(String path) {
+    Object? node = json;
+    for (final key in path.split('.')) {
+      node = node is Map ? node[key] : null;
+    }
+    return node is Map ? Map<String, dynamic>.from(node) : <String, dynamic>{};
+  }
+
+  List<Json> _matchesOf(Json section) => [
+    for (final id in section['matchIds'] as List? ?? const [])
+      if (_matches[id] != null) _matches[id]!,
+  ];
+
+  /// `home` or `away` side of the selected match.
+  String formState(String side) =>
+      _section('form.$side')['state'] as String? ?? 'none';
+
+  /// Newest first, as served.
+  List<Json> formMatches(String side) => _matchesOf(_section('form.$side'));
+
+  String get h2hState => _section('h2h')['state'] as String? ?? 'none';
+
+  /// Newest first, at most 5.
+  List<Json> get h2hMatches => _matchesOf(_section('h2h'));
+
+  Entity? team(String? id) => id == null ? null : _teams[id];
+  String? competitionName(String? id) =>
+      id == null ? null : _competitions[id]?['name'] as String?;
+}

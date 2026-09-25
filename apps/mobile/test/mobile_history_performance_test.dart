@@ -599,7 +599,7 @@ void main() {
         );
         expect(
           tester.widget<TabBar>(find.byType(TabBar)).controller!.length,
-          4,
+          5,
         );
         await tester.tap(find.text('Tabla'));
         await tester.pumpAndSettle();
@@ -611,7 +611,7 @@ void main() {
         expect(tester.widget<TabBar>(find.byType(TabBar)).controller!.index, 3);
         expect(
           tester.widget<TabBar>(find.byType(TabBar)).controller!.length,
-          4,
+          5,
         );
         expect(find.text('Sin tabla disponible'), findsOneWidget);
         expect(detailStarts, 1);

@@ -11,6 +11,7 @@ import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../entities/standings.dart';
+import 'match_preview_sections.dart';
 
 const _headerTop = Color(0xFF1B2B31);
 const _headerBottom = Color(0xFF0F181C);
@@ -69,7 +70,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     super.initState();
     // Stable structure: Tabla always exists (its content reports the state),
     // so tabs never appear/disappear while data arrives.
-    _tabs = TabController(length: 4, vsync: this);
+    _tabs = TabController(length: 5, vsync: this);
     Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
   }
 
@@ -242,6 +243,20 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final away = data.team(match.awayId)!;
     final hasStats =
         detail.statistics.isNotEmpty || match.statistics.isNotEmpty;
+    // Recent form + head-to-head: a separate read, never blocking the header
+    // or the tabs, failing on its own, read once per open.
+    final preview = ref.watch(matchPreviewProvider(widget.id));
+    // Before kickoff an empty events card adds nothing; real events, a
+    // started/finished match or a pending detail of a started one show it.
+    final showEvents =
+        !match.showKickoff ||
+        (match.isAwaitingUpdate && detail.pending) ||
+        mergedMatchTimeline(match, detail).isNotEmpty;
+    final previewSections = [
+      const _SectionTitle('Forma reciente'),
+      RecentFormSection(preview: preview, data: data, match: match),
+      StandingsSnapshotCard(data: data, match: match),
+    ];
 
     // Bounded: once the retries are spent a pending table settles into a
     // stable state (no endless spinner).
@@ -278,6 +293,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         const Tab(text: 'Estadísticas', height: 42),
         const Tab(text: 'Alineación', height: 42),
         const Tab(text: 'Tabla', height: 42),
+        const Tab(text: 'Cara a cara', height: 42),
       ],
     );
 
@@ -322,13 +338,16 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                   detail: detail,
                   venue: venue,
                 ),
+                ...previewSections,
               ],
               if (detail.videos.isNotEmpty) ...[
                 const _SectionTitle('Resumen oficial'),
                 PostMatchVideos(detail),
               ],
-              const _SectionTitle('Eventos del partido'),
-              MatchTimeline(data, match, detail),
+              if (showEvents) ...[
+                const _SectionTitle('Eventos del partido'),
+                MatchTimeline(data, match, detail),
+              ],
               if (hasStats) ...[
                 const _SectionTitle('Estadísticas clave'),
                 Statistics(match, detail: detail, limit: 4),
@@ -349,6 +368,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                   detail: detail,
                   venue: venue,
                 ),
+                ...previewSections,
               ],
             ]),
             _MatchTabList('estadisticas', [
@@ -370,6 +390,15 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                 awayTeamId: match.awayId,
                 refreshing: standingsRefreshing || _standingsManualRetry,
                 onRetry: _retryStandings,
+              ),
+            ]),
+            _MatchTabList('cara-a-cara', [
+              if (data.demo) const DemoNotice(),
+              HeadToHeadTab(
+                preview: preview,
+                data: data,
+                match: match,
+                onRetry: () => ref.invalidate(matchPreviewProvider(widget.id)),
               ),
             ]),
           ],

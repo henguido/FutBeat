@@ -136,6 +136,7 @@ Map<String, dynamic> _full() => _detail(
 );
 
 class _Server {
+  int previewReads = 0;
   _Server(this.detail);
 
   /// (read index, request-aware?) -> detail JSON, or null for a failure.
@@ -150,6 +151,20 @@ class _Server {
     ..interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          if (options.path == '/v1/match-preview') {
+            // #99 phase 2: separate DB-only read (not a detail read).
+            previewReads++;
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: {
+                  'schemaVersion': 1,
+                  'matchId': options.queryParameters['id'],
+                },
+              ),
+            );
+            return;
+          }
           if (options.path == '/v1/match-context') {
             handler.resolve(
               Response(requestOptions: options, data: _context()),

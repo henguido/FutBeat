@@ -167,6 +167,7 @@ Map<String, dynamic> _detail({bool partial = false}) => {
 };
 
 class _Server {
+  int previewReads = 0;
   _Server(this.context, {this.detail});
 
   Map<String, dynamic> Function(int read) context;
@@ -178,6 +179,20 @@ class _Server {
     ..interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
+          if (options.path == '/v1/match-preview') {
+            // #99 phase 2: separate DB-only read (not a detail read).
+            previewReads++;
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: {
+                  'schemaVersion': 1,
+                  'matchId': options.queryParameters['id'],
+                },
+              ),
+            );
+            return;
+          }
           if (options.path == '/v1/match-context') {
             handler.resolve(
               Response(requestOptions: options, data: context(contextReads++)),
@@ -223,6 +238,8 @@ Future<ProviderContainer> _open(
 }
 
 Future<void> _close(WidgetTester tester, ProviderContainer container) async {
+  // Let an in-flight (fake) HTTP read of the preview complete first.
+  await tester.pump(const Duration(milliseconds: 10));
   await tester.pumpWidget(const SizedBox());
   container.dispose();
 }
@@ -298,15 +315,15 @@ Future<void> _scrollTo(WidgetTester tester, Finder target) async {
 }
 
 void main() {
-  testWidgets('1. tabs are Previa / Estadísticas / Alineación / Tabla', (
-    tester,
-  ) async {
+  testWidgets('1. tabs are Previa / Estadísticas / Alineación / Tabla (+ '
+      'Cara a cara since phase 2)', (tester) async {
     final container = await _open(tester, _Server((_) => _context()));
     expect(_tabLabels(tester), [
       'Previa',
       'Estadísticas',
       'Alineación',
       'Tabla',
+      'Cara a cara',
     ]);
     expect(find.text('Resumen'), findsNothing);
     await _close(tester, container);

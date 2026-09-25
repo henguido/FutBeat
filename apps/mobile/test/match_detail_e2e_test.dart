@@ -59,6 +59,7 @@ class _Api {
           final data = switch (options.path) {
             '/v1/match-context' => _context(),
             '/v1/match-detail' => detail,
+            '/v1/match-preview' => {'schemaVersion': 1},
             _ => null,
           };
           if (data == null) {

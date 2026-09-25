@@ -93,8 +93,12 @@ Future<void> _pumpMatch(
     overrides: [
       databaseProvider.overrideWithValue(db),
       repositoryProvider.overrideWithValue(ApiRepository(Dio())),
-      matchContextSnapshotProvider.overrideWith((ref, id) async => Snapshot(payload)),
-      matchDetailProvider.overrideWith((ref, id) => Stream.value(MatchDetail(detail))),
+      matchContextSnapshotProvider.overrideWith(
+        (ref, id) async => Snapshot(payload),
+      ),
+      matchDetailProvider.overrideWith(
+        (ref, id) => Stream.value(MatchDetail(detail)),
+      ),
       followsProvider.overrideWith((ref) => Stream.value({})),
       liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
     ],
@@ -112,7 +116,8 @@ Future<void> _pumpMatch(
     routes: [
       GoRoute(
         path: '/match',
-        builder: (_, _) => MatchScreen(id: 'fb_match', initialData: Snapshot(payload)),
+        builder: (_, _) =>
+            MatchScreen(id: 'fb_match', initialData: Snapshot(payload)),
       ),
       GoRoute(
         path: '/player/:id',
@@ -136,91 +141,144 @@ Future<void> _pumpMatch(
 }
 
 void main() {
-  testWidgets('starter with canonicalId and canonical photo: tappable, photo renders (cases B1/D1)', (tester) async {
-    await _pumpMatch(
-      tester,
-      _detail(
-        starter: _lineupPlayer(name: 'Goleador', canonicalId: 'fb_player_1',
-          image: 'https://media.goal-api.com/players/1.png'),
-        bench: _lineupPlayer(name: 'Suplente', canonicalId: 'fb_player_2', lineupPosition: 2),
-      ),
-    );
-    expect(
-      find.byWidgetPredicate((w) => w is Image && (_networkUrl(w.image) ?? '').endsWith('1.png')),
-      findsOneWidget,
-    );
-    final starterInkWell = find.ancestor(of: find.text('Goleador'), matching: find.byType(InkWell)).first;
-    expect(starterInkWell, findsOneWidget);
-  });
+  testWidgets(
+    'starter with canonicalId and canonical photo: tappable, photo renders (cases B1/D1)',
+    (tester) async {
+      await _pumpMatch(
+        tester,
+        _detail(
+          starter: _lineupPlayer(
+            name: 'Goleador',
+            canonicalId: 'fb_player_1',
+            image: 'https://media.goal-api.com/players/1.png',
+          ),
+          bench: _lineupPlayer(
+            name: 'Suplente',
+            canonicalId: 'fb_player_2',
+            lineupPosition: 2,
+          ),
+        ),
+      );
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is Image && (_networkUrl(w.image) ?? '').endsWith('1.png'),
+        ),
+        findsOneWidget,
+      );
+      final starterInkWell = find
+          .ancestor(of: find.text('Goleador'), matching: find.byType(InkWell))
+          .first;
+      expect(starterInkWell, findsOneWidget);
+    },
+  );
 
-  testWidgets('bench player with canonical photo renders it (case D2)', (tester) async {
+  testWidgets('bench player with canonical photo renders it (case D2)', (
+    tester,
+  ) async {
     await _pumpMatch(
       tester,
       _detail(
         starter: _lineupPlayer(name: 'Titular', canonicalId: 'fb_player_1'),
-        bench: _lineupPlayer(name: 'Con Foto', canonicalId: 'fb_player_2', lineupPosition: 2,
-          image: 'https://media.goal-api.com/players/2.png'),
+        bench: _lineupPlayer(
+          name: 'Con Foto',
+          canonicalId: 'fb_player_2',
+          lineupPosition: 2,
+          image: 'https://media.goal-api.com/players/2.png',
+        ),
       ),
     );
     expect(
-      find.byWidgetPredicate((w) => w is Image && (_networkUrl(w.image) ?? '').endsWith('2.png')),
+      find.byWidgetPredicate(
+        (w) => w is Image && (_networkUrl(w.image) ?? '').endsWith('2.png'),
+      ),
       findsOneWidget,
     );
   });
 
-  testWidgets('player without any photo shows initials, not a broken image (case D4)', (tester) async {
-    await _pumpMatch(
-      tester,
-      _detail(
-        starter: _lineupPlayer(name: 'Sin Foto', canonicalId: 'fb_player_1'),
-        bench: _lineupPlayer(name: 'Suplente', canonicalId: 'fb_player_2', lineupPosition: 2),
-      ),
-    );
-    expect(find.text('SF'), findsOneWidget);
-    expect(find.byType(Image), findsNothing);
-  });
+  testWidgets(
+    'player without any photo shows initials, not a broken image (case D4)',
+    (tester) async {
+      await _pumpMatch(
+        tester,
+        _detail(
+          starter: _lineupPlayer(name: 'Sin Foto', canonicalId: 'fb_player_1'),
+          bench: _lineupPlayer(
+            name: 'Suplente',
+            canonicalId: 'fb_player_2',
+            lineupPosition: 2,
+          ),
+        ),
+      );
+      expect(find.text('SF'), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+    },
+  );
 
-  testWidgets('tapping a starter with canonicalId navigates to /player/<canonicalId> (case C, F)', (tester) async {
-    await _pumpMatch(
-      tester,
-      _detail(
-        starter: _lineupPlayer(name: 'Goleador', canonicalId: 'fb_player_1'),
-        bench: _lineupPlayer(name: 'Suplente', canonicalId: 'fb_player_2', lineupPosition: 2),
-      ),
-    );
-    await tester.tap(find.text('Goleador'));
-    await tester.pumpAndSettle();
-    expect(find.text('Player profile route'), findsOneWidget);
-  });
+  testWidgets(
+    'tapping a starter with canonicalId navigates to /player/<canonicalId> (case C, F)',
+    (tester) async {
+      await _pumpMatch(
+        tester,
+        _detail(
+          starter: _lineupPlayer(name: 'Goleador', canonicalId: 'fb_player_1'),
+          bench: _lineupPlayer(
+            name: 'Suplente',
+            canonicalId: 'fb_player_2',
+            lineupPosition: 2,
+          ),
+        ),
+      );
+      await tester.tap(find.text('Goleador'));
+      await tester.pumpAndSettle();
+      expect(find.text('Player profile route'), findsOneWidget);
+    },
+  );
 
-  testWidgets('tapping a bench player with canonicalId navigates to /player/<canonicalId> (case C, F)', (tester) async {
-    await _pumpMatch(
-      tester,
-      _detail(
-        starter: _lineupPlayer(name: 'Titular', canonicalId: 'fb_player_1'),
-        bench: _lineupPlayer(name: 'Suplente', canonicalId: 'fb_player_2', lineupPosition: 2),
-      ),
-    );
-    await tester.tap(find.text('Suplente'));
-    await tester.pumpAndSettle();
-    expect(find.text('Player profile route'), findsOneWidget);
-  });
+  testWidgets(
+    'tapping a bench player with canonicalId navigates to /player/<canonicalId> (case C, F)',
+    (tester) async {
+      await _pumpMatch(
+        tester,
+        _detail(
+          starter: _lineupPlayer(name: 'Titular', canonicalId: 'fb_player_1'),
+          bench: _lineupPlayer(
+            name: 'Suplente',
+            canonicalId: 'fb_player_2',
+            lineupPosition: 2,
+          ),
+        ),
+      );
+      await tester.tap(find.text('Suplente'));
+      await tester.pumpAndSettle();
+      expect(find.text('Player profile route'), findsOneWidget);
+    },
+  );
 
-  testWidgets('player without canonicalId yet: not tappable, no crash, presentation unchanged (review focus)', (tester) async {
-    await _pumpMatch(
-      tester,
-      _detail(
-        starter: _lineupPlayer(name: 'Pendiente', canonicalId: null),
-        bench: _lineupPlayer(name: 'Suplente', canonicalId: 'fb_player_2', lineupPosition: 2),
-      ),
-    );
-    expect(find.text('Pendiente'), findsOneWidget);
-    final pendienteInkWell = find.ancestor(of: find.text('Pendiente'), matching: find.byType(InkWell));
-    expect(pendienteInkWell, findsNothing);
-    await tester.tap(find.text('Pendiente'));
-    await tester.pumpAndSettle();
-    expect(find.text('Player profile route'), findsNothing);
-  });
+  testWidgets(
+    'player without canonicalId yet: not tappable, no crash, presentation unchanged (review focus)',
+    (tester) async {
+      await _pumpMatch(
+        tester,
+        _detail(
+          starter: _lineupPlayer(name: 'Pendiente', canonicalId: null),
+          bench: _lineupPlayer(
+            name: 'Suplente',
+            canonicalId: 'fb_player_2',
+            lineupPosition: 2,
+          ),
+        ),
+      );
+      expect(find.text('Pendiente'), findsOneWidget);
+      final pendienteInkWell = find.ancestor(
+        of: find.text('Pendiente'),
+        matching: find.byType(InkWell),
+      );
+      expect(pendienteInkWell, findsNothing);
+      await tester.tap(find.text('Pendiente'));
+      await tester.pumpAndSettle();
+      expect(find.text('Player profile route'), findsNothing);
+    },
+  );
 
   // Two separate tests, not a loop over one testWidgets body: _pumpMatch
   // creates its own ProviderContainer/database and registers its own
@@ -229,12 +287,21 @@ void main() {
   // dispose-scheduling timer pending when the second pumpWidget replaces the
   // tree, which flutter_test flags as a leaked timer.
   for (final width in [320.0, 360.0]) {
-    testWidgets('renders at ${width.toInt()}px without overflow (case F)', (tester) async {
+    testWidgets('renders at ${width.toInt()}px without overflow (case F)', (
+      tester,
+    ) async {
       await _pumpMatch(
         tester,
         _detail(
-          starter: _lineupPlayer(name: 'Goleador con Nombre Largo', canonicalId: 'fb_player_1'),
-          bench: _lineupPlayer(name: 'Suplente', canonicalId: 'fb_player_2', lineupPosition: 2),
+          starter: _lineupPlayer(
+            name: 'Goleador con Nombre Largo',
+            canonicalId: 'fb_player_1',
+          ),
+          bench: _lineupPlayer(
+            name: 'Suplente',
+            canonicalId: 'fb_player_2',
+            lineupPosition: 2,
+          ),
         ),
         size: Size(width, 780),
       );
