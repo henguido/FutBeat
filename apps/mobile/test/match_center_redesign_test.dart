@@ -385,6 +385,7 @@ void main() {
       'Estadísticas',
       'Alineación',
       'Tabla',
+      'Cara a cara',
     ]);
     await tester.ensureVisible(find.text('Tabla'));
     await tester.pumpAndSettle();
@@ -403,6 +404,7 @@ void main() {
       'Estadísticas',
       'Alineación',
       'Tabla',
+      'Cara a cara',
     ]);
     await tester.ensureVisible(find.text('Tabla'));
     await tester.pumpAndSettle();

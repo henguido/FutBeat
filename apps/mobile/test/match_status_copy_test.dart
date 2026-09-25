@@ -82,8 +82,10 @@ void main() {
   });
 
   test('MatchDetail.lineupEnrichmentPending reads coverage.lineupEnrichmentPending', () {
-    final pending = MatchDetail({...MatchDetail.empty('fb_match').json,
-      'coverage': {'lineupEnrichmentPending': true}});
+    final pending = MatchDetail({
+      ...MatchDetail.empty('fb_match').json,
+      'coverage': {'lineupEnrichmentPending': true},
+    });
     expect(pending.lineupEnrichmentPending, isTrue);
 
     final settled = MatchDetail(MatchDetail.empty('fb_match').json);

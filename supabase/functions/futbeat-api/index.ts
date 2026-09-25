@@ -220,6 +220,30 @@ export default {
       return reply(200, snapshot);
     }
 
+    // Recent form + head-to-head (#99): a separate DB-only read model, so the
+    // match context stays light. Never registers demand, never wakes the
+    // worker, never calls a provider.
+    if (path.endsWith('/futbeat-api/v1/match-preview')) {
+      const id = requestUrl.searchParams.get('id');
+      if (!validEntityId(id) || !id?.startsWith('fb_match_')) {
+        return reply(400, { error: 'Partido inválido' });
+      }
+      const { data: preview, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_read_match_preview',
+        { p_match_id: id },
+      );
+      if (error) {
+        return replyNoStore(503, { error: 'Previa temporalmente no disponible' });
+      }
+      if (!preview) {
+        return replyNoStore(404, { error: 'Partido no encontrado' });
+      }
+      if (preview.schemaVersion !== 1) {
+        return replyNoStore(503, { error: 'Previa temporalmente no disponible' });
+      }
+      return reply(200, preview);
+    }
+
     if (path.endsWith('/futbeat-api/v1/match-detail')) {
       const id = requestUrl.searchParams.get('id');
       if (!validEntityId(id) || !id?.startsWith('fb_match_')) {

@@ -122,6 +122,7 @@ Map<String, dynamic> _detail({
 };
 
 class _Server {
+  int previewReads = 0;
   _Server({required this.detail, required this.context});
   Map<String, dynamic>? Function(int read) detail;
   Map<String, dynamic> Function(int read) context;
@@ -132,6 +133,20 @@ class _Server {
     ..interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
+          if (options.path == '/v1/match-preview') {
+            // #99 phase 2: separate DB-only read (not a detail read).
+            previewReads++;
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: {
+                  'schemaVersion': 1,
+                  'matchId': options.queryParameters['id'],
+                },
+              ),
+            );
+            return;
+          }
           if (options.path == '/v1/match-context') {
             handler.resolve(
               Response(requestOptions: options, data: context(contextReads++)),
@@ -574,7 +589,7 @@ void main() {
           await _elapse(tester, wait + const Duration(seconds: 1));
           final bar = tester.widget<TabBar>(find.byType(TabBar));
           expect(bar.controller, same(controller));
-          expect(bar.controller!.length, 4);
+          expect(bar.controller!.length, 5);
           expect(_selectedTab(tester), 'Tabla');
           expect(tester.takeException(), isNull);
         }

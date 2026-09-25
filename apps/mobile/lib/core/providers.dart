@@ -533,6 +533,16 @@ class ApiRepository implements FootballRepository {
     queryParameters: {'id': id},
   );
 
+  /// Recent form + head-to-head (DB-only on the server: never registers
+  /// demand nor calls a provider). One attempt: it is optional content.
+  Future<MatchPreview> loadMatchPreview(String id) async => MatchPreview(
+    await _getJson(
+      '/v1/match-preview',
+      queryParameters: {'id': id},
+      maxAttempts: 1,
+    ),
+  );
+
   Future<Snapshot> loadExplore({CancelToken? cancelToken}) =>
       _loadCatalog('explore', '/v1/explore', cancelToken: cancelToken);
 
@@ -789,6 +799,21 @@ final matchContextSnapshotProvider = FutureProvider.autoDispose
       if (ref.mounted && !value.standingsPending) _retainSettled(ref);
       return value;
     });
+
+/// Recent form + head-to-head of a match, loaded after (and independently
+/// of) the match context: it never blocks the header or the tabs, fails on
+/// its own, and is read once per open (no polling; tab switches and context
+/// refreshes do not re-read it).
+final matchPreviewProvider = FutureProvider.autoDispose
+    .family<MatchPreview, String>((ref, id) async {
+      final repository = ref.watch(repositoryProvider);
+      if (repository is! ApiRepository) return MatchPreview.empty(id);
+      final value = await repository.loadMatchPreview(id);
+      if (ref.mounted) _retainSettled(ref);
+      return value;
+      // No automatic retries: a failure stays a quiet error state (manual
+      // "Reintentar" in Cara a cara only).
+    }, retry: (_, _) => null);
 
 /// First read-only recheck after the open. The provider usually answers in
 /// ~1 s once the worker is woken, so rechecks start early (reads only: never
