@@ -82,6 +82,45 @@ test('A/E. terminal evidence in live_match_state (raw payload SCHEDULED): later 
   assert.deepEqual([shown.status, shown.score], ['FINISHED_PENDING_VERIFICATION', { home: 2, away: 2 }]);
 }));
 
+test('malformed observation for a terminal match is never suppressed: core validation still rejects it, nothing audited', () => withDb(async (db) => {
+  const done = await seedMatch(db, { status: 'VERIFIED', score: [1, 4], hoursAgo: 3 });
+  const evidence = await seedMatch(db, { hoursAgo: 2 });
+  await record(db, [observation(evidence.ext, 'LIVE', [1, 2], 80)]);
+  await record(db, [observation(evidence.ext, 'FINISHED_PENDING_VERIFICATION', [2, 2], 90)]);
+  const stateBefore = await liveState(db, evidence.ext);
+  const rowBefore = await publicRow(db, evidence.match);
+  const audits = () => count(db, 'futbeat_private.live_suppressed_observations');
+
+  const variants = {
+    missing: (o) => { delete o.payloadHash; return o; },
+    empty: (o) => ({ ...o, payloadHash: '' }),
+    short: (o) => ({ ...o, payloadHash: 'abc123' }),
+    uppercase: (o) => ({ ...o, payloadHash: o.payloadHash.toUpperCase() }),
+  };
+  for (const [label, corrupt] of Object.entries(variants)) {
+    for (const [s, status] of [[done, 'LIVE'], [evidence, 'HALFTIME']]) {
+      assert.equal(await terminal(db, s.match), true);
+      await assert.rejects(record(db, [corrupt(observation(s.ext, status, [1, 1], 45))]), /invalid payloadHash/, `${label}/${status}`);
+      // A valid suppressible observation in the same batch is rolled back too.
+      await assert.rejects(record(db, [observation(done.ext, 'LIVE', [0, 0], 10), corrupt(observation(s.ext, status, [1, 1], 46))]), /invalid payloadHash/);
+    }
+  }
+  assert.equal(await audits(), 0, 'no audit row for malformed input');
+  assert.equal(await liveState(db, done.ext), null);
+  assert.equal(await publicRow(db, done.match), null, 'no public realtime row');
+  assert.deepEqual(await liveState(db, evidence.ext), stateBefore, 'live_match_state unchanged');
+  assert.deepEqual(await publicRow(db, evidence.match), rowBefore, 'public row unchanged (still terminal)');
+  assert.deepEqual(await regressions(db), []);
+
+  // The audit table itself refuses a row without a valid hash.
+  await assert.rejects(db.query(`insert into futbeat_private.live_suppressed_observations(provider,external_match_id,canonical_match_id,received_at,status)
+    values('goal_api',$1,$2,now(),'LIVE')`, [done.ext, done.match]), /null value|not-null/);
+  // A valid one is still suppressed and audited.
+  const ok = await record(db, [observation(done.ext, 'LIVE', [0, 0], 10)]);
+  assert.equal(ok.suppressedByCanonicalTerminal, true);
+  assert.equal(await audits(), 1);
+}));
+
 test('E. terminal evidence from provider_observations, FULL_TIME event or match detail alone suppresses realtime', () => withDb(async (db) => {
   const hash = () => createHash('sha256').update(String(++seq)).digest('hex');
   const sources = {

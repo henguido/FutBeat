@@ -56,7 +56,7 @@ create table if not exists futbeat_private.live_suppressed_observations (
   minute integer,
   home_score integer,
   away_score integer,
-  payload_hash text,
+  payload_hash text not null check(payload_hash ~ '^[0-9a-f]{64}$'),
   reason text not null default 'canonical_terminal',
   recorded_at timestamptz not null default now(),
   unique(provider,external_match_id,payload_hash)
@@ -86,7 +86,12 @@ begin
  if jsonb_typeof(p_observations)='array' then
   for obs in select value from jsonb_array_elements(p_observations) loop
    v_ext:=nullif(obs->>'externalMatchId',''); v_status:=nullif(obs->>'status',''); mid:=null;
-   if v_ext is not null and v_status is not null and not futbeat_private.is_terminal_match_status(v_status) then
+   -- Only an observation the core would accept can be suppressed; anything
+   -- malformed (e.g. a missing or invalid payloadHash) is left to the core,
+   -- which rejects the whole batch exactly as before.
+   if v_ext is not null and v_status is not null and not futbeat_private.is_terminal_match_status(v_status)
+     and coalesce(obs->>'payloadHash','') ~ '^[0-9a-f]{64}$'
+     and jsonb_typeof(coalesce(obs->'events','[]'::jsonb))='array' then
     if p_provider='api_football' then
      mid:=futbeat_private.try_link_api_football_match(obs);
     else
@@ -104,7 +109,7 @@ begin
        futbeat_private.safe_result_integer(obs->>'minute'),
        futbeat_private.safe_result_integer(obs#>>'{score,home}'),
        futbeat_private.safe_result_integer(obs#>>'{score,away}'),
-       nullif(obs->>'payloadHash',''))
+       obs->>'payloadHash')
      on conflict(provider,external_match_id,payload_hash) do nothing;
      suppressed:=suppressed||jsonb_build_array(jsonb_build_object('externalMatchId',v_ext,
        'canonicalMatchId',mid,'status',v_status,'reason','canonical_terminal'));
