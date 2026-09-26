@@ -6,18 +6,31 @@ import 'package:dio/dio.dart';
 
 import 'models.dart';
 
+/// [serverNow] is the REST response's server time (HTTP `Date`) and
+/// [deviceNow] the device time it arrived; together they give every row a
+/// skew-free receipt time (#120: an old LIVE row never looks fresh).
 Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
   Map<String, LiveMatchUpdate> current,
   Iterable<Json> rows, {
   Set<String>? keysBeforeRequest,
+  DateTime? serverNow,
+  DateTime? deviceNow,
 }) {
   final result = Map<String, LiveMatchUpdate>.of(current);
   final before = keysBeforeRequest ?? current.keys.toSet();
   final fetched = <String>{};
+  final arrivedAt = (deviceNow ?? DateTime.now()).toUtc();
 
   for (final row in rows) {
     try {
-      final update = LiveMatchUpdate.fromJson(row);
+      var update = LiveMatchUpdate.fromJson(
+        row,
+        receivedAt: LiveMatchUpdate.bootstrapReceivedAt(
+          row,
+          deviceNow: arrivedAt,
+          serverNow: serverNow,
+        ),
+      );
       if (!update.matchId.startsWith('fb_')) continue;
       fetched.add(update.matchId);
       final previous = result[update.matchId];
@@ -26,6 +39,15 @@ Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
               (update.provider == previous.provider &&
                   update.revision < previous.revision))) {
         continue;
+      }
+      // Same row already received live: keep its (later) local receipt.
+      final previousAt = previous?.receivedAt;
+      if (previous != null &&
+          previous.provider == update.provider &&
+          previous.revision == update.revision &&
+          previousAt != null &&
+          previousAt.isAfter(update.receivedAt!)) {
+        update = LiveMatchUpdate.fromJson(row, receivedAt: previousAt);
       }
       result[update.matchId] = update;
     } catch (_) {
@@ -125,7 +147,11 @@ class LiveRealtimeClient {
     }
 
     void accept(Json row) {
-      final update = LiveMatchUpdate.fromJson(row);
+      // A realtime frame is new now: its receipt time is local.
+      final update = LiveMatchUpdate.fromJson(
+        row,
+        receivedAt: DateTime.now().toUtc(),
+      );
       if (!update.matchId.startsWith('fb_')) return;
       final previous = state[update.matchId];
       if (previous != null &&
@@ -145,6 +171,14 @@ class LiveRealtimeClient {
           options: Options(headers: {'apikey': config.publicKey}),
         );
         if (disposed) return;
+        final deviceNow = DateTime.now().toUtc();
+        DateTime? serverNow;
+        try {
+          final date = response.headers.value('date');
+          if (date != null) serverNow = HttpDate.parse(date);
+        } catch (_) {
+          serverNow = null; // Conservative fallback: row timestamps.
+        }
         if (response.data is List) {
           final rows = (response.data as List)
               .whereType<Map>()
@@ -154,6 +188,8 @@ class LiveRealtimeClient {
             state,
             rows,
             keysBeforeRequest: before,
+            serverNow: serverNow,
+            deviceNow: deviceNow,
           );
           state
             ..clear()

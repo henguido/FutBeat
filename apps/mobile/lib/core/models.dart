@@ -286,24 +286,54 @@ class LiveMatchUpdate {
     required this.eventCount,
     required this.changedAt,
     this.events = const [],
+    this.receivedAt,
   });
 
-  factory LiveMatchUpdate.fromJson(Json json) => LiveMatchUpdate(
-    matchId: json['match_id'] as String,
-    provider: json['provider'] as String,
-    externalMatchId: json['external_match_id'] as String,
-    status: json['status'] as String,
-    minute: json['minute'] as int?,
-    homeScore: json['home_score'] as int?,
-    awayScore: json['away_score'] as int?,
-    revision: (json['revision'] as num).toInt(),
-    eventCount: (json['event_count'] as num?)?.toInt() ?? 0,
-    changedAt: DateTime.parse(json['changed_at'] as String),
-    events: (json['latest_events'] as List? ?? [])
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList(),
-  );
+  /// [receivedAt] is the device time the row arrived (realtime), or the
+  /// device-clock equivalent of its server-side age (REST bootstrap, see
+  /// [bootstrapReceivedAt]). Never defaulted to "now": an old row fetched
+  /// later must not look fresh.
+  factory LiveMatchUpdate.fromJson(Json json, {DateTime? receivedAt}) =>
+      LiveMatchUpdate(
+        matchId: json['match_id'] as String,
+        provider: json['provider'] as String,
+        externalMatchId: json['external_match_id'] as String,
+        status: json['status'] as String,
+        minute: json['minute'] as int?,
+        homeScore: json['home_score'] as int?,
+        awayScore: json['away_score'] as int?,
+        revision: (json['revision'] as num).toInt(),
+        eventCount: (json['event_count'] as num?)?.toInt() ?? 0,
+        changedAt: DateTime.parse(json['changed_at'] as String),
+        events: (json['latest_events'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(),
+        receivedAt: receivedAt,
+      );
+
+  /// Device-clock receipt time for a row fetched by REST: its age on the
+  /// server at fetch time (server `Date` minus the row's last server update)
+  /// moved onto the device clock, so device/server skew never matters.
+  /// Without a server time the row counts as already stale: a LIVE REST row
+  /// waits for a real realtime frame instead of comparing device and server
+  /// clocks (terminal rows are never subject to staleness).
+  static DateTime bootstrapReceivedAt(
+    Json row, {
+    required DateTime deviceNow,
+    DateTime? serverNow,
+  }) {
+    if (serverNow == null) {
+      return deviceNow.toUtc().subtract(
+        staleAfter + const Duration(seconds: 1),
+      );
+    }
+    final observed =
+        DateTime.tryParse(row['updated_at'] as String? ?? '') ??
+        DateTime.parse(row['changed_at'] as String);
+    final age = serverNow.toUtc().difference(observed.toUtc());
+    return deviceNow.toUtc().subtract(age.isNegative ? Duration.zero : age);
+  }
 
   final String matchId, provider, externalMatchId, status;
   final int? minute, homeScore, awayScore;
@@ -311,7 +341,14 @@ class LiveMatchUpdate {
   final DateTime changedAt;
   final List<Json> events;
 
-  Json applyTo(Json match) {
+  /// Device time this row was received (see [LiveMatchUpdate.fromJson]).
+  /// Staleness is measured on the device clock only.
+  final DateTime? receivedAt;
+
+  /// Same window as the server failsafe: a LIVE row this silent is not live.
+  static const staleAfter = Duration(minutes: 15);
+
+  Json applyTo(Json match, {DateTime? now}) {
     if (match['id'] != matchId) return match;
 
     const terminalStatuses = {
@@ -325,6 +362,16 @@ class LiveMatchUpdate {
     // never downgrade or rewrite it, however late its changedAt. Corrections
     // after the final arrive as a new canonical snapshot, not through here.
     if (terminalStatuses.contains(match['status'] as String?)) return match;
+    // #120: a silent LIVE overlay (missed DELETE, failed refresh) must not
+    // keep a match "EN VIVO"; terminal overlays always apply.
+    const liveStatuses = {'LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'};
+    if (liveStatuses.contains(status) &&
+        (now ?? DateTime.now()).toUtc().difference(
+              (receivedAt ?? changedAt).toUtc(),
+            ) >
+            staleAfter) {
+      return match;
+    }
 
     final previousAt = DateTime.tryParse(
       match['liveChangedAt'] as String? ?? '',
@@ -775,13 +822,16 @@ class Snapshot {
     });
   }
 
-  Snapshot withLiveUpdates(Map<String, LiveMatchUpdate> updates) {
+  Snapshot withLiveUpdates(
+    Map<String, LiveMatchUpdate> updates, {
+    DateTime? now,
+  }) {
     if (demo || updates.isEmpty) return this;
     var changed = false;
     final mergedMatches = matches.map((match) {
       final update = updates[match.id];
       if (update == null) return match.json;
-      final merged = update.applyTo(match.json);
+      final merged = update.applyTo(match.json, now: now);
       if (!identical(merged, match.json)) changed = true;
       return merged;
     }).toList();

@@ -61,6 +61,31 @@ function goalLiveStatus(fixture: Record<string, unknown>) {
   return "SCHEDULED";
 }
 
+// Raw GOAL matchStatus values this worker does not recognise (at most 10;
+// SCHEDULED is the documented pre-match value).
+function unmappedGoalStatuses(fixtures: Record<string, unknown>[]) {
+  const known = new Set([
+    "POSTPONED",
+    "CANCELLED",
+    "SUSPENDED",
+    "ABANDONED",
+    "HALF_TIME",
+    "LIVE",
+    "FINISHED",
+    "AFTER_ET",
+    "AFTER_PEN",
+    "AWARDED",
+    "SCHEDULED",
+  ]);
+  return [
+    ...new Set(
+      fixtures
+        .map((fixture) => clean(fixture.matchStatus).toUpperCase().slice(0, 40))
+        .filter((status) => !known.has(status)),
+    ),
+  ].slice(0, 10);
+}
+
 function nonNegativeInteger(value: unknown) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
@@ -424,12 +449,35 @@ async function syncLive() {
     const observations = await Promise.all(
       fixtures.map((fixture) => normalizeLiveFixture(fixture)),
     );
+    // Provider vocabulary drift is invisible otherwise: an unknown status
+    // silently maps to SCHEDULED (never inferred as live or final).
+    const unmappedStatuses = unmappedGoalStatuses(fixtures);
 
     const persistence = await rpc("futbeat_record_live_batch", {
       p_provider: "goal_api",
       p_received_at: new Date().toISOString(),
       p_observations: observations,
     }, 30000);
+
+    // #120: absence from the feed is evidence only once a whole sweep (offset
+    // 0 to the last page, possibly across resumed polls) was read; it only
+    // queues a bounded provider re-check, never a final.
+    const fromStart = startOffset === 0 || restarted;
+    const reachedEnd = !paginationTruncated;
+    let recovery: unknown = null;
+    try {
+      recovery = await rpc("futbeat_note_live_poll", {
+        p_provider: "goal_api",
+        p_seen: observations.map((observation) => observation.externalMatchId),
+        p_from_start: fromStart,
+        p_reached_end: reachedEnd,
+      });
+    } catch (error) {
+      console.warn(
+        "terminal recovery note unavailable",
+        error instanceof Error ? error.message : "unknown",
+      );
+    }
 
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservationId,
@@ -439,6 +487,10 @@ async function syncLive() {
       p_error_code: null,
       p_metadata: {
         mode: "live",
+        ...(unmappedStatuses.length ? { unmappedStatuses } : {}),
+        fromStart,
+        reachedEnd,
+        recovery,
         providerRequests,
         pageBudget,
         startOffset,
@@ -690,7 +742,22 @@ async function syncOneMatchDetail() {
     );
   }
 
-  const plan = await rpc("futbeat_reserve_match_detail_call", {
+  // #120: a match that left the LIVE feed without a terminal state is
+  // re-checked first (bounded attempts, protected 'results' class).
+  let recovery: Record<string, unknown> | null = null;
+  try {
+    const reserved = await rpc("futbeat_reserve_terminal_recovery_call", {
+      p_trigger_source: "supabase-cron",
+    });
+    if (reserved?.allowed) recovery = reserved;
+  } catch (error) {
+    console.warn(
+      "terminal recovery reservation unavailable",
+      error instanceof Error ? error.message : "unknown",
+    );
+  }
+
+  const plan = recovery ?? await rpc("futbeat_reserve_match_detail_call", {
     p_trigger_source: "supabase-cron",
   });
   if (!plan?.allowed) {
@@ -777,6 +844,22 @@ async function syncOneMatchDetail() {
       }, 30000);
     }
 
+    let recovered: unknown = null;
+    if (recovery) {
+      try {
+        recovered = await rpc("futbeat_complete_terminal_recovery", {
+          p_external_match_id: externalMatchId,
+          p_provider_status: clean(detailRecord.matchStatus).toUpperCase(),
+        });
+      } catch (error) {
+        // The provider call succeeded; the row settles on the next reserve.
+        console.warn(
+          "terminal recovery completion unavailable",
+          error instanceof Error ? error.message : "unknown",
+        );
+      }
+    }
+
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservationId,
       p_status: "SUCCEEDED",
@@ -785,6 +868,11 @@ async function syncOneMatchDetail() {
       p_error_code: null,
       p_metadata: {
         mode: "match-detail",
+        providerStatus: clean(detailRecord.matchStatus).toUpperCase().slice(0, 40),
+        ...(unmappedGoalStatuses([detailRecord]).length
+          ? { unmappedStatus: true }
+          : {}),
+        ...(recovery ? { recovery: recovery.reason, recovered } : {}),
         matchId,
         externalMatchId,
         transport: "supabase-cron",
