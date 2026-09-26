@@ -40,8 +40,9 @@ List<MatchInfoItem> matchInfoItems({
 }) {
   final country = _present(competition.country);
   final round = _present(detail.round);
-  final season =
-      _present(match.json['season']) ?? _present(competition.json['season']);
+  // The match's own season only: the competition entity carries its
+  // *current* season, which around a rollover is not this match's season.
+  final season = _present(match.json['season']);
   final stadium = _present(venue);
   final referee = _present(detail.referee);
   return [

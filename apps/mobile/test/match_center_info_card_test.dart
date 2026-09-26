@@ -27,6 +27,7 @@ Map<String, dynamic> _snapshot({
   String competition = 'Liga Info',
   String? country = 'Costa Rica',
   String? season = '2026',
+  String? competitionSeason,
   String? venue,
 }) {
   final now = DateTime.now().toUtc();
@@ -39,7 +40,12 @@ Map<String, dynamic> _snapshot({
     'updatedAt': now.toIso8601String(),
     'coverage': {'standings': 'missing', 'standingsPending': false},
     'competitions': [
-      {'id': 'fb_comp_ic', 'name': competition, 'country': ?country},
+      {
+        'id': 'fb_comp_ic',
+        'name': competition,
+        'country': ?country,
+        'season': ?competitionSeason,
+      },
     ],
     'teams': [
       {'id': _home, 'name': 'Local Info'},
@@ -229,6 +235,16 @@ void main() {
         venue: '   ',
       );
       expect(items.map((item) => item.id), ['competition', 'date']);
+    });
+
+    test("the competition's current season never labels a match", () {
+      final items = _items(
+        _snapshot(season: null, competitionSeason: '2027'),
+        _detail(),
+      );
+      expect(items.any((item) => item.id == 'season'), isFalse);
+      final round = items.singleWhere((item) => item.id == 'round');
+      expect(round.secondary, isNull);
     });
 
     test('season without round becomes its own item', () {
