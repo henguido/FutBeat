@@ -589,7 +589,7 @@ void main() {
           await _elapse(tester, wait + const Duration(seconds: 1));
           final bar = tester.widget<TabBar>(find.byType(TabBar));
           expect(bar.controller, same(controller));
-          expect(bar.controller!.length, 5);
+          expect(bar.controller!.length, 6);
           expect(_selectedTab(tester), 'Tabla');
           expect(tester.takeException(), isNull);
         }
@@ -657,7 +657,7 @@ void main() {
           context: (_) => _context(standingsPending: true),
         );
         final container = await _open(tester, server, width: width);
-        for (final tab in ['Estadísticas', 'Alineación', 'Previa']) {
+        for (final tab in ['Estadísticas', 'Alineación', 'Hechos']) {
           await _tab(tester, tab);
           expect(tester.takeException(), isNull);
         }

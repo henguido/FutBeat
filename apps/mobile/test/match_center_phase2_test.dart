@@ -326,6 +326,11 @@ Future<void> _tab(WidgetTester tester, String label) async {
   await _settle(tester);
 }
 
+String _selectedTab(WidgetTester tester) {
+  final bar = tester.widget<TabBar>(find.byType(TabBar));
+  return (bar.tabs[bar.controller!.index] as Tab).text!;
+}
+
 Future<void> _elapse(WidgetTester tester, Duration total) async {
   for (
     var t = Duration.zero;
@@ -378,14 +383,14 @@ void main() {
     expect(teamMatchResult(m('a', 'b', 1, 0), 'c'), isNull);
   });
 
-  testWidgets('1. five stable tabs', (tester) async {
+  testWidgets('1. six stable tabs before kickoff', (tester) async {
     final container = await _open(tester, _Server((_) => _context()));
     final bar = tester.widget<TabBar>(find.byType(TabBar));
     expect(
       [for (final t in bar.tabs) (t as Tab).text],
-      ['Previa', 'Estadísticas', 'Alineación', 'Tabla', 'Cara a cara'],
+      ['Previa', 'En vivo', 'Alineación', 'Tabla', 'Estadísticas', 'Cara a cara'],
     );
-    expect(bar.controller!.length, 5);
+    expect(bar.controller!.length, 6);
     expect(bar.isScrollable, true);
     await _close(tester, container);
   });
@@ -419,6 +424,9 @@ void main() {
     final container = await _open(tester, _Server((_) => _context()));
     expect(find.text('Eventos del partido'), findsNothing);
     expect(find.text('Sin eventos'), findsNothing);
+    await _tab(tester, 'En vivo');
+    expect(find.text('El partido aún no inicia'), findsOneWidget);
+    expect(find.text('Eventos del partido'), findsNothing);
     await _close(tester, container);
   });
 
@@ -440,7 +448,11 @@ void main() {
         ),
       ),
     );
+    expect(_selectedTab(tester), 'Hechos');
+    expect(find.text('Eventos del partido'), findsNothing);
+    await _tab(tester, 'En vivo');
     expect(find.text('Eventos del partido'), findsOneWidget);
+    expect(find.byType(MatchTimeline), findsOneWidget);
     await _close(tester, container);
   });
 
@@ -554,7 +566,7 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('19. #101 partial detail stays visible in Previa', (
+  testWidgets('19. #101 partial detail stays visible in Hechos', (
     tester,
   ) async {
     final container = await _open(

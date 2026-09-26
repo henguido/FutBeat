@@ -257,6 +257,10 @@ void main() {
         ],
       ),
     );
+    expect(find.text('Eventos del partido'), findsNothing);
+    await tester.ensureVisible(find.text('En vivo'));
+    await tester.tap(find.text('En vivo'));
+    await tester.pumpAndSettle();
     expect(find.text('Inicio'), findsOneWidget);
     expect(find.text('Medio tiempo'), findsOneWidget);
     expect(find.byType(EventGlyph), findsNWidgets(5));
@@ -381,10 +385,11 @@ void main() {
   ) async {
     await _pumpMatch(tester, _payload());
     expect(_tabLabels(tester), [
-      'Previa',
-      'Estadísticas',
+      'Hechos',
+      'En vivo',
       'Alineación',
       'Tabla',
+      'Estadísticas',
       'Cara a cara',
     ]);
     await tester.ensureVisible(find.text('Tabla'));
@@ -400,10 +405,11 @@ void main() {
   ) async {
     await _pumpMatch(tester, _payload(table: true));
     expect(_tabLabels(tester), [
-      'Previa',
-      'Estadísticas',
+      'Hechos',
+      'En vivo',
       'Alineación',
       'Tabla',
+      'Estadísticas',
       'Cara a cara',
     ]);
     await tester.ensureVisible(find.text('Tabla'));
