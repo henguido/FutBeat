@@ -732,7 +732,9 @@ async function syncOneResultsDate() {
   }
 }
 
-async function syncOneMatchDetail() {
+async function syncOneMatchDetail(
+  { allowRecovery = true }: { allowRecovery?: boolean } = {},
+) {
   try {
     await rpc("futbeat_enqueue_stale_live_detail");
   } catch (error) {
@@ -742,19 +744,25 @@ async function syncOneMatchDetail() {
     );
   }
 
-  // #120: a match that left the LIVE feed without a terminal state is
-  // re-checked first (bounded attempts, protected 'results' class).
+  // #132: terminal recovery is background cleanup. It never runs ahead of an
+  // explicit Match Center wake-up and it stops before the protected LIVE/user
+  // reserve. This prevents a historical backlog from starving current games.
   let recovery: Record<string, unknown> | null = null;
-  try {
-    const reserved = await rpc("futbeat_reserve_terminal_recovery_call", {
-      p_trigger_source: "supabase-cron",
-    });
-    if (reserved?.allowed) recovery = reserved;
-  } catch (error) {
-    console.warn(
-      "terminal recovery reservation unavailable",
-      error instanceof Error ? error.message : "unknown",
-    );
+  if (allowRecovery) {
+    try {
+      // The reservation RPC owns the protected user_high/LIVE guard under the
+      // provider quota lock. Do not pre-check it here: a read-then-reserve
+      // sequence can race another worker.
+      const reserved = await rpc("futbeat_reserve_terminal_recovery_call", {
+        p_trigger_source: "supabase-cron",
+      });
+      if (reserved?.allowed) recovery = reserved;
+    } catch (error) {
+      console.warn(
+        "terminal recovery reservation unavailable",
+        error instanceof Error ? error.message : "unknown",
+      );
+    }
   }
 
   const plan = recovery ?? await rpc("futbeat_reserve_match_detail_call", {
@@ -1068,13 +1076,17 @@ async function syncCalendarWarm() {
 // User demand lane: match detail first (a Match Center is open), then player
 // discovery/hydration. Woken by the database right after demand is recorded
 // and also run by the per-minute cron, so a lost wake-up only adds latency.
-async function syncDemand() {
+async function syncDemand(
+  { allowRecovery = false }: { allowRecovery?: boolean } = {},
+) {
   const detail: unknown[] = [];
-  // Up to three details per run (per-minute cron + debounced wake-ups); the
-  // central quota manager still decides every one.
-  for (let i = 0; i < 3; i++) {
+  // Interactive wake-ups serve exactly the highest-priority queued detail and
+  // stop. They must not turn the user's open into free background-drain work.
+  // detail-only maintenance keeps the historical batch of up to three.
+  const detailLimit = allowRecovery ? 3 : 1;
+  for (let i = 0; i < detailLimit; i++) {
     try {
-      const result = await syncOneMatchDetail() as Record<string, unknown>;
+      const result = await syncOneMatchDetail({ allowRecovery }) as Record<string, unknown>;
       detail.push(result);
       if (result?.status !== "ok") break;
     } catch (error) {
@@ -1592,7 +1604,10 @@ Deno.serve(async (request) => {
           status: 400,
         });
       }
-      return Response.json({ status: "ok", ...(await syncDemand()) });
+      return Response.json({
+        status: "ok",
+        ...(await syncDemand({ allowRecovery: trigger === "detail-only" })),
+      });
     }
 
     let live: unknown;

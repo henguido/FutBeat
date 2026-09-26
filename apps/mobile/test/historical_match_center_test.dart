@@ -361,7 +361,26 @@ void main() {
       final server = _Server((read, _) => read < 5 ? _waiting() : _full());
       final container = await _open(tester, server);
       await _tab(tester, 'Alineación');
-      await _elapse(tester, const Duration(seconds: 60));
+      expect(
+        find.byKey(const ValueKey('match-refreshing')),
+        findsOneWidget,
+        reason: 'a fresh open may show a discreet hydration signal',
+      );
+      await _elapse(
+        tester,
+        matchDetailRefreshIndicatorDuration + const Duration(seconds: 1),
+      );
+      expect(
+        find.byKey(const ValueKey('match-refreshing')),
+        findsNothing,
+        reason: 'long cron-fallback rechecks continue silently',
+      );
+      expect(
+        find.text('Cargando alineaciones…'),
+        findsOneWidget,
+        reason: 'the section may still wait while the global busy signal is gone',
+      );
+      await _elapse(tester, const Duration(seconds: 51));
       expect(server.detailCalls, [true, false, false, false, false]);
       expect(find.text('Cargando alineaciones…'), findsOneWidget);
       await _elapse(tester, const Duration(seconds: 10));

@@ -57,6 +57,11 @@ const staleLiveRefreshDelays = [
   Duration(seconds: 300),
 ];
 
+/// #132: detail hydration may keep doing bounded read-only rechecks for the
+/// cron fallback, but the Match Center must not look busy for that whole
+/// period. After this window the same rechecks continue silently.
+const matchDetailRefreshIndicatorDuration = Duration(seconds: 8);
+
 class MatchScreen extends ConsumerStatefulWidget {
   const MatchScreen({super.key, required this.id, this.initialData});
 
@@ -78,12 +83,22 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   bool _standingsManualRetry = false;
   Timer? _staleLiveRefresh;
   int _staleLiveAttempts = 0;
+  Timer? _detailRefreshIndicatorTimer;
+  bool _detailRefreshIndicatorExpired = false;
+
   @override
   void initState() {
     super.initState();
     // Stable structure: Tabla always exists (its content reports the state),
     // so tabs never appear/disappear while data arrives.
     _tabs = TabController(length: 5, vsync: this);
+    _detailRefreshIndicatorTimer = Timer(
+      matchDetailRefreshIndicatorDuration,
+      () {
+        if (!mounted) return;
+        setState(() => _detailRefreshIndicatorExpired = true);
+      },
+    );
     Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
   }
 
@@ -160,6 +175,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     _lineupEnrichmentRetry?.cancel();
     _standingsRetry?.cancel();
     _staleLiveRefresh?.cancel();
+    _detailRefreshIndicatorTimer?.cancel();
     super.dispose();
   }
 
@@ -302,7 +318,9 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final standingsRefreshing =
         data.standingsPending &&
         _standingsAttempts < standingsRetryDelays.length;
-    final refreshing = detail.pending || standingsRefreshing;
+    final refreshing =
+        (detail.pending && !_detailRefreshIndicatorExpired) ||
+        standingsRefreshing;
 
     final tabBar = TabBar(
       controller: _tabs,
