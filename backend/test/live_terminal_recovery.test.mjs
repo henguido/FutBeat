@@ -381,3 +381,24 @@ test('recovery calls never consume the planner post-match budget', () => withDb(
   const due = (await db.query("select futbeat_private.match_detail_planner_due($1,'recent_hot') v", [m.match])).rows[0].v;
   assert.equal(due, true, 'post-match fetch still due after 6 recovery calls');
 }));
+
+test('unknown GOAL statuses are recorded for diagnosis and never inferred as live or final', () => withDb(async (db) => {
+  const [m, n] = await seedLive(db, 2);
+  let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60), fixtureOf(n, 'MYSTERY_END', 90)]] }));
+  await w.run('live');
+  const live = (await db.query("select metadata from futbeat_private.provider_call_ledger where call_kind='live-goal' order by id desc limit 1")).rows[0].metadata;
+  assert.deepEqual(live.unmappedStatuses, ['MYSTERY_END']);
+  assert.notEqual((await shown(db, n)).status, 'FINISHED_PENDING_VERIFICATION');
+  await nextPoll(db);
+
+  w = worker(db, goalSim({ pages: [[]] }));
+  await w.run('live');
+  await makeDue(db, m.ext);
+  w = worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, 'MYSTERY_END', 90, ['2', '3']) } }));
+  await w.run('detail-only');
+  const detail = (await recoveryLedgerRows(db)).filter((r) => r.metadata.bucket === 'recovery').at(-1).metadata;
+  assert.equal(detail.providerStatus, 'MYSTERY_END');
+  assert.equal(detail.unmappedStatus, true);
+  assert.equal((await recoveryRow(db, m.ext)).state, 'PENDING');
+  assert.notEqual((await shown(db, m)).status, 'FINISHED_PENDING_VERIFICATION');
+}));

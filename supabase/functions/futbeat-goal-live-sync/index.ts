@@ -61,6 +61,31 @@ function goalLiveStatus(fixture: Record<string, unknown>) {
   return "SCHEDULED";
 }
 
+// Raw GOAL matchStatus values this worker does not recognise (at most 10;
+// SCHEDULED is the documented pre-match value).
+function unmappedGoalStatuses(fixtures: Record<string, unknown>[]) {
+  const known = new Set([
+    "POSTPONED",
+    "CANCELLED",
+    "SUSPENDED",
+    "ABANDONED",
+    "HALF_TIME",
+    "LIVE",
+    "FINISHED",
+    "AFTER_ET",
+    "AFTER_PEN",
+    "AWARDED",
+    "SCHEDULED",
+  ]);
+  return [
+    ...new Set(
+      fixtures
+        .map((fixture) => clean(fixture.matchStatus).toUpperCase().slice(0, 40))
+        .filter((status) => !known.has(status)),
+    ),
+  ].slice(0, 10);
+}
+
 function nonNegativeInteger(value: unknown) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
@@ -424,6 +449,9 @@ async function syncLive() {
     const observations = await Promise.all(
       fixtures.map((fixture) => normalizeLiveFixture(fixture)),
     );
+    // Provider vocabulary drift is invisible otherwise: an unknown status
+    // silently maps to SCHEDULED (never inferred as live or final).
+    const unmappedStatuses = unmappedGoalStatuses(fixtures);
 
     const persistence = await rpc("futbeat_record_live_batch", {
       p_provider: "goal_api",
@@ -459,6 +487,7 @@ async function syncLive() {
       p_error_code: null,
       p_metadata: {
         mode: "live",
+        ...(unmappedStatuses.length ? { unmappedStatuses } : {}),
         fromStart,
         reachedEnd,
         recovery,
@@ -839,13 +868,11 @@ async function syncOneMatchDetail() {
       p_error_code: null,
       p_metadata: {
         mode: "match-detail",
-        ...(recovery
-          ? {
-            recovery: recovery.reason,
-            providerStatus: clean(detailRecord.matchStatus).toUpperCase(),
-            recovered,
-          }
+        providerStatus: clean(detailRecord.matchStatus).toUpperCase().slice(0, 40),
+        ...(unmappedGoalStatuses([detailRecord]).length
+          ? { unmappedStatus: true }
           : {}),
+        ...(recovery ? { recovery: recovery.reason, recovered } : {}),
         matchId,
         externalMatchId,
         transport: "supabase-cron",

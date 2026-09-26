@@ -115,8 +115,15 @@ where metadata->>'matchId'=:match_id order by reserved_at desc limit 20;
 - `last_seen_at` keeps advancing with LIVE and minute ≈ 90 → provider kept
   it LIVE (`overdue_live`).
 - `match_detail_cache` has an unexpected `matchStatus` → GOAL vocabulary
-  gap; after deploy `futbeat_terminal_recovery_status()` lists exhausted rows
-  with their `lastProviderStatus`.
+  gap. After deploy: live-goal ledger rows carry `metadata.unmappedStatuses`,
+  match-detail rows carry `metadata.providerStatus` (+ `unmappedStatus`), and
+  `futbeat_terminal_recovery_status()` lists exhausted rows with their
+  `lastProviderStatus`:
+
+```sql
+select reserved_at,metadata->'unmappedStatuses' from futbeat_private.provider_call_ledger
+where call_kind='live-goal' and metadata ? 'unmappedStatuses' order by reserved_at desc limit 20;
+```
 
 ## Deploy (not done)
 
