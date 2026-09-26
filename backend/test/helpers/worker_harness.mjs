@@ -14,7 +14,7 @@ const stripImports = (source) => source.replace(/^import\s[\s\S]*?;\r?\n/gm, '')
 const stripExports = (source) => source.replace(/^export /gm, '');
 const sources = await Promise.all([
   read('_shared/results_pagination.ts'), read('_shared/goal_players.ts'), read('_shared/goal_standings.ts'),
-  read('futbeat-goal-live-sync/index.ts'),
+  read('_shared/live_events.ts'), read('futbeat-goal-live-sync/index.ts'),
 ]);
 
 export const goalOk = (data, remaining = 700) => new Response(JSON.stringify({ success: true, data }),
@@ -53,9 +53,9 @@ export function worker(db, goal) {
     Deno: { env: { get: (n) => ({ SUPABASE_URL: 'https://supabase.test', SUPABASE_SERVICE_ROLE_KEY: 'svc' })[n] },
       serve: (fn) => { handler = fn; } },
   });
-  const [pagination, players, standings, workerSource] = sources;
+  const [pagination, players, standings, liveEvents, workerSource] = sources;
   vm.runInContext(stripTypeScriptTypes([stripExports(pagination), stripExports(players), stripExports(standings),
-    stripImports(workerSource)].join('\n')), context);
+    stripExports(liveEvents), stripImports(workerSource)].join('\n')), context);
   return {
     calls, logs,
     goalCalls: () => calls.filter((u) => u.startsWith('https://api.goal-api.com')),

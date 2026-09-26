@@ -305,6 +305,8 @@ const goalKey = 'test-only-goal-key-not-a-secret';
 const unhandled = Symbol('unhandled');
 const workerSource = await readFile(new URL('../../supabase/functions/futbeat-goal-live-sync/index.ts', import.meta.url), 'utf8');
 const paginationSource = await readFile(new URL('../../supabase/functions/_shared/results_pagination.ts', import.meta.url), 'utf8');
+// The worker imports normalizeFixtureEvents from _shared/live_events.ts.
+const liveEventsSource = await readFile(new URL('../../supabase/functions/_shared/live_events.ts', import.meta.url), 'utf8');
 const stripImports = source => source.replace(/^import\s[\s\S]*?;\r?\n/gm, '');
 
 function edge(source, fetch, logs) {
@@ -359,7 +361,7 @@ function worker(db, provider) {
     unexpected.push(url.href);
     throw new Error(`Unexpected mocked request: ${url.href}`);
   };
-  const pagination = paginationSource.replace(/^export /gm, '');
+  const pagination = (paginationSource + '\n' + liveEventsSource).replace(/^export /gm, '');
   const runner = edge(pagination + '\n' + workerSource, fetch, logs);
   return {
     logs, unexpected,
