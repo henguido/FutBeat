@@ -380,7 +380,9 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('11. canonicalId opens the player profile', (tester) async {
+    testWidgets('11. canonicalId: the sheet offers Ver perfil to the profile', (
+      tester,
+    ) async {
       await _open(
         tester,
         _detail(home: [_player('Con Perfil', 8.0, canonicalId: 'fb_player_9')]),
@@ -388,6 +390,10 @@ void main() {
       final row = find.byKey(const ValueKey('team-top-rated-home-0'));
       await _scrollTo(tester, row);
       await tester.tap(row);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('player-sheet')), findsOneWidget);
+      expect(find.text('Perfil fb_player_9'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('player-sheet-profile')));
       await tester.pumpAndSettle();
       expect(find.text('Perfil fb_player_9'), findsOneWidget);
     });

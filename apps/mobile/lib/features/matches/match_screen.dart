@@ -356,7 +356,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ],
     );
 
-    return Scaffold(
+    final page = Scaffold(
       appBar: AppBar(
         title: const Text('Match Center'),
         backgroundColor: _headerTop,
@@ -510,6 +510,13 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
           ],
         ),
       ),
+    );
+    // Every player entry point opens the same local sheet (#99).
+    return MatchPlayerScope(
+      detail: detail,
+      home: home,
+      away: away,
+      child: page,
     );
   }
 }
@@ -689,6 +696,7 @@ class TeamTopRatedCard extends StatelessWidget {
           _TeamTopRatedPlayer(
             key: ValueKey('team-top-rated-$side-$i'),
             player: shown[i],
+            side: side,
             alignEnd: end,
             compact: shown.length > 1,
           ),
@@ -727,12 +735,14 @@ class TeamTopRatedCard extends StatelessWidget {
 class _TeamTopRatedPlayer extends StatelessWidget {
   const _TeamTopRatedPlayer({
     required this.player,
+    required this.side,
     required this.alignEnd,
     required this.compact,
     super.key,
   });
 
   final Json player;
+  final String side;
   final bool alignEnd;
   final bool compact;
 
@@ -740,8 +750,6 @@ class _TeamTopRatedPlayer extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = player['name']?.toString() ?? 'Jugador';
     final position = _positionLabel(player['position']);
-    final canonicalId = player['canonicalId']?.toString();
-    final canOpenProfile = canonicalId != null && canonicalId.isNotEmpty;
     final text = Expanded(
       child: Column(
         crossAxisAlignment: alignEnd
@@ -796,10 +804,9 @@ class _TeamTopRatedPlayer extends StatelessWidget {
           ? [text, const SizedBox(width: 8), avatar]
           : [avatar, const SizedBox(width: 8), text],
     );
-    if (!canOpenProfile) return content;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: () => context.push('/player/$canonicalId'),
+      onTap: () => showMatchPlayerSheet(context, player, side),
       child: content,
     );
   }
@@ -821,8 +828,6 @@ class _TopRatedEntry extends StatelessWidget {
   Widget build(BuildContext context) {
     final player = entry.player;
     final name = player['name']?.toString() ?? 'Jugador';
-    final canonicalId = player['canonicalId']?.toString();
-    final canOpenProfile = canonicalId != null && canonicalId.isNotEmpty;
 
     final content = Row(
       children: [
@@ -856,10 +861,9 @@ class _TopRatedEntry extends StatelessWidget {
       ],
     );
 
-    if (!canOpenProfile) return content;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: () => context.push('/player/$canonicalId'),
+      onTap: () => showMatchPlayerSheet(context, player, entry.side),
       child: content,
     );
   }
@@ -2329,6 +2333,7 @@ class _TeamLineup extends StatelessWidget {
                     ),
                     itemBuilder: (_, index) => _BenchPlayer(
                       substitutes[index],
+                      side: side,
                       events: lineupEventsForPlayer(
                         substitutes[index],
                         incidents,
@@ -2520,6 +2525,7 @@ class _FormationPitch extends StatelessWidget {
                     Expanded(
                       child: _PitchPlayer(
                         player,
+                        side: side,
                         events: lineupEventsForPlayer(player, incidents, side),
                       ),
                     ),
@@ -2611,17 +2617,16 @@ String _pitchName(String name) {
 }
 
 class _PitchPlayer extends StatelessWidget {
-  const _PitchPlayer(this.player, {required this.events});
+  const _PitchPlayer(this.player, {required this.side, required this.events});
 
   final Json player;
+  final String side;
   final List<LineupPlayerEvent> events;
 
   @override
   Widget build(BuildContext context) {
     final name = player['name']?.toString() ?? 'Jugador';
     final number = player['number']?.toString().trim() ?? '';
-    final canonicalId = player['canonicalId']?.toString();
-    final canOpenProfile = canonicalId != null && canonicalId.isNotEmpty;
 
     final content = Column(
       children: [
@@ -2676,10 +2681,9 @@ class _PitchPlayer extends StatelessWidget {
       ],
     );
 
-    if (!canOpenProfile) return content;
     return InkWell(
       borderRadius: BorderRadius.circular(28),
-      onTap: () => context.push('/player/$canonicalId'),
+      onTap: () => showMatchPlayerSheet(context, player, side),
       child: content,
     );
   }
@@ -2723,16 +2727,15 @@ String? _positionLabel(dynamic raw) {
 }
 
 class _BenchPlayer extends StatelessWidget {
-  const _BenchPlayer(this.player, {required this.events});
+  const _BenchPlayer(this.player, {required this.side, required this.events});
   final Json player;
+  final String side;
   final List<LineupPlayerEvent> events;
 
   @override
   Widget build(BuildContext context) {
     final number = player['number']?.toString().trim() ?? '';
     final position = _positionLabel(player['position']);
-    final canonicalId = player['canonicalId']?.toString();
-    final canOpenProfile = canonicalId != null && canonicalId.isNotEmpty;
 
     final content = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -2774,10 +2777,9 @@ class _BenchPlayer extends StatelessWidget {
       ),
     );
 
-    if (!canOpenProfile) return content;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: () => context.push('/player/$canonicalId'),
+      onTap: () => showMatchPlayerSheet(context, player, side),
       child: content,
     );
   }
@@ -2882,6 +2884,12 @@ String _playerInitials(dynamic name) {
       .toUpperCase();
 }
 
+Color _ratingColor(double value) => value >= 8
+    ? lime
+    : value >= 7
+    ? Colors.amber
+    : Colors.orangeAccent;
+
 class _RatingBadge extends StatelessWidget {
   const _RatingBadge(this.rating);
   final num rating;
@@ -2889,15 +2897,10 @@ class _RatingBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = rating.toDouble();
-    final color = value >= 8
-        ? lime
-        : value >= 7
-        ? Colors.amber
-        : Colors.orangeAccent;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
-        color: color,
+        color: _ratingColor(value),
         borderRadius: BorderRadius.circular(7),
       ),
       child: Text(
@@ -3043,3 +3046,386 @@ String eventLabel(String type) => switch (type) {
   'FULL_TIME' => 'Final',
   _ => 'Evento',
 };
+
+// ---------------------------------------------------------------------------
+// #99 player sheet: tapping any lineup / top-rated player opens a local,
+// instant panel with what the match already knows about them. No request,
+// no invalidation; "Ver perfil" (canonical players only) is the only exit to
+// another screen.
+// ---------------------------------------------------------------------------
+
+/// Match data the player sheet needs, provided once at the Match Center root
+/// so every entry point opens the sheet the same way.
+class MatchPlayerScope extends InheritedWidget {
+  const MatchPlayerScope({
+    required this.detail,
+    required this.home,
+    required this.away,
+    required super.child,
+    super.key,
+  });
+
+  final MatchDetail detail;
+  final Entity home;
+  final Entity away;
+
+  static MatchPlayerScope? maybeOf(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<MatchPlayerScope>();
+
+  @override
+  bool updateShouldNotify(MatchPlayerScope oldWidget) =>
+      detail != oldWidget.detail ||
+      home != oldWidget.home ||
+      away != oldWidget.away;
+}
+
+/// Real per-match numbers for one player: the provider rating and counts of
+/// the player's own match events. Only non-zero counts are reported (an
+/// absent event is not evidence of zero); nothing else is derived.
+class PlayerMatchSummary {
+  const PlayerMatchSummary({
+    this.rating,
+    this.goals = 0,
+    this.assists = 0,
+    this.yellowCards = 0,
+    this.redCards = 0,
+  });
+
+  final num? rating;
+  final int goals, assists, yellowCards, redCards;
+
+  /// Label/value pairs to show, in order; empty when there is nothing real.
+  List<(String, String)> get entries => [
+    if (rating != null) ('Rating', rating!.toDouble().toStringAsFixed(1)),
+    if (goals > 0) (goals == 1 ? 'Gol' : 'Goles', '$goals'),
+    if (assists > 0) (assists == 1 ? 'Asistencia' : 'Asistencias', '$assists'),
+    if (yellowCards > 0) ('Amarillas', '$yellowCards'),
+    if (redCards > 0) ('Rojas', '$redCards'),
+  ];
+}
+
+PlayerMatchSummary playerMatchSummary(
+  Json player,
+  List<LineupPlayerEvent> events,
+) {
+  final rating = player['rating'];
+  int count(String type) => events.where((e) => e.type == type).length;
+  return PlayerMatchSummary(
+    rating: rating is num && rating > 0 ? rating : null,
+    goals: count('GOAL'),
+    assists: count('ASSIST'),
+    yellowCards: count('YELLOW_CARD'),
+    redCards: count('RED_CARD'),
+  );
+}
+
+/// The single way to open the player sheet (pitch, bench, top rated, best by
+/// team). Purely local: reads the enclosing [MatchPlayerScope].
+Future<void> showMatchPlayerSheet(
+  BuildContext context,
+  Json player,
+  String side,
+) {
+  final scope = MatchPlayerScope.maybeOf(context);
+  final team = scope == null
+      ? null
+      : (side == 'home' ? scope.home : scope.away);
+  final events = scope == null
+      ? const <LineupPlayerEvent>[]
+      : lineupEventsForPlayer(player, scope.detail.incidents, side);
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: const Color(0xFF151B20),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+    ),
+    builder: (sheetContext) => MatchPlayerSheet(
+      player: player,
+      side: side,
+      team: team,
+      events: events,
+      onOpenProfile: canonicalId.isEmpty
+          ? null
+          : () {
+              Navigator.of(sheetContext).pop();
+              context.push('/player/$canonicalId');
+            },
+    ),
+  );
+}
+
+class MatchPlayerSheet extends StatelessWidget {
+  const MatchPlayerSheet({
+    required this.player,
+    required this.side,
+    required this.team,
+    required this.events,
+    required this.onOpenProfile,
+    super.key,
+  });
+
+  final Json player;
+  final String side;
+  final Entity? team;
+  final List<LineupPlayerEvent> events;
+  final VoidCallback? onOpenProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = player['name']?.toString().trim();
+    final number = player['number']?.toString().trim() ?? '';
+    final position = _positionLabel(player['position']);
+    final age = player['age'];
+    final summary = playerMatchSummary(player, events);
+    final sideColor = side == 'home' ? lime : awaySideColor;
+    final details = <Widget>[
+      if (number.isNotEmpty)
+        _SheetChip('#$number', key: const ValueKey('player-sheet-number')),
+      if (position != null)
+        _SheetChip(position, key: const ValueKey('player-sheet-position')),
+      if (team != null)
+        _SheetChip(
+          team!.name,
+          color: sideColor,
+          key: const ValueKey('player-sheet-team'),
+        ),
+      if (player['captain'] == true)
+        const _SheetChip('Capitán', key: ValueKey('player-sheet-captain')),
+      if (age is num && age > 0)
+        _SheetChip(
+          '${age.toInt()} años',
+          key: const ValueKey('player-sheet-age'),
+        ),
+    ];
+
+    return DraggableScrollableSheet(
+      key: const ValueKey('player-sheet'),
+      expand: false,
+      initialChildSize: .62,
+      minChildSize: .35,
+      maxChildSize: .92,
+      builder: (context, controller) => ListView(
+        controller: controller,
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 22),
+        children: [
+          Center(
+            child: Container(
+              width: 38,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _PlayerAvatar(player, size: 64),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  name == null || name.isEmpty ? 'Jugador' : name,
+                  key: const ValueKey('player-sheet-name'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (summary.rating != null) ...[
+                const SizedBox(width: 10),
+                _SheetRating(summary.rating!),
+              ],
+            ],
+          ),
+          if (details.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(spacing: 6, runSpacing: 6, children: details),
+          ],
+          if (summary.entries.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            const _SheetTitle('Resumen del partido'),
+            Row(
+              key: const ValueKey('player-sheet-summary'),
+              children: [
+                for (final (label, value) in summary.entries)
+                  Expanded(
+                    child: _SheetStat(label: label, value: value),
+                  ),
+              ],
+            ),
+          ],
+          if (events.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            const _SheetTitle('En el partido'),
+            for (final event in events)
+              _SheetEventRow(
+                event,
+                key: ValueKey(
+                  'player-sheet-event-${event.type}-${event.minute}',
+                ),
+              ),
+          ],
+          if (onOpenProfile != null) ...[
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              key: const ValueKey('player-sheet-profile'),
+              style: FilledButton.styleFrom(
+                backgroundColor: lime,
+                foregroundColor: Colors.black,
+                minimumSize: const Size.fromHeight(46),
+              ),
+              onPressed: onOpenProfile,
+              icon: const Icon(Icons.person_rounded, size: 18),
+              label: const Text(
+                'Ver perfil',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetChip extends StatelessWidget {
+  const _SheetChip(this.label, {this.color, super.key});
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .06),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: (color ?? Colors.white).withValues(alpha: .18)),
+    ),
+    child: Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: color ?? Colors.white70,
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
+}
+
+class _SheetRating extends StatelessWidget {
+  const _SheetRating(this.rating);
+  final num rating;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = rating.toDouble();
+    return Container(
+      key: const ValueKey('player-sheet-rating'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: _ratingColor(value),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        value.toStringAsFixed(1),
+        style: const TextStyle(
+          color: Colors.black,
+          fontSize: 18,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetTitle extends StatelessWidget {
+  const _SheetTitle(this.title);
+  final String title;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Text(
+      title.toUpperCase(),
+      style: const TextStyle(
+        color: muted,
+        fontSize: 11,
+        letterSpacing: .8,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+  );
+}
+
+class _SheetStat extends StatelessWidget {
+  const _SheetStat({required this.label, required this.value});
+  final String label, value;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(right: 6),
+    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .04),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: _cardBorder),
+    ),
+    child: Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: muted, fontSize: 11),
+        ),
+      ],
+    ),
+  );
+}
+
+class _SheetEventRow extends StatelessWidget {
+  const _SheetEventRow(this.event, {super.key});
+  final LineupPlayerEvent event;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      children: [
+        // Same glyph as the lineup; the minute is shown on the right.
+        SizedBox(
+          width: 24,
+          child: Center(
+            child: _LineupEventIcon(LineupPlayerEvent(event.type, null)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            eventLabel(event.type),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+        ),
+        if (event.minute != null)
+          Text(
+            '${event.minute}′',
+            style: const TextStyle(color: muted, fontSize: 12),
+          ),
+      ],
+    ),
+  );
+}
