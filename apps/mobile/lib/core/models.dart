@@ -488,7 +488,32 @@ class MatchDetail {
   /// four lineup lists whose rating is a real, positive number, deduplicated
   /// by canonical id (falling back to name+side) and sorted deterministically
   /// (rating desc, then name asc, then side asc). Never invents a rating.
-  List<({Json player, String side})> topRated({int limit = 3}) {
+  List<({Json player, String side})> topRated({int limit = 3}) =>
+      _ratedPlayers().take(limit).toList();
+
+  /// #99 "Mejor puntuado por equipo": per side, every player tied at that
+  /// side's highest real rating (usually one). A tie is returned as a tie,
+  /// never resolved into a single "best". A side without ratings is empty.
+  ({List<Json> home, List<Json> away}) bestRatedBySide() {
+    List<Json> best(String side) {
+      final players = [
+        for (final entry in _ratedPlayers())
+          if (entry.side == side) entry.player,
+      ];
+      if (players.isEmpty) return players;
+      final top = (players.first['rating'] as num).toDouble();
+      return [
+        for (final player in players)
+          if ((player['rating'] as num).toDouble() == top) player,
+      ];
+    }
+
+    return (home: best('home'), away: best('away'));
+  }
+
+  /// Rated lineup players (rating is num > 0), deduplicated by canonical id
+  /// (falling back to name+side), rating desc, then name asc, then side.
+  List<({Json player, String side})> _ratedPlayers() {
     final entries =
         <({Json player, String side})>[
           for (final player in homeStarters) (player: player, side: 'home'),
@@ -521,7 +546,7 @@ class MatchDetail {
       return a.side.compareTo(b.side);
     });
 
-    return deduped.take(limit).toList();
+    return deduped;
   }
 
   /// The single standout, only when their rating strictly beats the runner

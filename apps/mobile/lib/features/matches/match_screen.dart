@@ -425,6 +425,25 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                   home: home,
                   away: away,
                 ),
+                const _SectionTitle('Mejor puntuado por equipo'),
+                if (match.isLive)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'Provisional',
+                      style: TextStyle(
+                        color: muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                TeamTopRatedCard(
+                  key: const ValueKey('team-top-rated-card'),
+                  best: detail.bestRatedBySide(),
+                  home: home,
+                  away: away,
+                ),
               ],
               if (hasStats) ...[
                 const _SectionTitle('Estadísticas clave'),
@@ -611,6 +630,168 @@ class TopRatedCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// #99 best rated player of each side, side by side. A tie at a side's
+/// top shows the tied players (max 2) as equals; a side without ratings
+/// stays empty (no placeholder).
+class TeamTopRatedCard extends StatelessWidget {
+  const TeamTopRatedCard({
+    required this.best,
+    required this.home,
+    required this.away,
+    super.key,
+  });
+
+  final ({List<Json> home, List<Json> away}) best;
+  final Entity home;
+  final Entity away;
+
+  static const _maxShown = 2;
+
+  Widget _side(String side, List<Json> players, Entity team) {
+    final shown = players.take(_maxShown).toList();
+    final end = side == 'away';
+    return Column(
+      crossAxisAlignment: end
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      children: [
+        Text(
+          team.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: side == 'home' ? lime : awaySideColor,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        if (players.length > 1)
+          Text(
+            'Empatados',
+            key: ValueKey('team-top-rated-$side-tie'),
+            style: const TextStyle(color: muted, fontSize: 10.5),
+          ),
+        for (var i = 0; i < shown.length; i++) ...[
+          const SizedBox(height: 8),
+          _TeamTopRatedPlayer(
+            key: ValueKey('team-top-rated-$side-$i'),
+            player: shown[i],
+            alignEnd: end,
+            compact: shown.length > 1,
+          ),
+        ],
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .04),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: _cardBorder),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: best.home.isEmpty
+              ? const SizedBox.shrink()
+              : _side('home', best.home, home),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: best.away.isEmpty
+              ? const SizedBox.shrink()
+              : _side('away', best.away, away),
+        ),
+      ],
+    ),
+  );
+}
+
+class _TeamTopRatedPlayer extends StatelessWidget {
+  const _TeamTopRatedPlayer({
+    required this.player,
+    required this.alignEnd,
+    required this.compact,
+    super.key,
+  });
+
+  final Json player;
+  final bool alignEnd;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = player['name']?.toString() ?? 'Jugador';
+    final position = _positionLabel(player['position']);
+    final canonicalId = player['canonicalId']?.toString();
+    final canOpenProfile = canonicalId != null && canonicalId.isNotEmpty;
+    final text = Expanded(
+      child: Column(
+        crossAxisAlignment: alignEnd
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
+        children: [
+          Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: alignEnd ? TextAlign.end : TextAlign.start,
+            style: TextStyle(
+              fontSize: compact ? 12 : 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (position != null && !alignEnd) ...[
+                Flexible(
+                  child: Text(
+                    position,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: muted, fontSize: 11),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              _RatingBadge(player['rating'] as num),
+              if (position != null && alignEnd) ...[
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    position,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: muted, fontSize: 11),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+    final avatar = _PlayerAvatar(player, size: compact ? 30 : 40);
+    final content = Row(
+      children: alignEnd
+          ? [text, const SizedBox(width: 8), avatar]
+          : [avatar, const SizedBox(width: 8), text],
+    );
+    if (!canOpenProfile) return content;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => context.push('/player/$canonicalId'),
+      child: content,
     );
   }
 }
