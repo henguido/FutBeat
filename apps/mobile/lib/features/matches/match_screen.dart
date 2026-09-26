@@ -373,7 +373,6 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
               match: match,
               competition: competition,
               detail: detail,
-              venue: venue,
             ),
           ),
           SliverOverlapAbsorber(
@@ -913,7 +912,6 @@ class MatchHero extends StatelessWidget {
     required this.match,
     required this.competition,
     required this.detail,
-    required this.venue,
     super.key,
   });
 
@@ -921,15 +919,12 @@ class MatchHero extends StatelessWidget {
   final FootballMatch match;
   final Entity competition;
   final MatchDetail detail;
-  final String venue;
 
   @override
   Widget build(BuildContext context) {
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
     final round = detail.round?.trim() ?? '';
-    final date = matchDateLabel(match.startTime);
-    final time = localTime(context, match.startTime);
     // Scorers only once the match has started and a goal has a known side.
     final summary = match.showKickoff
         ? null
@@ -948,11 +943,12 @@ class MatchHero extends StatelessWidget {
           colors: [_headerTop, _headerBottom],
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(12, 2, 12, 14),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Competition first, clearly separated from the teams.
+          // Competition first, clearly separated from the teams. Date,
+          // venue, country and season live in "Información del partido".
           Material(
             color: Colors.white.withValues(alpha: .06),
             shape: const StadiumBorder(),
@@ -998,32 +994,18 @@ class MatchHero extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(child: _HeaderTeam(home, accent: lime)),
-              SizedBox(width: 112, child: _HeaderCenter(match)),
+              SizedBox(width: 120, child: _HeaderCenter(match)),
               Expanded(child: _HeaderTeam(away, accent: awaySideColor)),
             ],
           ),
           if (scorers != null) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             _HeaderScorers(home: scorers.home, away: scorers.away),
-          ],
-          if (!match.showKickoff || venue.trim().isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                if (!match.showKickoff)
-                  _InfoChip(Icons.calendar_today_rounded, '$date · $time'),
-                if (venue.trim().isNotEmpty)
-                  _InfoChip(Icons.location_on_outlined, venue.trim()),
-              ],
-            ),
           ],
         ],
       ),
@@ -1055,11 +1037,11 @@ class _HeaderTeam extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Colors.white.withValues(alpha: .05),
-                border: Border.all(color: Colors.white.withValues(alpha: .08)),
+                border: Border.all(color: accent.withValues(alpha: .28)),
               ),
-              child: EntityAvatar(team, size: 46),
+              child: EntityAvatar(team, size: 42),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 7),
             Text(
               team.name,
               maxLines: 2,
@@ -1071,7 +1053,7 @@ class _HeaderTeam extends StatelessWidget {
                 fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 5),
             Container(
               width: 18,
               height: 3,
@@ -1096,7 +1078,7 @@ class _HeaderCenter extends StatelessWidget {
   Widget build(BuildContext context) {
     final (color, _) = matchStatusTone(match);
     return Padding(
-      padding: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.only(top: 6),
       child: Column(
         children: [
           if (match.showKickoff) ...[
@@ -1105,7 +1087,7 @@ class _HeaderCenter extends StatelessWidget {
               child: Text(
                 localTime(context, match.startTime),
                 style: const TextStyle(
-                  fontSize: 30,
+                  fontSize: 32,
                   fontWeight: FontWeight.w900,
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
@@ -1114,7 +1096,13 @@ class _HeaderCenter extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               matchDateLabel(match.startTime),
-              style: const TextStyle(color: muted, fontSize: 12),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ] else
             FittedBox(
@@ -1122,7 +1110,7 @@ class _HeaderCenter extends StatelessWidget {
               child: Text(
                 match.score,
                 style: TextStyle(
-                  fontSize: 38,
+                  fontSize: 40,
                   height: 1.05,
                   letterSpacing: 1,
                   fontWeight: FontWeight.w900,
@@ -1139,37 +1127,6 @@ class _HeaderCenter extends StatelessWidget {
       ),
     );
   }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip(this.icon, this.text);
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: .05),
-      borderRadius: BorderRadius.circular(999),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 13, color: muted),
-        const SizedBox(width: 5),
-        Flexible(
-          child: Text(
-            text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-        ),
-      ],
-    ),
-  );
 }
 
 /// Visual tone of the match state: color and whether it is in play.
