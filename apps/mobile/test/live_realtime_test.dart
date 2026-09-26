@@ -178,4 +178,162 @@ void main() {
       expect(identical(merged, snapshot), isTrue);
     },
   );
+
+  group('#120 live overlay receipt time', () {
+    final serverNow = DateTime.utc(2026, 9, 26, 20);
+    // Device clock deliberately one hour ahead of the server.
+    final deviceNow = serverNow.add(const Duration(hours: 1));
+    Json canonical(String status) => {
+      'id': 'fb_match_rt',
+      'status': status,
+      'homeTeamId': 'fb_team_h',
+      'awayTeamId': 'fb_team_a',
+      'events': <dynamic>[],
+    };
+    Json row({
+      required String status,
+      required DateTime at,
+      int revision = 3,
+      bool withUpdatedAt = true,
+    }) => {
+      'match_id': 'fb_match_rt',
+      'provider': 'goal_api',
+      'external_match_id': 'rt',
+      'status': status,
+      'minute': 90,
+      'home_score': 2,
+      'away_score': 3,
+      'revision': revision,
+      'event_count': 0,
+      'latest_events': <dynamic>[],
+      'changed_at': at.toIso8601String(),
+      if (withUpdatedAt) 'updated_at': at.toIso8601String(),
+    };
+    LiveMatchUpdate bootstrapped(Json r, {bool serverTime = true}) =>
+        reconcileLiveBootstrapSnapshot(
+          const {},
+          [r],
+          serverNow: serverTime ? serverNow : null,
+          deviceNow: deviceNow,
+        )['fb_match_rt']!;
+
+    test('1. REST row last updated 2 h ago never overlays LIVE', () {
+      final update = bootstrapped(
+        row(status: 'LIVE', at: serverNow.subtract(const Duration(hours: 2))),
+      );
+      final shown = update.applyTo(canonical('SCHEDULED'), now: deviceNow);
+      expect(shown['status'], 'SCHEDULED');
+      expect(FootballMatch(shown).isLive, isFalse);
+    });
+
+    test('1b. without a server time an old REST row is dropped too', () {
+      final update = bootstrapped(
+        row(status: 'LIVE', at: serverNow.subtract(const Duration(hours: 2))),
+        serverTime: false,
+      );
+      expect(
+        update.applyTo(canonical('SCHEDULED'), now: serverNow)['status'],
+        'SCHEDULED',
+      );
+    });
+
+    test('2. REST row updated 5 min ago overlays LIVE despite device skew', () {
+      final update = bootstrapped(
+        row(status: 'LIVE', at: serverNow.subtract(const Duration(minutes: 5))),
+      );
+      expect(
+        update.applyTo(canonical('SCHEDULED'), now: deviceNow)['status'],
+        'LIVE',
+      );
+      // It ages from its server age: 11 more minutes and it is stale.
+      expect(
+        update.applyTo(
+          canonical('SCHEDULED'),
+          now: deviceNow.add(const Duration(minutes: 11)),
+        )['status'],
+        'SCHEDULED',
+      );
+    });
+
+    test('3/4. realtime receipt is local: fresh despite skew, stale after '
+        '16 min', () {
+      final update = LiveMatchUpdate.fromJson(
+        row(status: 'LIVE', at: serverNow.subtract(const Duration(hours: 3))),
+        receivedAt: deviceNow,
+      );
+      expect(
+        update.applyTo(
+          canonical('SCHEDULED'),
+          now: deviceNow.add(const Duration(minutes: 1)),
+        )['status'],
+        'LIVE',
+      );
+      expect(
+        update.applyTo(
+          canonical('SCHEDULED'),
+          now: deviceNow.add(const Duration(minutes: 16)),
+        )['status'],
+        'SCHEDULED',
+      );
+    });
+
+    test('5. an old terminal row always applies (realtime or REST)', () {
+      final old = serverNow.subtract(const Duration(hours: 5));
+      for (final update in [
+        LiveMatchUpdate.fromJson(
+          row(status: 'FINISHED_PENDING_VERIFICATION', at: old),
+          receivedAt: old,
+        ),
+        bootstrapped(row(status: 'FINISHED_PENDING_VERIFICATION', at: old)),
+      ]) {
+        final shown = update.applyTo(canonical('LIVE'), now: deviceNow);
+        expect(shown['status'], 'FINISHED_PENDING_VERIFICATION');
+        expect(shown['score'], {'home': 2, 'away': 3});
+      }
+    });
+
+    test('6. a terminal canonical absorbs a fresh non-terminal overlay', () {
+      final update = LiveMatchUpdate.fromJson(
+        row(status: 'LIVE', at: serverNow),
+        receivedAt: deviceNow,
+      );
+      final terminal = canonical('VERIFIED');
+      expect(
+        identical(update.applyTo(terminal, now: deviceNow), terminal),
+        isTrue,
+      );
+    });
+
+    test('7. REST reconcile still removes rows that disappeared', () {
+      final kept = LiveMatchUpdate.fromJson(
+        row(status: 'LIVE', at: serverNow),
+        receivedAt: deviceNow,
+      );
+      final result = reconcileLiveBootstrapSnapshot(
+        {'fb_match_rt': kept},
+        const [],
+        serverNow: serverNow,
+        deviceNow: deviceNow,
+      );
+      expect(result, isEmpty);
+    });
+
+    test(
+      'a REST refresh of the same revision keeps the later live receipt',
+      () {
+        final at = serverNow.subtract(const Duration(minutes: 20));
+        final live = LiveMatchUpdate.fromJson(
+          row(status: 'LIVE', at: at, withUpdatedAt: false),
+          receivedAt: deviceNow,
+        );
+        final refreshed = reconcileLiveBootstrapSnapshot(
+          {'fb_match_rt': live},
+          [row(status: 'LIVE', at: at, withUpdatedAt: false)],
+          serverNow: serverNow,
+          deviceNow: deviceNow.add(const Duration(minutes: 1)),
+        )['fb_match_rt']!;
+        expect(refreshed.receivedAt, deviceNow);
+      },
+    );
+  });
 }

@@ -67,10 +67,14 @@ Tuning keys (`provider_quota_policy.freshness`, defaults in code):
 `terminalRecoveryWindowHours` 6, `overdueLiveMinutes` 150,
 `terminalRecoveryFirstDelaySeconds` 60, `terminalRecoveryMaxAttempts` 6.
 
-Mobile (0aa7bf6 + follow-up): a LIVE overlay received more than 15 min ago
-(device clock, receipt time — immune to device/server skew) no longer
-overrides the canonical snapshot, and Match Center re-reads the canonical
-context on a finite schedule while the shown match is LIVE but silent.
+Mobile: a LIVE overlay received more than 15 min ago no longer overrides the
+canonical snapshot, and Match Center re-reads the canonical context on a
+finite schedule while the shown match is LIVE but silent. Receipt time is
+local for realtime frames; for REST bootstrap rows it is the row's server
+age at fetch (HTTP `Date` minus `updated_at`/`changed_at`) moved onto the
+device clock — so an old materialized LIVE row is never rejuvenated and
+device/server skew never matters (no `Date` header: the row's own timestamp,
+conservative). Terminal overlays always apply.
 
 ## Known residual risks
 

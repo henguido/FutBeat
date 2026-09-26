@@ -289,23 +289,46 @@ class LiveMatchUpdate {
     this.receivedAt,
   });
 
-  factory LiveMatchUpdate.fromJson(Json json) => LiveMatchUpdate(
-    matchId: json['match_id'] as String,
-    provider: json['provider'] as String,
-    externalMatchId: json['external_match_id'] as String,
-    status: json['status'] as String,
-    minute: json['minute'] as int?,
-    homeScore: json['home_score'] as int?,
-    awayScore: json['away_score'] as int?,
-    revision: (json['revision'] as num).toInt(),
-    eventCount: (json['event_count'] as num?)?.toInt() ?? 0,
-    changedAt: DateTime.parse(json['changed_at'] as String),
-    events: (json['latest_events'] as List? ?? [])
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList(),
-    receivedAt: DateTime.now().toUtc(),
-  );
+  /// [receivedAt] is the device time the row arrived (realtime), or the
+  /// device-clock equivalent of its server-side age (REST bootstrap, see
+  /// [bootstrapReceivedAt]). Never defaulted to "now": an old row fetched
+  /// later must not look fresh.
+  factory LiveMatchUpdate.fromJson(Json json, {DateTime? receivedAt}) =>
+      LiveMatchUpdate(
+        matchId: json['match_id'] as String,
+        provider: json['provider'] as String,
+        externalMatchId: json['external_match_id'] as String,
+        status: json['status'] as String,
+        minute: json['minute'] as int?,
+        homeScore: json['home_score'] as int?,
+        awayScore: json['away_score'] as int?,
+        revision: (json['revision'] as num).toInt(),
+        eventCount: (json['event_count'] as num?)?.toInt() ?? 0,
+        changedAt: DateTime.parse(json['changed_at'] as String),
+        events: (json['latest_events'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(),
+        receivedAt: receivedAt,
+      );
+
+  /// Device-clock receipt time for a row fetched by REST: its age on the
+  /// server at fetch time (server `Date` minus the row's last server update)
+  /// moved onto the device clock, so device/server skew never matters.
+  /// Without a server time the row counts as received at its own timestamp
+  /// (conservative: an old LIVE row is dropped, never rejuvenated).
+  static DateTime bootstrapReceivedAt(
+    Json row, {
+    required DateTime deviceNow,
+    DateTime? serverNow,
+  }) {
+    final observed =
+        DateTime.tryParse(row['updated_at'] as String? ?? '') ??
+        DateTime.parse(row['changed_at'] as String);
+    if (serverNow == null) return observed.toUtc();
+    final age = serverNow.toUtc().difference(observed.toUtc());
+    return deviceNow.toUtc().subtract(age.isNegative ? Duration.zero : age);
+  }
 
   final String matchId, provider, externalMatchId, status;
   final int? minute, homeScore, awayScore;
@@ -313,8 +336,8 @@ class LiveMatchUpdate {
   final DateTime changedAt;
   final List<Json> events;
 
-  /// Device time this row was received. Staleness is measured on the device
-  /// clock only (never device vs server time, which may be skewed).
+  /// Device time this row was received (see [LiveMatchUpdate.fromJson]).
+  /// Staleness is measured on the device clock only.
   final DateTime? receivedAt;
 
   /// Same window as the server failsafe: a LIVE row this silent is not live.
