@@ -125,16 +125,10 @@ class LiveMatchUpdate {
       'ABANDONED',
       'CANCELLED',
     };
-    final canonicalStatus = match['status'] as String?;
-    final provenance = match['provenance'];
-    final canonicalAt = provenance is Map
-        ? DateTime.tryParse(provenance['receivedAt'] as String? ?? '')
-        : null;
-    if (terminalStatuses.contains(canonicalStatus) &&
-        canonicalAt != null &&
-        !canonicalAt.isBefore(changedAt)) {
-      return match;
-    }
+    // A terminal snapshot is absorbing (#120): realtime is an overlay and can
+    // never downgrade or rewrite it, however late its changedAt. Corrections
+    // after the final arrive as a new canonical snapshot, not through here.
+    if (terminalStatuses.contains(match['status'] as String?)) return match;
 
     final previousAt = DateTime.tryParse(
       match['liveChangedAt'] as String? ?? '',
