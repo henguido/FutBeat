@@ -238,6 +238,7 @@ void main() {
   testWidgets('21. lineup that arrives later appears in place; tab kept', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     final server = _Server(
       // Missing at first (pending), available from the 2nd refresh on.
       detail: (i) => i < 2 ? _detail(pending: true) : _detail(lineup: true),
@@ -246,12 +247,32 @@ void main() {
     final container = await _open(tester, server);
     await _tab(tester, 'Alineación');
     expect(find.text('Cargando alineaciones…'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('match-section-loading-Cargando alineaciones…'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .getSemantics(
+            find.byKey(
+              const ValueKey(
+                'match-section-loading-Cargando alineaciones…',
+              ),
+            ),
+          )
+          .label,
+      'Cargando alineaciones…',
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byKey(const ValueKey('match-refreshing')), findsOneWidget);
     await _elapse(tester, const Duration(seconds: 20));
     expect(find.text('Cargando alineaciones…'), findsNothing);
     expect(find.text('AS'), findsWidgets); // starter on the pitch (initials)
     expect(_selectedTab(tester), 'Alineación');
     expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
+    semantics.dispose();
     await _close(tester, container);
   });
 
@@ -267,6 +288,13 @@ void main() {
     final container = await _open(tester, server);
     await _tab(tester, 'Estadísticas');
     expect(find.text('Cargando estadísticas…'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('match-section-loading-Cargando estadísticas…'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
     await _elapse(tester, const Duration(seconds: 20));
     expect(find.text('Tiros a puerta'), findsWidgets);
     expect(find.text('Sin estadísticas'), findsNothing);

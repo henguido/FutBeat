@@ -151,11 +151,23 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(find.text('Sin estadísticas'), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsWidgets);
+      expect(
+        find.byKey(
+          const ValueKey('match-section-loading-Cargando estadísticas…'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
       await _showTab(tester, 'Alineación');
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(find.text('Sin alineaciones'), findsNothing);
+      expect(
+        find.byKey(
+          const ValueKey('match-section-loading-Cargando alineaciones…'),
+        ),
+        findsOneWidget,
+      );
       // Bounded schedule: one read-only refresh per step (2, 4, 8, 15, 40 s),
       // then the pending state ends in simple empty states.
       for (var second = 0; second < 90; second++) {
