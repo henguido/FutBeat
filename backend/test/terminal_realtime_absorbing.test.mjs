@@ -121,6 +121,46 @@ test('malformed observation for a terminal match is never suppressed: core valid
   assert.equal(await audits(), 1);
 }));
 
+test('malformed numeric, timestamp or event fields on a terminal match: the whole batch is rejected before any suppression', () => withDb(async (db) => {
+  const done = await seedMatch(db, { status: 'VERIFIED', score: [1, 4], hoursAgo: 3 });
+  const evidence = await seedMatch(db, { hoursAgo: 2 });
+  const live = await seedMatch(db, { hoursAgo: 0.5 });
+  await record(db, [observation(evidence.ext, 'LIVE', [1, 2], 80)]);
+  await record(db, [observation(evidence.ext, 'FINISHED_PENDING_VERIFICATION', [2, 2], 90)]);
+  const stateBefore = await liveState(db, evidence.ext);
+  const rowBefore = await publicRow(db, evidence.match);
+  const rehash = (o) => { delete o.payloadHash; o.payloadHash = createHash('sha256').update(JSON.stringify(o)).digest('hex'); return o; };
+  const withField = (s, status, patch) => rehash({ ...observation(s.ext, status, [1, 1], 45), ...patch(observation(s.ext, status, [1, 1], 45)) });
+
+  const variants = {
+    'minute="abc"': [() => ({ minute: 'abc' }), /invalid input syntax for type integer/],
+    'score.home="abc"': [(o) => ({ score: { ...o.score, home: 'abc' } }), /invalid input syntax for type integer/],
+    'score.away="abc"': [(o) => ({ score: { ...o.score, away: 'abc' } }), /invalid input syntax for type integer/],
+    'providerObservedAt invalid': [() => ({ providerObservedAt: 'not-a-timestamp' }), /invalid input syntax for type timestamp/],
+    'event without eventKey': [() => ({ events: [{ type: 'GOAL', minute: 10 }] }), /eventKey is required/],
+    'event.minute="abc"': [() => ({ events: [{ eventKey: 'k1', type: 'GOAL', minute: 'abc' }] }), /invalid input syntax for type integer/],
+    'events not an array': [() => ({ events: { eventKey: 'k1' } }), /events must be an array/],
+    'negative minute': [() => ({ minute: -1 }), /non-negative/],
+  };
+  for (const [label, [patch, error]] of Object.entries(variants)) {
+    for (const [s, status] of [[done, 'LIVE'], [evidence, 'HALFTIME']]) {
+      await assert.rejects(record(db, [withField(s, status, patch)]), error, `${label} (${status})`);
+      // Validation covers the whole batch before any suppression or mapping.
+      await assert.rejects(record(db, [observation(done.ext, 'LIVE', [0, 0], 10), withField(s, status, patch)]), error, `${label} batch`);
+    }
+    // Same rejection for a normal (non-terminal) match: validation parity.
+    await assert.rejects(record(db, [withField(live, 'LIVE', patch)]), error, `${label} (non-terminal)`);
+  }
+  assert.equal(await count(db, 'futbeat_private.live_suppressed_observations'), 0, 'no audit row');
+  assert.equal(await liveState(db, done.ext), null);
+  assert.equal(await publicRow(db, done.match), null, 'no public realtime row');
+  assert.equal(await liveState(db, live.ext), null);
+  assert.equal(await publicRow(db, live.match), null);
+  assert.deepEqual(await liveState(db, evidence.ext), stateBefore, 'live_match_state unchanged');
+  assert.deepEqual(await publicRow(db, evidence.match), rowBefore);
+  assert.deepEqual(await regressions(db), []);
+}));
+
 test('E. terminal evidence from provider_observations, FULL_TIME event or match detail alone suppresses realtime', () => withDb(async (db) => {
   const hash = () => createHash('sha256').update(String(++seq)).digest('hex');
   const sources = {
@@ -242,8 +282,8 @@ test('H. terminal -> LIVE regression creates no change, no KICKOFF/FULL_TIME dup
 test('new helpers and the audit table are not reachable by public clients', () => withDb(async (db) => {
   const rows = (await db.query(`select p.proname,has_function_privilege('anon',p.oid,'execute') anon,has_function_privilege('authenticated',p.oid,'execute') auth
     from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='futbeat_private'
-    and p.proname in ('is_terminal_match_status','match_effectively_terminal','record_live_events','terminal_realtime_regressions')`)).rows;
-  assert.equal(rows.length, 4);
+    and p.proname in ('is_terminal_match_status','match_effectively_terminal','record_live_events','terminal_realtime_regressions','validate_live_observation')`)).rows;
+  assert.equal(rows.length, 5);
   assert.ok(rows.every((r) => !r.anon && !r.auth), JSON.stringify(rows));
   const table = (await db.query("select has_table_privilege('anon','futbeat_private.live_suppressed_observations','select') a")).rows[0].a;
   assert.equal(table, false);

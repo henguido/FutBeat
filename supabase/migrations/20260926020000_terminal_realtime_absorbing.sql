@@ -71,6 +71,33 @@ do $$ declare role_name text; begin
   end loop;
 end $$;
 
+-- Structural/cast validation of ONE live observation, identical to what
+-- record_live_batch_core enforces (same messages, same casts, same table
+-- checks), with no reads and no writes. record_live_events validates the
+-- whole batch with it before any mapping, suppression or audit; the core
+-- keeps its own validation as defense in depth.
+create or replace function futbeat_private.validate_live_observation(obs jsonb)
+returns void language plpgsql stable set search_path='' as $$
+declare evt jsonb; v_minute integer; v_home integer; v_away integer; v_event_minute integer; v_observed timestamptz;
+begin
+ if nullif(obs->>'externalMatchId','') is null then raise exception 'externalMatchId is required'; end if;
+ if nullif(obs->>'payloadHash','') is null or obs->>'payloadHash' !~ '^[0-9a-f]{64}$' then raise exception 'invalid payloadHash'; end if;
+ if nullif(obs->>'status','') is null then raise exception 'status is required'; end if;
+ v_minute:=nullif(obs->>'minute','')::integer;
+ v_home:=nullif(obs#>>'{score,home}','')::integer;
+ v_away:=nullif(obs#>>'{score,away}','')::integer;
+ v_observed:=nullif(obs->>'providerObservedAt','')::timestamptz;
+ -- provider_observations checks: minute and scores are non-negative.
+ if v_minute<0 or v_home<0 or v_away<0 then
+  raise exception 'minute and score must be non-negative' using errcode='23514';
+ end if;
+ if jsonb_typeof(coalesce(obs->'events','[]'::jsonb))<>'array' then raise exception 'events must be an array'; end if;
+ for evt in select value from jsonb_array_elements(coalesce(obs->'events','[]'::jsonb)) loop
+  if nullif(evt->>'eventKey','') is null then raise exception 'eventKey is required'; end if;
+  v_event_minute:=nullif(evt->>'minute','')::integer;
+ end loop;
+end $$;
+
 create or replace function futbeat_private.record_live_events(p_provider text,p_received_at timestamptz,p_observations jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare result jsonb; c jsonb; m jsonb; mid text; e record; tid text; pid text; aid text;
@@ -81,46 +108,45 @@ begin
  if exists(select 1 from jsonb_array_elements(p_observations) o
   join futbeat_private.live_match_state s on s.provider=p_provider and s.external_match_id=o->>'externalMatchId'
   where s.last_seen_at>p_received_at) then raise exception 'Stale live batch'; end if;
+ -- Validate the WHOLE batch first (same rules as the core) so nothing
+ -- malformed is ever mapped, suppressed or audited: it is rejected as before.
+ if p_provider is null or btrim(p_provider)='' then raise exception 'provider is required'; end if;
+ if p_received_at is null then raise exception 'received_at is required'; end if;
+ if p_observations is null or jsonb_typeof(p_observations)<>'array' then raise exception 'observations must be an array'; end if;
+ for obs in select value from jsonb_array_elements(p_observations) loop
+  perform futbeat_private.validate_live_observation(obs);
+ end loop;
  -- #120: a non-terminal observation never revives an effectively terminal
- -- match. Invalid input is left to the core, which validates it.
- if jsonb_typeof(p_observations)='array' then
-  for obs in select value from jsonb_array_elements(p_observations) loop
-   v_ext:=nullif(obs->>'externalMatchId',''); v_status:=nullif(obs->>'status',''); mid:=null;
-   -- Only an observation the core would accept can be suppressed; anything
-   -- malformed (e.g. a missing or invalid payloadHash) is left to the core,
-   -- which rejects the whole batch exactly as before.
-   if v_ext is not null and v_status is not null and not futbeat_private.is_terminal_match_status(v_status)
-     and coalesce(obs->>'payloadHash','') ~ '^[0-9a-f]{64}$'
-     and jsonb_typeof(coalesce(obs->'events','[]'::jsonb))='array' then
-    if p_provider='api_football' then
-     mid:=futbeat_private.try_link_api_football_match(obs);
-    else
-     select canonical_id into mid from futbeat_private.provider_entities
-      where provider=p_provider and kind='match' and external_id=v_ext;
-    end if;
-    if mid is null then
-     select canonical_match_id into mid from futbeat_private.live_match_state
-      where provider=p_provider and external_match_id=v_ext;
-    end if;
-    if mid is not null and futbeat_private.match_effectively_terminal(mid) then
-     insert into futbeat_private.live_suppressed_observations(provider,external_match_id,canonical_match_id,
-       received_at,status,minute,home_score,away_score,payload_hash)
-     values(p_provider,v_ext,mid,p_received_at,v_status,
-       futbeat_private.safe_result_integer(obs->>'minute'),
-       futbeat_private.safe_result_integer(obs#>>'{score,home}'),
-       futbeat_private.safe_result_integer(obs#>>'{score,away}'),
-       obs->>'payloadHash')
-     on conflict(provider,external_match_id,payload_hash) do nothing;
-     suppressed:=suppressed||jsonb_build_array(jsonb_build_object('externalMatchId',v_ext,
-       'canonicalMatchId',mid,'status',v_status,'reason','canonical_terminal'));
-     continue;
-    end if;
+ -- match.
+ for obs in select value from jsonb_array_elements(p_observations) loop
+  v_ext:=obs->>'externalMatchId'; v_status:=obs->>'status'; mid:=null;
+  if not futbeat_private.is_terminal_match_status(v_status) then
+   if p_provider='api_football' then
+    mid:=futbeat_private.try_link_api_football_match(obs);
+   else
+    select canonical_id into mid from futbeat_private.provider_entities
+     where provider=p_provider and kind='match' and external_id=v_ext;
    end if;
-   kept:=kept||jsonb_build_array(obs);
-  end loop;
- else
-  kept:=p_observations;
- end if;
+   if mid is null then
+    select canonical_match_id into mid from futbeat_private.live_match_state
+     where provider=p_provider and external_match_id=v_ext;
+   end if;
+   if mid is not null and futbeat_private.match_effectively_terminal(mid) then
+    insert into futbeat_private.live_suppressed_observations(provider,external_match_id,canonical_match_id,
+      received_at,status,minute,home_score,away_score,payload_hash)
+    values(p_provider,v_ext,mid,p_received_at,v_status,
+      nullif(obs->>'minute','')::integer,
+      nullif(obs#>>'{score,home}','')::integer,
+      nullif(obs#>>'{score,away}','')::integer,
+      obs->>'payloadHash')
+    on conflict(provider,external_match_id,payload_hash) do nothing;
+    suppressed:=suppressed||jsonb_build_array(jsonb_build_object('externalMatchId',v_ext,
+      'canonicalMatchId',mid,'status',v_status,'reason','canonical_terminal'));
+    continue;
+   end if;
+  end if;
+  kept:=kept||jsonb_build_array(obs);
+ end loop;
  result:=futbeat_private.record_live_batch_core(p_provider,p_received_at,kept);
  for c in select value from jsonb_array_elements(result->'changes') loop
   mid:=c->>'canonicalMatchId';
@@ -215,7 +241,8 @@ where not futbeat_private.is_terminal_match_status(l.status)
 do $$ declare fn regprocedure; role_name text; begin
  for fn in select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid=p.pronamespace
  where n.nspname='futbeat_private' and p.proname in
-   ('is_terminal_match_status','match_effectively_terminal','record_live_events','terminal_realtime_regressions')
+   ('is_terminal_match_status','match_effectively_terminal','record_live_events','terminal_realtime_regressions',
+    'validate_live_observation')
  loop
   execute format('revoke all on function %s from public',fn);
   foreach role_name in array array['anon','authenticated'] loop
