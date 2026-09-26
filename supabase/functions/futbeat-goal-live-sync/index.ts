@@ -732,35 +732,6 @@ async function syncOneResultsDate() {
   }
 }
 
-async function terminalRecoveryBudgetOpen() {
-  // Recovery is background repair, never part of the LIVE reserve. Reuse the
-  // central policy's user_high floor as the minimum remaining budget: once the
-  // provider reaches that band, LIVE + explicit user demand keep the rest.
-  try {
-    const status = await rpc("futbeat_provider_quota_status", {
-      p_provider: "goal_api",
-    }) as Record<string, unknown> | null;
-    const remaining = nonNegativeInteger(status?.providerRemaining);
-    const policy = status?.policy && typeof status.policy === "object" &&
-        !Array.isArray(status.policy)
-      ? status.policy as Record<string, unknown>
-      : null;
-    const floors = policy?.class_floors && typeof policy.class_floors === "object" &&
-        !Array.isArray(policy.class_floors)
-      ? policy.class_floors as Record<string, unknown>
-      : null;
-    const floor = nonNegativeInteger(floors?.user_high) ?? 150;
-    return remaining != null && remaining > floor;
-  } catch (error) {
-    console.warn(
-      "terminal recovery budget status unavailable",
-      error instanceof Error ? error.message : "unknown",
-    );
-    // Unknown budget must not let cleanup consume the LIVE reserve.
-    return false;
-  }
-}
-
 async function syncOneMatchDetail(
   { allowRecovery = true }: { allowRecovery?: boolean } = {},
 ) {
@@ -777,8 +748,11 @@ async function syncOneMatchDetail(
   // explicit Match Center wake-up and it stops before the protected LIVE/user
   // reserve. This prevents a historical backlog from starving current games.
   let recovery: Record<string, unknown> | null = null;
-  if (allowRecovery && await terminalRecoveryBudgetOpen()) {
+  if (allowRecovery) {
     try {
+      // The reservation RPC owns the protected user_high/LIVE guard under the
+      // provider quota lock. Do not pre-check it here: a read-then-reserve
+      // sequence can race another worker.
       const reserved = await rpc("futbeat_reserve_terminal_recovery_call", {
         p_trigger_source: "supabase-cron",
       });
