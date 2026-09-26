@@ -150,7 +150,14 @@ void main() {
     );
     expect(find.text('PROGRAMADO'), findsOneWidget);
     expect(find.text('—'), findsNothing);
-    expect(find.text(matchDateLabel(costaRicaTime(start))), findsOneWidget);
+    // The header shows the kickoff date (the info card repeats it as a fact).
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('match-hero')),
+        matching: find.text(matchDateLabel(costaRicaTime(start))),
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

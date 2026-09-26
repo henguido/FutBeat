@@ -11,6 +11,7 @@ import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../entities/standings.dart';
+import 'match_info_card.dart';
 import 'match_preview_sections.dart';
 
 const _headerTop = Color(0xFF1B2B31);
@@ -1223,77 +1224,6 @@ class _MatchStatePill extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class MatchInfoCard extends StatelessWidget {
-  const MatchInfoCard({
-    required this.match,
-    required this.competition,
-    required this.detail,
-    required this.venue,
-    super.key,
-  });
-
-  final FootballMatch match;
-  final Entity competition;
-  final MatchDetail detail;
-  final String venue;
-
-  @override
-  Widget build(BuildContext context) {
-    final round = detail.round?.trim() ?? '';
-    final referee = detail.referee?.trim() ?? '';
-    final rows = <(IconData, String, String)>[
-      (Icons.emoji_events_outlined, 'Competición', competition.name),
-      if (round.isNotEmpty)
-        (Icons.format_list_numbered_rounded, 'Jornada', round),
-      (
-        Icons.calendar_today_rounded,
-        'Fecha',
-        '${matchDateLabel(match.startTime)} · '
-            '${localTime(context, match.startTime)}',
-      ),
-      if (venue.trim().isNotEmpty)
-        (Icons.location_on_outlined, 'Estadio', venue.trim()),
-      if (referee.isNotEmpty) (Icons.sports_rounded, 'Árbitro', referee),
-    ];
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        child: Column(
-          children: [
-            for (final (icon, label, value) in rows)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(icon, size: 18, color: muted),
-                    const SizedBox(width: 12),
-                    Text(
-                      label,
-                      style: const TextStyle(color: muted, fontSize: 13),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        value,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.end,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
       ),
     );
   }
