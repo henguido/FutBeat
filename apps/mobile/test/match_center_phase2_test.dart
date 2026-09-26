@@ -601,4 +601,63 @@ void main() {
     );
     await _close(tester, container);
   });
+
+  // #120: the canonical context is read once per open; a LIVE match whose live
+  // data went silent must re-read it (bounded) so a server final replaces it.
+  Map<String, dynamic> liveContext(Duration silentFor) {
+    final context = _context(status: 'LIVE');
+    final match = (context['matches'] as List)
+        .cast<Map<String, dynamic>>()
+        .firstWhere((m) => m['id'] == _match);
+    match['minute'] = 90;
+    match['liveChangedAt'] = DateTime.now()
+        .toUtc()
+        .subtract(silentFor)
+        .toIso8601String();
+    return context;
+  }
+
+  testWidgets('#120 silent LIVE re-reads the context and shows the final', (
+    tester,
+  ) async {
+    final server = _Server(
+      (i) => i == 0
+          ? liveContext(const Duration(minutes: 20))
+          : _context(status: 'FINISHED_PENDING_VERIFICATION'),
+    );
+    final container = await _open(tester, server);
+    expect(server.contextReads, 1);
+    expect(
+      find.textContaining(RegExp('en vivo', caseSensitive: false)),
+      findsWidgets,
+    );
+    await _elapse(
+      tester,
+      staleLiveRefreshDelays.first + const Duration(seconds: 1),
+    );
+    await _settle(tester);
+    expect(server.contextReads, 2);
+    expect(
+      find.textContaining(RegExp('en vivo', caseSensitive: false)),
+      findsNothing,
+    );
+    await _elapse(tester, const Duration(minutes: 10));
+    expect(server.contextReads, 2, reason: 'final settles: no more reads');
+    await _close(tester, container);
+  });
+
+  testWidgets('#120 fresh LIVE is not re-read; silent LIVE stops after the '
+      'bounded schedule', (tester) async {
+    final fresh = _Server((_) => liveContext(const Duration(minutes: 1)));
+    var container = await _open(tester, fresh);
+    await _elapse(tester, const Duration(seconds: 40));
+    expect(fresh.contextReads, 1);
+    await _close(tester, container);
+
+    final silent = _Server((_) => liveContext(const Duration(minutes: 20)));
+    container = await _open(tester, silent);
+    await _elapse(tester, const Duration(minutes: 12));
+    expect(silent.contextReads, 1 + staleLiveRefreshDelays.length);
+    await _close(tester, container);
+  });
 }

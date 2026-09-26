@@ -48,7 +48,7 @@ void main() {
         eventCount: originalEvents,
         changedAt: DateTime.utc(2026, 9, 16, 6),
       ),
-    });
+    }, now: DateTime.utc(2026, 9, 16, 6, 1));
 
     final live = merged.match(match.id)!;
     expect(live.status, 'LIVE');

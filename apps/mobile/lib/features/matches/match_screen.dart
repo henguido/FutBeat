@@ -46,6 +46,17 @@ const _standingsSchedule = [
   ...standingsSilentRetryDelays,
 ];
 
+/// #120: while the shown match is LIVE but its live data went silent (no
+/// realtime for 15 min), re-read the canonical context a few times so a
+/// final recorded server-side replaces "EN VIVO". FutBeat API only; finite.
+const staleLiveRefreshDelays = [
+  Duration(seconds: 5),
+  Duration(seconds: 30),
+  Duration(seconds: 60),
+  Duration(seconds: 120),
+  Duration(seconds: 300),
+];
+
 class MatchScreen extends ConsumerStatefulWidget {
   const MatchScreen({super.key, required this.id, this.initialData});
 
@@ -65,6 +76,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   Timer? _standingsRetry;
   int _standingsAttempts = 0;
   bool _standingsManualRetry = false;
+  Timer? _staleLiveRefresh;
+  int _staleLiveAttempts = 0;
   @override
   void initState() {
     super.initState();
@@ -107,6 +120,25 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     });
   }
 
+  void _watchStaleLive(Snapshot merged) {
+    if (merged.match(widget.id)?.liveDataStale != true) {
+      _staleLiveRefresh?.cancel();
+      _staleLiveRefresh = null;
+      _staleLiveAttempts = 0;
+      return;
+    }
+    if (_staleLiveRefresh != null ||
+        _staleLiveAttempts >= staleLiveRefreshDelays.length) {
+      return;
+    }
+    _staleLiveRefresh = Timer(staleLiveRefreshDelays[_staleLiveAttempts], () {
+      if (!mounted) return;
+      _staleLiveAttempts++;
+      _staleLiveRefresh = null;
+      ref.invalidate(matchContextSnapshotProvider(widget.id));
+    });
+  }
+
   /// "Reintentar": one more read of the same context in this screen. The
   /// server deduplicates the demand, so repeated taps never add provider
   /// calls; the button is disabled while the read is in flight.
@@ -127,6 +159,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     _tabs.dispose();
     _lineupEnrichmentRetry?.cancel();
     _standingsRetry?.cancel();
+    _staleLiveRefresh?.cancel();
     super.dispose();
   }
 
@@ -164,7 +197,9 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         : null;
     final initialData = refreshed ?? widget.initialData;
     if (initialData != null) {
-      return _buildMatchCenter(initialData.withLiveUpdates(updates));
+      final merged = initialData.withLiveUpdates(updates);
+      if (watchesContext) _watchStaleLive(merged);
+      return _buildMatchCenter(merged);
     }
 
     return ref
@@ -202,7 +237,11 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
               ),
             ),
           ),
-          data: (data) => _buildMatchCenter(data.withLiveUpdates(updates)),
+          data: (data) {
+            final merged = data.withLiveUpdates(updates);
+            _watchStaleLive(merged);
+            return _buildMatchCenter(merged);
+          },
         );
   }
 

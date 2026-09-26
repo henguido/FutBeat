@@ -61,8 +61,12 @@ void main() {
         {...goal, 'id': 'fb_event_wrong', 'matchId': 'fb_match_other'},
       ]),
     );
-    final first = snapshot.withLiveUpdates({'fb_match_clasico': update});
-    final again = first.withLiveUpdates({'fb_match_clasico': update});
+    // Observed right after the rows' changed_at (a silent LIVE row is stale).
+    final now = DateTime.utc(2026, 9, 16, 16, 1);
+    final first = snapshot.withLiveUpdates({
+      'fb_match_clasico': update,
+    }, now: now);
+    final again = first.withLiveUpdates({'fb_match_clasico': update}, now: now);
     expect(
       again
           .match('fb_match_clasico')!
@@ -85,7 +89,7 @@ void main() {
     final old = LiveMatchUpdate.fromJson(row(1, []));
     expect(
       again
-          .withLiveUpdates({'fb_match_clasico': old})
+          .withLiveUpdates({'fb_match_clasico': old}, now: now)
           .match('fb_match_clasico')!
           .json['liveRevision'],
       2,

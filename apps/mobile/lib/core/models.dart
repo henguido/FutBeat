@@ -311,7 +311,10 @@ class LiveMatchUpdate {
   final DateTime changedAt;
   final List<Json> events;
 
-  Json applyTo(Json match) {
+  /// Same window as the server failsafe: a LIVE row this silent is not live.
+  static const staleAfter = Duration(minutes: 15);
+
+  Json applyTo(Json match, {DateTime? now}) {
     if (match['id'] != matchId) return match;
 
     const terminalStatuses = {
@@ -325,6 +328,14 @@ class LiveMatchUpdate {
     // never downgrade or rewrite it, however late its changedAt. Corrections
     // after the final arrive as a new canonical snapshot, not through here.
     if (terminalStatuses.contains(match['status'] as String?)) return match;
+    // #120: a silent LIVE overlay (missed DELETE, failed refresh) must not
+    // keep a match "EN VIVO"; terminal overlays always apply.
+    const liveStatuses = {'LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'};
+    if (liveStatuses.contains(status) &&
+        (now ?? DateTime.now()).toUtc().difference(changedAt.toUtc()) >
+            staleAfter) {
+      return match;
+    }
 
     final previousAt = DateTime.tryParse(
       match['liveChangedAt'] as String? ?? '',
@@ -775,13 +786,16 @@ class Snapshot {
     });
   }
 
-  Snapshot withLiveUpdates(Map<String, LiveMatchUpdate> updates) {
+  Snapshot withLiveUpdates(
+    Map<String, LiveMatchUpdate> updates, {
+    DateTime? now,
+  }) {
     if (demo || updates.isEmpty) return this;
     var changed = false;
     final mergedMatches = matches.map((match) {
       final update = updates[match.id];
       if (update == null) return match.json;
-      final merged = update.applyTo(match.json);
+      final merged = update.applyTo(match.json, now: now);
       if (!identical(merged, match.json)) changed = true;
       return merged;
     }).toList();

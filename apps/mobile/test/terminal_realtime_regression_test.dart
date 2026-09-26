@@ -157,12 +157,11 @@ void main() {
   });
 
   test('D. canonical scheduled + valid LIVE update => becomes LIVE', () {
-    final merged = _update(
-      status: 'LIVE',
-      minute: 12,
-      home: 1,
-      away: 0,
-    ).applyTo(_match(status: 'SCHEDULED'));
+    final merged = _update(status: 'LIVE', minute: 12, home: 1, away: 0)
+        .applyTo(
+          _match(status: 'SCHEDULED'),
+          now: _kickoff.add(const Duration(hours: 3)),
+        );
     final match = FootballMatch(merged);
     expect(match.status, 'LIVE');
     expect(match.score, '1 - 0');
@@ -187,7 +186,7 @@ void main() {
       away: 0,
       revision: 4,
       changedAt: _kickoff.add(const Duration(minutes: 70)),
-    ).applyTo(canonical);
+    ).applyTo(canonical, now: _kickoff.add(const Duration(minutes: 71)));
     expect(FootballMatch(merged).score, '2 - 0');
     expect(merged['minute'], 55);
     expect(merged['liveRevision'], 4);
@@ -274,5 +273,48 @@ void main() {
       expect(match.score, '1 - 4');
       expect(match.isLive, isFalse);
     }
+  });
+
+  test(
+    '#120 client: a silent LIVE overlay (>15 min) never keeps a match live',
+    () {
+      final canonical = _match(status: 'SCHEDULED');
+      final changedAt = _kickoff.add(const Duration(minutes: 80));
+      final update = _update(
+        status: 'LIVE',
+        minute: 90,
+        home: 2,
+        away: 3,
+        changedAt: changedAt,
+      );
+      final fresh = update.applyTo(
+        canonical,
+        now: changedAt.add(const Duration(minutes: 5)),
+      );
+      expect(fresh['status'], 'LIVE');
+      final silent = update.applyTo(
+        canonical,
+        now: changedAt.add(const Duration(minutes: 16)),
+      );
+      expect(identical(silent, canonical), isTrue);
+      expect(FootballMatch(silent).isLive, isFalse);
+    },
+  );
+
+  test('#120 client: a terminal overlay applies however old it is', () {
+    final changedAt = _kickoff.add(const Duration(minutes: 110));
+    final merged =
+        _update(
+          status: 'FINISHED_PENDING_VERIFICATION',
+          minute: 90,
+          home: 2,
+          away: 3,
+          changedAt: changedAt,
+        ).applyTo(
+          _match(status: 'LIVE'),
+          now: changedAt.add(const Duration(hours: 5)),
+        );
+    expect(merged['status'], 'FINISHED_PENDING_VERIFICATION');
+    expect(FootballMatch(merged).score, '2 - 3');
   });
 }
