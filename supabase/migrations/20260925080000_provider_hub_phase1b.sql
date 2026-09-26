@@ -240,7 +240,17 @@ begin
         when cardinality(r.last_statuses)>=3 and r.last_statuses[1:3]<@array['FAILED'] then 'UNAVAILABLE'
         when s.failed_24h::numeric/(s.success_24h+s.failed_24h)>=0.2 then 'DEGRADED'
         when coalesce(s.p95_latency_ms,0)>=10000 then 'DEGRADED'
-        else 'HEALTHY' end health
+        else 'HEALTHY' end health,
+      -- Same rules without the DISABLED short-circuit: what routing would
+      -- see if the provider were enabled (dry-run inspection only).
+      case
+        when s.success_24h+s.failed_24h=0 then 'UNSEEN'
+        when r.last_statuses[1]='FAILED' and (r.last_http_status in (401,403)
+          or coalesce(r.last_error_code,'') ~ '_(AUTH|ACCOUNT_SUSPENDED)$') then 'UNAVAILABLE'
+        when cardinality(r.last_statuses)>=3 and r.last_statuses[1:3]<@array['FAILED'] then 'UNAVAILABLE'
+        when s.failed_24h::numeric/(s.success_24h+s.failed_24h)>=0.2 then 'DEGRADED'
+        when coalesce(s.p95_latency_ms,0)>=10000 then 'DEGRADED'
+        else 'HEALTHY' end health_if_enabled
     from cfg c join stats s on s.provider=c.provider join recent r on r.provider=c.provider
   )
   select jsonb_build_object('generatedAt',now(),'providers',coalesce(jsonb_agg(jsonb_build_object(
@@ -252,7 +262,7 @@ begin
       'averageLatencyMs',avg_latency_ms,'p95LatencyMs',p95_latency_ms,
       'providerRemaining',futbeat_private.provider_remaining(provider),
       'lastErrorCode',last_error_code,
-      'health',health) order by priority,provider),'[]'))
+      'health',health,'healthIfEnabled',health_if_enabled) order by priority,provider),'[]'))
   into result from rows;
   return result;
 end $$;

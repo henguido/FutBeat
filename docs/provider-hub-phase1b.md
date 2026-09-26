@@ -49,12 +49,26 @@ removal is a separate cleanup).
    Never searches by display names.
 5. **dryRun (default)** stops here: returns the plan
    (`/fixtures?id=<external>`, 1 unit). Zero provider HTTP, zero ledger, zero
-   writes.
+   writes. It works with the real config (`enabled=false`): routing is also
+   evaluated read-only *as if enabled* (`routing.ifEnabled`, using
+   `healthIfEnabled` and the quota counters), and the response says
+   `providerEnabled:false`, `executionBlockedBy:"DISABLED"`. Every other gate
+   (reason, health, quota, mapping) still applies. `dryRun:false` stays
+   refused (`skipped`/`DISABLED`) while disabled.
 6. Execution (`dryRun:false`): secret present (existing backend secret
    `FUTBEAT_API_FOOTBALL_KEY`, never returned) → **persistent reservation**
    `futbeat_reserve_provider_hub_call` (100/day, 10/min total; still refused
-   while disabled) → **one** exact call `fetchFixture({fixtureId})` → ledger
-   completion → event dedup → secondary observation.
+   while disabled) → **one** exact call `fetchFixture({fixtureId})` →
+   normalization → player resolution → event dedup → secondary observation
+   → ledger completion.
+
+The ledger row becomes `SUCCEEDED` only after the secondary observation is
+recorded. A failure after the fetch completes it `FAILED` with a
+deterministic code (`API_FOOTBALL_INVALID_PAYLOAD` for normalization,
+`PROVIDER_HUB_INGEST_FAILED` with `metadata.stage` =
+`resolve_players|reconcile_events|record_observation` otherwise), keeping HTTP
+status, `x-ratelimit-requests-remaining` and duration; never raw error text,
+never left `RESERVED`, never retried.
 
 No retries and no loops: every invocation makes at most one provider request.
 

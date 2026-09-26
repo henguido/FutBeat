@@ -7,9 +7,10 @@
 // POST only, small bounded JSON body, no query parameters honored.
 //
 // dryRun defaults to true: routing, quota decision and mapping are computed
-// with read-only RPCs and NO provider request, ledger row or write happens.
-// Even with dryRun=false nothing is spent while provider_hub_config keeps
-// the provider disabled. No cron or workflow calls this function.
+// with read-only RPCs and NO provider request, ledger row or write happens;
+// it also works while the provider is disabled (reported as such). With
+// dryRun=false nothing is spent while provider_hub_config keeps the provider
+// disabled. No cron or workflow calls this function.
 //
 // Supersedes the legacy, unscheduled futbeat-live-sync / futbeat-fixtures-sync.
 import {

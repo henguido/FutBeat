@@ -171,6 +171,58 @@ test('B. disabled provider (production config): skipped, zero network, zero ledg
   assert.deepEqual(await ledger(db), []);
 }));
 
+const counts = (db) => db.query(`select
+    (select count(*)::int from futbeat_private.provider_call_ledger) ledger,
+    (select count(*)::int from futbeat_private.provider_secondary_observations) secondary,
+    (select count(*)::int from futbeat_private.provider_observations) observations,
+    (select count(*)::int from futbeat_private.provider_fixture_diagnostics) diagnostics,
+    (select count(*)::int from futbeat_private.provider_entities) mappings,
+    (select count(*)::int from futbeat_private.entities) entities`).then((r) => r.rows[0]);
+
+test('A2. dryRun with the UNTOUCHED production config (api_football disabled): plan + clear disabled flag, zero network/ledger/writes', () => withDb(async (db) => {
+  const s = await seed(db);
+  const config = () => db.query("select enabled,daily_budget,minute_budget from futbeat_private.provider_hub_config where provider='api_football'").then((r) => r.rows[0]);
+  assert.equal((await config()).enabled, false, 'no synthetic enable in this test');
+  const before = await counts(db);
+  const fake = transport(db, () => { throw new Error('dry run must not call'); });
+  const { call } = edge(db, fake);
+  const { dryRun, ...noDry } = body(s);
+
+  const r = await call(noDry);
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.status, r.body.dryRun, r.body.providerCalls], ['dry_run', true, 0]);
+  assert.equal(r.body.providerEnabled, false);
+  assert.equal(r.body.executionBlockedBy, 'DISABLED');
+  assert.deepEqual(r.body.plan, { endpoint: '/fixtures', params: { id: s.ext }, requestUnits: 1 });
+  assert.deepEqual(r.body.routing.mapping, { state: 'MAPPED', externalMatchId: s.ext });
+  assert.deepEqual([r.body.routing.quota.allowed, r.body.routing.quota.reason], [false, 'provider_disabled']);
+  assert.deepEqual(r.body.routing.rejected.find((x) => x.provider === 'api_football'), { provider: 'api_football', reason: 'DISABLED' });
+  assert.deepEqual(r.body.routing.ifEnabled.quota, { allowed: true, reason: null });
+  assert.deepEqual(r.body.routing.ifEnabled.candidates, ['goal_api', 'api_football']);
+
+  // Execution stays refused while disabled.
+  const exec = await call(body(s));
+  assert.deepEqual([exec.body.status, exec.body.why, exec.body.providerCalls, exec.body.providerEnabled], ['skipped', 'DISABLED', 0, false]);
+
+  assert.equal(fake.calls.length, 0);
+  assert.deepEqual(await counts(db), before, 'zero ledger rows, zero writes');
+  assert.deepEqual(await config(), { enabled: false, daily_budget: 100, minute_budget: 10 });
+}));
+
+test('A3. disabled dry-run still applies every other gate (BASE_LIVE, unmapped)', () => withDb(async (db) => {
+  const s = await seed(db);
+  const u = await seed(db, { mapped: false });
+  const fake = transport(db, () => { throw new Error('must not call'); });
+  const { call } = edge(db, fake);
+  const live = await call(body(s, { reason: 'BASE_LIVE', dataType: 'live', dryRun: true }));
+  assert.deepEqual([live.body.status, live.body.why, live.body.providerEnabled], ['skipped', 'REASON_NOT_ALLOWED_FOR_SECONDARY', false]);
+  const unmapped = await call(body(u, { dryRun: true }));
+  assert.deepEqual([unmapped.body.status, unmapped.body.providerCalls], ['unmapped', 0]);
+  assert.equal(unmapped.body.plan, undefined);
+  assert.equal(fake.calls.length, 0);
+  assert.deepEqual(await ledger(db), []);
+}));
+
 test('C. BASE_LIVE never selects API-Football', () => withDb(async (db) => {
   const s = await seed(db);
   await enable(db);
@@ -216,6 +268,33 @@ test('F/H/N/O. mapped exact fixture: reservation first, ONE call, SUCCEEDED with
   assert.equal(row.metadata.providerHub, true);
   assert.equal(r.body.providerRemaining, 87);
   assert.ok(!JSON.stringify(r.body).includes(API_KEY));
+}));
+
+test('ledger is SUCCEEDED only after ingest: a failed secondary-observation write completes it FAILED, one call, no retry', () => withDb(async (db) => {
+  const s = await seed(db);
+  await enable(db);
+  // Force the final ingest step to fail (message must never reach the ledger).
+  await db.query(`create or replace function public.futbeat_record_secondary_observation(p_provider text,p_match_id text,p_observation jsonb)
+    returns jsonb language plpgsql as $$ begin raise exception 'forced ingest failure raw-detail-xyz'; end $$`);
+  const fake = transport(db, () => apiResponse(envelope([fixture(s)]), { remaining: '86' }));
+  const r = await edge(db, fake).call(body(s));
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.status, r.body.errorCode, r.body.stage, r.body.retry, r.body.providerCalls],
+    ['failed', 'PROVIDER_HUB_INGEST_FAILED', 'record_observation', false, 1]);
+  assert.equal(fake.calls.length, 1, 'exactly one provider call, no retry');
+  assert.equal(fake.calls[0].reservedAtCallTime, 1);
+  const rows = await ledger(db);
+  assert.equal(rows.length, 1);
+  const [row] = rows;
+  assert.deepEqual([row.status, row.http_status, row.error_code, row.provider_remaining], ['FAILED', 200, 'PROVIDER_HUB_INGEST_FAILED', 86]);
+  assert.equal(row.metadata.stage, 'record_observation');
+  assert.equal(row.metadata.retry, false);
+  assert.ok(Number.isFinite(row.metadata.durationMs));
+  assert.ok(!rows.some((x) => x.status === 'SUCCEEDED' || x.status === 'RESERVED'));
+  const stored = JSON.stringify(rows) + JSON.stringify(r.body);
+  assert.ok(!stored.includes('raw-detail-xyz'), 'no raw error text');
+  assert.ok(!stored.includes(API_KEY), 'no secret');
+  assert.deepEqual(await secondary(db), []);
 }));
 
 test('G. quota denial: zero network', () => withDb(async (db) => {
