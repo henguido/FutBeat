@@ -53,9 +53,9 @@ create table if not exists futbeat_private.live_suppressed_observations (
   canonical_match_id text not null,
   received_at timestamptz not null,
   status text not null,
-  minute integer,
-  home_score integer,
-  away_score integer,
+  minute integer check (minute is null or minute >= 0),
+  home_score integer check (home_score is null or home_score >= 0),
+  away_score integer check (away_score is null or away_score >= 0),
   payload_hash text not null check(payload_hash ~ '^[0-9a-f]{64}$'),
   reason text not null default 'canonical_terminal',
   recorded_at timestamptz not null default now(),
@@ -95,6 +95,8 @@ begin
  for evt in select value from jsonb_array_elements(coalesce(obs->'events','[]'::jsonb)) loop
   if nullif(evt->>'eventKey','') is null then raise exception 'eventKey is required'; end if;
   v_event_minute:=nullif(evt->>'minute','')::integer;
+  -- live_events check: an event minute is non-negative.
+  if v_event_minute<0 then raise exception 'event minute must be non-negative' using errcode='23514'; end if;
  end loop;
 end $$;
 

@@ -141,6 +141,7 @@ test('malformed numeric, timestamp or event fields on a terminal match: the whol
     'event.minute="abc"': [() => ({ events: [{ eventKey: 'k1', type: 'GOAL', minute: 'abc' }] }), /invalid input syntax for type integer/],
     'events not an array': [() => ({ events: { eventKey: 'k1' } }), /events must be an array/],
     'negative minute': [() => ({ minute: -1 }), /non-negative/],
+    'event.minute=-1': [() => ({ events: [{ eventKey: 'k1', type: 'GOAL', minute: -1 }] }), /event minute must be non-negative/],
   };
   for (const [label, [patch, error]] of Object.entries(variants)) {
     for (const [s, status] of [[done, 'LIVE'], [evidence, 'HALFTIME']]) {
@@ -159,6 +160,12 @@ test('malformed numeric, timestamp or event fields on a terminal match: the whol
   assert.deepEqual(await liveState(db, evidence.ext), stateBefore, 'live_match_state unchanged');
   assert.deepEqual(await publicRow(db, evidence.match), rowBefore);
   assert.deepEqual(await regressions(db), []);
+
+  // Defense in depth: the audit table itself refuses negative values.
+  for (const column of ['minute', 'home_score', 'away_score']) {
+    await assert.rejects(db.query(`insert into futbeat_private.live_suppressed_observations(provider,external_match_id,canonical_match_id,received_at,status,payload_hash,${column})
+      values('goal_api',$1,$2,now(),'LIVE',$3,-1)`, [done.ext, done.match, 'b'.repeat(64)]), /check constraint/, column);
+  }
 }));
 
 test('E. terminal evidence from provider_observations, FULL_TIME event or match detail alone suppresses realtime', () => withDb(async (db) => {
