@@ -2118,9 +2118,15 @@ class Lineups extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasPlayers =
-        detail.homeStarters.isNotEmpty || detail.awayStarters.isNotEmpty;
-    if (!hasPlayers) {
+    final homeHasLineup =
+        detail.homeStarters.isNotEmpty ||
+        detail.homeSubstitutes.isNotEmpty ||
+        detail.homeCoach != null;
+    final awayHasLineup =
+        detail.awayStarters.isNotEmpty ||
+        detail.awaySubstitutes.isNotEmpty ||
+        detail.awayCoach != null;
+    if (!homeHasLineup && !awayHasLineup) {
       if (detail.lineupPending) {
         return const _PendingSection('Cargando alineaciones…');
       }
@@ -2129,25 +2135,27 @@ class Lineups extends StatelessWidget {
 
     return Column(
       children: [
-        _TeamLineup(
-          team: data.team(match.homeId)!,
-          formation: detail.homeFormation,
-          starters: detail.homeStarters,
-          substitutes: detail.homeSubstitutes,
-          coach: detail.homeCoach,
-          incidents: detail.incidents,
-          side: 'home',
-        ),
-        const SizedBox(height: 14),
-        _TeamLineup(
-          team: data.team(match.awayId)!,
-          formation: detail.awayFormation,
-          starters: detail.awayStarters,
-          substitutes: detail.awaySubstitutes,
-          coach: detail.awayCoach,
-          incidents: detail.incidents,
-          side: 'away',
-        ),
+        if (homeHasLineup)
+          _TeamLineup(
+            team: data.team(match.homeId)!,
+            formation: detail.homeFormation,
+            starters: detail.homeStarters,
+            substitutes: detail.homeSubstitutes,
+            coach: detail.homeCoach,
+            incidents: detail.incidents,
+            side: 'home',
+          ),
+        if (homeHasLineup && awayHasLineup) const SizedBox(height: 14),
+        if (awayHasLineup)
+          _TeamLineup(
+            team: data.team(match.awayId)!,
+            formation: detail.awayFormation,
+            starters: detail.awayStarters,
+            substitutes: detail.awaySubstitutes,
+            coach: detail.awayCoach,
+            incidents: detail.incidents,
+            side: 'away',
+          ),
       ],
     );
   }

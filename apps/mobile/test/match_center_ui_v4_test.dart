@@ -248,6 +248,46 @@ void main() {
       expect(find.text('63′'), findsOneWidget);
       expect(find.text('71′'), findsOneWidget);
       expect(tester.takeException(), isNull);
+
+      // A provider may publish the bench/coach before its starters. Existing
+      // partial data must stay visible instead of becoming "Sin alineaciones"
+      // or an empty card for the other side.
+      final benchOnly = MatchDetail({
+        'matchId': 'fb_match',
+        'available': true,
+        'pending': false,
+        'detailLevel': 'partial',
+        'home': {
+          'starters': <dynamic>[],
+          'substitutes': [
+            {'id': 'home-12', 'name': 'Suplente Local', 'number': '12'},
+          ],
+          'coach': {'name': 'Entrenador Local'},
+        },
+        'away': {
+          'starters': <dynamic>[],
+          'substitutes': <dynamic>[],
+        },
+        'statistics': <dynamic>[],
+        'incidents': <dynamic>[],
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Lineups(snapshot, snapshot.matches.single, benchOnly),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Titulares'), findsNothing);
+      expect(find.text('Suplentes'), findsOneWidget);
+      expect(find.text('Suplente Local'), findsOneWidget);
+      expect(find.text('Entrenador Local'), findsOneWidget);
+      expect(find.text('Sin alineaciones'), findsNothing);
+      expect(find.text('Equipo Visitante'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 }
