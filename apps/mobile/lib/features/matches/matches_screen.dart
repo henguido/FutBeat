@@ -388,30 +388,47 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             }
           }
 
-          return RefreshIndicator(
-            onRefresh: () async {
-              final repository = ref.read(repositoryProvider);
-              if (repository is ApiRepository) repository.refreshDate(selected);
-              ref.invalidate(calendarSnapshotProvider(selected));
-              try {
-                await ref.read(calendarSnapshotProvider(selected).future);
-              } catch (_) {
-                // CalendarDataView exposes the provider error and retry action.
-              }
+          // Horizontal fling = previous/next day. Vertical scrolling and
+          // inner horizontal lists keep their gestures (gesture arena).
+          return GestureDetector(
+            key: const ValueKey('matches-date-swipe'),
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragEnd: (details) {
+              final velocity = details.primaryVelocity ?? 0;
+              if (velocity.abs() < _dateSwipeMinVelocity) return;
+              setState(
+                () => date = DateUtils.dateOnly(
+                  selected.add(Duration(days: velocity < 0 ? 1 : -1)),
+                ),
+              );
             },
-            child: CustomScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) => feedItems[index](),
-                      childCount: feedItems.length,
+            child: RefreshIndicator(
+              onRefresh: () async {
+                final repository = ref.read(repositoryProvider);
+                if (repository is ApiRepository) {
+                  repository.refreshDate(selected);
+                }
+                ref.invalidate(calendarSnapshotProvider(selected));
+                try {
+                  await ref.read(calendarSnapshotProvider(selected).future);
+                } catch (_) {
+                  // CalendarDataView exposes the provider error and retry action.
+                }
+              },
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) => feedItems[index](),
+                        childCount: feedItems.length,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -419,6 +436,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
     );
   }
 }
+
+/// Logical px/s: a deliberate fling, not a slightly diagonal scroll.
+const _dateSwipeMinVelocity = 350.0;
 
 class _DateOption extends StatelessWidget {
   const _DateOption({
