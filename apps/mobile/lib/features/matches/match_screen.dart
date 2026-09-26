@@ -1228,28 +1228,52 @@ class PostMatchVideos extends StatelessWidget {
   );
 }
 
-/// Discrete inline indicator for a section whose detail is still arriving.
+/// Calm section skeleton while detail is still arriving.
+///
+/// It deliberately has no indeterminate spinner: the rest of the Match
+/// Center stays usable while the bounded background refresh continues.
 class _PendingSection extends StatelessWidget {
   const _PendingSection(this.label);
 
   final String label;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 18),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
+  Widget build(BuildContext context) => Semantics(
+    label: label,
+    liveRegion: true,
+    excludeSemantics: true,
+    child: Card(
+      key: ValueKey('match-section-loading-$label'),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                color: muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            for (final widthFactor in const [.72, .94, .58]) ...[
+              FractionallySizedBox(
+                widthFactor: widthFactor,
+                child: Container(
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .06),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+              ),
+              if (widthFactor != .58) const SizedBox(height: 9),
+            ],
+          ],
         ),
-        const SizedBox(width: 10),
-        Flexible(
-          child: Text(label, style: const TextStyle(color: muted)),
-        ),
-      ],
+      ),
     ),
   );
 }
