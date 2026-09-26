@@ -335,11 +335,7 @@ void main() {
   ) async {
     final server = _Server(
       (i) => i == 0
-          ? _context(
-              status: 'SCHEDULED',
-              table: false,
-              standingsPending: true,
-            )
+          ? _context(status: 'SCHEDULED', table: false, standingsPending: true)
           : _context(status: 'LIVE'),
     );
     final container = await _open(tester, server);
@@ -561,21 +557,38 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('21. header: finished match shows result, date and stadium', (
-    tester,
-  ) async {
+  testWidgets('21. header: finished match shows the result; date and '
+      'stadium live in Información del partido', (tester) async {
     final container = await _open(
       tester,
       _Server((_) => _context()),
       width: 360,
     );
+    final hero = find.byKey(const ValueKey('match-hero'));
     expect(find.text('2 - 1'), findsOneWidget);
     expect(find.text('FINALIZADO'), findsOneWidget);
-    expect(find.text('Estadio Fase Uno'), findsWidgets);
+    // Hero v2: no date/venue chips duplicating the info card.
+    expect(
+      find.descendant(of: hero, matching: find.text('Estadio Fase Uno')),
+      findsNothing,
+    );
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey('match-hero')),
+        of: hero,
         matching: find.byIcon(Icons.calendar_today_rounded),
+      ),
+      findsNothing,
+    );
+    final card = find.byKey(const ValueKey('match-info-card'));
+    await _scrollTo(tester, card);
+    expect(
+      find.descendant(of: card, matching: find.text('Estadio Fase Uno')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.byKey(const ValueKey('match-info-date')),
       ),
       findsOneWidget,
     );
