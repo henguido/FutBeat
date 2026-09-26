@@ -315,17 +315,22 @@ class LiveMatchUpdate {
   /// Device-clock receipt time for a row fetched by REST: its age on the
   /// server at fetch time (server `Date` minus the row's last server update)
   /// moved onto the device clock, so device/server skew never matters.
-  /// Without a server time the row counts as received at its own timestamp
-  /// (conservative: an old LIVE row is dropped, never rejuvenated).
+  /// Without a server time the row counts as already stale: a LIVE REST row
+  /// waits for a real realtime frame instead of comparing device and server
+  /// clocks (terminal rows are never subject to staleness).
   static DateTime bootstrapReceivedAt(
     Json row, {
     required DateTime deviceNow,
     DateTime? serverNow,
   }) {
+    if (serverNow == null) {
+      return deviceNow.toUtc().subtract(
+        staleAfter + const Duration(seconds: 1),
+      );
+    }
     final observed =
         DateTime.tryParse(row['updated_at'] as String? ?? '') ??
         DateTime.parse(row['changed_at'] as String);
-    if (serverNow == null) return observed.toUtc();
     final age = serverNow.toUtc().difference(observed.toUtc());
     return deviceNow.toUtc().subtract(age.isNegative ? Duration.zero : age);
   }

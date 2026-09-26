@@ -402,3 +402,143 @@ test('unknown GOAL statuses are recorded for diagnosis and never inferred as liv
   assert.equal((await recoveryRow(db, m.ext)).state, 'PENDING');
   assert.notEqual((await shown(db, m)).status, 'FINISHED_PENDING_VERIFICATION');
 }));
+
+// Production #120 case (generic): the provider keeps a finished fixture LIVE
+// 90' in the feed and in detail for hours, then drops it. overdue_live spends
+// its budget first; the later complete absence is stronger evidence and must
+// reopen a bounded recovery exactly once.
+const note = (db, seen, fromStart = true, reachedEnd = true) => db.query('select public.futbeat_note_live_poll($1,$2,$3,$4) v',
+  ['goal_api', JSON.stringify(seen), fromStart, reachedEnd]).then((r) => r.rows[0].v);
+const settle = (db) => db.query('select futbeat_private.settle_terminal_recovery()');
+async function exhaustedOverdue(db) {
+  const [m] = await seedLive(db, 1, { minutes: -170 });
+  // Last LIVE observation a few minutes ago (real clock, so a later detail
+  // fetch is never older than it).
+  await db.query('select public.futbeat_record_live_batch($1,$2,$3)', ['goal_api',
+    new Date(Date.now() - 5 * 60000).toISOString(), JSON.stringify([liveObs(m.ext, 'LIVE', 90, [2, 3])])]);
+  await db.query(`insert into futbeat_private.live_terminal_recovery(provider,external_match_id,canonical_match_id,reason,state,
+    last_live_status,detected_at,attempts,next_attempt_at,last_attempt_at,resolved_at,resolution)
+    values('goal_api',$1,$2,'overdue_live','EXHAUSTED','LIVE',now()-interval '1 hour',6,now(),now(),now(),'max_attempts')`, [m.ext, m.match]);
+  return m;
+}
+
+test('production #120: overdue_live exhausted while still LIVE, later absence reopens once and the final lands', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1, { minutes: -160 });
+  const live90 = fixtureOf(m, 'LIVE', 90, ['2', '3']);
+  let w = worker(db, goalSim({ pages: [[live90]], details: { [m.ext]: live90 } }));
+  await w.run('live');
+  let row = await recoveryRow(db, m.ext);
+  assert.equal(row.reason, 'overdue_live');
+  for (let guard = 0; (row = await recoveryRow(db, m.ext)).attempts < 6 && guard < 12; guard++) {
+    await makeDue(db, m.ext);
+    w = worker(db, goalSim({ details: { [m.ext]: live90 } }));
+    await w.run('detail-only');
+  }
+  await settle(db);
+  row = await recoveryRow(db, m.ext);
+  assert.deepEqual([row.state, row.reason, row.attempts], ['EXHAUSTED', 'overdue_live', 6]);
+  // Still in the feed as LIVE: no new overdue row, still exhausted.
+  await nextPoll(db);
+  w = worker(db, goalSim({ pages: [[live90]] }));
+  await w.run('live');
+  assert.equal((await recoveryRow(db, m.ext)).state, 'EXHAUSTED');
+
+  // The fixture finally leaves a complete sweep.
+  await nextPoll(db);
+  w = worker(db, goalSim({ pages: [[]] }));
+  await w.run('live');
+  row = await recoveryRow(db, m.ext);
+  assert.deepEqual([row.state, row.reason, row.attempts, row.last_attempt_at], ['PENDING', 'absent_from_live', 0, null]);
+
+  await makeDue(db, m.ext);
+  w = worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, 'FINISHED', 90, ['2', '3']) } }));
+  await w.run('detail-only');
+  const model = await shown(db, m);
+  assert.equal(model.status, 'FINISHED_PENDING_VERIFICATION');
+  assert.deepEqual(model.score, { home: 2, away: 3 });
+  row = await recoveryRow(db, m.ext);
+  assert.deepEqual([row.state, row.resolution], ['RESOLVED', 'terminal_evidence']);
+
+  // A later LIVE never revives it.
+  await nextPoll(db);
+  w = worker(db, goalSim({ pages: [[live90]] }));
+  await w.run('live');
+  assert.equal((await shown(db, m)).status, 'FINISHED_PENDING_VERIFICATION');
+}));
+
+test('reopen A/B: exhausted overdue reopens as absent exactly once; exhausted absence never resets', () => withDb(async (db) => {
+  const m = await exhaustedOverdue(db);
+  assert.equal((await note(db, [])).absent, 1);
+  let row = await recoveryRow(db, m.ext);
+  assert.deepEqual([row.state, row.reason, row.attempts], ['PENDING', 'absent_from_live', 0]);
+  await db.query("update futbeat_private.live_terminal_recovery set attempts=6 where external_match_id=$1", [m.ext]);
+  await settle(db);
+  assert.equal((await recoveryRow(db, m.ext)).state, 'EXHAUSTED');
+  assert.equal((await note(db, [])).absent, 0);
+  row = await recoveryRow(db, m.ext);
+  assert.deepEqual([row.state, row.reason, row.attempts], ['EXHAUSTED', 'absent_from_live', 6]);
+}));
+
+test('reopen C: a pending absence seen absent again keeps attempts and backoff', () => withDb(async (db) => {
+  const m = await exhaustedOverdue(db);
+  await note(db, []);
+  await db.query("update futbeat_private.live_terminal_recovery set attempts=2,next_attempt_at=now()+interval '7 minutes' where external_match_id=$1", [m.ext]);
+  const before = await recoveryRow(db, m.ext);
+  assert.equal((await note(db, [])).absent, 0);
+  const after = await recoveryRow(db, m.ext);
+  assert.deepEqual([after.state, after.attempts, after.next_attempt_at.getTime()], ['PENDING', 2, before.next_attempt_at.getTime()]);
+}));
+
+test('reopen E: a partial sweep cannot reopen an exhausted overdue; the one reopen never repeats under flapping', () => withDb(async (db) => {
+  const m = await exhaustedOverdue(db);
+  assert.equal((await note(db, [], false, true)).complete, false, 'tail without its start');
+  assert.equal((await note(db, [], true, false)).complete, false, 'truncated start');
+  await db.query('delete from futbeat_private.live_poll_sweep');
+  assert.deepEqual([(await recoveryRow(db, m.ext)).state, (await recoveryRow(db, m.ext)).reason], ['EXHAUSTED', 'overdue_live']);
+  await note(db, []);
+  assert.equal((await recoveryRow(db, m.ext)).state, 'PENDING');
+  await db.query("update futbeat_private.live_terminal_recovery set attempts=2 where external_match_id=$1", [m.ext]);
+  // Back in the feed (still LIVE, still overdue): the absence is cancelled
+  // and the overdue lane resumes with the SAME attempt budget; never final.
+  const back = await note(db, [m.ext]);
+  assert.equal(back.reappeared, 1);
+  let row = await recoveryRow(db, m.ext);
+  assert.deepEqual([row.state, row.reason, row.attempts], ['PENDING', 'overdue_live', 2]);
+  assert.notEqual((await shown(db, m)).status, 'FINISHED_PENDING_VERIFICATION');
+
+  // Flapping after the one reopen: exhausted again, gone again -> no reset.
+  await db.query("update futbeat_private.live_terminal_recovery set attempts=6 where external_match_id=$1", [m.ext]);
+  await settle(db);
+  assert.equal((await note(db, [])).absent, 0);
+  row = await recoveryRow(db, m.ext);
+  assert.deepEqual([row.state, row.reason, row.attempts], ['EXHAUSTED', 'overdue_live', 6]);
+}));
+
+test('reopen D: a fresh (not overdue) disappearance that reappears is CANCELLED, never final', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1, { minutes: -40 });
+  await db.query('select public.futbeat_record_live_batch($1,$2,$3)', ['goal_api',
+    new Date(Date.now() - 60000).toISOString(), JSON.stringify([liveObs(m.ext, 'LIVE', 38)])]);
+  await note(db, []);
+  assert.equal((await recoveryRow(db, m.ext)).state, 'PENDING');
+  await note(db, [m.ext]);
+  const row = await recoveryRow(db, m.ext);
+  assert.deepEqual([row.state, row.resolution], ['CANCELLED', 'reappeared']);
+  assert.notEqual((await shown(db, m)).status, 'FINISHED_PENDING_VERIFICATION');
+}));
+
+test('reopen F/G/H: the reopened absence follows the provider — SUSPENDED stays open, ABANDONED shows, FINISHED resolves', () => withDb(async (db) => {
+  for (const [status, expected] of [['SUSPENDED', 'PENDING'], ['ABANDONED', 'RESOLVED'], ['FINISHED', 'RESOLVED']]) {
+    await nextPoll(db);
+    const m = await exhaustedOverdue(db);
+    await note(db, []);
+    await makeDue(db, m.ext);
+    const w = worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, status, 90, ['2', '3']) } }));
+    await w.run('detail-only');
+    const row = await recoveryRow(db, m.ext);
+    assert.equal(row.state, expected, status);
+    const model = await shown(db, m);
+    if (status === 'FINISHED') assert.equal(model.status, 'FINISHED_PENDING_VERIFICATION');
+    else assert.notEqual(model.status, 'FINISHED_PENDING_VERIFICATION', status);
+    if (status === 'ABANDONED') assert.equal(model.status, 'ABANDONED');
+  }
+}));

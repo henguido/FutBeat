@@ -44,6 +44,14 @@ The clock is never used to declare a final.
   lock, backoff 1 min → 2, 4, 8, 16, 30 min, max
   `terminalRecoveryMaxAttempts` (6) then `EXHAUSTED`; a row that can no
   longer be served expires after the window.
+- Two evidence levels. `overdue_live` (provider still says LIVE too long) is
+  preventive; `absent_from_live` (gone from a whole sweep) is stronger. An
+  `overdue_live` row that exhausted its budget while the provider kept the
+  fixture LIVE (seen in production: LIVE 90' in feed and detail for ~4.5 h)
+  reopens as `absent_from_live` with a fresh budget when the fixture finally
+  leaves a complete sweep — once per fixture (`absence_reopened_at`). An
+  exhausted absence never reopens and flapping never resets a budget: at
+  most 6 overdue + 6 absence attempts per fixture lifecycle.
 - The fetched detail goes through the normal pipeline
   (`futbeat_store_match_detail` + `futbeat_record_live_batch`), so a provider
   FINISHED becomes FINISHED_PENDING_VERIFICATION + FULL_TIME via the existing
@@ -73,8 +81,9 @@ finite schedule while the shown match is LIVE but silent. Receipt time is
 local for realtime frames; for REST bootstrap rows it is the row's server
 age at fetch (HTTP `Date` minus `updated_at`/`changed_at`) moved onto the
 device clock — so an old materialized LIVE row is never rejuvenated and
-device/server skew never matters (no `Date` header: the row's own timestamp,
-conservative). Terminal overlays always apply.
+device/server skew never matters. Without a `Date` header a LIVE REST row
+counts as already stale and waits for a real realtime frame. Terminal
+overlays always apply.
 
 ## Known residual risks
 

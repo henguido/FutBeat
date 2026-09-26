@@ -226,15 +226,33 @@ void main() {
       expect(FootballMatch(shown).isLive, isFalse);
     });
 
-    test('1b. without a server time an old REST row is dropped too', () {
-      final update = bootstrapped(
-        row(status: 'LIVE', at: serverNow.subtract(const Duration(hours: 2))),
-        serverTime: false,
+    test('1b. no server Date + device clock 2 h behind: a LIVE REST row '
+        'never overlays (no device vs server comparison)', () {
+      final behind = serverNow.subtract(const Duration(hours: 2));
+      final update = reconcileLiveBootstrapSnapshot(const {}, [
+        row(status: 'LIVE', at: serverNow),
+      ], deviceNow: behind)['fb_match_rt']!;
+      final shown = update.applyTo(canonical('SCHEDULED'), now: behind);
+      expect(shown['status'], 'SCHEDULED');
+      // A real realtime frame then applies normally.
+      final live = LiveMatchUpdate.fromJson(
+        row(status: 'LIVE', at: serverNow, revision: 4),
+        receivedAt: behind,
       );
       expect(
-        update.applyTo(canonical('SCHEDULED'), now: serverNow)['status'],
-        'SCHEDULED',
+        live.applyTo(canonical('SCHEDULED'), now: behind)['status'],
+        'LIVE',
       );
+    });
+
+    test('1c. no server Date: a terminal REST row still applies', () {
+      final behind = serverNow.subtract(const Duration(hours: 2));
+      final update = reconcileLiveBootstrapSnapshot(const {}, [
+        row(status: 'FINISHED_PENDING_VERIFICATION', at: serverNow),
+      ], deviceNow: behind)['fb_match_rt']!;
+      final shown = update.applyTo(canonical('LIVE'), now: behind);
+      expect(shown['status'], 'FINISHED_PENDING_VERIFICATION');
+      expect(shown['score'], {'home': 2, 'away': 3});
     });
 
     test('2. REST row updated 5 min ago overlays LIVE despite device skew', () {

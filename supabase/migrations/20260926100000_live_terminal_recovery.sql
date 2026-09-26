@@ -35,6 +35,9 @@ create table if not exists futbeat_private.live_terminal_recovery (
   last_provider_status text,
   resolved_at timestamptz,
   resolution text,
+  -- Set when an exhausted overdue_live reopened as absent_from_live: that
+  -- reset happens once per fixture lifecycle, never again.
+  absence_reopened_at timestamptz,
   primary key (provider,external_match_id)
 );
 create index if not exists live_terminal_recovery_due_idx
@@ -111,9 +114,13 @@ begin
         and not (s.external_match_id=any(v_all))
         -- Unmapped fixtures have no read model to repair.
         and s.canonical_match_id is not null
-        -- Rows already tracked are left alone (and cost nothing).
+        -- Rows already tracked are left alone (and cost nothing), except an
+        -- exhausted overdue_live: disappearing from a whole sweep is new,
+        -- stronger evidence than "still LIVE too long" (see below).
         and not exists(select 1 from futbeat_private.live_terminal_recovery t
-          where t.provider=s.provider and t.external_match_id=s.external_match_id and t.state<>'CANCELLED')
+          where t.provider=s.provider and t.external_match_id=s.external_match_id
+            and t.state<>'CANCELLED'
+            and not (t.state='EXHAUSTED' and t.reason='overdue_live' and t.absence_reopened_at is null))
         and not futbeat_private.match_effectively_terminal(s.canonical_match_id)
     ), upserted as (
       insert into futbeat_private.live_terminal_recovery as r(
@@ -123,9 +130,17 @@ begin
       on conflict(provider,external_match_id) do update set
         reason='absent_from_live',state='PENDING',canonical_match_id=excluded.canonical_match_id,
         last_live_status=excluded.last_live_status,detected_at=now(),resolved_at=null,resolution=null,
-        -- Flapping never resets the attempt budget nor the backoff.
-        next_attempt_at=greatest(r.next_attempt_at,excluded.next_attempt_at)
+        -- Exhausted overdue_live -> absent_from_live: a new evidence level with
+        -- its own bounded budget (at most once: the row is now absent_from_live
+        -- and an exhausted absence never reopens). A reappeared absence
+        -- (CANCELLED) never resets the attempt budget nor the backoff.
+        attempts=case when r.state='EXHAUSTED' then 0 else r.attempts end,
+        last_attempt_at=case when r.state='EXHAUSTED' then null else r.last_attempt_at end,
+        next_attempt_at=case when r.state='EXHAUSTED' then excluded.next_attempt_at
+          else greatest(r.next_attempt_at,excluded.next_attempt_at) end,
+        absence_reopened_at=case when r.state='EXHAUSTED' then now() else r.absence_reopened_at end
       where r.state='CANCELLED'
+        or (r.state='EXHAUSTED' and r.reason='overdue_live' and r.absence_reopened_at is null)
       returning 1
     )
     select count(*) into v_absent from upserted;
