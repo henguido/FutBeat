@@ -431,15 +431,18 @@ async function syncLive() {
       p_observations: observations,
     }, 30000);
 
-    // #120: absence from the feed is evidence only when every page was read
-    // from offset 0; it only queues a bounded provider re-check, never a final.
-    const complete = !paginationTruncated && (startOffset === 0 || restarted);
+    // #120: absence from the feed is evidence only once a whole sweep (offset
+    // 0 to the last page, possibly across resumed polls) was read; it only
+    // queues a bounded provider re-check, never a final.
+    const fromStart = startOffset === 0 || restarted;
+    const reachedEnd = !paginationTruncated;
     let recovery: unknown = null;
     try {
       recovery = await rpc("futbeat_note_live_poll", {
         p_provider: "goal_api",
         p_seen: observations.map((observation) => observation.externalMatchId),
-        p_complete: complete,
+        p_from_start: fromStart,
+        p_reached_end: reachedEnd,
       });
     } catch (error) {
       console.warn(
@@ -456,7 +459,8 @@ async function syncLive() {
       p_error_code: null,
       p_metadata: {
         mode: "live",
-        complete,
+        fromStart,
+        reachedEnd,
         recovery,
         providerRequests,
         pageBudget,

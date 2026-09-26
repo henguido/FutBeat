@@ -329,3 +329,55 @@ test('ABANDONED evidence before a rescheduled kickoff never absorbs the replayed
   assert.equal(model.status, 'LIVE');
   assert.deepEqual(model.score, { home: 1, away: 0 });
 }));
+
+// Review follow-ups.
+test('a truncated poll + its resumed poll form one sweep: absence counts; an expired sweep does not', () => withDb(async (db) => {
+  const [a, b, c] = await seedLive(db, 3);
+  let w = worker(db, goalSim({ pages: [[fixtureOf(a), fixtureOf(b), fixtureOf(c)]] }));
+  await w.run('live');
+  await nextPoll(db);
+  const note = (seen, fromStart, reachedEnd) => db.query('select public.futbeat_note_live_poll($1,$2,$3,$4) v',
+    ['goal_api', JSON.stringify(seen), fromStart, reachedEnd]).then((r) => r.rows[0].v);
+
+  // Expired sweep: started long ago, the tail never completes it.
+  assert.equal((await note([a.ext], true, false)).complete, false);
+  await db.query("update futbeat_private.live_poll_sweep set started_at=now()-interval '1 hour'");
+  assert.equal((await note([b.ext], false, true)).complete, false);
+  assert.equal(await recoveryRow(db, c.ext), null);
+
+  // Fresh sweep across two polls: A on page 1, B on the resumed page; C gone.
+  assert.equal((await note([a.ext], true, false)).complete, false);
+  const done = await note([b.ext], false, true);
+  assert.equal(done.complete, true);
+  assert.equal(done.absent, 1);
+  assert.equal((await recoveryRow(db, c.ext)).reason, 'absent_from_live');
+  assert.equal(await recoveryRow(db, a.ext), null);
+  assert.equal(await recoveryRow(db, b.ext), null);
+  // A resumed tail without a sweep start is never complete.
+  assert.equal((await note([], false, true)).complete, false);
+}));
+
+test('an older SUSPENDED never outlives a later LIVE that went silent', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1, { minutes: -120 });
+  await recordObs(db, [liveObs(m.ext, 'LIVE', 30)]);
+  await recordObs(db, [liveObs(m.ext, 'SUSPENDED', 40)]);
+  await recordObs(db, [liveObs(m.ext, 'LIVE', 41)]);
+  assert.equal((await shown(db, m)).status, 'LIVE');
+  await db.query("update futbeat_private.provider_observations set received_at=received_at-interval '30 minutes' where canonical_match_id=$1", [m.match]);
+  await db.query("update futbeat_private.live_match_state set last_seen_at=last_seen_at-interval '30 minutes',changed_at=changed_at-interval '30 minutes',first_seen_at=first_seen_at-interval '30 minutes' where canonical_match_id=$1", [m.match]);
+  const model = await shown(db, m);
+  assert.notEqual(model.status, 'SUSPENDED');
+  assert.notEqual(model.status, 'LIVE');
+}));
+
+test('recovery calls never consume the planner post-match budget', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1, { minutes: -180 });
+  for (let i = 0; i < 6; i++) {
+    await db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,reserved_at,completed_at,metadata)
+      values('goal_api','match-detail','test','SUCCEEDED',now(),now(),$1)`,
+    [JSON.stringify({ matchId: m.match, bucket: 'recovery', source: 'recovery' })]);
+  }
+  await db.query("insert into futbeat_private.match_detail_cache values($1,'goal_api',$2,now()-interval '150 minutes','{}')", [m.match, m.ext]);
+  const due = (await db.query("select futbeat_private.match_detail_planner_due($1,'recent_hot') v", [m.match])).rows[0].v;
+  assert.equal(due, true, 'post-match fetch still due after 6 recovery calls');
+}));

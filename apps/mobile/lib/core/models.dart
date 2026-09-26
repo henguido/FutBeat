@@ -286,6 +286,7 @@ class LiveMatchUpdate {
     required this.eventCount,
     required this.changedAt,
     this.events = const [],
+    this.receivedAt,
   });
 
   factory LiveMatchUpdate.fromJson(Json json) => LiveMatchUpdate(
@@ -303,6 +304,7 @@ class LiveMatchUpdate {
         .whereType<Map>()
         .map((e) => Map<String, dynamic>.from(e))
         .toList(),
+    receivedAt: DateTime.now().toUtc(),
   );
 
   final String matchId, provider, externalMatchId, status;
@@ -310,6 +312,10 @@ class LiveMatchUpdate {
   final int revision, eventCount;
   final DateTime changedAt;
   final List<Json> events;
+
+  /// Device time this row was received. Staleness is measured on the device
+  /// clock only (never device vs server time, which may be skewed).
+  final DateTime? receivedAt;
 
   /// Same window as the server failsafe: a LIVE row this silent is not live.
   static const staleAfter = Duration(minutes: 15);
@@ -332,7 +338,9 @@ class LiveMatchUpdate {
     // keep a match "EN VIVO"; terminal overlays always apply.
     const liveStatuses = {'LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'};
     if (liveStatuses.contains(status) &&
-        (now ?? DateTime.now()).toUtc().difference(changedAt.toUtc()) >
+        (now ?? DateTime.now()).toUtc().difference(
+              (receivedAt ?? changedAt).toUtc(),
+            ) >
             staleAfter) {
       return match;
     }

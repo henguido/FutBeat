@@ -47,21 +47,33 @@ returns interval language sql immutable set search_path='' as $$
   select least(interval '30 minutes',interval '2 minutes'*power(2,greatest(p_attempts-1,0)))
 $$;
 
--- Called by the worker after each persisted live poll. p_complete is true only
--- when every page of /fixtures/live was read (no truncation, from offset 0).
+-- A paginated feed may take several polls (truncated at the page budget, the
+-- next poll resumes at its offset). One sweep = from offset 0 to the last
+-- page, possibly across polls; absence is evaluated only on a finished sweep.
+create table if not exists futbeat_private.live_poll_sweep (
+  provider text primary key,
+  started_at timestamptz not null,
+  seen text[] not null
+);
+alter table futbeat_private.live_poll_sweep enable row level security;
+revoke all on futbeat_private.live_poll_sweep from public,anon,authenticated;
+
+-- Called by the worker after each persisted live poll: p_from_start when the
+-- poll read from offset 0, p_reached_end when it read the last page.
 create or replace function futbeat_private.note_live_poll(
-  p_provider text,p_seen jsonb,p_complete boolean)
+  p_provider text,p_seen jsonb,p_from_start boolean,p_reached_end boolean)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare
-  v_seen text[];
+  v_seen text[]; v_all text[]; v_complete boolean:=false;
   v_window interval:=make_interval(hours=>futbeat_private.quota_setting('goal_api','terminalRecoveryWindowHours',6)::integer);
   v_overdue interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','overdueLiveMinutes',150)::integer);
   v_first interval:=make_interval(secs=>futbeat_private.quota_setting('goal_api','terminalRecoveryFirstDelaySeconds',60)::integer);
+  v_sweep_max interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','liveSweepMaxMinutes',20)::integer);
   v_absent integer:=0; v_overdue_n integer:=0; v_back integer:=0;
 begin
   if p_provider is null or btrim(p_provider)='' then raise exception 'provider is required'; end if;
   if p_seen is null or jsonb_typeof(p_seen)<>'array' then raise exception 'seen must be an array'; end if;
-  select coalesce(array_agg(value),array[]::text[]) into v_seen
+  select coalesce(array_agg(distinct value),array[]::text[]) into v_seen
   from jsonb_array_elements_text(p_seen) where btrim(value)<>'';
 
   -- Back in the feed: an absence was temporary, never a final.
@@ -71,17 +83,37 @@ begin
     and r.external_match_id=any(v_seen);
   get diagnostics v_back=row_count;
 
-  -- Absence is evidence only when the whole feed was read.
-  if coalesce(p_complete,false) then
+  -- Sweep bookkeeping: a resumed poll only extends a recent sweep.
+  if coalesce(p_from_start,false) then
+    insert into futbeat_private.live_poll_sweep as w(provider,started_at,seen) values(p_provider,now(),v_seen)
+    on conflict(provider) do update set started_at=now(),seen=excluded.seen;
+  else
+    update futbeat_private.live_poll_sweep w
+    set seen=array(select distinct x from unnest(w.seen||v_seen) x)
+    where w.provider=p_provider and w.started_at>now()-v_sweep_max;
+  end if;
+  if coalesce(p_reached_end,false) then
+    select w.seen into v_all from futbeat_private.live_poll_sweep w
+    where w.provider=p_provider and w.started_at>now()-v_sweep_max;
+    v_complete:=v_all is not null;
+    -- Finished (or stale partial) sweep: the next poll starts over.
+    delete from futbeat_private.live_poll_sweep w where w.provider=p_provider;
+  end if;
+
+  -- Absence is evidence only when a whole sweep was read.
+  if v_complete then
     with gone as (
       select s.external_match_id,s.canonical_match_id,s.status
       from futbeat_private.live_match_state s
       where s.provider=p_provider
         and s.status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES')
         and s.last_seen_at>now()-v_window
-        and not (s.external_match_id=any(v_seen))
+        and not (s.external_match_id=any(v_all))
         -- Unmapped fixtures have no read model to repair.
         and s.canonical_match_id is not null
+        -- Rows already tracked are left alone (and cost nothing).
+        and not exists(select 1 from futbeat_private.live_terminal_recovery t
+          where t.provider=s.provider and t.external_match_id=s.external_match_id and t.state<>'CANCELLED')
         and not futbeat_private.match_effectively_terminal(s.canonical_match_id)
     ), upserted as (
       insert into futbeat_private.live_terminal_recovery as r(
@@ -107,6 +139,8 @@ begin
     where s.provider=p_provider and s.external_match_id=any(v_seen)
       and s.status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES')
       and nullif(e.payload->>'startTime','')::timestamptz<now()-v_overdue
+      and not exists(select 1 from futbeat_private.live_terminal_recovery t
+        where t.provider=s.provider and t.external_match_id=s.external_match_id and t.state<>'CANCELLED')
       and not futbeat_private.match_effectively_terminal(s.canonical_match_id)
   ), upserted as (
     insert into futbeat_private.live_terminal_recovery as r(
@@ -114,15 +148,15 @@ begin
     select p_provider,o.external_match_id,o.canonical_match_id,'overdue_live',o.status,now(),now()
     from overdue o
     on conflict(provider,external_match_id) do update set
-      reason='overdue_live',state='PENDING',last_live_status=excluded.last_live_status,
-      detected_at=now(),resolved_at=null,resolution=null,
+      reason='overdue_live',state='PENDING',canonical_match_id=excluded.canonical_match_id,
+      last_live_status=excluded.last_live_status,detected_at=now(),resolved_at=null,resolution=null,
       next_attempt_at=greatest(r.next_attempt_at,now())
     where r.state='CANCELLED'
     returning 1
   )
   select count(*) into v_overdue_n from upserted;
 
-  return jsonb_build_object('complete',coalesce(p_complete,false),'absent',v_absent,
+  return jsonb_build_object('complete',v_complete,'absent',v_absent,
     'overdue',v_overdue_n,'reappeared',v_back);
 end $$;
 
@@ -139,6 +173,11 @@ begin
   update futbeat_private.live_terminal_recovery r
   set state='EXHAUSTED',resolved_at=now(),resolution='max_attempts'
   where r.state='PENDING' and r.attempts>=v_max;
+  -- A row that can no longer be served (mapping relinked or removed) expires.
+  update futbeat_private.live_terminal_recovery r
+  set state='EXHAUSTED',resolved_at=now(),resolution='expired'
+  where r.state='PENDING' and r.detected_at<now()-make_interval(
+    hours=>futbeat_private.quota_setting('goal_api','terminalRecoveryWindowHours',6)::integer);
   delete from futbeat_private.live_terminal_recovery
   where state<>'PENDING' and coalesce(resolved_at,detected_at)<now()-interval '3 days';
 end $$;
@@ -224,9 +263,10 @@ returns jsonb language sql stable security definer set search_path='' as $$
   from futbeat_private.live_terminal_recovery
 $$;
 
-create or replace function public.futbeat_note_live_poll(p_provider text,p_seen jsonb,p_complete boolean)
+create or replace function public.futbeat_note_live_poll(
+  p_provider text,p_seen jsonb,p_from_start boolean,p_reached_end boolean)
 returns jsonb language sql security definer set search_path='' as $$
-  select futbeat_private.note_live_poll(p_provider,p_seen,p_complete)
+  select futbeat_private.note_live_poll(p_provider,p_seen,p_from_start,p_reached_end)
 $$;
 create or replace function public.futbeat_reserve_terminal_recovery_call(p_trigger_source text)
 returns jsonb language sql security definer set search_path='' as $$
@@ -252,7 +292,7 @@ do $$ declare fn regprocedure; begin
     execute format('revoke all on function %s from public,anon,authenticated',fn);
   end loop;
 end $$;
-grant execute on function public.futbeat_note_live_poll(text,jsonb,boolean) to service_role;
+grant execute on function public.futbeat_note_live_poll(text,jsonb,boolean,boolean) to service_role;
 grant execute on function public.futbeat_reserve_terminal_recovery_call(text) to service_role;
 grant execute on function public.futbeat_complete_terminal_recovery(text,text) to service_role;
 grant execute on function public.futbeat_terminal_recovery_status() to service_role;
@@ -263,7 +303,7 @@ grant execute on function public.futbeat_terminal_recovery_status() to service_r
 -- outrank everything; evidence older than the kickoff stays ignored.
 -- POSTPONED/CANCELLED stay with the results reconciliation, which checks
 -- reschedule provenance (an old postponement must not hide a new kickoff).
--- Copied from 20260926030000; only the evidence filter/order changed.
+-- Copied from 20260926030000; only the evidence filter/selection changed.
 create or replace function futbeat_private.match_read_model_core(p_match jsonb,p_events boolean)
 returns jsonb language plpgsql stable security invoker set search_path='' as $$
 declare
@@ -342,10 +382,12 @@ begin
       and (received_at>=v_received
         or (v_relax_terminal and status in ('VERIFIED','FINISHED_PENDING_VERIFICATION','ABANDONED','SUSPENDED')))
       and (status in ('VERIFIED','FINISHED_PENDING_VERIFICATION','ABANDONED','SUSPENDED')
-        or (status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES') and received_at>=now()-interval '15 minutes'))
-    -- Finals first; otherwise the newest provider state wins.
+        or status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES'))
+    -- Finals first; otherwise the newest provider state wins, and a LIVE one
+    -- only while fresh (an older stop never outlives a later, silent LIVE).
     order by (status in ('VERIFIED','FINISHED_PENDING_VERIFICATION')) desc,received_at desc,id desc limit 1;
-   if found then
+   if found and not (v_evidence.status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES')
+       and v_evidence.received_at<now()-interval '15 minutes') then
      v_status:=v_evidence.status;
      p_match:=p_match||jsonb_strip_nulls(jsonb_build_object('minute',v_evidence.minute,
        'liveChangedAt',v_evidence.received_at));
@@ -384,4 +426,68 @@ begin
            or jsonb_array_length(case when jsonb_typeof(c.payload->'incidents')='array'
            then c.payload->'incidents' else '[]'::jsonb end)>0))))
    ||case when v_events is null then '{}'::jsonb else jsonb_build_object('events',v_events) end;
+end $$;
+
+-- #120 recovery calls have their own attempt cap: they never consume the
+-- planner's per-match post-match budget (copied from 20260924200000; only
+-- the ledger phase mapping changed).
+create or replace function futbeat_private.match_detail_planner_due(p_match_id text,p_bucket text)
+returns boolean language plpgsql stable set search_path='' as $$
+declare cov futbeat_private.match_detail_coverage; fetched timestamptz; kickoff timestamptz;
+  sections jsonb; gap interval; final_after interval; phase text; used integer;
+begin
+  if p_bucket is null or p_bucket not in ('live','results','prematch','upcoming','recent_hot','recent','history') then
+    return false;
+  end if;
+  select * into cov from futbeat_private.match_detail_coverage where match_id=p_match_id;
+  if coalesce(cov.next_retry_at>now(),false) then return false; end if;
+  select c.fetched_at into fetched from futbeat_private.match_detail_cache c where c.match_id=p_match_id;
+  -- Hard bound on background work per match and phase (user opens are not
+  -- counted): pre-match, LIVE and results attempts never eat the post-match
+  -- fetch, and each phase has its own cap.
+  phase:=case p_bucket when 'prematch' then 'prematch' when 'live' then 'live'
+    when 'results' then 'results' else 'finished' end;
+  select count(*) into used from futbeat_private.provider_call_ledger l
+  where l.call_kind='match-detail' and l.metadata->>'matchId'=p_match_id
+    and l.reserved_at>now()-interval '1 day' and coalesce(l.metadata->>'source','')<>'user'
+    and case coalesce(l.metadata->>'bucket','') when 'prematch' then 'prematch' when 'live' then 'live'
+      when 'results' then 'results' when 'recovery' then 'recovery' else 'finished' end=phase;
+  if used>=(case phase
+      when 'prematch' then futbeat_private.quota_setting('goal_api','plannerMaxPrematchFetches',3)
+      when 'live' then futbeat_private.quota_setting('goal_api','plannerMaxLiveFetches',6)
+      when 'results' then futbeat_private.quota_setting('goal_api','plannerMaxResultFetches',2)
+      else futbeat_private.quota_setting('goal_api','plannerMaxFetchesPerMatchDay',4) end) then
+    return false;
+  end if;
+  if fetched is null then return true; end if;
+  if p_bucket='results' then
+    return futbeat_private.match_detail_due('FINISHED_PENDING_VERIFICATION',fetched);
+  end if;
+  if p_bucket='upcoming' then return false; end if;
+  if p_bucket='live' then
+    return coalesce((coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN'
+        and fetched<now()-make_interval(mins=>futbeat_private.quota_setting('goal_api','liveRetryMinutes',5)::integer))
+      -- Periodic refresh only while the provider budget is comfortable.
+      or (fetched<now()-make_interval(mins=>futbeat_private.quota_setting('goal_api','plannerLiveRefreshMinutes',30)::integer)
+        and futbeat_private.detail_planner_band()->>'band' in ('abundant','normal')),false);
+  end if;
+  sections:=futbeat_private.match_detail_sections(p_match_id);
+  if sections is null then return false; end if;
+  gap:=make_interval(secs=>(sections->>'retryGap')::double precision);
+  if p_bucket='prematch' then
+    return coalesce((sections->>'lineupWanted')::boolean and coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN'
+      and fetched<now()-make_interval(mins=>futbeat_private.quota_setting('goal_api','prematchRetryMinutes',20)::integer),false);
+  end if;
+  -- Finished: one post-match fetch, then only missing sections / due rechecks.
+  select nullif(e.payload->>'startTime','')::timestamptz into kickoff
+  from futbeat_private.entities e where e.id=p_match_id and e.kind='match';
+  final_after:=make_interval(mins=>futbeat_private.quota_setting('goal_api','finalFetchAfterMinutes',120)::integer);
+  if kickoff is not null and now()>=kickoff+final_after and fetched<kickoff+final_after then
+    return true;
+  end if;
+  return coalesce(fetched<now()-gap and (
+    coalesce(cov.lineup_state,'UNKNOWN')='UNKNOWN' or coalesce(cov.statistics_state,'UNKNOWN')='UNKNOWN'
+    -- A NO_DATA without a recheck time (older rows) is never rechecked.
+    or (cov.lineup_state='NO_DATA' and coalesce(cov.lineup_recheck_at,'infinity')<=now())
+    or (cov.statistics_state='NO_DATA' and coalesce(cov.statistics_recheck_at,'infinity')<=now())),false);
 end $$;

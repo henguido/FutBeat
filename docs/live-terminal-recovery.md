@@ -25,14 +25,16 @@ The clock is never used to declare a final.
 
 ## Fix (migration `20260926100000_live_terminal_recovery.sql`)
 
-- `futbeat_note_live_poll(provider, seen, complete)` — called by the worker
-  after each persisted live poll.
-  - `complete` is true only when every page was read from offset 0 (not
-    truncated by page budget / reserve, not a resumed tail). Partial polls
-    never count as absence.
+- `futbeat_note_live_poll(provider, seen, from_start, reached_end)` — called
+  by the worker after each persisted live poll.
+  - A **sweep** is offset 0 → last page, possibly across polls (a poll
+    truncated by the page budget / reserve is resumed by the next one). Seen
+    ids are unioned per sweep (`live_poll_sweep`, max `liveSweepMaxMinutes`
+    20); absence is evaluated only when a sweep finishes. A resumed tail
+    without its start, or an expired sweep, never counts.
   - LIVE-family matches (mapped, seen in the last
-    `terminalRecoveryWindowHours`, not effectively terminal) absent from a
-    complete poll → recovery row `absent_from_live`.
+    `terminalRecoveryWindowHours`, not effectively terminal, not already
+    tracked) absent from a finished sweep → recovery row `absent_from_live`.
   - Matches still LIVE in the feed `overdueLiveMinutes` (150) after kickoff →
     recovery row `overdue_live` (provider stuck at 90').
   - An absent match that reappears → row `CANCELLED` (`reappeared`).
@@ -40,27 +42,50 @@ The clock is never used to declare a final.
   `syncOneMatchDetail`: one `/fixtures/{id}` call under the protected
   `results` quota class and the `match-detail` kind cap, per-match inflight
   lock, backoff 1 min → 2, 4, 8, 16, 30 min, max
-  `terminalRecoveryMaxAttempts` (6) then `EXHAUSTED`.
+  `terminalRecoveryMaxAttempts` (6) then `EXHAUSTED`; a row that can no
+  longer be served expires after the window.
 - The fetched detail goes through the normal pipeline
   (`futbeat_store_match_detail` + `futbeat_record_live_batch`), so a provider
   FINISHED becomes FINISHED_PENDING_VERIFICATION + FULL_TIME via the existing
   code. `futbeat_complete_terminal_recovery` stores the raw provider status
   and settles the row once the match is effectively terminal.
 - Read model: the newest in-play stop from the provider (ABANDONED,
-  SUSPENDED) replaces an older LIVE; finals still outrank all. Evidence older
+  SUSPENDED) replaces an older LIVE; finals still outrank all. The newest
+  row is chosen first and a LIVE one only counts while fresh, so an older
+  SUSPENDED never outlives a later LIVE that went silent. Evidence older
   than the kickoff stays ignored. POSTPONED / CANCELLED stay with the results
   reconciliation (it checks reschedule provenance); a recovery fetch that gets
   one of them just stops retrying (`provider_postponed` / `provider_cancelled`).
 
 Cost: at most 6 detail calls per affected match, only for matches that
 actually lost their LIVE feed or overran; no mobile calls, no new cron.
-Recovery calls are ledgered with `bucket='recovery'`, `source='recovery'`
-(they count toward the planner's per-match "finished" cap, and the fetch
-itself stores the full post-match detail).
+Recovery calls are ledgered with `bucket='recovery'`, `source='recovery'`;
+the detail planner counts them as their own phase, so they never consume the
+per-match post-match budget.
 
 Tuning keys (`provider_quota_policy.freshness`, defaults in code):
 `terminalRecoveryWindowHours` 6, `overdueLiveMinutes` 150,
 `terminalRecoveryFirstDelaySeconds` 60, `terminalRecoveryMaxAttempts` 6.
+
+Mobile (0aa7bf6 + follow-up): a LIVE overlay received more than 15 min ago
+(device clock, receipt time — immune to device/server skew) no longer
+overrides the canonical snapshot, and Match Center re-reads the canonical
+context on a finite schedule while the shown match is LIVE but silent.
+
+## Known residual risks
+
+- ABANDONED from any source is terminal (`is_terminal_match_status`): later
+  LIVE observations for the same fixture id and kickoff are suppressed. A
+  fixture replayed with a new kickoff is safe (evidence before kickoff is
+  ignored).
+- If a live poll lands while a recovery detail call for a match still in
+  the feed is running, the detail's older `fetchedAt` hits the existing
+  "Stale live batch" guard and that attempt is recorded as failed (the
+  detail itself is stored). Pre-existing behaviour of every detail fetch;
+  the next attempt retries.
+- `liveDataStale` (Match Center re-read trigger) still compares device time
+  with the server's `liveChangedAt`; a badly skewed device only costs the
+  bounded 5 re-reads per open.
 
 ## Diagnosis in production (read-only)
 

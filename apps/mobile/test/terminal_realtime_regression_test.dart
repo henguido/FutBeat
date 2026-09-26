@@ -317,4 +317,35 @@ void main() {
     expect(merged['status'], 'FINISHED_PENDING_VERIFICATION');
     expect(FootballMatch(merged).score, '2 - 3');
   });
+
+  test('#120 client: staleness uses device receipt time, not device vs server '
+      'clock', () {
+    final changedAt = _kickoff.add(const Duration(minutes: 60));
+    // Device clock one hour ahead of the server.
+    final received = changedAt.add(const Duration(hours: 1));
+    LiveMatchUpdate update() => LiveMatchUpdate(
+      matchId: _match(status: 'SCHEDULED')['id'] as String,
+      provider: 'goal_api',
+      externalMatchId: 'ext',
+      status: 'LIVE',
+      minute: 61,
+      homeScore: 1,
+      awayScore: 0,
+      revision: 9,
+      eventCount: 0,
+      changedAt: changedAt,
+      receivedAt: received,
+    );
+    final canonical = _match(status: 'SCHEDULED');
+    final fresh = update().applyTo(
+      canonical,
+      now: received.add(const Duration(minutes: 1)),
+    );
+    expect(fresh['status'], 'LIVE');
+    final silent = update().applyTo(
+      canonical,
+      now: received.add(const Duration(minutes: 16)),
+    );
+    expect(identical(silent, canonical), isTrue);
+  });
 }
