@@ -717,6 +717,14 @@ class MatchHero extends StatelessWidget {
     final round = detail.round?.trim() ?? '';
     final date = matchDateLabel(match.startTime);
     final time = localTime(context, match.startTime);
+    // Scorers only once the match has started and a goal has a known side.
+    final summary = match.showKickoff
+        ? null
+        : matchScorerSummary(match, detail, data);
+    final scorers =
+        summary != null && (summary.home.isNotEmpty || summary.away.isNotEmpty)
+        ? summary
+        : null;
 
     return Container(
       key: const ValueKey('match-hero'),
@@ -786,6 +794,10 @@ class MatchHero extends StatelessWidget {
               Expanded(child: _HeaderTeam(away, accent: awaySideColor)),
             ],
           ),
+          if (scorers != null) ...[
+            const SizedBox(height: 10),
+            _HeaderScorers(home: scorers.home, away: scorers.away),
+          ],
           if (!match.showKickoff || venue.trim().isNotEmpty) ...[
             const SizedBox(height: 12),
             Wrap(
@@ -1573,6 +1585,106 @@ String? timelineSide(Json event, FootballMatch match, Snapshot data) {
 }
 
 const _neutralEvents = {'KICKOFF', 'HALFTIME', 'FULL_TIME'};
+
+/// One header line: a real scorer with all their minutes on one side, or an
+/// anonymous goal ("Gol 55′") that is never merged with another one.
+class ScorerLine {
+  ScorerLine(this.name, this.minutes);
+  final String? name;
+  final List<String> minutes;
+
+  String get label => name == null
+      ? 'Gol ${minutes.join(', ')}'
+      : '$name ${minutes.join(', ')}';
+}
+
+/// #99 header scorers from the already-deduplicated timeline (#121): only
+/// GOAL events with a known side. Name = the provider's structured
+/// playerName, else the canonical player entity of its playerId (the same
+/// identity the timeline shows); never parsed from free text or invented.
+/// The same named player is grouped per side, anonymous goals never are.
+({List<ScorerLine> home, List<ScorerLine> away}) matchScorerSummary(
+  FootballMatch match,
+  MatchDetail detail,
+  Snapshot data,
+) {
+  final home = <ScorerLine>[], away = <ScorerLine>[];
+  for (final event in mergedMatchTimeline(match, detail)) {
+    if (event['type'] != 'GOAL') continue;
+    final side = timelineSide(event, match, data);
+    if (side == null) continue;
+    final lines = side == 'home' ? home : away;
+    final provided = event['playerName']?.toString().trim() ?? '';
+    final name = provided.isNotEmpty
+        ? provided
+        : data.player(event['playerId']?.toString() ?? '')?.name.trim();
+    final minute = eventMinuteLabel(event);
+    if (name != null && name.isNotEmpty) {
+      final existing = lines.where((line) => line.name == name).firstOrNull;
+      if (existing != null) {
+        existing.minutes.add(minute);
+        continue;
+      }
+      lines.add(ScorerLine(name, [minute]));
+    } else {
+      lines.add(ScorerLine(null, [minute]));
+    }
+  }
+  return (home: home, away: away);
+}
+
+class _HeaderScorers extends StatelessWidget {
+  const _HeaderScorers({required this.home, required this.away});
+
+  final List<ScorerLine> home, away;
+  static const _maxLines = 5;
+
+  Widget _column(List<ScorerLine> lines, String side, TextAlign align) {
+    final shown = lines.take(_maxLines).toList();
+    final hidden = lines.length - shown.length;
+    return Column(
+      crossAxisAlignment: side == 'home'
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < shown.length; i++)
+          Text(
+            shown[i].label,
+            key: ValueKey('scorer-$side-$i'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: align,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 11.5,
+              height: 1.35,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        if (hidden > 0)
+          Text(
+            '+$hidden',
+            textAlign: align,
+            style: const TextStyle(color: muted, fontSize: 11),
+          ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Row(
+    key: const ValueKey('header-scorers'),
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Expanded(child: _column(home, 'home', TextAlign.end)),
+      const SizedBox(
+        width: 28,
+        child: Icon(Icons.sports_soccer, size: 13, color: muted),
+      ),
+      Expanded(child: _column(away, 'away', TextAlign.start)),
+    ],
+  );
+}
 
 class MatchTimeline extends StatelessWidget {
   const MatchTimeline(this.data, this.match, this.detail, {super.key});
