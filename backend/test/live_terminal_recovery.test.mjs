@@ -120,6 +120,65 @@ test('#132: demand wake serves the opened Match Center before terminal recovery'
     'interactive demand must not spend a recovery attempt');
 }));
 
+test('#132: recovery reservation atomically preserves the user_high floor', () => withDb(async (db) => {
+  const [a, b] = await seedLive(db, 2, { minutes: 30 });
+  for (const m of [a, b]) {
+    await db.query(`insert into futbeat_private.live_terminal_recovery(
+      provider,external_match_id,canonical_match_id,reason,state,last_live_status,
+      detected_at,attempts,next_attempt_at)
+      values('goal_api',$1,$2,'absent_from_live','PENDING','LIVE',now(),0,now()-interval '1 second')`,
+    [m.ext, m.match]);
+  }
+
+  // Exactly one provider unit exists above user_high (151 vs floor 150).
+  await db.query(`insert into futbeat_private.provider_call_ledger(
+    provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining)
+    values('goal_api','live-goal','test',now(),now(),'SUCCEEDED',151)`);
+
+  const first = (await db.query(
+    "select public.futbeat_reserve_terminal_recovery_call('test') v",
+  )).rows[0].v;
+  assert.equal(first.allowed, true, JSON.stringify(first));
+  assert.equal(first.providerRemaining, 151);
+  assert.equal(first.effectiveProviderRemaining, 151);
+  assert.equal(first.committedUnits, 0);
+
+  // The first reservation is still open. A second worker must count that unit
+  // before reserving, leaving an effective 150 and protecting the floor.
+  const second = (await db.query(
+    "select public.futbeat_reserve_terminal_recovery_call('test') v",
+  )).rows[0].v;
+  assert.equal(second.allowed, false, JSON.stringify(second));
+  assert.equal(second.reason, 'provider_remaining_reserve');
+  assert.equal(second.providerRemaining, 151);
+  assert.equal(second.committedUnits, 1);
+  assert.equal(second.effectiveProviderRemaining, 150);
+  assert.equal(second.floor, 150);
+
+  const rows = (await db.query(
+    "select attempts from futbeat_private.live_terminal_recovery where external_match_id=any($1) order by external_match_id",
+    [[a.ext, b.ext]],
+  )).rows;
+  assert.equal(rows.reduce((sum, row) => sum + Number(row.attempts), 0), 1,
+    'only one recovery attempt may enter the protected band');
+}));
+
+test('#132: recovery fails closed when provider remaining is unknown', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1, { minutes: 30 });
+  await db.query(`insert into futbeat_private.live_terminal_recovery(
+    provider,external_match_id,canonical_match_id,reason,state,last_live_status,
+    detected_at,attempts,next_attempt_at)
+    values('goal_api',$1,$2,'absent_from_live','PENDING','LIVE',now(),0,now()-interval '1 second')`,
+  [m.ext, m.match]);
+
+  const reserved = (await db.query(
+    "select public.futbeat_reserve_terminal_recovery_call('test') v",
+  )).rows[0].v;
+  assert.equal(reserved.allowed, false, JSON.stringify(reserved));
+  assert.equal(reserved.reason, 'provider_remaining_unknown');
+  assert.equal((await recoveryRow(db, m.ext)).attempts, 0);
+}));
+
 test('B. LIVE disappears from a complete poll -> recovery row, then detail fetch resolves FINISHED 2-3', () => withDb(async (db) => {
   const [m] = await seedLive(db, 1);
   let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60)]] }));
