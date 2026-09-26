@@ -355,7 +355,8 @@ void main() {
     );
     await _scrollTo(tester, find.byKey(const ValueKey('top-rated-card')));
     expect(find.text('Mejor puntuado'), findsOneWidget);
-    expect(find.text('Provisional'), findsOneWidget);
+    // One per block: the global leader and the per-team block below it.
+    expect(find.text('Provisional'), findsNWidgets(2));
     expect(find.text('Jugador del partido'), findsNothing);
     await _close(tester, container);
   });
