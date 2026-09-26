@@ -14,3 +14,9 @@ verify_jwt = true
 
 [functions.futbeat-fixtures-sync]
 verify_jwt = true
+
+# Provider Hub secondary worker (#102 Phase 1B): internal, same pattern as
+# futbeat-goal-live-sync (no user JWT; the function itself requires the
+# stored x-futbeat-cron-token). Not scheduled; secondaries stay disabled.
+[functions.futbeat-provider-hub-sync]
+verify_jwt = false
