@@ -215,7 +215,7 @@ void main() {
   );
 
   testWidgets(
-    'tapping a starter with canonicalId navigates to /player/<canonicalId> (case C, F)',
+    'tapping a starter with canonicalId opens the player sheet; Ver perfil navigates to /player/<canonicalId> (case C, F)',
     (tester) async {
       await _pumpMatch(
         tester,
@@ -230,12 +230,17 @@ void main() {
       );
       await tester.tap(find.text('Goleador'));
       await tester.pumpAndSettle();
+      // #99: the tap opens the local player sheet, not the profile.
+      expect(find.byKey(const ValueKey('player-sheet')), findsOneWidget);
+      expect(find.text('Player profile route'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('player-sheet-profile')));
+      await tester.pumpAndSettle();
       expect(find.text('Player profile route'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'tapping a bench player with canonicalId navigates to /player/<canonicalId> (case C, F)',
+    'tapping a bench player with canonicalId opens the player sheet; Ver perfil navigates to /player/<canonicalId> (case C, F)',
     (tester) async {
       await _pumpMatch(
         tester,
@@ -250,12 +255,16 @@ void main() {
       );
       await tester.tap(find.text('Suplente'));
       await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('player-sheet')), findsOneWidget);
+      expect(find.text('Player profile route'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('player-sheet-profile')));
+      await tester.pumpAndSettle();
       expect(find.text('Player profile route'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'player without canonicalId yet: not tappable, no crash, presentation unchanged (review focus)',
+    'player without canonicalId yet: opens the sheet without Ver perfil, never navigates, no crash (review focus)',
     (tester) async {
       await _pumpMatch(
         tester,
@@ -269,14 +278,14 @@ void main() {
         ),
       );
       expect(find.text('Pendiente'), findsOneWidget);
-      final pendienteInkWell = find.ancestor(
-        of: find.text('Pendiente'),
-        matching: find.byType(InkWell),
-      );
-      expect(pendienteInkWell, findsNothing);
       await tester.tap(find.text('Pendiente'));
       await tester.pumpAndSettle();
+      // #99: every named player opens the sheet; without a canonical
+      // identity there is simply no profile action.
+      expect(find.byKey(const ValueKey('player-sheet')), findsOneWidget);
+      expect(find.byKey(const ValueKey('player-sheet-profile')), findsNothing);
       expect(find.text('Player profile route'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 
