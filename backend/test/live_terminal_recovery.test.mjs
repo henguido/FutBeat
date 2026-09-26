@@ -1,0 +1,331 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { openDatabase } from '../storage/database.mjs';
+import { createHash } from 'node:crypto';
+import { worker } from './helpers/worker_harness.mjs';
+
+// #120: a match that leaves the GOAL /fixtures/live feed (or stays LIVE far
+// too long) before FutBeat recorded any terminal status must still resolve.
+// Exercises the real migration (20260926100000_live_terminal_recovery.sql)
+// and the real worker (futbeat-goal-live-sync/index.ts) against real SQL and
+// a simulated GOAL API. No real network, no fixed teams/matches.
+
+let seq = 0;
+async function seedLive(db, n, { minutes = -30 } = {}) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const k = ++seq;
+    const ids = { comp: `fb_comp_tc${k}`, home: `fb_team_tc${k}h`, away: `fb_team_tc${k}a`, match: `fb_match_tc${k}`, ext: `tc-${k}` };
+    const start = new Date(Date.now() + minutes * 60000).toISOString();
+    for (const [id, kind, payload] of [
+      [ids.comp, 'competition', { id: ids.comp, name: `Comp ${k}` }],
+      [ids.home, 'team', { id: ids.home, name: `H ${k}` }],
+      [ids.away, 'team', { id: ids.away, name: `A ${k}` }],
+      [ids.match, 'match', { id: ids.match, competitionId: ids.comp, homeTeamId: ids.home, awayTeamId: ids.away,
+        status: 'SCHEDULED', startTime: start, events: [], statistics: [],
+        provenance: { receivedAt: new Date(Date.now() - 2 * 3600000).toISOString() } }],
+    ]) await db.query('insert into futbeat_private.entities values($1,$2,$3)', [id, kind, JSON.stringify(payload)]);
+    await db.query("insert into futbeat_private.provider_entities values('goal_api','match',$1,$2)", [ids.ext, ids.match]);
+    out.push({ ...ids, start });
+  }
+  return out;
+}
+const fixtureOf = (m, status = 'LIVE', minute = 30, score = ['1', '0']) => ({ apiId: m.ext, kickoffUtc: m.start,
+  matchStatus: status, matchElapsed: minute, homeTeamScore: score[0], awayTeamScore: score[1],
+  homeTeam: { id: `${m.ext}-h`, name: 'H' }, awayTeam: { id: `${m.ext}-a`, name: 'A' } });
+
+// Simulated GOAL: /fixtures/live paginated by `pages`; /fixtures/{externalId}
+// answered per-call from `details` (a map externalId -> fixture-shaped object,
+// or a function returning one/throwing to simulate an error); everything
+// else (squads/news/etc.) answered harmlessly.
+function goalSim({ pages = [[]], details = {}, remainingStart = 700 } = {}) {
+  let remaining = remainingStart;
+  return (url) => {
+    remaining -= 1;
+    const headers = { 'x-ratelimit-remaining': String(remaining), 'content-type': 'application/json' };
+    if (url.pathname === '/v1/fixtures/live') {
+      const offset = Number(url.searchParams.get('offset') ?? 0);
+      const index = Math.floor(offset / 100);
+      const data = pages[index] ?? [];
+      return new Response(JSON.stringify({ success: true, data,
+        pagination: { total: pages.flat().length, limit: 100, hasMore: index + 1 < pages.length } }), { status: 200, headers });
+    }
+    const detailMatch = url.pathname.match(/^\/v1\/fixtures\/([^/]+)$/);
+    if (detailMatch) {
+      const external = decodeURIComponent(detailMatch[1]);
+      const entry = details[external];
+      if (!entry) return new Response(JSON.stringify({ success: false }), { status: 404, headers });
+      const fixture = typeof entry === 'function' ? entry() : entry;
+      return new Response(JSON.stringify({ success: true, data: fixture }), { status: 200, headers });
+    }
+    return new Response(JSON.stringify({ success: true, data: [] }), { status: 200, headers });
+  };
+}
+
+const nextPoll = (db) => db.query("update futbeat_private.provider_call_ledger set reserved_at=reserved_at-interval '5 minutes' where call_kind='live-goal'");
+const makeDue = (db, ext) => db.query("update futbeat_private.live_terminal_recovery set next_attempt_at=now()-interval '1 second' where external_match_id=$1", [ext]);
+const shown = (db, m) => db.query(`select futbeat_private.match_read_model(payload) v from futbeat_private.entities where id=$1`, [m.match]).then((r) => r.rows[0].v);
+const recoveryRow = (db, ext) => db.query('select * from futbeat_private.live_terminal_recovery where external_match_id=$1', [ext]).then((r) => r.rows[0] ?? null);
+const recoveryLedgerRows = (db) => db.query("select metadata from futbeat_private.provider_call_ledger where call_kind='match-detail' order by id").then((r) => r.rows);
+async function withDb(fn) {
+  const db = await openDatabase();
+  try { await fn(db); } finally { await db.close(); }
+}
+
+test('A. SCHEDULED -> LIVE -> HALFTIME -> LIVE -> FT via live polls: FINISHED_PENDING_VERIFICATION, no recovery row', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1);
+  const sequence = [
+    fixtureOf(m, 'LIVE', 10),
+    fixtureOf(m, 'HALF_TIME', 45),
+    fixtureOf(m, 'LIVE', 50),
+    fixtureOf(m, 'FINISHED', 90, ['2', '1']),
+  ];
+  for (const fixture of sequence) {
+    const w = worker(db, goalSim({ pages: [[fixture]] }));
+    assert.equal((await w.run('live')).live.status, 'ok');
+    await nextPoll(db);
+  }
+  const model = await shown(db, m);
+  assert.equal(model.status, 'FINISHED_PENDING_VERIFICATION');
+  assert.deepEqual(model.score, { home: 2, away: 1 });
+  assert.equal(await recoveryRow(db, m.ext), null, 'no recovery row was ever needed');
+}));
+
+test('B. LIVE disappears from a complete poll -> recovery row, then detail fetch resolves FINISHED 2-3', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1);
+  let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60)]] }));
+  await w.run('live');
+  await nextPoll(db);
+
+  // Next complete poll: the match is simply gone from the feed.
+  w = worker(db, goalSim({ pages: [[]] }));
+  const result = await w.run('live');
+  assert.equal(result.live.paginationTruncated, false);
+  let row = await recoveryRow(db, m.ext);
+  assert.equal(row.state, 'PENDING');
+  assert.equal(row.reason, 'absent_from_live');
+
+  await makeDue(db, m.ext);
+  w = worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, 'FINISHED', 90, ['2', '3']) } }));
+  const detailResult = await w.run('detail-only');
+  assert.equal(detailResult.status, 'ok');
+  assert.deepEqual(detailResult.detail[0].status, 'ok', JSON.stringify(detailResult.detail));
+
+  const model = await shown(db, m);
+  assert.equal(model.status, 'FINISHED_PENDING_VERIFICATION');
+  assert.deepEqual(model.score, { home: 2, away: 3 });
+  row = await recoveryRow(db, m.ext);
+  assert.equal(row.state, 'RESOLVED');
+  // The default/'live' cascade also runs its own stale-LIVE prefetch lane
+  // (unrelated to #120), which may add its own match-detail ledger rows; the
+  // recovery-specific reservation is what this case is about.
+  const recoveryLedger = (await recoveryLedgerRows(db)).filter((r) => r.metadata.bucket === 'recovery');
+  assert.equal(recoveryLedger.length, 1);
+  assert.equal(recoveryLedger[0].metadata.recoveryReason, 'absent_from_live');
+}));
+
+test('C. LIVE disappears then reappears in the next complete poll -> recovery CANCELLED, not terminal', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1);
+  let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60)]] }));
+  await w.run('live');
+  await nextPoll(db);
+
+  w = worker(db, goalSim({ pages: [[]] }));
+  await w.run('live');
+  assert.equal((await recoveryRow(db, m.ext)).state, 'PENDING');
+  await nextPoll(db);
+
+  w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 65)]] }));
+  await w.run('live');
+  const row = await recoveryRow(db, m.ext);
+  assert.equal(row.state, 'CANCELLED');
+  assert.equal(row.resolution, 'reappeared');
+  const model = await shown(db, m);
+  assert.equal(model.status, 'LIVE');
+}));
+
+test('D. recovery fetch returns SUSPENDED: not terminal, row stays PENDING, attempts incremented, backed off', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1);
+  let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60)]] }));
+  await w.run('live');
+  await nextPoll(db);
+  w = worker(db, goalSim({ pages: [[]] }));
+  await w.run('live');
+  await makeDue(db, m.ext);
+
+  w = worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, 'SUSPENDED', 60) } }));
+  await w.run('detail-only');
+
+  const row = await recoveryRow(db, m.ext);
+  assert.equal(row.state, 'PENDING');
+  assert.equal(row.attempts, 1);
+  assert.ok(new Date(row.next_attempt_at).getTime() > Date.now(), 'backoff pushes next attempt into the future');
+  const model = await shown(db, m);
+  assert.notEqual(model.status, 'FINISHED_PENDING_VERIFICATION');
+}));
+
+// ABANDONED is surfaced by the read model (it used to be dropped), so the row
+// settles on terminal evidence; POSTPONED/CANCELLED stop the recovery (the
+// results reconciliation owns them). None ever becomes FINISHED.
+test('E. recovery fetch returns POSTPONED/CANCELLED/ABANDONED: resolved, never FINISHED', () => withDb(async (db) => {
+  for (const providerStatus of ['POSTPONED', 'CANCELLED', 'ABANDONED']) {
+    await nextPoll(db);
+    const [m] = await seedLive(db, 1);
+    let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 30)]] }));
+    await w.run('live');
+    await nextPoll(db);
+    w = worker(db, goalSim({ pages: [[]] }));
+    await w.run('live');
+    await makeDue(db, m.ext);
+
+    w = worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, providerStatus, 30) } }));
+    await w.run('detail-only');
+
+    const row = await recoveryRow(db, m.ext);
+    assert.equal(row.state, 'RESOLVED', providerStatus);
+    assert.equal(row.resolution, providerStatus === 'ABANDONED' ? 'terminal_evidence' : `provider_${providerStatus.toLowerCase()}`);
+    const model = await shown(db, m);
+    if (providerStatus === 'ABANDONED') assert.equal(model.status, 'ABANDONED');
+    assert.notEqual(model.status, 'FINISHED_PENDING_VERIFICATION', `${providerStatus} must never become FINISHED`);
+  }
+}));
+
+test('F. an already-terminal match absent from a complete poll gets no recovery row; a later stale LIVE never revives it', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1);
+  let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'FINISHED', 90, ['1', '0'])]] }));
+  await w.run('live');
+  assert.equal((await shown(db, m)).status, 'FINISHED_PENDING_VERIFICATION');
+  await nextPoll(db);
+
+  w = worker(db, goalSim({ pages: [[]] }));
+  await w.run('live');
+  assert.equal(await recoveryRow(db, m.ext), null, 'no recovery row for an already-terminal match');
+  await nextPoll(db);
+
+  // A stale LIVE observation reappearing does not revive it (absorbing guard).
+  w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 91)]] }));
+  await w.run('live');
+  const model = await shown(db, m);
+  assert.equal(model.status, 'FINISHED_PENDING_VERIFICATION');
+  assert.equal(await recoveryRow(db, m.ext), null);
+}));
+
+test('G. truncated/partial poll never treats absence as evidence; a resumed (offset>0, not restarted) poll neither', () => withDb(async (db) => {
+  const [a, b] = await seedLive(db, 2);
+  let w = worker(db, goalSim({ pages: [[fixtureOf(a, 'LIVE', 10), fixtureOf(b, 'LIVE', 10)]] }));
+  await w.run('live');
+  await nextPoll(db);
+
+  // Truncated: page budget cut to 1 via a low observed remaining, and only
+  // page 0 (A) is ever read; B is not in the read pages.
+  await db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining,reserved_at,completed_at)
+    values('goal_api','global-ingest','test','SUCCEEDED',21,now(),now())`);
+  const filler = Array.from({ length: 99 }, (_, i) => ({ ...fixtureOf(a, 'LIVE', 40), apiId: `unmapped-tc-${i}` }));
+  w = worker(db, goalSim({ pages: [[fixtureOf(a, 'LIVE', 40), ...filler], [fixtureOf(b, 'LIVE', 40)]], remainingStart: 300 }));
+  const result = await w.run('live');
+  assert.equal(result.live.paginationTruncated, true);
+  assert.equal(await recoveryRow(db, b.ext), null, 'B was never read: absence is not evidence');
+  await nextPoll(db);
+
+  // A poll that resumes at offset>0 without restarting: the reservation
+  // itself (via provider_call_ledger.metadata.resumeOffset from the
+  // truncated poll above) resumes at offset 100, so only the unread page
+  // (holding B) is ever fetched; A is simply not on it. A high observed
+  // remaining removes any further truncation from this poll.
+  await db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining,reserved_at,completed_at)
+    values('goal_api','global-ingest','test','SUCCEEDED',400,now(),now())`);
+  // pages[0] is never requested (the worker starts straight at offset 100 /
+  // pages[1]); a poison page proves that if it ever got read it would fail.
+  const poison = [{ apiId: 'never-read', kickoffUtc: a.start, matchStatus: 'LIVE', matchElapsed: 1,
+    homeTeamScore: '0', awayTeamScore: '0', homeTeam: { id: 'x-h' }, awayTeam: { id: 'x-a' } }];
+  w = worker(db, goalSim({ pages: [poison, [fixtureOf(b, 'LIVE', 41)]] }));
+  const resumed = await w.run('live');
+  assert.equal(resumed.live.status, 'ok');
+  assert.equal(w.goalCalls().filter((u) => u.includes('/fixtures/live')).length, 1, 'only the unread page is fetched');
+  assert.ok(w.goalCalls().some((u) => u.includes('/fixtures/live') && u.includes('offset=100')));
+  assert.equal(await recoveryRow(db, a.ext), null, 'A absent from a resumed (offset>0, non-restarted) poll is not evidence');
+}));
+
+test('H. idempotency: two absences make one row without resetting attempts; EXHAUSTED after max attempts stops reservation', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1);
+  let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60)]] }));
+  await w.run('live');
+  await nextPoll(db);
+  w = worker(db, goalSim({ pages: [[]] }));
+  await w.run('live');
+  await nextPoll(db);
+  w = worker(db, goalSim({ pages: [[]] }));
+  await w.run('live');
+  let rows = await db.query('select * from futbeat_private.live_terminal_recovery where external_match_id=$1', [m.ext]).then((r) => r.rows);
+  assert.equal(rows.length, 1, 'idempotent: one row for the same absence noted twice');
+  assert.equal(rows[0].attempts, 0, 'noting the absence again is not an attempt');
+
+  // Drive it to EXHAUSTED: repeatedly make it due and answer with SUSPENDED
+  // (never terminal) until the attempt cap (6) is spent.
+  for (let i = 0; i < 6; i++) {
+    await makeDue(db, m.ext);
+    w = worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, 'SUSPENDED', 60) } }));
+    await w.run('detail-only');
+  }
+  const row = await recoveryRow(db, m.ext);
+  assert.equal(row.state, 'EXHAUSTED');
+  assert.equal(row.attempts, 6);
+
+  await makeDue(db, m.ext);
+  const reserved = (await db.query("select public.futbeat_reserve_terminal_recovery_call('test') v")).rows[0].v;
+  assert.equal(reserved.allowed, false);
+  assert.equal(reserved.reason, 'no_recovery_due');
+}));
+
+test('overdue_live: a match still LIVE in the feed with kickoff far in the past gets an overdue row; reappearing does not cancel it', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1, { minutes: -190 }); // kickoff 3h10m ago
+  const w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 190)]] }));
+  await w.run('live');
+
+  const row = await recoveryRow(db, m.ext);
+  assert.equal(row.state, 'PENDING');
+  assert.equal(row.reason, 'overdue_live');
+
+  // Reappearing (still LIVE, still seen) does not cancel an overdue row: only
+  // absence-cancellation looks at reason='absent_from_live'.
+  await nextPoll(db);
+  const w2 = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 200)]] }));
+  await w2.run('live');
+  const row2 = await recoveryRow(db, m.ext);
+  assert.equal(row2.state, 'PENDING');
+  assert.equal(row2.reason, 'overdue_live');
+}));
+
+// Read-model safety of surfacing non-final provider states.
+const liveObs = (ext, status, minute = 30, [home, away] = [0, 0]) => {
+  const obs = { externalMatchId: ext, status, minute, score: { home, away }, events: [], nonce: ++seq };
+  obs.payloadHash = createHash('sha256').update(JSON.stringify(obs)).digest('hex');
+  return obs;
+};
+let recordClock = Date.now();
+const recordObs = (db, observations) => db.query('select public.futbeat_record_live_batch($1,$2,$3) v',
+  ['goal_api', new Date((recordClock = Math.max(recordClock + 1000, Date.now()))).toISOString(), JSON.stringify(observations)]);
+
+test('SUSPENDED then resumed: the newest provider state (LIVE) wins, never a final', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1);
+  await recordObs(db, [liveObs(m.ext, 'LIVE', 30)]);
+  await recordObs(db, [liveObs(m.ext, 'SUSPENDED', 31)]);
+  assert.equal((await shown(db, m)).status, 'SUSPENDED');
+  await recordObs(db, [liveObs(m.ext, 'LIVE', 32)]);
+  assert.equal((await shown(db, m)).status, 'LIVE');
+}));
+
+test('ABANDONED evidence before a rescheduled kickoff never absorbs the replayed fixture', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1, { minutes: -5 });
+  await recordObs(db, [liveObs(m.ext, 'ABANDONED', 3)]);
+  assert.equal((await shown(db, m)).status, 'ABANDONED');
+  // Provider reschedules the same fixture id; the calendar moves the kickoff.
+  // New kickoff after the ABANDONED observation; the replay is observed at it.
+  const kickoff = new Date(recordClock + 1000).toISOString();
+  await db.query("update futbeat_private.entities set payload=jsonb_set(payload,'{startTime}',to_jsonb($2::text)) where id=$1", [m.match, kickoff]);
+  const result = (await recordObs(db, [liveObs(m.ext, 'LIVE', 3, [1, 0])])).rows[0].v;
+  assert.notEqual(result.suppressedByCanonicalTerminal, true);
+  const model = await shown(db, m);
+  assert.equal(model.status, 'LIVE');
+  assert.deepEqual(model.score, { home: 1, away: 0 });
+}));
