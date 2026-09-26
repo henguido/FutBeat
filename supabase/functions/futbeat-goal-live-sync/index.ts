@@ -6,6 +6,7 @@ import {
   normalizeGoalPlayerSearch,
   normalizeGoalPlayerStatistics,
 } from "../_shared/goal_players.ts";
+import { normalizeFixtureEvents } from "../_shared/live_events.ts";
 import {
   GOAL_STANDINGS_ENDPOINT,
   goalStandingsRows,
@@ -64,111 +65,6 @@ function nonNegativeInteger(value: unknown) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function eventMinute(value: unknown) {
-  const match = clean(value).match(/^(\d+)/);
-  return match ? Number(match[1]) : null;
-}
-
-function asRows(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((item): item is Record<string, unknown> =>
-      item != null && typeof item === "object" && !Array.isArray(item)
-    )
-    : [];
-}
-
-function normalizeFixtureEvents(fixture: Record<string, unknown>) {
-  const homeTeam = fixture.homeTeam && typeof fixture.homeTeam === "object"
-    ? fixture.homeTeam as Record<string, unknown>
-    : {};
-  const awayTeam = fixture.awayTeam && typeof fixture.awayTeam === "object"
-    ? fixture.awayTeam as Record<string, unknown>
-    : {};
-  const homeTeamId = clean(homeTeam.id ?? fixture.homeTeamId);
-  const awayTeamId = clean(awayTeam.id ?? fixture.awayTeamId);
-  const events: Array<Record<string, unknown>> = [];
-
-  for (const row of asRows(fixture.events)) {
-    const providerType = clean(row.type).toUpperCase();
-    const type = providerType.includes("MISSED") && providerType.includes("PENAL")
-      ? "MISSED_PENALTY"
-      : providerType.includes("VAR")
-      ? "VAR"
-      : providerType.includes("GOAL")
-      ? "GOAL"
-      : "OTHER";
-    if (type === "OTHER") continue;
-
-    const homePlayer = clean(row.homeScorerId);
-    const awayPlayer = clean(row.awayScorerId);
-    const teamExternalId = homePlayer ? homeTeamId : awayPlayer ? awayTeamId : "";
-    const playerExternalId = homePlayer || awayPlayer;
-    const assistExternalId = clean(row.homeAssistId ?? row.awayAssistId);
-    const minute = eventMinute(row.time);
-    const eventKey = clean(row.id) ||
-      [type, minute ?? "na", teamExternalId, playerExternalId].join(":");
-
-    events.push({
-      eventKey,
-      type,
-      minute,
-      teamExternalId: teamExternalId || null,
-      playerExternalId: playerExternalId || null,
-      assistExternalId: assistExternalId || null,
-      payload: row,
-    });
-  }
-
-  for (const row of asRows(fixture.cards)) {
-    const card = clean(row.card).toLowerCase();
-    const type = card.includes("red") ? "RED_CARD" : "YELLOW_CARD";
-    const homePlayer = clean(row.homePlayerId);
-    const awayPlayer = clean(row.awayPlayerId);
-    const teamExternalId = homePlayer ? homeTeamId : awayPlayer ? awayTeamId : "";
-    const playerExternalId = homePlayer || awayPlayer;
-    const minute = eventMinute(row.time);
-    const eventKey = clean(row.id) ||
-      [type, minute ?? "na", teamExternalId, playerExternalId].join(":");
-
-    events.push({
-      eventKey,
-      type,
-      minute,
-      teamExternalId: teamExternalId || null,
-      playerExternalId: playerExternalId || null,
-      payload: row,
-    });
-  }
-
-  for (const row of asRows(fixture.substitutions)) {
-    const side = clean(row.team).toLowerCase();
-    const ids = clean(row.substitutionPlayerId)
-      .split("|")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    const teamExternalId = side === "home"
-      ? homeTeamId
-      : side === "away"
-      ? awayTeamId
-      : "";
-    const minute = eventMinute(row.time);
-    const eventKey = clean(row.id) ||
-      ["SUBSTITUTION", minute ?? "na", teamExternalId, ...ids].join(":");
-
-    events.push({
-      eventKey,
-      type: "SUBSTITUTION",
-      minute,
-      teamExternalId: teamExternalId || null,
-      playerExternalId: ids[0] || null,
-      assistExternalId: ids[1] || null,
-      payload: row,
-    });
-  }
-
-  return events;
 }
 
 async function sha256Hex(value: string) {

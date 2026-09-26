@@ -15,8 +15,9 @@ import { openDatabase } from '../storage/database.mjs';
 const token = 'test-only-cron-token-not-a-secret-123456789';
 const goalKey = 'test-only-goal-key-not-a-secret-XYZ';
 const read = (path) => readFile(new URL(`../../supabase/functions/${path}`, import.meta.url), 'utf8');
-const [workerSource, paginationSource, playersSource] = await Promise.all([
-  read('futbeat-goal-live-sync/index.ts'), read('_shared/results_pagination.ts'), read('_shared/goal_players.ts')]);
+const [workerSource, paginationSource, playersSource, liveEventsSource] = await Promise.all([
+  read('futbeat-goal-live-sync/index.ts'), read('_shared/results_pagination.ts'), read('_shared/goal_players.ts'),
+  read('_shared/live_events.ts')]);
 const stripImports = (source) => source.replace(/^import\s[\s\S]*?;\r?\n/gm, '');
 const stripExports = (source) => source.replace(/^export /gm, '');
 
@@ -53,7 +54,7 @@ function worker(db, goal) {
     Deno: { env: { get: (n) => ({ SUPABASE_URL: 'https://supabase.test', SUPABASE_SERVICE_ROLE_KEY: 'svc' })[n] },
       serve: (fn) => { handler = fn; } },
   });
-  const source = stripExports(paginationSource) + '\n' + stripExports(playersSource) + '\n' + stripImports(workerSource);
+  const source = stripExports(paginationSource) + '\n' + stripExports(playersSource) + '\n' + stripExports(liveEventsSource) + '\n' + stripImports(workerSource);
   vm.runInContext(stripTypeScriptTypes(source), context);
   return {
     calls, logs, unexpected,

@@ -1,6 +1,8 @@
 // Pure normalizers for stored GOAL match detail (lineups, statistics). Shared
 // by the futbeat-api edge function and node tests; no I/O here.
 
+import { parseEventMinute } from './live_events.ts';
+
 export type PlayerMedia = Record<string, { canonicalId?: unknown; image?: unknown }>;
 
 export const asRecord = (value: unknown): Record<string, unknown> =>
@@ -233,13 +235,7 @@ export function normalizeStatistics(value: unknown): StatRow[] {
   );
 }
 
-const minuteParts = (value: unknown) => {
-  const match = cleanText(value).match(/(\d+)(?:\s*\+\s*(\d+))?/);
-  return {
-    minute: match ? Number(match[1]) : null,
-    extraMinute: match?.[2] ? Number(match[2]) : null,
-  };
-};
+const minuteParts = parseEventMinute;
 
 const minuteValue = (value: unknown) => minuteParts(value).minute;
 const extraMinuteValue = (value: unknown) => minuteParts(value).extraMinute;
@@ -302,6 +298,7 @@ export function normalizeMatchDetail(
       return {
         type,
         minute: minuteValue(row.time),
+        providerEventId: cleanText(row.id) || null,
         extraMinute: extraMinuteValue(row.time),
         label: type === 'GOAL'
           ? 'Gol'
@@ -327,6 +324,7 @@ export function normalizeMatchDetail(
       return {
         type: card.toLowerCase().includes('red') ? 'RED_CARD' : 'YELLOW_CARD',
         minute: minuteValue(row.time),
+        providerEventId: cleanText(row.id) || null,
         extraMinute: extraMinuteValue(row.time),
         label: card || 'Tarjeta',
         detail:
@@ -351,6 +349,7 @@ export function normalizeMatchDetail(
       return {
         type: 'SUBSTITUTION',
         minute: minuteValue(row.time),
+        providerEventId: cleanText(row.id) || null,
         extraMinute: extraMinuteValue(row.time),
         label: 'Sustitución',
         detail: cleanText(row.substitution) || null,

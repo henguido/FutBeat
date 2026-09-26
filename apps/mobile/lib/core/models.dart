@@ -45,6 +45,202 @@ int _eventTypeOrder(String type) => switch (type) {
   _ => 9,
 };
 
+// Football phase of an event: kickoff, first half (incl. 45+x), halftime,
+// the rest of the match, events without a minute, full time. A missing
+// minute never moves a phase marker (FULL_TIME often has none).
+int _timelinePhase(Json event) {
+  final minute = event['minute'];
+  return switch (event['type']) {
+    'KICKOFF' => 0,
+    'HALFTIME' => 2,
+    'FULL_TIME' => 5,
+    _ when minute is! int => 4,
+    _ when minute <= 45 => 1,
+    _ => 3,
+  };
+}
+
+/// Football order: KICKOFF, first half by minute + added time, HALFTIME,
+/// second half / extra time, FULL_TIME last. Provider minutes are never
+/// rewritten; this is only a sort key.
+int compareTimelineEvents(Json a, Json b) {
+  final byPhase = _timelinePhase(a).compareTo(_timelinePhase(b));
+  if (byPhase != 0) return byPhase;
+  final byMinute = (a['minute'] as int? ?? 0).compareTo(
+    b['minute'] as int? ?? 0,
+  );
+  if (byMinute != 0) return byMinute;
+  final byExtra = (a['extraMinute'] as int? ?? 0).compareTo(
+    b['extraMinute'] as int? ?? 0,
+  );
+  if (byExtra != 0) return byExtra;
+  final byType = _eventTypeOrder(a['type'] as String? ?? '')
+      .compareTo(_eventTypeOrder(b['type'] as String? ?? ''));
+  if (byType != 0) return byType;
+  return (a['id'] as String? ?? '').compareTo(b['id'] as String? ?? '');
+}
+
+const _phaseEvents = {'KICKOFF', 'HALFTIME', 'FULL_TIME'};
+const _technicalEventCopy = 'Marcador actualizado';
+
+bool _isSynthetic(Json event) => event['synthetic'] == true;
+
+/// Removes internal copy: a provisional score-change goal renders as a
+/// plain goal, never as "Marcador actualizado".
+Json _presentable(Json event) {
+  if (!_isSynthetic(event) && event['detail'] != _technicalEventCopy) {
+    return event;
+  }
+  return Json.of(event)..remove('detail');
+}
+
+String? _eventSide(Json event, FootballMatch match) {
+  final teamId = event['teamId']?.toString();
+  if (teamId != null && teamId.isNotEmpty) {
+    if (teamId == match.homeId) return 'home';
+    if (teamId == match.awayId) return 'away';
+  }
+  for (final key in ['side', 'team']) {
+    final raw = event[key]?.toString().trim().toLowerCase() ?? '';
+    if (raw == 'home') return 'home';
+    if (raw == 'away') return 'away';
+  }
+  return null;
+}
+
+String? _upstreamKey(Json event) {
+  final key = (event['providerEventId'] ?? event['providerEventKey'])
+      ?.toString()
+      .trim();
+  if (key == null || key.isEmpty) return null;
+  // Detail rows come from GOAL; only GOAL (or unlabeled) keys are comparable.
+  final provider = event['provider']?.toString();
+  return provider == null || provider == 'goal_api' ? key : '$provider:$key';
+}
+
+int? _absoluteMinute(Json event) {
+  final minute = event['minute'];
+  if (minute is! int) return null;
+  final extra = event['extraMinute'];
+  return minute + (extra is int ? extra : 0);
+}
+
+bool _minutesCompatible(Json a, Json b) {
+  final minute = a['minute'];
+  if (minute is! int || minute != b['minute']) return false;
+  final ea = a['extraMinute'], eb = b['extraMinute'];
+  return ea is! int || eb is! int || ea == eb;
+}
+
+/// Same logical occurrence between two rich (non-synthetic) events.
+/// [sameIdSpace] is false when comparing detail rows (provider ids) with
+/// canonical events (canonical ids): player ids are then not comparable.
+bool _sameRichEvent(
+  Json a,
+  Json b,
+  FootballMatch match, {
+  required bool sameIdSpace,
+}) {
+  if (a['type'] != b['type']) return false;
+  if (a['id'] != null && a['id'] == b['id']) return true;
+  if (_phaseEvents.contains(a['type'])) return false;
+  final ka = _upstreamKey(a), kb = _upstreamKey(b);
+  if (ka != null && kb != null) {
+    if (ka == kb) return true;
+    // Two upstream row ids are two occurrences; composed keys are weak.
+    if (!ka.contains(':') && !kb.contains(':')) return false;
+  }
+  final sideA = _eventSide(a, match), sideB = _eventSide(b, match);
+  if (sideA != null && sideB != null && sideA != sideB) return false;
+  if (!sameIdSpace) {
+    // A detail row and a canonical event are two presentations of the same
+    // GOAL feed; the caller pairs them one-to-one, so this never folds two
+    // events of one source together (player ids are not comparable here).
+    return _minutesCompatible(a, b);
+  }
+  // Canonical vs canonical, conservatively (same rules as the backend):
+  // type + team + minute alone never merges two real events.
+  if (sideA == null || sideB == null) return false;
+  final pa = a['playerId'], pb = b['playerId'];
+  if (pa != null && pb != null && pa != pb) return false;
+  if (a['type'] == 'SUBSTITUTION') {
+    final ia = a['assistPlayerId'], ib = b['assistPlayerId'];
+    if (ia != null && ib != null && ia != ib) return false;
+  }
+  final sa = _scoreAfter(a), sb = _scoreAfter(b);
+  if (sa != null && sb != null && sa != sb) return false;
+  if (pa != null && pb != null) {
+    final va = _absoluteMinute(a), vb = _absoluteMinute(b);
+    return _minutesCompatible(a, b) ||
+        (va != null && vb != null && (va - vb).abs() <= 1);
+  }
+  // Without player identity on a side: only the same score after the event.
+  return sa != null && sa == sb && _minutesCompatible(a, b);
+}
+
+String? _scoreAfter(Json event) {
+  final score = event['score'];
+  if (score is! Map) return null;
+  final home = score['home'], away = score['away'];
+  return home is int && away is int ? '$home-$away' : null;
+}
+
+/// Folds each synthetic GOAL into at most one rich GOAL of the same side:
+/// the one whose ordinal among that side's rich goals equals the
+/// synthetic's score-after-goal, within 3 minutes (closest wins).
+List<Json> _foldSyntheticGoals(
+  List<Json> rich,
+  List<Json> synthetic,
+  FootballMatch match,
+) {
+  final ordinal = <Json, int>{};
+  for (final side in ['home', 'away']) {
+    final goals =
+        rich
+            .where((e) => e['type'] == 'GOAL' && _eventSide(e, match) == side)
+            .toList()
+          ..sort(compareTimelineEvents);
+    for (var i = 0; i < goals.length; i++) {
+      ordinal[goals[i]] = i + 1;
+    }
+  }
+  final absorbed = <Json>{};
+  final remaining = <Json>[];
+  for (final event in [...synthetic]..sort(compareTimelineEvents)) {
+    final side = _eventSide(event, match);
+    final score = event['score'];
+    final teamGoals = score is Map && side != null ? score[side] : null;
+    Json? best;
+    int? bestDistance;
+    for (final candidate in rich) {
+      if (candidate['type'] != 'GOAL' ||
+          side == null ||
+          _eventSide(candidate, match) != side ||
+          absorbed.contains(candidate)) {
+        continue;
+      }
+      if (teamGoals is int && ordinal[candidate] != teamGoals) continue;
+      final a = _absoluteMinute(candidate), b = _absoluteMinute(event);
+      final distance = a == null || b == null ? null : (a - b).abs();
+      if (!_minutesCompatible(candidate, event) &&
+          !(distance != null && distance <= 3) &&
+          !(distance == null && teamGoals is int)) {
+        continue;
+      }
+      if (best == null || (distance ?? 99) < (bestDistance ?? 99)) {
+        best = candidate;
+        bestDistance = distance ?? 99;
+      }
+    }
+    if (best == null) {
+      remaining.add(event);
+    } else {
+      absorbed.add(best);
+    }
+  }
+  return remaining;
+}
+
 class Entity {
   Entity(this.json);
   final Json json;
@@ -320,21 +516,11 @@ class FootballMatch {
   }
 
   List<Json> get events {
-    final items = (json['events'] as List? ?? const []).cast<Json>().toList();
-    items.sort((a, b) {
-      final byMinute = (a['minute'] as int? ?? -1).compareTo(
-        b['minute'] as int? ?? -1,
-      );
-      if (byMinute != 0) return byMinute;
-      final byExtra = (a['extraMinute'] as int? ?? 0).compareTo(
-        b['extraMinute'] as int? ?? 0,
-      );
-      if (byExtra != 0) return byExtra;
-      final byType = _eventTypeOrder(a['type'] as String? ?? '')
-          .compareTo(_eventTypeOrder(b['type'] as String? ?? ''));
-      if (byType != 0) return byType;
-      return (a['id'] as String? ?? '').compareTo(b['id'] as String? ?? '');
-    });
+    final items = (json['events'] as List? ?? const [])
+        .cast<Json>()
+        .map(_presentable)
+        .toList();
+    items.sort(compareTimelineEvents);
     return items;
   }
 
@@ -350,6 +536,12 @@ class FootballMatch {
   List<Json> get statistics => MatchDetail._maps(json['statistics']);
 }
 
+/// Match Center timeline: canonical events (already deduplicated by the
+/// backend) merged with Match Detail incidents. Final presentation guard,
+/// not the authority: detail rows win over their canonical twin (same
+/// upstream id, or same type/side/minute), synthetic goals fold into the
+/// rich goal they stand for, and two rich events with different players
+/// are never collapsed.
 List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
   final detailed = <Json>[
     for (var i = 0; i < detail.incidents.length; i++)
@@ -369,39 +561,56 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
           'team': detail.incidents[i]['team'],
         if (detail.incidents[i]['side'] != null)
           'side': detail.incidents[i]['side'],
+        if (detail.incidents[i]['providerEventId'] != null)
+          'providerEventId': detail.incidents[i]['providerEventId'],
         'detailSource': true,
       },
   ];
 
-  final detailedMoments = {
-    for (final event in detailed)
-      '${event['type']}|${event['minute'] ?? -1}|${event['extraMinute'] ?? 0}',
-  };
+  final phases = <Json>[];
+  final synthetic = <Json>[];
+  final canonical = <Json>[];
+  // Strongest canonical evidence first: identified player, then minute.
+  final ordered = [...match.events]
+    ..sort((a, b) {
+      final byPlayer = (a['playerId'] == null ? 1 : 0).compareTo(
+        b['playerId'] == null ? 1 : 0,
+      );
+      return byPlayer != 0 ? byPlayer : compareTimelineEvents(a, b);
+    });
+  for (final event in ordered) {
+    if (_phaseEvents.contains(event['type'])) {
+      if (!phases.any((e) => e['type'] == event['type'])) phases.add(event);
+    } else if (_isSynthetic(event)) {
+      synthetic.add(event);
+    } else if (!canonical.any(
+      (kept) => _sameRichEvent(kept, event, match, sameIdSpace: true),
+    )) {
+      canonical.add(event);
+    }
+  }
 
-  final merged = <Json>[
-    for (final event in match.events)
-      if (!detailedMoments.contains(
-            '${event['type']}|${event['minute'] ?? -1}|${event['extraMinute'] ?? 0}',
-          ) ||
-          {'KICKOFF', 'HALFTIME', 'FULL_TIME'}.contains(event['type']))
-        event,
+  // Each detail row replaces at most one canonical twin (one-to-one).
+  final replaced = <Json>{};
+  for (final row in detailed) {
+    for (final event in canonical) {
+      if (!replaced.contains(event) &&
+          _sameRichEvent(row, event, match, sameIdSpace: false)) {
+        replaced.add(event);
+        break;
+      }
+    }
+  }
+  final rich = [
+    ...canonical.where((event) => !replaced.contains(event)),
     ...detailed,
   ];
 
-  merged.sort((a, b) {
-    final byMinute = (a['minute'] as int? ?? -1).compareTo(
-      b['minute'] as int? ?? -1,
-    );
-    if (byMinute != 0) return byMinute;
-    final byExtra = (a['extraMinute'] as int? ?? 0).compareTo(
-      b['extraMinute'] as int? ?? 0,
-    );
-    if (byExtra != 0) return byExtra;
-    final byType = _eventTypeOrder(a['type'] as String? ?? '')
-        .compareTo(_eventTypeOrder(b['type'] as String? ?? ''));
-    if (byType != 0) return byType;
-    return (a['id'] as String? ?? '').compareTo(b['id'] as String? ?? '');
-  });
+  final merged = <Json>[
+    ...phases,
+    ...rich,
+    ..._foldSyntheticGoals(rich, synthetic, match).map(_presentable),
+  ]..sort(compareTimelineEvents);
   return merged;
 }
 
