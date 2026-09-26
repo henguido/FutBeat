@@ -274,7 +274,10 @@ void main() {
   ) async {
     final server = _Server((_, _) => _partial());
     final container = await _open(tester, server);
+    // Hechos: general info at once; the chronology lives only in En vivo.
     expect(find.text('Estadio Parcial'), findsWidgets);
+    expect(find.text('Anotador Parcial'), findsNothing);
+    await _tab(tester, 'En vivo');
     expect(find.text('Anotador Parcial'), findsWidgets);
     await _tab(tester, 'Alineación');
     expect(find.text('Cargando alineaciones…'), findsOneWidget);
@@ -469,11 +472,14 @@ void main() {
   ) async {
     final server = _Server((read, _) => read == 0 ? _partial() : null);
     final container = await _open(tester, server);
+    expect(find.text('Estadio Parcial'), findsWidgets);
+    await _tab(tester, 'En vivo');
     for (var step = 0; step < 240; step++) {
       await tester.pump(const Duration(milliseconds: 250));
-      expect(find.text('Estadio Parcial'), findsWidgets, reason: 'step $step');
-      expect(find.text('Anotador Parcial'), findsWidgets);
+      expect(find.text('Anotador Parcial'), findsWidgets, reason: 'step $step');
     }
+    await _tab(tester, 'Hechos');
+    expect(find.text('Estadio Parcial'), findsWidgets);
     expect(server.requestAware, 1);
     await _close(tester, container);
   });
@@ -489,6 +495,7 @@ void main() {
       ),
     );
     final container = await _open(tester, server);
+    await _tab(tester, 'En vivo');
     expect(find.text('Anotador Parcial'), findsWidgets);
     await _tab(tester, 'Estadísticas');
     expect(find.text('Tiros a puerta'), findsWidgets);
@@ -542,6 +549,7 @@ void main() {
         (_, _) => _detail(level: 'live', incidents: [_partialGoal]),
       );
       final container = await _open(tester, server);
+      await _tab(tester, 'En vivo');
       expect(find.text('Anotador Parcial'), findsWidgets);
       await _tab(tester, 'Alineación');
       expect(find.text('Sin alineaciones'), findsOneWidget);

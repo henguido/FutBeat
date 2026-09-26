@@ -90,6 +90,30 @@ class _OfflineDetailRepository extends ApiRepository {
   }
 }
 
+/// A tab of the (horizontally scrollable) Match Center TabBar, by label.
+Finder _tabLabel(String label) =>
+    find.descendant(of: find.byType(TabBar), matching: find.text(label));
+
+/// Brings a tab into view and taps it. Pumps (never settles), so pending
+/// spinners do not block the test.
+Future<void> _showTab(WidgetTester tester, String label) async {
+  await tester.ensureVisible(_tabLabel(label));
+  await tester.pump(const Duration(milliseconds: 300));
+  await tester.tap(_tabLabel(label), warnIfMissed: false);
+  // A non-adjacent jump animates across pages: let it finish frame by frame.
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+int _tabIndex(WidgetTester tester, String label) => tester
+    .widget<TabBar>(find.byType(TabBar))
+    .tabs
+    .indexWhere((tab) => tab is Tab && tab.text == label);
+
+TabController _controller(WidgetTester tester) =>
+    tester.widget<TabBar>(find.byType(TabBar)).controller!;
+
 void main() {
   testWidgets(
     'offline detail keeps summary, expires to empty and tabs never restart polling',
@@ -123,12 +147,12 @@ void main() {
       );
       await tester.pump();
       expect(find.text('2 - 1'), findsOneWidget);
-      await tester.tap(find.text('Estadísticas'));
+      await _showTab(tester, 'Estadísticas');
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(find.text('Sin estadísticas'), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsWidgets);
-      await tester.tap(find.text('Alineación'));
+      await _showTab(tester, 'Alineación');
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(find.text('Sin alineaciones'), findsNothing);
@@ -139,7 +163,7 @@ void main() {
       }
       await tester.pumpAndSettle();
       expect(find.text('Sin alineaciones'), findsOneWidget);
-      await tester.tap(find.text('Estadísticas'));
+      await _showTab(tester, 'Estadísticas');
       await tester.pumpAndSettle();
       expect(find.text('Sin estadísticas'), findsOneWidget);
       expect(repo.loads, 1);
@@ -549,7 +573,7 @@ void main() {
     );
   });
 
-  for (final selected in [1, 2]) {
+  for (final selected in ['Estadísticas', 'Alineación']) {
     testWidgets(
       'table changes preserve tab $selected; Tabla stays while its table goes',
       (tester) async {
@@ -586,33 +610,28 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(
-          find.text(selected == 1 ? 'Estadísticas' : 'Alineación'),
-        );
+        final controller = _controller(tester);
+        await _showTab(tester, selected);
         await tester.pumpAndSettle();
+        final selectedIndex = _tabIndex(tester, selected);
+        expect(controller.index, selectedIndex);
         hasTable = true;
         container.invalidate(matchContextSnapshotProvider('fb_match_test'));
         await tester.pumpAndSettle();
-        expect(
-          tester.widget<TabBar>(find.byType(TabBar)).controller!.index,
-          selected,
-        );
-        expect(
-          tester.widget<TabBar>(find.byType(TabBar)).controller!.length,
-          5,
-        );
-        await tester.tap(find.text('Tabla'));
+        // Refresh keeps the same controller, length and selection.
+        expect(identical(_controller(tester), controller), isTrue);
+        expect(controller.index, selectedIndex);
+        expect(controller.length, 6);
+        await _showTab(tester, 'Tabla');
         await tester.pumpAndSettle();
         hasTable = false;
         container.invalidate(matchContextSnapshotProvider('fb_match_test'));
         await tester.pumpAndSettle();
         // Stable structure: the tab and the selection stay, the content
         // reports the state.
-        expect(tester.widget<TabBar>(find.byType(TabBar)).controller!.index, 3);
-        expect(
-          tester.widget<TabBar>(find.byType(TabBar)).controller!.length,
-          5,
-        );
+        expect(identical(_controller(tester), controller), isTrue);
+        expect(controller.index, _tabIndex(tester, 'Tabla'));
+        expect(controller.length, 6);
         expect(find.text('Sin tabla disponible'), findsOneWidget);
         expect(detailStarts, 1);
         expect(tester.takeException(), isNull);

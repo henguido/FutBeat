@@ -591,10 +591,13 @@ void main() {
       _Server((_) => _context(), detail: (_) => _detail(partial: true)),
     );
     expect(_selectedTab(tester), 'Hechos');
-    expect(find.text('Anotador Parcial'), findsWidgets);
+    // Hechos keeps the general info; the chronology lives only in En vivo.
     expect(find.text('Estadio Fase Uno'), findsWidgets);
+    expect(find.text('Anotador Parcial'), findsNothing);
     await _scrollTo(tester, find.text('Información del partido'));
     expect(find.text('Información del partido'), findsOneWidget);
+    await _tab(tester, 'En vivo');
+    expect(find.text('Anotador Parcial'), findsWidgets);
     await _close(tester, container);
   });
 }
