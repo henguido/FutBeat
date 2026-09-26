@@ -91,6 +91,35 @@ test('A. SCHEDULED -> LIVE -> HALFTIME -> LIVE -> FT via live polls: FINISHED_PE
   assert.equal(await recoveryRow(db, m.ext), null, 'no recovery row was ever needed');
 }));
 
+test('#132: demand wake serves the opened Match Center before terminal recovery', () => withDb(async (db) => {
+  const [recover, opened] = await seedLive(db, 2, { minutes: 30 });
+  await db.query(`insert into futbeat_private.live_terminal_recovery(
+    provider,external_match_id,canonical_match_id,reason,state,last_live_status,
+    detected_at,attempts,next_attempt_at)
+    values('goal_api',$1,$2,'absent_from_live','PENDING','LIVE',now(),0,now()-interval '1 second')`,
+  [recover.ext, recover.match]);
+  // Give the central manager a known healthy budget and enqueue the explicit
+  // Match Center demand that woke this worker.
+  await db.query(`insert into futbeat_private.provider_call_ledger(
+    provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining)
+    values('goal_api','live-goal','test',now(),now(),'SUCCEEDED',700)`);
+  await db.query('select public.futbeat_request_match_detail($1)', [opened.match]);
+
+  const w = worker(db, goalSim({ details: {
+    [recover.ext]: fixtureOf(recover, 'FINISHED', 90, ['2', '1']),
+    [opened.ext]: fixtureOf(opened, 'SCHEDULED', 0, ['0', '0']),
+  } }));
+  const result = await w.run('demand');
+  assert.equal(result.status, 'ok');
+  assert.equal(result.detail[0].status, 'ok', JSON.stringify(result.detail));
+
+  const fixtureCalls = w.goalCalls().filter((url) => url.includes('/v1/fixtures/'));
+  assert.equal(fixtureCalls.length, 1, fixtureCalls.join('\n'));
+  assert.ok(fixtureCalls[0].includes(encodeURIComponent(opened.ext)), fixtureCalls[0]);
+  assert.equal((await recoveryRow(db, recover.ext)).attempts, 0,
+    'interactive demand must not spend a recovery attempt');
+}));
+
 test('B. LIVE disappears from a complete poll -> recovery row, then detail fetch resolves FINISHED 2-3', () => withDb(async (db) => {
   const [m] = await seedLive(db, 1);
   let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60)]] }));
