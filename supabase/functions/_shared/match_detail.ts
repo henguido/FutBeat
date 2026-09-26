@@ -315,6 +315,10 @@ export function normalizeMatchDetail(
         ].filter((part) => part.length > 0).join(' · ') || null,
         playerId: cleanText(row.homeScorerId) || cleanText(row.awayScorerId) || null,
         assistPlayerId: cleanText(row.homeAssistId) || cleanText(row.awayAssistId) || null,
+        // Structured names (only what the provider sent; never inferred).
+        playerName: scorer || null,
+        assistName: assist || null,
+        info: cleanText(row.info) || null,
         side,
       };
     }),

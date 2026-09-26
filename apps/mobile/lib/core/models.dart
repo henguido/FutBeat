@@ -661,6 +661,14 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
           'side': detail.incidents[i]['side'],
         if (detail.incidents[i]['providerEventId'] != null)
           'providerEventId': detail.incidents[i]['providerEventId'],
+        // Structured provider names/ids (#99), never inferred.
+        for (final key in const [
+          'playerName',
+          'assistName',
+          'playerId',
+          'assistPlayerId',
+        ])
+          if (detail.incidents[i][key] != null) key: detail.incidents[i][key],
         'detailSource': true,
       },
   ];
