@@ -1106,9 +1106,11 @@ async function syncDemand(
   { allowRecovery = false }: { allowRecovery?: boolean } = {},
 ) {
   const detail: unknown[] = [];
-  // Up to three details per run. An interactive demand wake-up skips terminal
-  // recovery entirely; detail-only maintenance may opt into recovery.
-  for (let i = 0; i < 3; i++) {
+  // Interactive wake-ups serve exactly the highest-priority queued detail and
+  // stop. They must not turn the user's open into free background-drain work.
+  // detail-only maintenance keeps the historical batch of up to three.
+  const detailLimit = allowRecovery ? 3 : 1;
+  for (let i = 0; i < detailLimit; i++) {
     try {
       const result = await syncOneMatchDetail({ allowRecovery }) as Record<string, unknown>;
       detail.push(result);
