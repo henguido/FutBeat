@@ -257,6 +257,10 @@ void main() {
         ],
       ),
     );
+    expect(find.text('Eventos del partido'), findsNothing);
+    await tester.ensureVisible(find.text('En vivo'));
+    await tester.tap(find.text('En vivo'));
+    await tester.pumpAndSettle();
     expect(find.text('Inicio'), findsOneWidget);
     expect(find.text('Medio tiempo'), findsOneWidget);
     expect(find.byType(EventGlyph), findsNWidgets(5));
@@ -308,7 +312,14 @@ void main() {
 
   testWidgets('missing statistics show a final empty state', (tester) async {
     await _pumpMatch(tester, _payload(), detail: _detail());
-    await tester.tap(find.text('Estadísticas'));
+    // Estadísticas is the 5th tab: bring it into the scrollable TabBar first.
+    final tab = find.descendant(
+      of: find.byType(TabBar),
+      matching: find.text('Estadísticas'),
+    );
+    await tester.ensureVisible(tab);
+    await tester.pumpAndSettle();
+    await tester.tap(tab);
     await tester.pumpAndSettle();
     expect(find.text('Sin estadísticas'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -381,10 +392,11 @@ void main() {
   ) async {
     await _pumpMatch(tester, _payload());
     expect(_tabLabels(tester), [
-      'Previa',
-      'Estadísticas',
+      'Hechos',
+      'En vivo',
       'Alineación',
       'Tabla',
+      'Estadísticas',
       'Cara a cara',
     ]);
     await tester.ensureVisible(find.text('Tabla'));
@@ -400,10 +412,11 @@ void main() {
   ) async {
     await _pumpMatch(tester, _payload(table: true));
     expect(_tabLabels(tester), [
-      'Previa',
-      'Estadísticas',
+      'Hechos',
+      'En vivo',
       'Alineación',
       'Tabla',
+      'Estadísticas',
       'Cara a cara',
     ]);
     await tester.ensureVisible(find.text('Tabla'));

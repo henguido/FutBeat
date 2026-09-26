@@ -315,14 +315,15 @@ Future<void> _scrollTo(WidgetTester tester, Finder target) async {
 }
 
 void main() {
-  testWidgets('1. tabs are Previa / Estadísticas / Alineación / Tabla (+ '
-      'Cara a cara since phase 2)', (tester) async {
+  testWidgets('1. finished tabs are Hechos / En vivo / Alineación / Tabla / '
+      'Estadísticas / Cara a cara', (tester) async {
     final container = await _open(tester, _Server((_) => _context()));
     expect(_tabLabels(tester), [
-      'Previa',
-      'Estadísticas',
+      'Hechos',
+      'En vivo',
       'Alineación',
       'Tabla',
+      'Estadísticas',
       'Cara a cara',
     ]);
     expect(find.text('Resumen'), findsNothing);
@@ -333,10 +334,16 @@ void main() {
     tester,
   ) async {
     final server = _Server(
-      (i) =>
-          i == 0 ? _context(table: false, standingsPending: true) : _context(),
+      (i) => i == 0
+          ? _context(
+              status: 'SCHEDULED',
+              table: false,
+              standingsPending: true,
+            )
+          : _context(status: 'LIVE'),
     );
     final container = await _open(tester, server);
+    expect(_selectedTab(tester), 'Previa');
     await _tab(tester, 'Tabla');
     final controller = tester.widget<TabBar>(find.byType(TabBar)).controller;
     await _elapse(
@@ -347,6 +354,8 @@ void main() {
     expect(find.text('Clasificación'), findsOneWidget);
     final bar = tester.widget<TabBar>(find.byType(TabBar));
     expect(bar.controller, same(controller));
+    expect(bar.controller!.length, 6);
+    expect((bar.tabs.first as Tab).text, 'Hechos');
     expect(_selectedTab(tester), 'Tabla');
     await _close(tester, container);
   });
@@ -534,6 +543,7 @@ void main() {
     expect(find.text('Local Uno'), findsWidgets);
     expect(find.text('Visita Uno'), findsWidgets);
     expect(find.text('Liga Fase Uno · Jornada 5'), findsOneWidget);
+    expect(_selectedTab(tester), 'Previa');
     expect(tester.takeException(), isNull);
     await _close(tester, container);
   });
@@ -546,6 +556,7 @@ void main() {
     );
     expect(find.text('2 - 1'), findsOneWidget);
     expect(find.text('63′ · EN VIVO'), findsOneWidget);
+    expect(_selectedTab(tester), 'Hechos');
     expect(tester.takeException(), isNull);
     await _close(tester, container);
   });
@@ -572,18 +583,21 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('22. #101 partial detail stays visible in Previa', (
+  testWidgets('22. #101 partial detail stays visible in Hechos', (
     tester,
   ) async {
     final container = await _open(
       tester,
       _Server((_) => _context(), detail: (_) => _detail(partial: true)),
     );
-    expect(_selectedTab(tester), 'Previa');
-    expect(find.text('Anotador Parcial'), findsWidgets);
+    expect(_selectedTab(tester), 'Hechos');
+    // Hechos keeps the general info; the chronology lives only in En vivo.
     expect(find.text('Estadio Fase Uno'), findsWidgets);
+    expect(find.text('Anotador Parcial'), findsNothing);
     await _scrollTo(tester, find.text('Información del partido'));
     expect(find.text('Información del partido'), findsOneWidget);
+    await _tab(tester, 'En vivo');
+    expect(find.text('Anotador Parcial'), findsWidgets);
     await _close(tester, container);
   });
 }

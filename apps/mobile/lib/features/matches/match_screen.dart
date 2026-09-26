@@ -91,7 +91,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     super.initState();
     // Stable structure: Tabla always exists (its content reports the state),
     // so tabs never appear/disappear while data arrives.
-    _tabs = TabController(length: 5, vsync: this);
+    _tabs = TabController(length: 6, vsync: this);
     _detailRefreshIndicatorTimer = Timer(
       matchDetailRefreshIndicatorDuration,
       () {
@@ -307,6 +307,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         !match.showKickoff ||
         (match.isAwaitingUpdate && detail.pending) ||
         mergedMatchTimeline(match, detail).isNotEmpty;
+    final factsTabLabel = match.showKickoff ? 'Previa' : 'Hechos';
     final previewSections = [
       const _SectionTitle('Forma reciente'),
       RecentFormSection(preview: preview, data: data, match: match),
@@ -346,10 +347,11 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ),
       dividerColor: Colors.transparent,
       tabs: [
-        const Tab(text: 'Previa', height: 42),
-        const Tab(text: 'Estadísticas', height: 42),
+        Tab(text: factsTabLabel, height: 42),
+        const Tab(text: 'En vivo', height: 42),
         const Tab(text: 'Alineación', height: 42),
         const Tab(text: 'Tabla', height: 42),
+        const Tab(text: 'Estadísticas', height: 42),
         const Tab(text: 'Cara a cara', height: 42),
       ],
     );
@@ -384,7 +386,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         body: TabBarView(
           controller: _tabs,
           children: [
-            _MatchTabList('previa', [
+            _MatchTabList('facts', [
               if (data.demo) const DemoNotice(),
               // Before kickoff the match facts lead; afterwards the story.
               if (match.showKickoff) ...[
@@ -400,10 +402,6 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
               if (detail.videos.isNotEmpty) ...[
                 const _SectionTitle('Resumen oficial'),
                 PostMatchVideos(detail),
-              ],
-              if (showEvents) ...[
-                const _SectionTitle('Eventos del partido'),
-                MatchTimeline(data, match, detail),
               ],
               if (!match.showKickoff && detail.topRated().isNotEmpty) ...[
                 _SectionTitle(_topRatedTitle(match, detail)),
@@ -451,7 +449,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton.icon(
-                    onPressed: () => _tabs.animateTo(1),
+                    onPressed: () => _tabs.animateTo(4),
                     icon: const Icon(Icons.bar_chart_rounded, size: 18),
                     label: const Text('Ver todas las estadísticas'),
                   ),
@@ -468,11 +466,16 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                 ...previewSections,
               ],
             ]),
-            _MatchTabList('estadisticas', [
+            _MatchTabList('live', [
               if (data.demo) const DemoNotice(),
-              _StatsLegend(home: home, away: away),
-              const SizedBox(height: 12),
-              Statistics(match, detail: detail),
+              if (showEvents) ...[
+                const _SectionTitle('Eventos del partido'),
+                MatchTimeline(data, match, detail),
+              ] else
+                const _EmptySection(
+                  Icons.sports_soccer_rounded,
+                  'El partido aún no inicia',
+                ),
             ]),
             _MatchTabList('alineacion', [
               if (data.demo) const DemoNotice(),
@@ -488,6 +491,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                 refreshing: standingsRefreshing || _standingsManualRetry,
                 onRetry: _retryStandings,
               ),
+            ]),
+            _MatchTabList('estadisticas', [
+              if (data.demo) const DemoNotice(),
+              _StatsLegend(home: home, away: away),
+              const SizedBox(height: 12),
+              Statistics(match, detail: detail),
             ]),
             _MatchTabList('cara-a-cara', [
               if (data.demo) const DemoNotice(),
