@@ -852,6 +852,29 @@ void main() {
     );
     expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
     expect(tester.takeException(), isNull);
+
+    // Horizontal fling: left = next day, right = previous day. The strip
+    // shows selected-1..selected+1, so visible dates reveal the selection.
+    final swipe = find.byKey(const ValueKey('matches-date-swipe'));
+    DateTime day(int offset) => today.add(Duration(days: offset));
+    await tester.fling(swipe, const Offset(-300, 0), 1200);
+    await tester.pumpAndSettle();
+    expect(find.text(compact(day(3))), findsOneWidget);
+    expect(find.text(compact(today)), findsNothing);
+    for (var i = 0; i < 2; i++) {
+      await tester.fling(swipe, const Offset(300, 0), 1200);
+      await tester.pumpAndSettle();
+    }
+    expect(find.text(compact(day(-1))), findsOneWidget);
+    // A slow horizontal drag is not a day change.
+    await tester.timedDrag(
+      swipe,
+      const Offset(-60, 0),
+      const Duration(seconds: 1),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(compact(day(-1))), findsOneWidget);
+    expect(find.text(compact(day(2))), findsNothing);
   });
 
   testWidgets('a followed competition gets its own block before all matches', (
