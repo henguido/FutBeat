@@ -484,6 +484,57 @@ class MatchDetail {
   List<Json> get incidents => _maps(json['incidents']);
   List<Json> get videos => _maps(json['videos']);
 
+  /// #99 "Jugador del partido" / "Mejores puntuados": every player from the
+  /// four lineup lists whose rating is a real, positive number, deduplicated
+  /// by canonical id (falling back to name+side) and sorted deterministically
+  /// (rating desc, then name asc, then side asc). Never invents a rating.
+  List<({Json player, String side})> topRated({int limit = 3}) {
+    final entries =
+        <({Json player, String side})>[
+          for (final player in homeStarters) (player: player, side: 'home'),
+          for (final player in homeSubstitutes) (player: player, side: 'home'),
+          for (final player in awayStarters) (player: player, side: 'away'),
+          for (final player in awaySubstitutes) (player: player, side: 'away'),
+        ].where((entry) {
+          final rating = entry.player['rating'];
+          return rating is num && rating > 0;
+        }).toList();
+
+    final seen = <String>{};
+    final deduped = <({Json player, String side})>[];
+    for (final entry in entries) {
+      final canonicalId = entry.player['canonicalId']?.toString();
+      final key = canonicalId != null && canonicalId.isNotEmpty
+          ? 'id:$canonicalId'
+          : 'name:${entry.player['name']}|${entry.side}';
+      if (seen.add(key)) deduped.add(entry);
+    }
+
+    deduped.sort((a, b) {
+      final ratingA = (a.player['rating'] as num).toDouble();
+      final ratingB = (b.player['rating'] as num).toDouble();
+      if (ratingA != ratingB) return ratingB.compareTo(ratingA);
+      final nameA = a.player['name']?.toString() ?? '';
+      final nameB = b.player['name']?.toString() ?? '';
+      final nameCompare = nameA.compareTo(nameB);
+      if (nameCompare != 0) return nameCompare;
+      return a.side.compareTo(b.side);
+    });
+
+    return deduped.take(limit).toList();
+  }
+
+  /// The single standout, only when their rating strictly beats the runner
+  /// up's; a tie at the top means no individual player of the match.
+  ({Json player, String side})? get playerOfTheMatch {
+    final top = topRated(limit: 2);
+    if (top.isEmpty) return null;
+    if (top.length == 1) return top.first;
+    final first = (top.first.player['rating'] as num).toDouble();
+    final second = (top[1].player['rating'] as num).toDouble();
+    return first > second ? top.first : null;
+  }
+
   static String? _optional(dynamic value) {
     final result = value?.toString().trim() ?? '';
     return result.isEmpty ? null : result;

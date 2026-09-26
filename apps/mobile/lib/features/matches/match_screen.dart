@@ -387,6 +387,27 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                 const _SectionTitle('Eventos del partido'),
                 MatchTimeline(data, match, detail),
               ],
+              if (!match.showKickoff && detail.topRated().isNotEmpty) ...[
+                _SectionTitle(_topRatedTitle(match, detail)),
+                if (match.isLive)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'Provisional',
+                      style: TextStyle(
+                        color: muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                TopRatedCard(
+                  key: const ValueKey('top-rated-card'),
+                  topRated: detail.topRated(),
+                  home: home,
+                  away: away,
+                ),
+              ],
               if (hasStats) ...[
                 const _SectionTitle('Estadísticas clave'),
                 Statistics(match, detail: detail, limit: 4),
@@ -514,6 +535,126 @@ class _MatchTabList extends StatelessWidget {
       ),
     ],
   );
+}
+
+/// #99: "Jugador del partido" only once the match is over and a single
+/// player stands out (no tie at the top); a live match shows a provisional
+/// leader; otherwise a calmer "Mejores puntuados" plural.
+String _topRatedTitle(FootballMatch match, MatchDetail detail) {
+  if (match.isFinished && detail.playerOfTheMatch != null) {
+    return 'Jugador del partido';
+  }
+  if (match.isLive) return 'Mejor puntuado';
+  return 'Mejores puntuados';
+}
+
+class TopRatedCard extends StatelessWidget {
+  const TopRatedCard({
+    required this.topRated,
+    required this.home,
+    required this.away,
+    super.key,
+  });
+
+  final List<({Json player, String side})> topRated;
+  final Entity home;
+  final Entity away;
+
+  String _teamName(String side) => side == 'home' ? home.name : away.name;
+
+  @override
+  Widget build(BuildContext context) {
+    if (topRated.isEmpty) return const SizedBox.shrink();
+    final top = topRated.first;
+    final rest = topRated.skip(1).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .04),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _TopRatedEntry(
+            entry: top,
+            teamName: _teamName(top.side),
+            prominent: true,
+          ),
+          for (var i = 0; i < rest.length; i++) ...[
+            const SizedBox(height: 8),
+            _TopRatedEntry(
+              key: ValueKey('top-rated-${i + 1}'),
+              entry: rest[i],
+              teamName: _teamName(rest[i].side),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TopRatedEntry extends StatelessWidget {
+  const _TopRatedEntry({
+    required this.entry,
+    required this.teamName,
+    this.prominent = false,
+    super.key,
+  });
+
+  final ({Json player, String side}) entry;
+  final String teamName;
+  final bool prominent;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = entry.player;
+    final name = player['name']?.toString() ?? 'Jugador';
+    final canonicalId = player['canonicalId']?.toString();
+    final canOpenProfile = canonicalId != null && canonicalId.isNotEmpty;
+
+    final content = Row(
+      children: [
+        _PlayerAvatar(player, size: prominent ? 52 : 38),
+        SizedBox(width: prominent ? 12 : 8),
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: prominent ? 15 : 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                teamName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: muted, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        _RatingBadge(player['rating'] as num),
+      ],
+    );
+
+    if (!canOpenProfile) return content;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => context.push('/player/$canonicalId'),
+      child: content,
+    );
+  }
 }
 
 class _SectionTitle extends StatelessWidget {
