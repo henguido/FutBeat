@@ -936,7 +936,13 @@ Json _mergeDetailSide(
   return {
     ...current,
     ...next,
-    'formation': _latestNonEmpty(current['formation'], next['formation']),
+    'formation':
+        replaceExisting ||
+            current['formation'] == null ||
+            (current['formation'] is String &&
+                (current['formation'] as String).trim().isEmpty)
+        ? _latestNonEmpty(current['formation'], next['formation'])
+        : current['formation'],
     'starters': acceptNextPlayers
         ? _authoritativePlayerList(rememberedPlayers, next['starters'])
         : current['starters'],

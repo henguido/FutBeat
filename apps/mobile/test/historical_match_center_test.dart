@@ -721,12 +721,14 @@ void main() {
       for (var index = 1; index <= 11; index++)
         {'id': 'full-$index', 'name': 'Titular completo $index'},
     ];
+    (remembered['home'] as Map<String, dynamic>)['formation'] = '4-3-3';
     remembered['statistics'] = [
       for (var index = 1; index <= 5; index++)
         {'label': 'Estadística completa $index', 'home': index, 'away': 0},
     ];
     final live = _detail(level: 'live', lineup: true, stats: true);
     live['home'] = {
+      'formation': '3-5-2',
       'starters': [
         {'id': 'live-only', 'name': 'Fila parcial en vivo'},
       ],
@@ -748,6 +750,7 @@ void main() {
     expect(detail.detailLevel, 'full');
     expect(detail.homeStarters, hasLength(11));
     expect(detail.homeStarters.first['name'], 'Titular completo 1');
+    expect(detail.homeFormation, '4-3-3');
     expect(detail.statistics, hasLength(5));
     expect(detail.statistics.first['label'], 'Estadística completa 1');
     await _close(tester, container);
