@@ -176,6 +176,7 @@ class PushService {
   String? pendingConfirmationEmail;
   String? recoveryAccessToken;
   int recoveryGeneration = 0;
+  Future<void> recoveryUpdates = Future.value();
   String? token;
   StreamSubscription<String>? rotation;
   StreamSubscription<Set<String>>? follows;
@@ -357,17 +358,27 @@ class PushService {
     if (password.length < 8) {
       throw ArgumentError('Password must contain at least 8 characters');
     }
-    await dio.put(
-      '${config.supabaseUrl}/auth/v1/user',
-      data: {'password': password},
-      options: Options(
-        headers: {'apikey': config.publicKey, 'Authorization': 'Bearer $token'},
-      ),
-    );
-    if (generation == recoveryGeneration && token == recoveryAccessToken) {
-      recoveryAccessToken = null;
-      recoveryGeneration++;
-    }
+    final operation = recoveryUpdates.catchError((_) {}).then((_) async {
+      if (generation != recoveryGeneration || token != recoveryAccessToken) {
+        return;
+      }
+      await dio.put(
+        '${config.supabaseUrl}/auth/v1/user',
+        data: {'password': password},
+        options: Options(
+          headers: {
+            'apikey': config.publicKey,
+            'Authorization': 'Bearer $token',
+          },
+        ),
+      );
+      if (generation == recoveryGeneration && token == recoveryAccessToken) {
+        recoveryAccessToken = null;
+        recoveryGeneration++;
+      }
+    });
+    recoveryUpdates = operation;
+    await operation;
   }
 
   Future<void> refreshSession() async {
@@ -676,21 +687,42 @@ class PushService {
     if (!accountConfigured || !authenticated) {
       throw StateError('Authentication required');
     }
-    await pending.catchError((_) {});
-    final response = await dio.post<Map<String, dynamic>>(
-      '${config.supabaseUrl}/functions/v1/futbeat-delete-account',
-      options: authHeaders,
-    );
-    if (response.data?['deleted'] != true) {
-      throw StateError('Account deletion was not confirmed');
-    }
-
+    final wasEnabled = enabled;
     await rotation?.cancel();
     await follows?.cancel();
     renewal?.cancel();
     rotation = null;
     follows = null;
     renewal = null;
+    await pending.catchError((_) {});
+    try {
+      final response = await dio.post<Map<String, dynamic>>(
+        '${config.supabaseUrl}/functions/v1/futbeat-delete-account',
+        options: authHeaders,
+      );
+      if (response.data?['deleted'] != true) {
+        throw StateError('Account deletion was not confirmed');
+      }
+    } catch (_) {
+      if (authenticated && !disposed) {
+        await _startAccountSync();
+        if (wasEnabled) {
+          enabled = true;
+          rotation = tokens.rotations.listen((value) {
+            pending = pending
+                .catchError((_) {})
+                .then((_) async {
+                  if (disposed || !enabled) return;
+                  token = value;
+                  await register(true);
+                })
+                .catchError((_) {});
+          });
+        }
+      }
+      rethrow;
+    }
+
     enabled = false;
     token = null;
     session = null;

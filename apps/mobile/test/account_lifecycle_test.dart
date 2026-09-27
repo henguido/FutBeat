@@ -28,11 +28,15 @@ class _Http {
     this.fail = const {},
     this.pkceGates = const {},
     this.passwordUpdateGate,
+    this.onDelete,
   }) {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
           calls.add(options);
+          if (options.path.endsWith('futbeat-delete-account')) {
+            onDelete?.call();
+          }
           if (fail.any(options.path.startsWith)) {
             handler.reject(
               DioException(
@@ -78,6 +82,7 @@ class _Http {
   final Set<String> fail;
   final Map<String, Completer<void>> pkceGates;
   final Completer<void>? passwordUpdateGate;
+  final void Function()? onDelete;
   final calls = <RequestOptions>[];
 }
 
@@ -85,6 +90,7 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
   Set<String> fail = const {},
   Map<String, Completer<void>> pkceGates = const {},
   Completer<void>? passwordUpdateGate,
+  void Function()? onDelete,
 }) async {
   FlutterSecureStorage.setMockInitialValues({});
   final db = AppDatabase(NativeDatabase.memory());
@@ -92,6 +98,7 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
     fail: fail,
     pkceGates: pkceGates,
     passwordUpdateGate: passwordUpdateGate,
+    onDelete: onDelete,
   );
   final service = PushService(
     const LiveRealtimeConfig(
@@ -309,7 +316,7 @@ void main() {
   );
 
   test(
-    'an older password update cannot clear a newer recovery token',
+    'password updates are serialized and the newest recovery wins',
     () async {
       final updateGate = Completer<void>();
       final value = await _service(passwordUpdateGate: updateGate);
@@ -321,14 +328,30 @@ void main() {
       await value.service.beginPasswordRecovery(
         Uri.parse('futbeat://auth/recovery?code=first'),
       );
-      final oldUpdate = value.service.updateRecoveredPassword('new-password');
+      final oldUpdate = value.service.updateRecoveredPassword('old-password');
+      await Future<void>.delayed(Duration.zero);
       await value.service.requestPasswordReset('person@example.com');
       await value.service.beginPasswordRecovery(
         Uri.parse('futbeat://auth/recovery?code=second'),
       );
+      final newUpdate = value.service.updateRecoveredPassword('new-password');
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        value.http.calls.where((call) => call.method == 'PUT'),
+        hasLength(1),
+      );
       updateGate.complete();
-      await oldUpdate;
-      expect(value.service.recoveryAccessToken, 'recovery-access-second');
+      await Future.wait([oldUpdate, newUpdate]);
+      expect(
+        value.http.calls
+            .where((call) => call.method == 'PUT')
+            .map((call) => call.data),
+        [
+          {'password': 'old-password'},
+          {'password': 'new-password'},
+        ],
+      );
+      expect(value.service.recoveryAccessToken, isNull);
     },
   );
 
@@ -458,23 +481,33 @@ void main() {
   test(
     'delete failure keeps session; success clears identity and account timers',
     () async {
+      late PushService failedService;
+      var quiescedBeforeDelete = false;
       final failed = await _service(
         fail: {'https://supabase.test/functions/v1/futbeat-delete-account'},
+        onDelete: () {
+          quiescedBeforeDelete =
+              failedService.renewal == null &&
+              failedService.rotation == null &&
+              failedService.follows == null;
+        },
       );
+      failedService = failed.service;
       addTearDown(() async {
         failed.service.dispose();
         await failed.db.close();
       });
-      failed.service.session = {
-        'access_token': 'a',
-        'refresh_token': 'r',
-        'user': {'email': 'a@b.test'},
-      };
+      await failed.service.signIn('user@example.com', 'password-test');
+      expect(failed.service.renewal, isNotNull);
+      expect(failed.service.follows, isNotNull);
       await expectLater(
         failed.service.deleteAccount(),
         throwsA(isA<DioException>()),
       );
+      expect(quiescedBeforeDelete, isTrue);
       expect(failed.service.authenticated, isTrue);
+      expect(failed.service.renewal, isNotNull);
+      expect(failed.service.follows, isNotNull);
 
       final value = await _service();
       addTearDown(() async {
