@@ -925,14 +925,11 @@ Json _mergeDetailSide(
   Json current,
   Json next, {
   required bool replaceExisting,
+  required List<dynamic> rememberedPlayers,
 }) {
   final nextHasPlayers = _hasLineupPlayers(next);
   final acceptNextPlayers =
       nextHasPlayers && (replaceExisting || !_hasLineupPlayers(current));
-  final rememberedPlayers = <dynamic>[
-    if (current['starters'] is List) ...current['starters'] as List,
-    if (current['substitutes'] is List) ...current['substitutes'] as List,
-  ];
   return {
     ...current,
     ...next,
@@ -968,15 +965,25 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   final replaceExisting =
       _detailLevelRank(next.detailLevel) >=
       _detailLevelRank(current.detailLevel);
+  final rememberedPlayers = <dynamic>[
+    if (current.home['starters'] is List) ...current.home['starters'] as List,
+    if (current.home['substitutes'] is List)
+      ...current.home['substitutes'] as List,
+    if (current.away['starters'] is List) ...current.away['starters'] as List,
+    if (current.away['substitutes'] is List)
+      ...current.away['substitutes'] as List,
+  ];
   final home = _mergeDetailSide(
     current.home,
     next.home,
     replaceExisting: replaceExisting,
+    rememberedPlayers: rememberedPlayers,
   );
   final away = _mergeDetailSide(
     current.away,
     next.away,
     replaceExisting: replaceExisting,
+    rememberedPlayers: rememberedPlayers,
   );
   final currentStatistics = current.json['statistics'];
   final statistics =
