@@ -7,6 +7,7 @@ import 'core/models.dart';
 import 'core/theme.dart';
 import 'core/push.dart';
 import 'features/profile/profile_screen.dart';
+import 'features/profile/password_recovery_screen.dart';
 import 'features/matches/matches_screen.dart';
 import 'features/matches/match_screen.dart';
 import 'features/entities/entity_screen.dart';
@@ -28,6 +29,10 @@ GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
     ),
   ),
   routes: [
+    GoRoute(
+      path: '/recovery',
+      builder: (_, state) => PasswordRecoveryScreen(uri: state.uri),
+    ),
     ShellRoute(
       builder: (context, state, child) =>
           AppShell(location: state.uri.path, child: child),

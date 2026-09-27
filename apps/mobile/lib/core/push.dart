@@ -154,6 +154,7 @@ class FirebasePushTokens implements PushTokenSource {
 }
 
 class PushService {
+  static const passwordRecoveryRedirect = 'futbeat://auth/recovery';
   PushService(this.config, this.database, this.tokens, {Dio? dio})
     : dio =
           dio ??
@@ -171,6 +172,8 @@ class PushService {
   final storage = const FlutterSecureStorage();
 
   Map<String, dynamic>? session;
+  String? pendingConfirmationEmail;
+  String? recoveryAccessToken;
   String? token;
   StreamSubscription<String>? rotation;
   StreamSubscription<Set<String>>? follows;
@@ -225,6 +228,8 @@ class PushService {
       options: Options(headers: {'apikey': config.publicKey}),
     );
     session = result.data;
+    pendingConfirmationEmail = null;
+    await storage.delete(key: 'futbeat.auth.pendingConfirmationEmail');
     await _persistSession();
     await _reconcileAccount();
     await _startAccountSync();
@@ -234,10 +239,16 @@ class PushService {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
+    final normalized = email.trim();
     await dio.post(
       '${config.supabaseUrl}/auth/v1/signup',
-      data: {'email': email.trim(), 'password': password},
+      data: {'email': normalized, 'password': password},
       options: Options(headers: {'apikey': config.publicKey}),
+    );
+    pendingConfirmationEmail = normalized;
+    await storage.write(
+      key: 'futbeat.auth.pendingConfirmationEmail',
+      value: normalized,
     );
   }
 
@@ -247,8 +258,10 @@ class PushService {
     }
     final normalized = email.trim();
     if (normalized.isEmpty) throw ArgumentError('Email is required');
+    final endpoint = Uri.parse('${config.supabaseUrl}/auth/v1/recover')
+        .replace(queryParameters: {'redirect_to': passwordRecoveryRedirect});
     await dio.post(
-      '${config.supabaseUrl}/auth/v1/recover',
+      endpoint.toString(),
       data: {'email': normalized},
       options: Options(headers: {'apikey': config.publicKey}),
     );
@@ -258,8 +271,8 @@ class PushService {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
-    final currentEmail = email;
-    if (currentEmail == null || emailVerified != false) {
+    final currentEmail = authenticated ? email : pendingConfirmationEmail;
+    if (currentEmail == null || (authenticated && emailVerified != false)) {
       throw StateError('Email confirmation is not pending');
     }
     await dio.post(
@@ -274,6 +287,9 @@ class PushService {
   Future<void> _restore() async {
     if (!accountConfigured || disposed) return;
     try {
+      pendingConfirmationEmail = await storage.read(
+        key: 'futbeat.auth.pendingConfirmationEmail',
+      );
       final saved = await storage.read(key: 'futbeat.push.session');
       if (saved == null || disposed) return;
       session = jsonDecode(saved) as Map<String, dynamic>;
@@ -292,6 +308,36 @@ class PushService {
 
   Future<void> _persistSession() =>
       storage.write(key: 'futbeat.push.session', value: jsonEncode(session));
+
+  void beginPasswordRecovery(Uri uri) {
+    final values = <String, String>{...uri.queryParameters};
+    if (uri.fragment.isNotEmpty) {
+      values.addAll(Uri.splitQueryString(uri.fragment));
+    }
+    final token = values['access_token'];
+    if (values['type'] != 'recovery' || token == null || token.isEmpty) {
+      throw StateError('Invalid recovery link');
+    }
+    recoveryAccessToken = token;
+  }
+
+  Future<void> updateRecoveredPassword(String password) async {
+    final token = recoveryAccessToken;
+    if (!accountConfigured || token == null) {
+      throw StateError('Password recovery is not active');
+    }
+    if (password.length < 8) {
+      throw ArgumentError('Password must contain at least 8 characters');
+    }
+    await dio.put(
+      '${config.supabaseUrl}/auth/v1/user',
+      data: {'password': password},
+      options: Options(
+        headers: {'apikey': config.publicKey, 'Authorization': 'Bearer $token'},
+      ),
+    );
+    recoveryAccessToken = null;
+  }
 
   Future<void> refreshSession() async {
     if (!authenticated || disposed) return;
@@ -587,6 +633,7 @@ class PushService {
     }
     session = null;
     token = null;
+    recoveryAccessToken = null;
     rotation = null;
     follows = null;
     renewal = null;
@@ -615,6 +662,7 @@ class PushService {
     enabled = false;
     token = null;
     session = null;
+    recoveryAccessToken = null;
     pending = Future.value();
     await storage.delete(key: 'futbeat.push.session');
     await storage.write(key: 'futbeat.push.enabled', value: 'false');

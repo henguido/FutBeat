@@ -272,6 +272,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               title: Text('Inicio de sesión no disponible'),
             )
           else if (!service.authenticated) ...[
+            if (service.pendingConfirmationEmail != null)
+              Card(
+                color: Theme.of(context).colorScheme.secondaryContainer,
+                child: ListTile(
+                  leading: const Icon(Icons.mark_email_unread_outlined),
+                  title: const Text('Confirma tu correo'),
+                  subtitle: Text(service.pendingConfirmationEmail!),
+                  trailing: TextButton(
+                    onPressed: busy
+                        ? null
+                        : () => action(
+                            service.resendEmailConfirmation,
+                            'Correo de confirmación reenviado.',
+                          ),
+                    child: const Text('Reenviar correo'),
+                  ),
+                ),
+              ),
             TextField(
               controller: email,
               keyboardType: TextInputType.emailAddress,

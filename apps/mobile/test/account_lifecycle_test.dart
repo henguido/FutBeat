@@ -12,6 +12,7 @@ import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
+import 'package:futbeat/features/profile/password_recovery_screen.dart';
 import 'package:futbeat/features/profile/profile_screen.dart';
 
 class _Tokens implements PushTokenSource {
@@ -28,7 +29,7 @@ class _Http {
       InterceptorsWrapper(
         onRequest: (options, handler) {
           calls.add(options);
-          if (fail.contains(options.path)) {
+          if (fail.any(options.path.startsWith)) {
             handler.reject(
               DioException(
                 requestOptions: options,
@@ -156,6 +157,7 @@ void main() {
         'password': 'password-test',
       });
       expect(value.service.authenticated, isFalse);
+      expect(value.service.pendingConfirmationEmail, 'new@example.com');
     },
   );
 
@@ -188,7 +190,12 @@ void main() {
         await value.db.close();
       });
       await value.service.requestPasswordReset(' person@example.com ');
-      expect(value.http.calls.single.path, endsWith('/auth/v1/recover'));
+      final resetUri = Uri.parse(value.http.calls.single.path);
+      expect(resetUri.path, endsWith('/auth/v1/recover'));
+      expect(
+        resetUri.queryParameters['redirect_to'],
+        PushService.passwordRecoveryRedirect,
+      );
       expect(value.http.calls.single.data, {'email': 'person@example.com'});
       await expectLater(
         value.service.requestPasswordReset('  '),
@@ -208,6 +215,93 @@ void main() {
       );
     },
   );
+
+  test('pending signup can resend while signed out', () async {
+    final value = await _service();
+    addTearDown(() async {
+      value.service.dispose();
+      await value.db.close();
+    });
+    await value.service.signUp('pending@example.com', 'password-test');
+    await value.service.resendEmailConfirmation();
+    expect(value.http.calls.last.path, endsWith('/auth/v1/resend'));
+    expect(value.http.calls.last.data, {
+      'type': 'signup',
+      'email': 'pending@example.com',
+    });
+  });
+
+  test('recovery link updates password with its short-lived token', () async {
+    final value = await _service();
+    addTearDown(() async {
+      value.service.dispose();
+      await value.db.close();
+    });
+    value.service.beginPasswordRecovery(
+      Uri.parse(
+        'futbeat://auth/recovery#type=recovery&access_token=recovery-token',
+      ),
+    );
+    await value.service.updateRecoveredPassword('new-password');
+    final request = value.http.calls.single;
+    expect(request.method, 'PUT');
+    expect(request.path, endsWith('/auth/v1/user'));
+    expect(request.data, {'password': 'new-password'});
+    expect(request.headers['Authorization'], 'Bearer recovery-token');
+    expect(value.service.recoveryAccessToken, isNull);
+  });
+
+  test(
+    'invalid recovery links and short passwords are rejected locally',
+    () async {
+      final value = await _service();
+      addTearDown(() async {
+        value.service.dispose();
+        await value.db.close();
+      });
+      expect(
+        () => value.service.beginPasswordRecovery(
+          Uri.parse('futbeat://auth/recovery'),
+        ),
+        throwsStateError,
+      );
+      value.service.beginPasswordRecovery(
+        Uri.parse('futbeat://auth/recovery?type=recovery&access_token=token'),
+      );
+      await expectLater(
+        value.service.updateRecoveredPassword('short'),
+        throwsArgumentError,
+      );
+    },
+  );
+
+  testWidgets('recovery screen completes password update', (tester) async {
+    final value = await _service();
+    addTearDown(() async {
+      value.service.dispose();
+      await value.db.close();
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [pushServiceProvider.overrideWithValue(value.service)],
+        child: MaterialApp(
+          home: PasswordRecoveryScreen(
+            uri: Uri.parse(
+              'futbeat://auth/recovery#type=recovery&access_token=screen-token',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.enterText(find.byType(TextField).at(0), 'new-password');
+    await tester.enterText(find.byType(TextField).at(1), 'new-password');
+    await tester.tap(find.text('Actualizar contraseña'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Contraseña actualizada. Ya puedes iniciar sesión.'),
+      findsOneWidget,
+    );
+  });
 
   test(
     'email verification distinguishes verified, pending, and absent claims',

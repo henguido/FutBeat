@@ -24,8 +24,8 @@ release:
 
 1. apply `20260927174752_account_deletion_cascade.sql`;
 2. deploy `futbeat-delete-account` with JWT verification enabled;
-3. verify password-recovery and signup-confirmation email templates plus the
-   Auth site/redirect URLs in the target Supabase project;
+3. add `futbeat://auth/recovery` to the target Supabase Auth redirect allow
+   list, then verify the recovery and signup-confirmation email templates;
 4. exercise recovery, confirmation resend, deletion, retry, and guest fallback
    with non-production test accounts before publishing the mobile build.
 
@@ -38,6 +38,7 @@ and locally stored cloud profile settings.
 
 Public Privacy Policy and Terms URLs were not found in the repository. No dead
 or invented links are shown; the real public URLs remain a Google Play launch
-prerequisite. The password-recovery email destination/deep-link behavior must
-also be verified against the target project's Auth URL configuration before
+prerequisite. Android and iOS register the `futbeat://auth/recovery` deep link,
+and the app handles the recovery token plus password update; the target
+project's redirect allow list must still be configured and tested before
 release.
