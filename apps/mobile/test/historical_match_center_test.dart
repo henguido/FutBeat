@@ -540,6 +540,9 @@ void main() {
         for (var index = 1; index <= 10; index++) player(index, 'anterior'),
         player(11, 'obsoleto'),
       ];
+      (remembered['home'] as Map<String, dynamic>)['coach'] = {
+        'name': 'Entrenador Viejo',
+      };
       remembered['statistics'] = [
         statistic('Possession', 55),
         statistic('Total Shots', 12),
@@ -551,6 +554,10 @@ void main() {
       (corrected['home'] as Map<String, dynamic>)['starters'] = [
         for (var index = 1; index <= 10; index++) player(index, 'corregido'),
       ];
+      corrected['home'] = <String, dynamic>{
+        ...corrected['home'] as Map<String, dynamic>,
+        'coach': null,
+      };
       corrected['statistics'] = [
         statistic('Possession', 51),
         statistic('Total Shots', 10),
@@ -561,6 +568,7 @@ void main() {
       final container = await _open(tester, server);
       await _tab(tester, 'Alineación');
       expect(find.textContaining('obsoleto'), findsWidgets);
+      expect(find.text('Entrenador Viejo'), findsOneWidget);
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
@@ -585,6 +593,8 @@ void main() {
       await _elapse(tester, const Duration(seconds: 1));
       expect(find.textContaining('corregido'), findsWidgets);
       expect(find.textContaining('obsoleto'), findsNothing);
+      expect(find.text('Entrenador Viejo'), findsNothing);
+      expect(memory[_match]!.homeCoach, isNull);
       expect(memory[_match]!.lineupEnrichmentPending, isFalse);
       await _tab(tester, 'Estadísticas');
       expect(find.text('Tiros a puerta'), findsWidgets);
@@ -593,6 +603,88 @@ void main() {
       await _close(tester, container);
     },
   );
+
+  testWidgets('a corrected lineup replaces its remembered coach', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['coach'] = {
+      'name': 'Entrenador Viejo',
+    };
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['coach'] = {
+      'name': 'Entrenador Nuevo',
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.text('Entrenador Nuevo'), findsOneWidget);
+    expect(find.text('Entrenador Viejo'), findsNothing);
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.homeCoach?['name'],
+      'Entrenador Nuevo',
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('an empty refresh retains a remembered coach', (tester) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['coach'] = {
+      'name': 'Entrenador Conservado',
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : _partial());
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.text('Entrenador Conservado'), findsOneWidget);
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.homeCoach?['name'],
+      'Entrenador Conservado',
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('a new coach-only observation replaces the remembered coach', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['coach'] = {
+      'name': 'Entrenador Viejo',
+    };
+    final coachOnly = _partial();
+    coachOnly['home'] = {
+      'starters': <dynamic>[],
+      'substitutes': <dynamic>[],
+      'coach': {'name': 'Entrenador Nuevo'},
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : coachOnly);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.text('Entrenador Nuevo'), findsOneWidget);
+    expect(find.text('Entrenador Viejo'), findsNothing);
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.homeCoach?['name'],
+      'Entrenador Nuevo',
+    );
+    await _close(tester, container);
+  });
 
   testWidgets('an empty refresh retains remembered lineup and statistics', (
     tester,

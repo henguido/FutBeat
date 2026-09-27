@@ -870,6 +870,18 @@ dynamic _latestNonEmpty(dynamic current, dynamic next) {
   return next;
 }
 
+bool _hasLineupPlayers(Json side) =>
+    (side['starters'] is List && (side['starters'] as List).isNotEmpty) ||
+    (side['substitutes'] is List && (side['substitutes'] as List).isNotEmpty);
+
+dynamic _mergeCoach(Json current, Json next) {
+  if (_hasLineupPlayers(next)) return next['coach'];
+  final nextCoach = next['coach'];
+  return nextCoach is Map && nextCoach.isNotEmpty
+      ? nextCoach
+      : current['coach'];
+}
+
 Json _mergeDetailSide(Json current, Json next) => {
   ...current,
   ...next,
@@ -880,14 +892,12 @@ Json _mergeDetailSide(Json current, Json next) => {
     next['substitutes'],
   ),
   'missing': _longerList(current['missing'], next['missing']),
-  'coach': _latestNonEmpty(current['coach'], next['coach']),
+  'coach': _mergeCoach(current, next),
 };
 
 bool _hasVisibleLineup(Json home, Json away) {
   bool sideHasData(Json side) =>
-      (side['starters'] is List && (side['starters'] as List).isNotEmpty) ||
-      (side['substitutes'] is List &&
-          (side['substitutes'] as List).isNotEmpty) ||
+      _hasLineupPlayers(side) ||
       (side['coach'] is Map && (side['coach'] as Map).isNotEmpty);
   return sideHasData(home) || sideHasData(away);
 }
