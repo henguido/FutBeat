@@ -543,6 +543,9 @@ void main() {
       (remembered['home'] as Map<String, dynamic>)['coach'] = {
         'name': 'Entrenador Viejo',
       };
+      (remembered['home'] as Map<String, dynamic>)['substitutes'] = [
+        for (var index = 12; index <= 18; index++) player(index, 'banca vieja'),
+      ];
       remembered['statistics'] = [
         statistic('Possession', 55),
         statistic('Total Shots', 12),
@@ -556,6 +559,10 @@ void main() {
       ];
       corrected['home'] = <String, dynamic>{
         ...corrected['home'] as Map<String, dynamic>,
+        'substitutes': [
+          for (var index = 12; index <= 14; index++)
+            player(index, 'banca corregida'),
+        ],
         'coach': null,
       };
       corrected['statistics'] = [
@@ -593,8 +600,12 @@ void main() {
       await _elapse(tester, const Duration(seconds: 1));
       expect(find.textContaining('corregido'), findsWidgets);
       expect(find.textContaining('obsoleto'), findsNothing);
+      expect(find.textContaining('banca corregida'), findsWidgets);
+      expect(find.textContaining('banca vieja'), findsNothing);
       expect(find.text('Entrenador Viejo'), findsNothing);
       expect(memory[_match]!.homeCoach, isNull);
+      expect(memory[_match]!.homeStarters, hasLength(10));
+      expect(memory[_match]!.homeSubstitutes, hasLength(3));
       expect(memory[_match]!.lineupEnrichmentPending, isFalse);
       await _tab(tester, 'Estadísticas');
       expect(find.text('Tiros a puerta'), findsWidgets);
@@ -603,6 +614,92 @@ void main() {
       await _close(tester, container);
     },
   );
+
+  testWidgets('an authoritative side can clear its obsolete bench', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['substitutes'] = [
+      for (var index = 1; index <= 5; index++)
+        {'name': 'Suplente obsoleto $index'},
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['substitutes'] = <dynamic>[];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.textContaining('Suplente obsoleto'), findsNothing);
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.homeSubstitutes,
+      isEmpty,
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('an authoritative bench can clear obsolete starters', (
+    tester,
+  ) async {
+    final remembered = _full();
+    final corrected = _full();
+    corrected['home'] = <String, dynamic>{
+      ...corrected['home'] as Map<String, dynamic>,
+      'starters': <dynamic>[],
+      'substitutes': [
+        {'name': 'Único suplente nuevo'},
+      ],
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.homeStarters, isEmpty);
+    expect(detail.homeSubstitutes, hasLength(1));
+    expect(detail.homeSubstitutes.single['name'], 'Único suplente nuevo');
+    await _close(tester, container);
+  });
+
+  testWidgets('authoritative home does not clear a transient empty away side', (
+    tester,
+  ) async {
+    final remembered = _full();
+    remembered['away'] = {
+      'starters': [
+        {'name': 'Visitante conservado'},
+      ],
+      'substitutes': [
+        {'name': 'Banca visitante conservada'},
+      ],
+    };
+    final corrected = _full();
+    corrected['away'] = {
+      'starters': <dynamic>[],
+      'substitutes': <dynamic>[],
+      'coach': null,
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.awayStarters.single['name'], 'Visitante conservado');
+    expect(detail.awaySubstitutes.single['name'], 'Banca visitante conservada');
+    await _close(tester, container);
+  });
 
   testWidgets('a corrected lineup replaces its remembered coach', (
     tester,

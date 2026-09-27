@@ -882,18 +882,22 @@ dynamic _mergeCoach(Json current, Json next) {
       : current['coach'];
 }
 
-Json _mergeDetailSide(Json current, Json next) => {
-  ...current,
-  ...next,
-  'formation': _latestNonEmpty(current['formation'], next['formation']),
-  'starters': _latestNonEmptyList(current['starters'], next['starters']),
-  'substitutes': _latestNonEmptyList(
-    current['substitutes'],
-    next['substitutes'],
-  ),
-  'missing': _longerList(current['missing'], next['missing']),
-  'coach': _mergeCoach(current, next),
-};
+Json _mergeDetailSide(Json current, Json next) {
+  final nextHasPlayers = _hasLineupPlayers(next);
+  return {
+    ...current,
+    ...next,
+    'formation': _latestNonEmpty(current['formation'], next['formation']),
+    'starters': nextHasPlayers
+        ? (next['starters'] is List ? next['starters'] : <dynamic>[])
+        : current['starters'],
+    'substitutes': nextHasPlayers
+        ? (next['substitutes'] is List ? next['substitutes'] : <dynamic>[])
+        : current['substitutes'],
+    'missing': _longerList(current['missing'], next['missing']),
+    'coach': _mergeCoach(current, next),
+  };
+}
 
 bool _hasVisibleLineup(Json home, Json away) {
   bool sideHasData(Json side) =>
