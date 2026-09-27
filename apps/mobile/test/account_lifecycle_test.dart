@@ -24,10 +24,10 @@ class _Tokens implements PushTokenSource {
 }
 
 class _Http {
-  _Http({this.fail = const {}}) {
+  _Http({this.fail = const {}, this.pkceGates = const {}}) {
     dio.interceptors.add(
       InterceptorsWrapper(
-        onRequest: (options, handler) {
+        onRequest: (options, handler) async {
           calls.add(options);
           if (fail.any(options.path.startsWith)) {
             handler.reject(
@@ -50,7 +50,10 @@ class _Http {
               },
             };
           } else if (options.path.contains('grant_type=pkce')) {
-            data = {'access_token': 'recovery-access-token'};
+            final code = options.data['auth_code']?.toString();
+            final gate = pkceGates[code];
+            if (gate != null) await gate.future;
+            data = {'access_token': 'recovery-access-$code'};
           } else if (options.path.endsWith('futbeat_read_user_profile')) {
             data = {'preferences': <String, dynamic>{}, 'follows': <dynamic>[]};
           } else if (options.path.endsWith('futbeat-delete-account')) {
@@ -66,15 +69,17 @@ class _Http {
 
   final dio = Dio();
   final Set<String> fail;
+  final Map<String, Completer<void>> pkceGates;
   final calls = <RequestOptions>[];
 }
 
 Future<({PushService service, AppDatabase db, _Http http})> _service({
   Set<String> fail = const {},
+  Map<String, Completer<void>> pkceGates = const {},
 }) async {
   FlutterSecureStorage.setMockInitialValues({});
   final db = AppDatabase(NativeDatabase.memory());
-  final http = _Http(fail: fail);
+  final http = _Http(fail: fail, pkceGates: pkceGates);
   final service = PushService(
     const LiveRealtimeConfig(
       supabaseUrl: 'https://supabase.test',
@@ -256,9 +261,39 @@ void main() {
     expect(request.method, 'PUT');
     expect(request.path, endsWith('/auth/v1/user'));
     expect(request.data, {'password': 'new-password'});
-    expect(request.headers['Authorization'], 'Bearer recovery-access-token');
+    expect(
+      request.headers['Authorization'],
+      'Bearer recovery-access-one-time-code',
+    );
     expect(value.service.recoveryAccessToken, isNull);
   });
+
+  test(
+    'a stale PKCE exchange cannot replace the newest recovery token',
+    () async {
+      final firstGate = Completer<void>();
+      final secondGate = Completer<void>();
+      final value = await _service(
+        pkceGates: {'first': firstGate, 'second': secondGate},
+      );
+      addTearDown(() async {
+        value.service.dispose();
+        await value.db.close();
+      });
+      await value.service.requestPasswordReset('person@example.com');
+      final first = value.service.beginPasswordRecovery(
+        Uri.parse('futbeat://auth/recovery?code=first'),
+      );
+      final second = value.service.beginPasswordRecovery(
+        Uri.parse('futbeat://auth/recovery?code=second'),
+      );
+      secondGate.complete();
+      await second;
+      firstGate.complete();
+      await first;
+      expect(value.service.recoveryAccessToken, 'recovery-access-second');
+    },
+  );
 
   test(
     'invalid recovery links and short passwords are rejected locally',

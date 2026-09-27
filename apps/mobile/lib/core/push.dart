@@ -175,6 +175,7 @@ class PushService {
   Map<String, dynamic>? session;
   String? pendingConfirmationEmail;
   String? recoveryAccessToken;
+  int recoveryGeneration = 0;
   String? token;
   StreamSubscription<String>? rotation;
   StreamSubscription<Set<String>>? follows;
@@ -326,6 +327,7 @@ class PushService {
       storage.write(key: 'futbeat.push.session', value: jsonEncode(session));
 
   Future<void> beginPasswordRecovery(Uri uri) async {
+    final generation = ++recoveryGeneration;
     recoveryAccessToken = null;
     final code = uri.queryParameters['code'];
     final verifier = await storage.read(key: 'futbeat.auth.recoveryVerifier');
@@ -341,6 +343,7 @@ class PushService {
     if (token == null || token.isEmpty) {
       throw StateError('Invalid recovery session');
     }
+    if (generation != recoveryGeneration) return;
     recoveryAccessToken = token;
     await storage.delete(key: 'futbeat.auth.recoveryVerifier');
   }
@@ -361,6 +364,7 @@ class PushService {
       ),
     );
     recoveryAccessToken = null;
+    recoveryGeneration++;
   }
 
   Future<void> refreshSession() async {
@@ -658,6 +662,7 @@ class PushService {
     session = null;
     token = null;
     recoveryAccessToken = null;
+    recoveryGeneration++;
     rotation = null;
     follows = null;
     renewal = null;
@@ -687,6 +692,7 @@ class PushService {
     token = null;
     session = null;
     recoveryAccessToken = null;
+    recoveryGeneration++;
     pending = Future.value();
     await storage.delete(key: 'futbeat.push.session');
     await storage.write(key: 'futbeat.push.enabled', value: 'false');

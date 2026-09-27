@@ -21,6 +21,7 @@ class _PasswordRecoveryScreenState
   bool? validLink;
   bool busy = false;
   String? message;
+  int generation = 0;
 
   @override
   void initState() {
@@ -35,6 +36,7 @@ class _PasswordRecoveryScreenState
   }
 
   Future<void> _open(Uri uri) async {
+    final operation = ++generation;
     password.clear();
     confirmation.clear();
     setState(() {
@@ -43,9 +45,13 @@ class _PasswordRecoveryScreenState
     });
     try {
       await ref.read(pushServiceProvider).beginPasswordRecovery(uri);
-      if (mounted) setState(() => validLink = true);
+      if (mounted && operation == generation) {
+        setState(() => validLink = true);
+      }
     } catch (_) {
-      if (mounted) setState(() => validLink = false);
+      if (mounted && operation == generation) {
+        setState(() => validLink = false);
+      }
     }
   }
 
