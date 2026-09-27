@@ -713,6 +713,46 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('a lower-ranked refresh preserves full lineup and statistics', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      for (var index = 1; index <= 11; index++)
+        {'id': 'full-$index', 'name': 'Titular completo $index'},
+    ];
+    remembered['statistics'] = [
+      for (var index = 1; index <= 5; index++)
+        {'label': 'Estadística completa $index', 'home': index, 'away': 0},
+    ];
+    final live = _detail(level: 'live', lineup: true, stats: true);
+    live['home'] = {
+      'starters': [
+        {'id': 'live-only', 'name': 'Fila parcial en vivo'},
+      ],
+      'substitutes': <dynamic>[],
+      'coach': null,
+    };
+    live['statistics'] = [
+      {'label': 'Fila estadística parcial', 'home': 1, 'away': 0},
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : live);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.detailLevel, 'full');
+    expect(detail.homeStarters, hasLength(11));
+    expect(detail.homeStarters.first['name'], 'Titular completo 1');
+    expect(detail.statistics, hasLength(5));
+    expect(detail.statistics.first['label'], 'Estadística completa 1');
+    await _close(tester, container);
+  });
+
   testWidgets('an authoritative bench can clear obsolete starters', (
     tester,
   ) async {

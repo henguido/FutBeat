@@ -874,8 +874,14 @@ bool _hasLineupPlayers(Json side) =>
     (side['starters'] is List && (side['starters'] as List).isNotEmpty) ||
     (side['substitutes'] is List && (side['substitutes'] as List).isNotEmpty);
 
-dynamic _mergeCoach(Json current, Json next) {
-  if (_hasLineupPlayers(next)) return next['coach'];
+dynamic _mergeCoach(
+  Json current,
+  Json next, {
+  required bool acceptNextPlayers,
+}) {
+  if (_hasLineupPlayers(next)) {
+    return acceptNextPlayers ? next['coach'] : current['coach'];
+  }
   final nextCoach = next['coach'];
   return nextCoach is Map && nextCoach.isNotEmpty
       ? nextCoach
@@ -915,8 +921,14 @@ dynamic _authoritativePlayerList(dynamic current, dynamic next) {
   }).toList();
 }
 
-Json _mergeDetailSide(Json current, Json next) {
+Json _mergeDetailSide(
+  Json current,
+  Json next, {
+  required bool replaceExisting,
+}) {
   final nextHasPlayers = _hasLineupPlayers(next);
+  final acceptNextPlayers =
+      nextHasPlayers && (replaceExisting || !_hasLineupPlayers(current));
   final rememberedPlayers = <dynamic>[
     if (current['starters'] is List) ...current['starters'] as List,
     if (current['substitutes'] is List) ...current['substitutes'] as List,
@@ -925,14 +937,14 @@ Json _mergeDetailSide(Json current, Json next) {
     ...current,
     ...next,
     'formation': _latestNonEmpty(current['formation'], next['formation']),
-    'starters': nextHasPlayers
+    'starters': acceptNextPlayers
         ? _authoritativePlayerList(rememberedPlayers, next['starters'])
         : current['starters'],
-    'substitutes': nextHasPlayers
+    'substitutes': acceptNextPlayers
         ? _authoritativePlayerList(rememberedPlayers, next['substitutes'])
         : current['substitutes'],
     'missing': _longerList(current['missing'], next['missing']),
-    'coach': _mergeCoach(current, next),
+    'coach': _mergeCoach(current, next, acceptNextPlayers: acceptNextPlayers),
   };
 }
 
@@ -947,12 +959,26 @@ bool _hasVisibleLineup(Json home, Json away) {
 /// latest answer. Rechecks may add data, but never erase richer UI state.
 MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   if (!current.available) return next;
-  final home = _mergeDetailSide(current.home, next.home);
-  final away = _mergeDetailSide(current.away, next.away);
-  final statistics = _latestNonEmptyList(
-    current.json['statistics'],
-    next.json['statistics'],
+  final replaceExisting =
+      _detailLevelRank(next.detailLevel) >=
+      _detailLevelRank(current.detailLevel);
+  final home = _mergeDetailSide(
+    current.home,
+    next.home,
+    replaceExisting: replaceExisting,
   );
+  final away = _mergeDetailSide(
+    current.away,
+    next.away,
+    replaceExisting: replaceExisting,
+  );
+  final currentStatistics = current.json['statistics'];
+  final statistics =
+      !replaceExisting &&
+          currentStatistics is List &&
+          currentStatistics.isNotEmpty
+      ? currentStatistics
+      : _latestNonEmptyList(currentStatistics, next.json['statistics']);
   final coverage = <String, dynamic>{
     ...?current.coverage,
     ...?next.coverage,
@@ -962,11 +988,7 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   if (statistics is List && statistics.isNotEmpty) {
     coverage['statistics'] = 'available';
   }
-  final detailLevel =
-      _detailLevelRank(next.detailLevel) >=
-          _detailLevelRank(current.detailLevel)
-      ? next.detailLevel
-      : current.detailLevel;
+  final detailLevel = replaceExisting ? next.detailLevel : current.detailLevel;
   return MatchDetail({
     ...current.json,
     ...next.json,
