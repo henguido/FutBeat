@@ -39,6 +39,8 @@ and locally stored cloud profile settings.
 Public Privacy Policy and Terms URLs were not found in the repository. No dead
 or invented links are shown; the real public URLs remain a Google Play launch
 prerequisite. Android and iOS register the `futbeat://auth/recovery` deep link,
-and the app handles the recovery token plus password update; the target
+and the app exchanges the single-use recovery code with a PKCE verifier kept
+in secure storage before allowing the password update. This prevents another
+app claiming the custom scheme from using an intercepted callback. The target
 project's redirect allow list must still be configured and tested before
 release.

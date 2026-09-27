@@ -18,17 +18,34 @@ class _PasswordRecoveryScreenState
     extends ConsumerState<PasswordRecoveryScreen> {
   final password = TextEditingController();
   final confirmation = TextEditingController();
-  bool validLink = true;
+  bool? validLink;
   bool busy = false;
   String? message;
 
   @override
   void initState() {
     super.initState();
+    _open(widget.uri);
+  }
+
+  @override
+  void didUpdateWidget(covariant PasswordRecoveryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.uri != widget.uri) _open(widget.uri);
+  }
+
+  Future<void> _open(Uri uri) async {
+    password.clear();
+    confirmation.clear();
+    setState(() {
+      validLink = null;
+      message = null;
+    });
     try {
-      ref.read(pushServiceProvider).beginPasswordRecovery(widget.uri);
+      await ref.read(pushServiceProvider).beginPasswordRecovery(uri);
+      if (mounted) setState(() => validLink = true);
     } catch (_) {
-      validLink = false;
+      if (mounted) setState(() => validLink = false);
     }
   }
 
@@ -79,7 +96,9 @@ class _PasswordRecoveryScreenState
     body: ListView(
       padding: const EdgeInsets.all(24),
       children: [
-        if (!validLink) ...[
+        if (validLink == null)
+          const Center(child: CircularProgressIndicator())
+        else if (validLink == false) ...[
           const Text('Este enlace no es válido o está incompleto.'),
           const SizedBox(height: 12),
           FilledButton(

@@ -49,6 +49,8 @@ class _Http {
                 'email_confirmed_at': '2026-09-27T00:00:00Z',
               },
             };
+          } else if (options.path.contains('grant_type=pkce')) {
+            data = {'access_token': 'recovery-access-token'};
           } else if (options.path.endsWith('futbeat_read_user_profile')) {
             data = {'preferences': <String, dynamic>{}, 'follows': <dynamic>[]};
           } else if (options.path.endsWith('futbeat-delete-account')) {
@@ -196,7 +198,9 @@ void main() {
         resetUri.queryParameters['redirect_to'],
         PushService.passwordRecoveryRedirect,
       );
-      expect(value.http.calls.single.data, {'email': 'person@example.com'});
+      expect(value.http.calls.single.data['email'], 'person@example.com');
+      expect(value.http.calls.single.data['code_challenge_method'], 's256');
+      expect(value.http.calls.single.data['code_challenge'], isNotEmpty);
       await expectLater(
         value.service.requestPasswordReset('  '),
         throwsArgumentError,
@@ -237,17 +241,22 @@ void main() {
       value.service.dispose();
       await value.db.close();
     });
-    value.service.beginPasswordRecovery(
-      Uri.parse(
-        'futbeat://auth/recovery#type=recovery&access_token=recovery-token',
-      ),
+    await value.service.requestPasswordReset('person@example.com');
+    value.http.calls.clear();
+    await value.service.beginPasswordRecovery(
+      Uri.parse('futbeat://auth/recovery?code=one-time-code'),
     );
+    final exchange = value.http.calls.single;
+    expect(exchange.path, contains('grant_type=pkce'));
+    expect(exchange.data['auth_code'], 'one-time-code');
+    expect(exchange.data['code_verifier'], isNotEmpty);
+    value.http.calls.clear();
     await value.service.updateRecoveredPassword('new-password');
     final request = value.http.calls.single;
     expect(request.method, 'PUT');
     expect(request.path, endsWith('/auth/v1/user'));
     expect(request.data, {'password': 'new-password'});
-    expect(request.headers['Authorization'], 'Bearer recovery-token');
+    expect(request.headers['Authorization'], 'Bearer recovery-access-token');
     expect(value.service.recoveryAccessToken, isNull);
   });
 
@@ -259,14 +268,15 @@ void main() {
         value.service.dispose();
         await value.db.close();
       });
-      expect(
-        () => value.service.beginPasswordRecovery(
+      await expectLater(
+        value.service.beginPasswordRecovery(
           Uri.parse('futbeat://auth/recovery'),
         ),
         throwsStateError,
       );
-      value.service.beginPasswordRecovery(
-        Uri.parse('futbeat://auth/recovery?type=recovery&access_token=token'),
+      await value.service.requestPasswordReset('person@example.com');
+      await value.service.beginPasswordRecovery(
+        Uri.parse('futbeat://auth/recovery?code=one-time-code'),
       );
       await expectLater(
         value.service.updateRecoveredPassword('short'),
@@ -281,26 +291,64 @@ void main() {
       value.service.dispose();
       await value.db.close();
     });
+    await tester.runAsync(
+      () => value.service.requestPasswordReset('person@example.com'),
+    );
     await tester.pumpWidget(
       ProviderScope(
         overrides: [pushServiceProvider.overrideWithValue(value.service)],
         child: MaterialApp(
           home: PasswordRecoveryScreen(
-            uri: Uri.parse(
-              'futbeat://auth/recovery#type=recovery&access_token=screen-token',
-            ),
+            uri: Uri.parse('futbeat://auth/recovery?code=screen-code'),
           ),
         ),
       ),
     );
+    await tester.pump(const Duration(milliseconds: 500));
     await tester.enterText(find.byType(TextField).at(0), 'new-password');
     await tester.enterText(find.byType(TextField).at(1), 'new-password');
     await tester.tap(find.text('Actualizar contraseña'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
     expect(
       find.text('Contraseña actualizada. Ya puedes iniciar sesión.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('an open recovery screen exchanges a newly received code', (
+    tester,
+  ) async {
+    final value = await _service();
+    addTearDown(() async {
+      value.service.dispose();
+      await value.db.close();
+    });
+    Future<void> request() => tester.runAsync(
+      () => value.service.requestPasswordReset('person@example.com'),
+    );
+    Widget screen(String code) => ProviderScope(
+      overrides: [pushServiceProvider.overrideWithValue(value.service)],
+      child: MaterialApp(
+        home: PasswordRecoveryScreen(
+          uri: Uri.parse('futbeat://auth/recovery?code=$code'),
+        ),
+      ),
+    );
+
+    await request();
+    await tester.pumpWidget(screen('first-code'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await request();
+    await tester.pumpWidget(screen('second-code'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    final exchanges = value.http.calls
+        .where((call) => call.path.contains('grant_type=pkce'))
+        .toList();
+    expect(exchanges.map((call) => call.data['auth_code']), [
+      'first-code',
+      'second-code',
+    ]);
   });
 
   test(
