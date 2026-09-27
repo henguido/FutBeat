@@ -99,7 +99,13 @@ test('auth user deletion cascades private data and preserves shared sports data'
       select entity_id,count(*)::int from futbeat_private.push_follows group by entity_id;
     $$;
   `);
+  const orphan = '33333333-3333-4333-8333-333333333333';
+  await db.exec("insert into futbeat_private.entities values ('fb_team_orphan')");
+  await db.query("insert into futbeat_private.push_follows values ($1,'fb_team_orphan')", [orphan]);
+  await db.exec('select futbeat_private.refresh_interest_aggregates()');
+  assert.equal((await db.query('select count(*)::int count from futbeat_private.coverage_interests')).rows[0].count, 1);
   await db.exec(await read('supabase/migrations/20260927174752_account_deletion_cascade.sql'));
+  assert.equal((await db.query('select count(*)::int count from futbeat_private.coverage_interests')).rows[0].count, 0);
   await db.query('insert into auth.users values ($1),($2)', [userA, userB]);
   await db.exec("insert into futbeat_private.entities values ('fb_team_shared')");
   const device = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -115,7 +121,7 @@ test('auth user deletion cascades private data and preserves shared sports data'
   for (const table of ['push_devices', 'push_follows', 'user_preferences', 'temporary_interests', 'notification_outbox']) {
     assert.equal((await db.query(`select count(*)::int count from futbeat_private.${table}`)).rows[0].count, 0, table);
   }
-  assert.equal((await db.query('select count(*)::int count from futbeat_private.entities')).rows[0].count, 1);
+  assert.equal((await db.query('select count(*)::int count from futbeat_private.entities')).rows[0].count, 2);
   assert.equal((await db.query('select count(*)::int count from futbeat_private.coverage_interests')).rows[0].count, 0);
   assert.equal((await db.query('select count(*)::int count from auth.users')).rows[0].count, 1);
   await db.close();

@@ -47,6 +47,10 @@ begin
   delete from futbeat_private.push_devices d
   where not exists (select 1 from auth.users u where u.id=d.user_id);
 
+  -- The deletes above precede the account trigger created below. Rebuild now
+  -- so historical orphan cleanup cannot leave stale provider demand behind.
+  perform futbeat_private.refresh_interest_aggregates();
+
   alter table futbeat_private.push_devices
     add constraint push_devices_auth_user_fkey
     foreign key(user_id) references auth.users(id) on delete cascade;
