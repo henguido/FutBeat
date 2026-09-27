@@ -855,11 +855,14 @@ int _detailLevelRank(String level) => switch (level) {
   _ => 0,
 };
 
-dynamic _richerList(dynamic current, dynamic next) {
+dynamic _longerList(dynamic current, dynamic next) {
   final currentLength = current is List ? current.length : 0;
   final nextLength = next is List ? next.length : 0;
   return nextLength >= currentLength ? next : current;
 }
+
+dynamic _latestNonEmptyList(dynamic current, dynamic next) =>
+    next is List && next.isNotEmpty ? next : current;
 
 dynamic _latestNonEmpty(dynamic current, dynamic next) {
   if (next == null) return current;
@@ -871,19 +874,21 @@ Json _mergeDetailSide(Json current, Json next) => {
   ...current,
   ...next,
   'formation': _latestNonEmpty(current['formation'], next['formation']),
-  'starters': _richerList(current['starters'], next['starters']),
-  'substitutes': _richerList(current['substitutes'], next['substitutes']),
-  'missing': _richerList(current['missing'], next['missing']),
+  'starters': _latestNonEmptyList(current['starters'], next['starters']),
+  'substitutes': _latestNonEmptyList(
+    current['substitutes'],
+    next['substitutes'],
+  ),
+  'missing': _longerList(current['missing'], next['missing']),
   'coach': _latestNonEmpty(current['coach'], next['coach']),
 };
 
-bool _hasLineup(Json home, Json away) {
+bool _hasVisibleLineup(Json home, Json away) {
   bool sideHasData(Json side) =>
       (side['starters'] is List && (side['starters'] as List).isNotEmpty) ||
       (side['substitutes'] is List &&
           (side['substitutes'] as List).isNotEmpty) ||
-      side['coach'] is Map ||
-      (side['formation']?.toString().trim().isNotEmpty ?? false);
+      (side['coach'] is Map && (side['coach'] as Map).isNotEmpty);
   return sideHasData(home) || sideHasData(away);
 }
 
@@ -893,7 +898,7 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   if (!current.available) return next;
   final home = _mergeDetailSide(current.home, next.home);
   final away = _mergeDetailSide(current.away, next.away);
-  final statistics = _richerList(
+  final statistics = _latestNonEmptyList(
     current.json['statistics'],
     next.json['statistics'],
   );
@@ -902,7 +907,7 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
     ...?next.coverage,
     'lineupEnrichmentPending': next.lineupEnrichmentPending,
   };
-  if (_hasLineup(home, away)) coverage['lineup'] = 'available';
+  if (_hasVisibleLineup(home, away)) coverage['lineup'] = 'available';
   if (statistics is List && statistics.isNotEmpty) {
     coverage['statistics'] = 'available';
   }
@@ -922,8 +927,8 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
     'home': home,
     'away': away,
     'statistics': statistics,
-    'incidents': _richerList(current.json['incidents'], next.json['incidents']),
-    'videos': _richerList(current.json['videos'], next.json['videos']),
+    'incidents': _longerList(current.json['incidents'], next.json['incidents']),
+    'videos': _longerList(current.json['videos'], next.json['videos']),
     'pending': next.pending,
     'hydrationNeeded': next.hydrationNeeded,
     'coverage': coverage,

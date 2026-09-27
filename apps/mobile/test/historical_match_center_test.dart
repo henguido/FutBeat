@@ -522,28 +522,45 @@ void main() {
   });
 
   testWidgets(
-    '10. reopening paints memory at once and a poorer available response '
-    'does not erase it',
+    '10. a shorter non-empty correction replaces remembered lineup and stats',
     (tester) async {
-      final richer = _full();
-      (richer['home'] as Map<String, dynamic>)['starters'] = [
-        _starter,
-        {
-          'id': 'p2',
-          'canonicalId': 'fb_player_hist2',
-          'name': 'Jugador Conservado',
-          'number': '2',
-        },
+      Map<String, dynamic> player(int index, String suffix) => {
+        'id': 'p$index',
+        'canonicalId': 'fb_player_hist$index',
+        'name': 'Jugador $index $suffix',
+        'number': '$index',
+      };
+      Map<String, dynamic> statistic(String label, int value) => {
+        'label': label,
+        'home': value,
+        'away': value - 1,
+      };
+      final remembered = _full();
+      (remembered['home'] as Map<String, dynamic>)['starters'] = [
+        for (var index = 1; index <= 10; index++) player(index, 'anterior'),
+        player(11, 'obsoleto'),
       ];
-      (richer['statistics'] as List).add({
-        'label': 'Corner Kicks',
-        'home': 4,
-        'away': 2,
-      });
-      final server = _Server((read, _) => read == 0 ? richer : _full());
+      remembered['statistics'] = [
+        statistic('Possession', 55),
+        statistic('Total Shots', 12),
+        statistic('Shots on Goal', 6),
+        statistic('Corner Kicks', 5),
+        statistic('Fouls', 9),
+      ];
+      final corrected = _full();
+      (corrected['home'] as Map<String, dynamic>)['starters'] = [
+        for (var index = 1; index <= 10; index++) player(index, 'corregido'),
+      ];
+      corrected['statistics'] = [
+        statistic('Possession', 51),
+        statistic('Total Shots', 10),
+        statistic('Shots on Goal', 4),
+        statistic('Corner Kicks', 3),
+      ];
+      final server = _Server((read, _) => read == 0 ? remembered : corrected);
       final container = await _open(tester, server);
       await _tab(tester, 'Alineación');
-      expect(find.text('AS'), findsWidgets);
+      expect(find.textContaining('obsoleto'), findsWidgets);
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
@@ -563,18 +580,69 @@ void main() {
       server.gate = Completer<void>();
       await _mount(tester, container);
       await _tab(tester, 'Alineación');
-      expect(find.text('AS'), findsWidgets);
+      expect(find.textContaining('obsoleto'), findsWidgets);
       server.gate!.complete();
       await _elapse(tester, const Duration(seconds: 1));
-      expect(find.text('AS'), findsWidgets);
-      expect(find.text('Conservado'), findsWidgets);
+      expect(find.textContaining('corregido'), findsWidgets);
+      expect(find.textContaining('obsoleto'), findsNothing);
       expect(memory[_match]!.lineupEnrichmentPending, isFalse);
       await _tab(tester, 'Estadísticas');
       expect(find.text('Tiros a puerta'), findsWidgets);
       expect(find.text('Córners'), findsWidgets);
+      expect(find.text('Faltas'), findsNothing);
       await _close(tester, container);
     },
   );
+
+  testWidgets('an empty refresh retains remembered lineup and statistics', (
+    tester,
+  ) async {
+    final server = _Server((read, _) => read == 0 ? _full() : _partial());
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.text('AS'), findsWidgets);
+    await _tab(tester, 'Estadísticas');
+    expect(find.text('Tiros a puerta'), findsWidgets);
+    await _close(tester, container);
+  });
+
+  testWidgets('formation alone keeps a pending lineup in its loading state', (
+    tester,
+  ) async {
+    Map<String, dynamic> formationOnly({required bool pending}) {
+      final detail = _detail(
+        level: 'partial',
+        pending: pending,
+        lineupState: pending ? 'pending' : 'missing',
+      );
+      detail['home'] = {
+        'formation': '4-3-3',
+        'starters': <dynamic>[],
+        'substitutes': <dynamic>[],
+        'coach': null,
+      };
+      return detail;
+    }
+
+    final server = _Server((read, _) => formationOnly(pending: read > 0));
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.text('Cargando alineaciones…'), findsOneWidget);
+    expect(find.text('Sin alineaciones'), findsNothing);
+    await _close(tester, container);
+  });
 
   testWidgets('a missing remembered section adopts the latest pending state', (
     tester,
