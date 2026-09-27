@@ -958,6 +958,7 @@ void main() {
   ) async {
     final remembered = _full();
     remembered['away'] = {
+      'formation': '4-4-2',
       'starters': [
         {'name': 'Visitante conservado'},
       ],
@@ -967,6 +968,7 @@ void main() {
     };
     final corrected = _full();
     corrected['away'] = {
+      'formation': '3-5-2',
       'starters': <dynamic>[],
       'substitutes': <dynamic>[],
       'coach': null,
@@ -982,6 +984,7 @@ void main() {
     final detail = container.read(matchDetailMemoryProvider)[_match]!;
     expect(detail.awayStarters.single['name'], 'Visitante conservado');
     expect(detail.awaySubstitutes.single['name'], 'Banca visitante conservada');
+    expect(detail.awayFormation, '4-4-2');
     await _close(tester, container);
   });
 

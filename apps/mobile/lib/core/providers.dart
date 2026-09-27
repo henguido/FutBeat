@@ -966,8 +966,7 @@ Json _mergeDetailSide(
     ...current,
     ...next,
     'formation':
-        replaceExisting ||
-            acceptNextPlayers ||
+        acceptNextPlayers ||
             current['formation'] == null ||
             (current['formation'] is String &&
                 (current['formation'] as String).trim().isEmpty)
