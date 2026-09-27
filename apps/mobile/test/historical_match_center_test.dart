@@ -659,7 +659,12 @@ void main() {
     ];
     final corrected = _full();
     (corrected['home'] as Map<String, dynamic>)['starters'] = [
-      {..._starter, 'canonicalId': null, 'image': null, 'media': null},
+      {
+        ..._starter,
+        'id': 'corrected-provider-id',
+        'image': null,
+        'media': null,
+      },
     ];
     final server = _Server((read, _) => read == 0 ? remembered : corrected);
     final container = await _open(tester, server);

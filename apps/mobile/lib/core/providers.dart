@@ -888,13 +888,15 @@ dynamic _mergeCoach(
       : current['coach'];
 }
 
-String _lineupPlayerKey(Json player) {
+List<String> _lineupPlayerKeys(Json player) {
+  final keys = <String>[];
   for (final field in const ['id', 'canonicalId']) {
     final value = player[field]?.toString().trim();
-    if (value != null && value.isNotEmpty) return '$field:$value';
+    if (value != null && value.isNotEmpty) keys.add('$field:$value');
   }
+  if (keys.isNotEmpty) return keys;
   final name = player['name']?.toString().trim().toLowerCase() ?? '';
-  return name.isEmpty ? '' : 'name:$name';
+  return name.isEmpty ? const [] : ['name:$name'];
 }
 
 dynamic _authoritativePlayerList(dynamic current, dynamic next) {
@@ -903,14 +905,19 @@ dynamic _authoritativePlayerList(dynamic current, dynamic next) {
   if (current is List) {
     for (final item in current.whereType<Map>()) {
       final player = Map<String, dynamic>.from(item);
-      final key = _lineupPlayerKey(player);
-      if (key.isNotEmpty) remembered[key] = player;
+      for (final key in _lineupPlayerKeys(player)) {
+        remembered.putIfAbsent(key, () => player);
+      }
     }
   }
   return next.map((item) {
     if (item is! Map) return item;
     final player = Map<String, dynamic>.from(item);
-    final previous = remembered[_lineupPlayerKey(player)];
+    Json? previous;
+    for (final key in _lineupPlayerKeys(player)) {
+      previous = remembered[key];
+      if (previous != null) break;
+    }
     if (previous == null) return player;
     for (final field in const ['canonicalId', 'image', 'media']) {
       final value = player[field];
