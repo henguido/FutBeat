@@ -445,7 +445,11 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
               ],
               if (hasStats) ...[
                 const _SectionTitle('Estadísticas clave'),
-                Statistics(match, detail: detail, limit: 4),
+                Statistics(
+                  match,
+                  detail: detail,
+                  mode: StatisticsDisplayMode.compact,
+                ),
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton.icon(
@@ -1424,11 +1428,18 @@ class _StatsLegend extends StatelessWidget {
   }
 }
 
+enum StatisticsDisplayMode { compact, full }
+
 class Statistics extends StatelessWidget {
-  const Statistics(this.match, {this.detail, this.limit, super.key});
+  const Statistics(
+    this.match, {
+    this.detail,
+    this.mode = StatisticsDisplayMode.full,
+    super.key,
+  });
   final FootballMatch match;
   final MatchDetail? detail;
-  final int? limit;
+  final StatisticsDisplayMode mode;
 
   @override
   Widget build(BuildContext context) {
@@ -1442,13 +1453,19 @@ class Statistics extends StatelessWidget {
       return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
     }
     final ordered = orderedStatistics(stats);
-    final visible = limit == null ? ordered : ordered.take(limit!).toList();
+    final visible = mode == StatisticsDisplayMode.compact
+        ? ordered.take(4).toList()
+        : ordered;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-        child: Column(
-          children: [for (final stat in visible) _StatisticComparison(stat)],
-        ),
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+        child: mode == StatisticsDisplayMode.compact
+            ? Column(
+                children: [
+                  for (final stat in visible) _StatisticComparison(stat),
+                ],
+              )
+            : _FullStatistics(visible),
       ),
     );
   }
@@ -1458,14 +1475,181 @@ class Statistics extends StatelessWidget {
 String statisticName(Json stat) =>
     (stat['label'] ?? stat['type'])?.toString() ?? '';
 
-/// Keeps provider order but lifts possession first, as football apps do.
+enum _StatisticGroup { summary, attack, passes, defense, discipline, other }
+
+const _statisticGroupLabels = {
+  _StatisticGroup.summary: 'Resumen',
+  _StatisticGroup.attack: 'Ataque',
+  _StatisticGroup.passes: 'Pases',
+  _StatisticGroup.defense: 'Defensa',
+  _StatisticGroup.discipline: 'Disciplina',
+  _StatisticGroup.other: 'Otras estadísticas',
+};
+
+const _possessionKeys = {
+  'possession',
+  'ball possession',
+  'possession %',
+  'posesión',
+};
+const _xgKeys = {'expected goals', 'expected goals (xg)', 'xg'};
+const _totalShotKeys = {'shots', 'total shots', 'shots total', 'tiros'};
+const _onTargetKeys = {
+  'shots on target',
+  'shots on goal',
+  'on target',
+  'tiros a puerta',
+};
+const _passKeys = {
+  'passes',
+  'total passes',
+  'accurate passes',
+  'passes accurate',
+  'passes %',
+  'pass accuracy',
+  'pases',
+};
+const _cornerKeys = {'corners', 'corner kicks', 'córners', 'saques de esquina'};
+const _disciplineKeys = {
+  'fouls',
+  'faltas',
+  'yellow cards',
+  'tarjetas amarillas',
+  'red cards',
+  'tarjetas rojas',
+};
+
+int _statisticPriority(String name) {
+  final key = _statKey(name);
+  if (_possessionKeys.contains(key)) return 0;
+  if (_xgKeys.contains(key)) return 1;
+  if (_totalShotKeys.contains(key)) return 2;
+  if (_onTargetKeys.contains(key)) return 3;
+  if (_passKeys.contains(key)) return 4;
+  if (_cornerKeys.contains(key)) return 5;
+  if (_disciplineKeys.contains(key)) return 6;
+  return 7;
+}
+
+/// Stable, deterministic priority. No row is deduplicated or synthesized.
 List<Json> orderedStatistics(List<Json> stats) {
-  bool isPossession(Json stat) =>
-      _statKey(statisticName(stat)).contains('possession');
-  return [
-    ...stats.where(isPossession),
-    ...stats.where((s) => !isPossession(s)),
-  ];
+  final indexed = stats.indexed.toList();
+  indexed.sort((a, b) {
+    final priority = _statisticPriority(statisticName(a.$2))
+        .compareTo(_statisticPriority(statisticName(b.$2)));
+    return priority != 0 ? priority : a.$1.compareTo(b.$1);
+  });
+  return indexed.map((entry) => entry.$2).toList();
+}
+
+_StatisticGroup _statisticGroup(String name) {
+  final key = _statKey(name);
+  if (_possessionKeys.contains(key) || _xgKeys.contains(key)) {
+    return _StatisticGroup.summary;
+  }
+  if (_totalShotKeys.contains(key) ||
+      _onTargetKeys.contains(key) ||
+      const {
+        'shots off target',
+        'shots off goal',
+        'off target',
+        'blocked shots',
+        'shots blocked',
+        'shots inside box',
+        'shots insidebox',
+        'shots outside box',
+        'shots outsidebox',
+        'attacks',
+        'dangerous attacks',
+      }.contains(key)) {
+    return _StatisticGroup.attack;
+  }
+  if (_passKeys.contains(key) || const {'crosses', 'centros'}.contains(key)) {
+    return _StatisticGroup.passes;
+  }
+  if (_cornerKeys.contains(key) ||
+      const {
+        'saves',
+        'goalkeeper saves',
+        'tackles',
+        'offsides',
+        'free kicks',
+        'throw ins',
+        'throw-ins',
+        'goal kicks',
+      }.contains(key)) {
+    return _StatisticGroup.defense;
+  }
+  if (_disciplineKeys.contains(key)) return _StatisticGroup.discipline;
+  return _StatisticGroup.other;
+}
+
+/// Only explicit performance metrics get winner emphasis. Unknown and
+/// discipline metrics stay neutral rather than inventing a value judgment.
+bool statisticHigherIsBetter(String name) {
+  final key = _statKey(name);
+  return _possessionKeys.contains(key) ||
+      _xgKeys.contains(key) ||
+      _totalShotKeys.contains(key) ||
+      _onTargetKeys.contains(key) ||
+      _passKeys.contains(key) ||
+      _cornerKeys.contains(key) ||
+      const {
+        'shots off target',
+        'shots off goal',
+        'off target',
+        'blocked shots',
+        'shots blocked',
+        'shots inside box',
+        'shots insidebox',
+        'shots outside box',
+        'shots outsidebox',
+        'attacks',
+        'dangerous attacks',
+        'saves',
+        'goalkeeper saves',
+        'tackles',
+        'crosses',
+      }.contains(key);
+}
+
+class _FullStatistics extends StatelessWidget {
+  const _FullStatistics(this.stats);
+
+  final List<Json> stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final grouped = <_StatisticGroup, List<Json>>{};
+    for (final stat in stats) {
+      grouped
+          .putIfAbsent(_statisticGroup(statisticName(stat)), () => [])
+          .add(stat);
+    }
+    return Column(
+      children: [
+        for (final group in _StatisticGroup.values)
+          if (grouped[group]?.isNotEmpty == true) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 10, 4, 2),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _statisticGroupLabels[group]!,
+                  style: const TextStyle(
+                    color: muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: .7,
+                  ),
+                ),
+              ),
+            ),
+            for (final stat in grouped[group]!) _StatisticComparison(stat),
+          ],
+      ],
+    );
+  }
 }
 
 class _StatisticComparison extends StatelessWidget {
@@ -1479,68 +1663,81 @@ class _StatisticComparison extends StatelessWidget {
     final away = statNumericValue(stat['away']);
     final comparable = home != null && away != null && home >= 0 && away >= 0;
     final total = comparable ? home + away : 0.0;
-    final homeLeads = comparable && home > away;
-    final awayLeads = comparable && away > home;
+    final higherIsBetter = statisticHigherIsBetter(statisticName(stat));
+    final homeLeads = higherIsBetter && comparable && home > away;
+    final awayLeads = higherIsBetter && comparable && away > home;
+    final label = _statLabel(statisticName(stat));
+    final homeText = _statValue(stat['home'], stat['unit']);
+    final awayText = _statValue(stat['away'], stat['unit']);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 9),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              _StatValuePill(
-                _statValue(stat['home'], stat['unit']),
-                color: lime,
-                highlighted: homeLeads,
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    _statLabel(statisticName(stat)),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      label: '$label. Local $homeText. Visitante $awayText.',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                _StatValuePill(
+                  homeText,
+                  color: lime,
+                  highlighted: homeLeads,
+                  key: ValueKey('stat-${_statKey(statisticName(stat))}-home'),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              _StatValuePill(
-                _statValue(stat['away'], stat['unit']),
-                color: awaySideColor,
-                highlighted: awayLeads,
-              ),
-            ],
-          ),
-          if (comparable) ...[
-            const SizedBox(height: 7),
-            Row(
-              key: const ValueKey('stat-bars'),
-              children: [
-                Expanded(
-                  child: _StatBar(
-                    share: total > 0 ? home / total : 0,
-                    color: homeLeads ? lime : lime.withValues(alpha: .45),
-                    fromEnd: true,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _StatBar(
-                    share: total > 0 ? away / total : 0,
-                    color: awayLeads
-                        ? awaySideColor
-                        : awaySideColor.withValues(alpha: .45),
-                    fromEnd: false,
-                  ),
+                _StatValuePill(
+                  awayText,
+                  color: awaySideColor,
+                  highlighted: awayLeads,
+                  key: ValueKey('stat-${_statKey(statisticName(stat))}-away'),
                 ),
               ],
             ),
+            if (comparable) ...[
+              const SizedBox(height: 7),
+              Row(
+                key: const ValueKey('stat-bars'),
+                children: [
+                  Expanded(
+                    child: _StatBar(
+                      share: total > 0 ? home / total : 0,
+                      color: higherIsBetter && !homeLeads
+                          ? lime.withValues(alpha: .45)
+                          : lime,
+                      fromEnd: true,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _StatBar(
+                      share: total > 0 ? away / total : 0,
+                      color: higherIsBetter && !awayLeads
+                          ? awaySideColor.withValues(alpha: .45)
+                          : awaySideColor,
+                      fromEnd: false,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -1551,6 +1748,7 @@ class _StatValuePill extends StatelessWidget {
     this.text, {
     required this.color,
     required this.highlighted,
+    super.key,
   });
 
   final String text;
@@ -1621,6 +1819,7 @@ double? statNumericValue(dynamic value) {
 String _statValue(dynamic value, dynamic unit) {
   final text = value?.toString() ?? '—';
   final suffix = unit?.toString() ?? '';
+  if (suffix.isEmpty || text.endsWith(suffix)) return text;
   return '$text$suffix';
 }
 
