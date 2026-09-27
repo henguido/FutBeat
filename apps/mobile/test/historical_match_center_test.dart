@@ -765,11 +765,15 @@ void main() {
       {'name': 'Alex Smith', 'image': 'https://img.example/home.png'},
     ];
     (remembered['away'] as Map<String, dynamic>)['starters'] = [
-      {'name': 'Alex Smith', 'image': 'https://img.example/away.png'},
+      {
+        'name': 'Alex Smith',
+        'canonicalId': 'away-alex',
+        'image': 'https://img.example/away.png',
+      },
     ];
     final corrected = _full();
     (corrected['home'] as Map<String, dynamic>)['starters'] = [
-      {'name': 'Alex Smith', 'image': null},
+      {'name': 'Alex Smith', 'canonicalId': 'home-alex', 'image': null},
     ];
     (corrected['away'] as Map<String, dynamic>)['starters'] = [
       {'name': 'Alex Smith', 'image': null},

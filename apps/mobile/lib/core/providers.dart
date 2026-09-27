@@ -894,9 +894,9 @@ List<String> _lineupPlayerKeys(Json player, {String nameScope = ''}) {
     final value = player[field]?.toString().trim();
     if (value != null && value.isNotEmpty) keys.add('$field:$value');
   }
-  if (keys.isNotEmpty) return keys;
   final name = player['name']?.toString().trim().toLowerCase() ?? '';
-  return name.isEmpty ? const [] : ['name:$nameScope:$name'];
+  if (name.isNotEmpty) keys.add('name:$nameScope:$name');
+  return keys;
 }
 
 dynamic _authoritativePlayerList(
@@ -906,6 +906,7 @@ dynamic _authoritativePlayerList(
 }) {
   if (next is! List) return <dynamic>[];
   final remembered = <String, Json>{};
+  final ambiguousNames = <String>{};
   if (current is List) {
     for (final item in current.whereType<Map>()) {
       final player = Map<String, dynamic>.from(item);
@@ -913,6 +914,12 @@ dynamic _authoritativePlayerList(
         player,
         nameScope: player['_memorySide']?.toString() ?? '',
       )) {
+        if (ambiguousNames.contains(key)) continue;
+        if (key.startsWith('name:') && remembered.containsKey(key)) {
+          remembered.remove(key);
+          ambiguousNames.add(key);
+          continue;
+        }
         remembered.putIfAbsent(key, () => player);
       }
     }
