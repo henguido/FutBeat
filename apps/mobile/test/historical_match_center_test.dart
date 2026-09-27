@@ -381,7 +381,8 @@ void main() {
       expect(
         find.text('Cargando alineaciones…'),
         findsOneWidget,
-        reason: 'the section may still wait while the global busy signal is gone',
+        reason:
+            'the section may still wait while the global busy signal is gone',
       );
       await _elapse(tester, const Duration(seconds: 51));
       expect(server.detailCalls, [true, false, false, false, false]);
@@ -520,25 +521,705 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('10. reopening the same match paints from memory at once', (
+  testWidgets(
+    '10. a shorter non-empty correction replaces remembered lineup and stats',
+    (tester) async {
+      Map<String, dynamic> player(int index, String suffix) => {
+        'id': 'p$index',
+        'canonicalId': 'fb_player_hist$index',
+        'name': 'Jugador $index $suffix',
+        'number': '$index',
+      };
+      Map<String, dynamic> statistic(String label, int value) => {
+        'label': label,
+        'home': value,
+        'away': value - 1,
+      };
+      final remembered = _full();
+      (remembered['home'] as Map<String, dynamic>)['starters'] = [
+        for (var index = 1; index <= 10; index++) player(index, 'anterior'),
+        player(11, 'obsoleto'),
+      ];
+      (remembered['home'] as Map<String, dynamic>)['coach'] = {
+        'name': 'Entrenador Viejo',
+      };
+      (remembered['home'] as Map<String, dynamic>)['substitutes'] = [
+        for (var index = 12; index <= 18; index++) player(index, 'banca vieja'),
+      ];
+      remembered['statistics'] = [
+        statistic('Possession', 55),
+        statistic('Total Shots', 12),
+        statistic('Shots on Goal', 6),
+        statistic('Corner Kicks', 5),
+        statistic('Fouls', 9),
+      ];
+      final corrected = _full();
+      (corrected['home'] as Map<String, dynamic>)['starters'] = [
+        for (var index = 1; index <= 10; index++) player(index, 'corregido'),
+      ];
+      corrected['home'] = <String, dynamic>{
+        ...corrected['home'] as Map<String, dynamic>,
+        'substitutes': [
+          for (var index = 12; index <= 14; index++)
+            player(index, 'banca corregida'),
+        ],
+        'coach': null,
+      };
+      corrected['statistics'] = [
+        statistic('Possession', 51),
+        statistic('Total Shots', 10),
+        statistic('Shots on Goal', 4),
+        statistic('Corner Kicks', 3),
+      ];
+      final server = _Server((read, _) => read == 0 ? remembered : corrected);
+      final container = await _open(tester, server);
+      await _tab(tester, 'Alineación');
+      expect(find.textContaining('obsoleto'), findsWidgets);
+      expect(find.text('Entrenador Viejo'), findsOneWidget);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const SizedBox(),
+        ),
+      );
+      await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+      final memory = container.read(matchDetailMemoryProvider);
+      memory[_match] = MatchDetail({
+        ...memory[_match]!.json,
+        'coverage': {
+          ...memory[_match]!.coverage!,
+          'lineupEnrichmentPending': true,
+        },
+      });
+      // The server is slow now: the remembered detail is shown meanwhile.
+      server.gate = Completer<void>();
+      await _mount(tester, container);
+      await _tab(tester, 'Alineación');
+      expect(find.textContaining('obsoleto'), findsWidgets);
+      server.gate!.complete();
+      await _elapse(tester, const Duration(seconds: 1));
+      expect(find.textContaining('corregido'), findsWidgets);
+      expect(find.textContaining('obsoleto'), findsNothing);
+      expect(find.textContaining('banca corregida'), findsWidgets);
+      expect(find.textContaining('banca vieja'), findsNothing);
+      expect(find.text('Entrenador Viejo'), findsNothing);
+      expect(memory[_match]!.homeCoach, isNull);
+      expect(memory[_match]!.homeStarters, hasLength(10));
+      expect(memory[_match]!.homeSubstitutes, hasLength(3));
+      expect(memory[_match]!.lineupEnrichmentPending, isFalse);
+      await _tab(tester, 'Estadísticas');
+      expect(find.text('Tiros a puerta'), findsWidgets);
+      expect(find.text('Córners'), findsWidgets);
+      expect(find.text('Faltas'), findsNothing);
+      await _close(tester, container);
+    },
+  );
+
+  testWidgets('an authoritative side can clear its obsolete bench', (
     tester,
   ) async {
-    final server = _Server((_, _) => _full());
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['substitutes'] = [
+      for (var index = 1; index <= 5; index++)
+        {'name': 'Suplente obsoleto $index'},
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['substitutes'] = <dynamic>[];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
     final container = await _open(tester, server);
-    await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets);
     await tester.pumpWidget(
       UncontrolledProviderScope(container: container, child: const SizedBox()),
     );
     await tester.pump(matchCacheRetention + const Duration(seconds: 1));
-    // The server is slow now: the remembered detail is shown meanwhile.
-    server.gate = Completer<void>();
     await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.textContaining('Suplente obsoleto'), findsNothing);
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.homeSubstitutes,
+      isEmpty,
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('authoritative membership retains missing player enrichment', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        ..._starter,
+        'image': 'https://img.example/player.png',
+        'media': {
+          'url': 'https://img.example/canonical.png',
+          'verificationStatus': 'VERIFIED',
+        },
+      },
+      {'id': 'removed', 'name': 'Jugador Eliminado'},
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        ..._starter,
+        'id': 'corrected-provider-id',
+        'image': null,
+        'media': null,
+      },
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final starters = container
+        .read(matchDetailMemoryProvider)[_match]!
+        .homeStarters;
+    expect(starters, hasLength(1), reason: 'removed membership stays removed');
+    expect(starters.single['canonicalId'], 'fb_player_hist1');
+    expect(starters.single['image'], 'https://img.example/player.png');
+    expect((starters.single['media'] as Map)['verificationStatus'], 'VERIFIED');
+    await _close(tester, container);
+  });
+
+  testWidgets('a player moved to the bench retains missing enrichment', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {..._starter, 'image': 'https://img.example/player.png'},
+    ];
+    final corrected = _full();
+    corrected['home'] = <String, dynamic>{
+      ...corrected['home'] as Map<String, dynamic>,
+      'starters': <dynamic>[],
+      'substitutes': [
+        {..._starter, 'canonicalId': null, 'image': null},
+      ],
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.homeStarters, isEmpty);
+    expect(detail.homeSubstitutes, hasLength(1));
+    expect(detail.homeSubstitutes.single['canonicalId'], 'fb_player_hist1');
+    expect(
+      detail.homeSubstitutes.single['image'],
+      'https://img.example/player.png',
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('a player moved across sides retains missing enrichment', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {..._starter, 'image': 'https://img.example/player.png'},
+    ];
+    final corrected = _full();
+    corrected['home'] = {
+      ...corrected['home'] as Map<String, dynamic>,
+      'starters': <dynamic>[],
+      'substitutes': [
+        {'name': 'Reserva local autoritativa'},
+      ],
+    };
+    corrected['away'] = {
+      ...corrected['away'] as Map<String, dynamic>,
+      'starters': [
+        {..._starter, 'canonicalId': null, 'image': null},
+      ],
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.awayStarters, hasLength(1));
+    expect(detail.awayStarters.single['canonicalId'], 'fb_player_hist1');
+    expect(
+      detail.awayStarters.single['image'],
+      'https://img.example/player.png',
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('name-only homonyms retain enrichment from their own side', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {'name': 'Alex Smith', 'image': 'https://img.example/home.png'},
+    ];
+    (remembered['away'] as Map<String, dynamic>)['starters'] = [
+      {
+        'name': 'Alex Smith',
+        'canonicalId': 'away-alex',
+        'image': 'https://img.example/away.png',
+      },
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['starters'] = [
+      {'name': 'Alex Smith', 'canonicalId': 'home-alex', 'image': null},
+    ];
+    (corrected['away'] as Map<String, dynamic>)['starters'] = [
+      {'name': 'Alex Smith', 'image': null},
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.homeStarters.single['image'], 'https://img.example/home.png');
+    expect(detail.awayStarters.single['image'], 'https://img.example/away.png');
+    await _close(tester, container);
+  });
+
+  testWidgets('conflicting stable identities never merge by name', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        'name': 'Alex Smith',
+        'id': 'shared-provider-id',
+        'canonicalId': 'old-alex',
+        'image': 'https://img.example/old.png',
+      },
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        'name': 'Alex Smith',
+        'id': 'shared-provider-id',
+        'canonicalId': 'new-alex',
+        'image': null,
+      },
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final player = container
+        .read(matchDetailMemoryProvider)[_match]!
+        .homeStarters
+        .single;
+    expect(player['canonicalId'], 'new-alex');
+    expect(player['image'], isNull);
+    await _close(tester, container);
+  });
+
+  testWidgets('an exact canonical identity beats a provider id alias', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        'name': 'Alias candidato',
+        'id': 'shared-id',
+        'image': 'https://img.example/wrong.png',
+      },
+      {
+        'name': 'Canónico candidato',
+        'id': 'old-id',
+        'canonicalId': 'canonical-player',
+        'image': 'https://img.example/correct.png',
+      },
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        'name': 'Canónico candidato',
+        'id': 'shared-id',
+        'canonicalId': 'canonical-player',
+        'image': null,
+      },
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    expect(
+      container
+          .read(matchDetailMemoryProvider)[_match]!
+          .homeStarters
+          .single['image'],
+      'https://img.example/correct.png',
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('a lower-ranked refresh preserves full lineup and statistics', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      for (var index = 1; index <= 11; index++)
+        {'id': 'full-$index', 'name': 'Titular completo $index'},
+    ];
+    (remembered['home'] as Map<String, dynamic>)['formation'] = '4-3-3';
+    remembered['statistics'] = [
+      for (var index = 1; index <= 5; index++)
+        {'label': 'Estadística completa $index', 'home': index, 'away': 0},
+    ];
+    final live = _detail(level: 'live', lineup: true, stats: true);
+    live['home'] = {
+      'formation': '3-5-2',
+      'starters': [
+        {'id': 'live-only', 'name': 'Fila parcial en vivo'},
+      ],
+      'substitutes': <dynamic>[],
+      'coach': null,
+    };
+    live['statistics'] = [
+      {'label': 'Fila estadística parcial', 'home': 1, 'away': 0},
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : live);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.detailLevel, 'full');
+    expect(detail.homeStarters, hasLength(11));
+    expect(detail.homeStarters.first['name'], 'Titular completo 1');
+    expect(detail.homeFormation, '4-3-3');
+    expect(detail.statistics, hasLength(5));
+    expect(detail.statistics.first['label'], 'Estadística completa 1');
+    await _close(tester, container);
+  });
+
+  testWidgets('a successful empty video read removes a withdrawn video', (
+    tester,
+  ) async {
+    final remembered = _full()
+      ..['videos'] = [
+        {
+          'videoId': 'abcDEF12345',
+          'url': 'https://www.youtube.com/watch?v=abcDEF12345',
+        },
+      ];
+    final corrected = _full()
+      ..['videos'] = <dynamic>[]
+      ..['coverage'] = {
+        ..._full()['coverage'] as Map<String, dynamic>,
+        'videos': 'available',
+      };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    expect(container.read(matchDetailMemoryProvider)[_match]!.videos, isEmpty);
+    await _close(tester, container);
+  });
+
+  testWidgets('a failed video read preserves the remembered video', (
+    tester,
+  ) async {
+    final remembered = _full()
+      ..['videos'] = [
+        {
+          'videoId': 'abcDEF12345',
+          'url': 'https://www.youtube.com/watch?v=abcDEF12345',
+        },
+      ];
+    final failed = _full()
+      ..['videos'] = <dynamic>[]
+      ..['coverage'] = {
+        ..._full()['coverage'] as Map<String, dynamic>,
+        'videos': 'unavailable',
+      };
+    final server = _Server((read, _) => read == 0 ? remembered : failed);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.videos,
+      hasLength(1),
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('an authoritative bench can clear obsolete starters', (
+    tester,
+  ) async {
+    final remembered = _full();
+    final corrected = _full();
+    corrected['home'] = <String, dynamic>{
+      ...corrected['home'] as Map<String, dynamic>,
+      'starters': <dynamic>[],
+      'substitutes': [
+        {'name': 'Único suplente nuevo'},
+      ],
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.homeStarters, isEmpty);
+    expect(detail.homeSubstitutes, hasLength(1));
+    expect(detail.homeSubstitutes.single['name'], 'Único suplente nuevo');
+    await _close(tester, container);
+  });
+
+  testWidgets('authoritative home does not clear a transient empty away side', (
+    tester,
+  ) async {
+    final remembered = _full();
+    remembered['away'] = {
+      'formation': '4-4-2',
+      'starters': [
+        {'name': 'Visitante conservado'},
+      ],
+      'substitutes': [
+        {'name': 'Banca visitante conservada'},
+      ],
+    };
+    final corrected = _full();
+    corrected['away'] = {
+      'formation': '3-5-2',
+      'starters': <dynamic>[],
+      'substitutes': <dynamic>[],
+      'coach': null,
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.awayStarters.single['name'], 'Visitante conservado');
+    expect(detail.awaySubstitutes.single['name'], 'Banca visitante conservada');
+    expect(detail.awayFormation, '4-4-2');
+    await _close(tester, container);
+  });
+
+  testWidgets('a corrected lineup replaces its remembered coach', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['coach'] = {
+      'name': 'Entrenador Viejo',
+    };
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['coach'] = {
+      'name': 'Entrenador Nuevo',
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.text('Entrenador Nuevo'), findsOneWidget);
+    expect(find.text('Entrenador Viejo'), findsNothing);
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.homeCoach?['name'],
+      'Entrenador Nuevo',
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('an empty refresh retains a remembered coach', (tester) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['coach'] = {
+      'name': 'Entrenador Conservado',
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : _partial());
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.text('Entrenador Conservado'), findsOneWidget);
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.homeCoach?['name'],
+      'Entrenador Conservado',
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('a new coach-only observation replaces the remembered coach', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['coach'] = {
+      'name': 'Entrenador Viejo',
+    };
+    final coachOnly = _partial();
+    coachOnly['home'] = {
+      'starters': <dynamic>[],
+      'substitutes': <dynamic>[],
+      'coach': {'name': 'Entrenador Nuevo'},
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : coachOnly);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Alineación');
+    expect(find.text('Entrenador Nuevo'), findsOneWidget);
+    expect(find.text('Entrenador Viejo'), findsNothing);
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.homeCoach?['name'],
+      'Entrenador Nuevo',
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('an empty refresh retains remembered lineup and statistics', (
+    tester,
+  ) async {
+    final server = _Server((read, _) => read == 0 ? _full() : _partial());
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
     await _tab(tester, 'Alineación');
     expect(find.text('AS'), findsWidgets);
-    server.gate!.complete();
+    await _tab(tester, 'Estadísticas');
+    expect(find.text('Tiros a puerta'), findsWidgets);
+    await _close(tester, container);
+  });
+
+  testWidgets('formation alone keeps a pending lineup in its loading state', (
+    tester,
+  ) async {
+    Map<String, dynamic> formationOnly({required bool pending}) {
+      final detail = _detail(
+        level: 'partial',
+        pending: pending,
+        lineupState: pending ? 'pending' : 'missing',
+      );
+      detail['home'] = {
+        'formation': '4-3-3',
+        'starters': <dynamic>[],
+        'substitutes': <dynamic>[],
+        'coach': null,
+      };
+      return detail;
+    }
+
+    final server = _Server((read, _) => formationOnly(pending: read > 0));
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
     await _elapse(tester, const Duration(seconds: 1));
-    expect(find.text('AS'), findsWidgets);
+    await _tab(tester, 'Alineación');
+    expect(find.text('Cargando alineaciones…'), findsOneWidget);
+    expect(find.text('Sin alineaciones'), findsNothing);
+    await _close(tester, container);
+  });
+
+  testWidgets('first real lineup replaces a formation-only shape', (
+    tester,
+  ) async {
+    final remembered = _detail(level: 'full', lineup: true);
+    remembered['home'] = {
+      'formation': '4-3-3',
+      'starters': <dynamic>[],
+      'substitutes': <dynamic>[],
+      'coach': null,
+    };
+    final live = _detail(level: 'live', lineup: true);
+    live['home'] = {
+      'formation': '3-5-2',
+      'starters': [
+        {'name': 'Primera alineación real'},
+      ],
+      'substitutes': <dynamic>[],
+      'coach': null,
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : live);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.homeStarters.single['name'], 'Primera alineación real');
+    expect(detail.homeFormation, '3-5-2');
+    await _close(tester, container);
+  });
+
+  testWidgets('a missing remembered section adopts the latest pending state', (
+    tester,
+  ) async {
+    final server = _Server(
+      (read, _) =>
+          read == 0 ? _detail(level: 'full', lineup: true) : _partial(),
+    );
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    await _tab(tester, 'Estadísticas');
+    expect(find.text('Cargando estadísticas…'), findsOneWidget);
+    expect(find.text('Sin estadísticas'), findsNothing);
     await _close(tester, container);
   });
 

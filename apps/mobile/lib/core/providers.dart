@@ -848,6 +848,245 @@ final matchDetailMemoryProvider = Provider<Map<String, MatchDetail>>(
 /// Most recently opened matches kept in [matchDetailMemoryProvider].
 const matchDetailMemoryLimit = 30;
 
+int _detailLevelRank(String level) => switch (level) {
+  'full' => 3,
+  'partial' => 2,
+  'live' => 1,
+  _ => 0,
+};
+
+dynamic _longerList(dynamic current, dynamic next) {
+  final currentLength = current is List ? current.length : 0;
+  final nextLength = next is List ? next.length : 0;
+  return nextLength >= currentLength ? next : current;
+}
+
+dynamic _latestNonEmptyList(dynamic current, dynamic next) =>
+    next is List && next.isNotEmpty ? next : current;
+
+dynamic _latestNonEmpty(dynamic current, dynamic next) {
+  if (next == null) return current;
+  if (next is String && next.trim().isEmpty) return current;
+  return next;
+}
+
+bool _hasLineupPlayers(Json side) =>
+    (side['starters'] is List && (side['starters'] as List).isNotEmpty) ||
+    (side['substitutes'] is List && (side['substitutes'] as List).isNotEmpty);
+
+dynamic _mergeCoach(
+  Json current,
+  Json next, {
+  required bool acceptNextPlayers,
+}) {
+  if (_hasLineupPlayers(next)) {
+    return acceptNextPlayers ? next['coach'] : current['coach'];
+  }
+  final nextCoach = next['coach'];
+  return nextCoach is Map && nextCoach.isNotEmpty
+      ? nextCoach
+      : current['coach'];
+}
+
+List<String> _lineupPlayerKeys(Json player, {String nameScope = ''}) {
+  final keys = <String>[];
+  for (final field in const ['canonicalId', 'id']) {
+    final value = player[field]?.toString().trim();
+    if (value != null && value.isNotEmpty) keys.add('$field:$value');
+  }
+  final name = player['name']?.toString().trim().toLowerCase() ?? '';
+  if (name.isNotEmpty) keys.add('name:$nameScope:$name');
+  return keys;
+}
+
+bool _compatibleLineupIdentity(Json remembered, Json next) {
+  final rememberedCanonical = remembered['canonicalId']?.toString().trim();
+  final nextCanonical = next['canonicalId']?.toString().trim();
+  if (rememberedCanonical?.isNotEmpty == true &&
+      nextCanonical?.isNotEmpty == true) {
+    return rememberedCanonical == nextCanonical;
+  }
+  final rememberedId = remembered['id']?.toString().trim();
+  final nextId = next['id']?.toString().trim();
+  if (rememberedId?.isNotEmpty == true && nextId?.isNotEmpty == true) {
+    return rememberedId == nextId;
+  }
+  return true;
+}
+
+dynamic _authoritativePlayerList(
+  dynamic current,
+  dynamic next, {
+  required String nameScope,
+}) {
+  if (next is! List) return <dynamic>[];
+  final remembered = <String, Json>{};
+  final ambiguousNames = <String>{};
+  if (current is List) {
+    for (final item in current.whereType<Map>()) {
+      final player = Map<String, dynamic>.from(item);
+      for (final key in _lineupPlayerKeys(
+        player,
+        nameScope: player['_memorySide']?.toString() ?? '',
+      )) {
+        if (ambiguousNames.contains(key)) continue;
+        if (key.startsWith('name:') && remembered.containsKey(key)) {
+          remembered.remove(key);
+          ambiguousNames.add(key);
+          continue;
+        }
+        remembered.putIfAbsent(key, () => player);
+      }
+    }
+  }
+  return next.map((item) {
+    if (item is! Map) return item;
+    final player = Map<String, dynamic>.from(item);
+    Json? previous;
+    final keys = _lineupPlayerKeys(player, nameScope: nameScope);
+    final stableKeys = keys.where((key) => !key.startsWith('name:'));
+    for (final key in stableKeys) {
+      previous = remembered[key];
+      if (previous != null && !_compatibleLineupIdentity(previous, player)) {
+        previous = null;
+        continue;
+      }
+      if (previous != null) break;
+    }
+    if (previous == null) {
+      final nameKey = keys.where((key) => key.startsWith('name:')).firstOrNull;
+      final byName = nameKey == null ? null : remembered[nameKey];
+      final rememberedHasStable =
+          byName != null &&
+          _lineupPlayerKeys(byName).any((key) => !key.startsWith('name:'));
+      if (stableKeys.isEmpty || !rememberedHasStable) previous = byName;
+    }
+    if (previous == null) return player;
+    for (final field in const ['canonicalId', 'image', 'media']) {
+      final value = player[field];
+      final absent = value == null || (value is String && value.trim().isEmpty);
+      if (absent && previous[field] != null) player[field] = previous[field];
+    }
+    return player;
+  }).toList();
+}
+
+Json _mergeDetailSide(
+  Json current,
+  Json next, {
+  required bool replaceExisting,
+  required List<dynamic> rememberedPlayers,
+  required String side,
+}) {
+  final nextHasPlayers = _hasLineupPlayers(next);
+  final acceptNextPlayers =
+      nextHasPlayers && (replaceExisting || !_hasLineupPlayers(current));
+  return {
+    ...current,
+    ...next,
+    'formation':
+        acceptNextPlayers ||
+            current['formation'] == null ||
+            (current['formation'] is String &&
+                (current['formation'] as String).trim().isEmpty)
+        ? _latestNonEmpty(current['formation'], next['formation'])
+        : current['formation'],
+    'starters': acceptNextPlayers
+        ? _authoritativePlayerList(
+            rememberedPlayers,
+            next['starters'],
+            nameScope: side,
+          )
+        : current['starters'],
+    'substitutes': acceptNextPlayers
+        ? _authoritativePlayerList(
+            rememberedPlayers,
+            next['substitutes'],
+            nameScope: side,
+          )
+        : current['substitutes'],
+    'missing': _longerList(current['missing'], next['missing']),
+    'coach': _mergeCoach(current, next, acceptNextPlayers: acceptNextPlayers),
+  };
+}
+
+bool _hasVisibleLineup(Json home, Json away) {
+  bool sideHasData(Json side) =>
+      _hasLineupPlayers(side) ||
+      (side['coach'] is Map && (side['coach'] as Map).isNotEmpty);
+  return sideHasData(home) || sideHasData(away);
+}
+
+/// Merges persisted detail monotonically while taking liveness from the
+/// latest answer. Rechecks may add data, but never erase richer UI state.
+MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
+  if (!current.available) return next;
+  final replaceExisting =
+      _detailLevelRank(next.detailLevel) >=
+      _detailLevelRank(current.detailLevel);
+  final rememberedPlayers = <dynamic>[
+    for (final player in current.homeStarters)
+      {...player, '_memorySide': 'home'},
+    for (final player in current.homeSubstitutes)
+      {...player, '_memorySide': 'home'},
+    for (final player in current.awayStarters)
+      {...player, '_memorySide': 'away'},
+    for (final player in current.awaySubstitutes)
+      {...player, '_memorySide': 'away'},
+  ];
+  final home = _mergeDetailSide(
+    current.home,
+    next.home,
+    replaceExisting: replaceExisting,
+    rememberedPlayers: rememberedPlayers,
+    side: 'home',
+  );
+  final away = _mergeDetailSide(
+    current.away,
+    next.away,
+    replaceExisting: replaceExisting,
+    rememberedPlayers: rememberedPlayers,
+    side: 'away',
+  );
+  final currentStatistics = current.json['statistics'];
+  final statistics =
+      !replaceExisting &&
+          currentStatistics is List &&
+          currentStatistics.isNotEmpty
+      ? currentStatistics
+      : _latestNonEmptyList(currentStatistics, next.json['statistics']);
+  final videos = next.sectionState('videos') == 'unavailable'
+      ? current.json['videos']
+      : next.json['videos'];
+  final coverage = <String, dynamic>{
+    ...?current.coverage,
+    ...?next.coverage,
+    'lineupEnrichmentPending': next.lineupEnrichmentPending,
+  };
+  if (_hasVisibleLineup(home, away)) coverage['lineup'] = 'available';
+  if (statistics is List && statistics.isNotEmpty) {
+    coverage['statistics'] = 'available';
+  }
+  final detailLevel = replaceExisting ? next.detailLevel : current.detailLevel;
+  return MatchDetail({
+    ...current.json,
+    ...next.json,
+    'available': true,
+    'detailLevel': detailLevel,
+    'stadium': _latestNonEmpty(current.json['stadium'], next.json['stadium']),
+    'referee': _latestNonEmpty(current.json['referee'], next.json['referee']),
+    'round': _latestNonEmpty(current.json['round'], next.json['round']),
+    'home': home,
+    'away': away,
+    'statistics': statistics,
+    'incidents': _longerList(current.json['incidents'], next.json['incidents']),
+    'videos': videos,
+    'pending': next.pending,
+    'hydrationNeeded': next.hydrationNeeded,
+    'coverage': coverage,
+  });
+}
+
 final matchDetailProvider = StreamProvider.autoDispose
     .family<MatchDetail, String>((ref, id) async* {
       final repository = ref.watch(repositoryProvider);
@@ -890,10 +1129,7 @@ final matchDetailProvider = StreamProvider.autoDispose
                     throw TimeoutException('Initial detail deadline');
                   },
                 );
-        // Never replace remembered real data with an emptier answer.
-        current = loaded.available || !current.available
-            ? loaded
-            : MatchDetail({...current.json, 'pending': loaded.pending});
+        current = _monotonicDetail(current, loaded);
         remember(current);
       } catch (_) {
         // A failed read is not evidence that data is absent: keep what we
@@ -928,8 +1164,7 @@ final matchDetailProvider = StreamProvider.autoDispose
                 },
               );
           if (disposed) return;
-          // Never replace real data with an emptier answer.
-          if (next.available || !current.available) current = next;
+          current = _monotonicDetail(current, next);
           remember(current);
           yield current;
         } catch (_) {
