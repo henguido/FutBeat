@@ -350,6 +350,7 @@ class PushService {
 
   Future<void> updateRecoveredPassword(String password) async {
     final token = recoveryAccessToken;
+    final generation = recoveryGeneration;
     if (!accountConfigured || token == null) {
       throw StateError('Password recovery is not active');
     }
@@ -363,8 +364,10 @@ class PushService {
         headers: {'apikey': config.publicKey, 'Authorization': 'Bearer $token'},
       ),
     );
-    recoveryAccessToken = null;
-    recoveryGeneration++;
+    if (generation == recoveryGeneration && token == recoveryAccessToken) {
+      recoveryAccessToken = null;
+      recoveryGeneration++;
+    }
   }
 
   Future<void> refreshSession() async {

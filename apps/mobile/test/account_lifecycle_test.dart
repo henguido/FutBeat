@@ -24,7 +24,11 @@ class _Tokens implements PushTokenSource {
 }
 
 class _Http {
-  _Http({this.fail = const {}, this.pkceGates = const {}}) {
+  _Http({
+    this.fail = const {},
+    this.pkceGates = const {},
+    this.passwordUpdateGate,
+  }) {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -59,6 +63,9 @@ class _Http {
           } else if (options.path.endsWith('futbeat-delete-account')) {
             data = {'deleted': true};
           }
+          if (options.method == 'PUT' && passwordUpdateGate != null) {
+            await passwordUpdateGate!.future;
+          }
           handler.resolve(
             Response(requestOptions: options, statusCode: 200, data: data),
           );
@@ -70,16 +77,22 @@ class _Http {
   final dio = Dio();
   final Set<String> fail;
   final Map<String, Completer<void>> pkceGates;
+  final Completer<void>? passwordUpdateGate;
   final calls = <RequestOptions>[];
 }
 
 Future<({PushService service, AppDatabase db, _Http http})> _service({
   Set<String> fail = const {},
   Map<String, Completer<void>> pkceGates = const {},
+  Completer<void>? passwordUpdateGate,
 }) async {
   FlutterSecureStorage.setMockInitialValues({});
   final db = AppDatabase(NativeDatabase.memory());
-  final http = _Http(fail: fail, pkceGates: pkceGates);
+  final http = _Http(
+    fail: fail,
+    pkceGates: pkceGates,
+    passwordUpdateGate: passwordUpdateGate,
+  );
   final service = PushService(
     const LiveRealtimeConfig(
       supabaseUrl: 'https://supabase.test',
@@ -291,6 +304,30 @@ void main() {
       await second;
       firstGate.complete();
       await first;
+      expect(value.service.recoveryAccessToken, 'recovery-access-second');
+    },
+  );
+
+  test(
+    'an older password update cannot clear a newer recovery token',
+    () async {
+      final updateGate = Completer<void>();
+      final value = await _service(passwordUpdateGate: updateGate);
+      addTearDown(() async {
+        value.service.dispose();
+        await value.db.close();
+      });
+      await value.service.requestPasswordReset('person@example.com');
+      await value.service.beginPasswordRecovery(
+        Uri.parse('futbeat://auth/recovery?code=first'),
+      );
+      final oldUpdate = value.service.updateRecoveredPassword('new-password');
+      await value.service.requestPasswordReset('person@example.com');
+      await value.service.beginPasswordRecovery(
+        Uri.parse('futbeat://auth/recovery?code=second'),
+      );
+      updateGate.complete();
+      await oldUpdate;
       expect(value.service.recoveryAccessToken, 'recovery-access-second');
     },
   );

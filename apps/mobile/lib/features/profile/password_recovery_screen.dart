@@ -41,6 +41,7 @@ class _PasswordRecoveryScreenState
     confirmation.clear();
     setState(() {
       validLink = null;
+      busy = false;
       message = null;
     });
     try {
@@ -63,6 +64,7 @@ class _PasswordRecoveryScreenState
   }
 
   Future<void> submit() async {
+    final operation = generation;
     if (password.text.length < 8) {
       setState(() => message = 'Usa al menos 8 caracteres.');
       return;
@@ -79,20 +81,22 @@ class _PasswordRecoveryScreenState
       await ref
           .read(pushServiceProvider)
           .updateRecoveredPassword(password.text);
-      if (!mounted) return;
+      if (!mounted || operation != generation) return;
       password.clear();
       confirmation.clear();
       setState(
         () => message = 'Contraseña actualizada. Ya puedes iniciar sesión.',
       );
     } catch (_) {
-      if (mounted) {
+      if (mounted && operation == generation) {
         setState(
           () => message = 'No se pudo actualizar. Solicita un enlace nuevo.',
         );
       }
     } finally {
-      if (mounted) setState(() => busy = false);
+      if (mounted && operation == generation) {
+        setState(() => busy = false);
+      }
     }
   }
 
