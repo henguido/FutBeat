@@ -11,6 +11,20 @@ alter table futbeat_private.notification_outbox
   foreign key(device_id) references futbeat_private.push_devices(id)
   on delete cascade;
 
+create function futbeat_private.refresh_interests_after_account_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform futbeat_private.refresh_interest_aggregates();
+  return null;
+end
+$$;
+revoke all on function futbeat_private.refresh_interests_after_account_delete()
+from public;
+
 do $$
 begin
   -- auth.users is guaranteed by Supabase. The guard keeps the migration
@@ -48,5 +62,16 @@ begin
   alter table futbeat_private.notification_outbox
     add constraint notification_outbox_auth_user_fkey
     foreign key(user_id) references auth.users(id) on delete cascade;
+
+  -- Run once for each deleted Auth account, at transaction end. Deferral is
+  -- important: every FK cascade above is complete before aggregate demand is
+  -- rebuilt, so deleted follows/interests/preferences cannot remain counted.
+  execute $trigger$
+    create constraint trigger futbeat_refresh_interests_after_account_delete
+    after delete on auth.users
+    deferrable initially deferred
+    for each row
+    execute function futbeat_private.refresh_interests_after_account_delete()
+  $trigger$;
 end
 $$;

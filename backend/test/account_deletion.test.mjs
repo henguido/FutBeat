@@ -91,6 +91,13 @@ test('auth user deletion cascades private data and preserves shared sports data'
     create table futbeat_private.user_preferences(user_id uuid primary key);
     create table futbeat_private.temporary_interests(user_id uuid not null, entity_id text references futbeat_private.entities(id));
     create table futbeat_private.notification_outbox(id uuid primary key, device_id uuid not null references futbeat_private.push_devices(id), user_id uuid not null);
+    create table futbeat_private.coverage_interests(entity_id text primary key, explicit_followers int not null);
+    create function futbeat_private.refresh_interest_aggregates() returns void
+    language sql as $$
+      delete from futbeat_private.coverage_interests;
+      insert into futbeat_private.coverage_interests
+      select entity_id,count(*)::int from futbeat_private.push_follows group by entity_id;
+    $$;
   `);
   await db.exec(await read('supabase/migrations/20260927174752_account_deletion_cascade.sql'));
   await db.query('insert into auth.users values ($1),($2)', [userA, userB]);
@@ -99,6 +106,7 @@ test('auth user deletion cascades private data and preserves shared sports data'
   const outbox = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   await db.query('insert into futbeat_private.push_devices values ($1,$2)', [device, userA]);
   await db.query("insert into futbeat_private.push_follows values ($1,'fb_team_shared')", [userA]);
+  await db.exec('select futbeat_private.refresh_interest_aggregates()');
   await db.query('insert into futbeat_private.user_preferences values ($1)', [userA]);
   await db.query("insert into futbeat_private.temporary_interests values ($1,'fb_team_shared')", [userA]);
   await db.query('insert into futbeat_private.notification_outbox values ($1,$2,$3)', [outbox, device, userA]);
@@ -108,6 +116,7 @@ test('auth user deletion cascades private data and preserves shared sports data'
     assert.equal((await db.query(`select count(*)::int count from futbeat_private.${table}`)).rows[0].count, 0, table);
   }
   assert.equal((await db.query('select count(*)::int count from futbeat_private.entities')).rows[0].count, 1);
+  assert.equal((await db.query('select count(*)::int count from futbeat_private.coverage_interests')).rows[0].count, 0);
   assert.equal((await db.query('select count(*)::int count from auth.users')).rows[0].count, 1);
   await db.close();
 });
