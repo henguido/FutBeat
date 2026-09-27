@@ -917,15 +917,19 @@ dynamic _authoritativePlayerList(dynamic current, dynamic next) {
 
 Json _mergeDetailSide(Json current, Json next) {
   final nextHasPlayers = _hasLineupPlayers(next);
+  final rememberedPlayers = <dynamic>[
+    if (current['starters'] is List) ...current['starters'] as List,
+    if (current['substitutes'] is List) ...current['substitutes'] as List,
+  ];
   return {
     ...current,
     ...next,
     'formation': _latestNonEmpty(current['formation'], next['formation']),
     'starters': nextHasPlayers
-        ? _authoritativePlayerList(current['starters'], next['starters'])
+        ? _authoritativePlayerList(rememberedPlayers, next['starters'])
         : current['starters'],
     'substitutes': nextHasPlayers
-        ? _authoritativePlayerList(current['substitutes'], next['substitutes'])
+        ? _authoritativePlayerList(rememberedPlayers, next['substitutes'])
         : current['substitutes'],
     'missing': _longerList(current['missing'], next['missing']),
     'coach': _mergeCoach(current, next),

@@ -679,6 +679,40 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('a player moved to the bench retains missing enrichment', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {..._starter, 'image': 'https://img.example/player.png'},
+    ];
+    final corrected = _full();
+    corrected['home'] = <String, dynamic>{
+      ...corrected['home'] as Map<String, dynamic>,
+      'starters': <dynamic>[],
+      'substitutes': [
+        {..._starter, 'canonicalId': null, 'image': null},
+      ],
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.homeStarters, isEmpty);
+    expect(detail.homeSubstitutes, hasLength(1));
+    expect(detail.homeSubstitutes.single['canonicalId'], 'fb_player_hist1');
+    expect(
+      detail.homeSubstitutes.single['image'],
+      'https://img.example/player.png',
+    );
+    await _close(tester, container);
+  });
+
   testWidgets('an authoritative bench can clear obsolete starters', (
     tester,
   ) async {
