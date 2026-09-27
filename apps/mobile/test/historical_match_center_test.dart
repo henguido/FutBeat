@@ -799,13 +799,19 @@ void main() {
     (remembered['home'] as Map<String, dynamic>)['starters'] = [
       {
         'name': 'Alex Smith',
+        'id': 'shared-provider-id',
         'canonicalId': 'old-alex',
         'image': 'https://img.example/old.png',
       },
     ];
     final corrected = _full();
     (corrected['home'] as Map<String, dynamic>)['starters'] = [
-      {'name': 'Alex Smith', 'canonicalId': 'new-alex', 'image': null},
+      {
+        'name': 'Alex Smith',
+        'id': 'shared-provider-id',
+        'canonicalId': 'new-alex',
+        'image': null,
+      },
     ];
     final server = _Server((read, _) => read == 0 ? remembered : corrected);
     final container = await _open(tester, server);

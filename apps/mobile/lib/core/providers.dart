@@ -899,6 +899,21 @@ List<String> _lineupPlayerKeys(Json player, {String nameScope = ''}) {
   return keys;
 }
 
+bool _compatibleLineupIdentity(Json remembered, Json next) {
+  final rememberedCanonical = remembered['canonicalId']?.toString().trim();
+  final nextCanonical = next['canonicalId']?.toString().trim();
+  if (rememberedCanonical?.isNotEmpty == true &&
+      nextCanonical?.isNotEmpty == true) {
+    return rememberedCanonical == nextCanonical;
+  }
+  final rememberedId = remembered['id']?.toString().trim();
+  final nextId = next['id']?.toString().trim();
+  if (rememberedId?.isNotEmpty == true && nextId?.isNotEmpty == true) {
+    return rememberedId == nextId;
+  }
+  return true;
+}
+
 dynamic _authoritativePlayerList(
   dynamic current,
   dynamic next, {
@@ -932,6 +947,10 @@ dynamic _authoritativePlayerList(
     final stableKeys = keys.where((key) => !key.startsWith('name:'));
     for (final key in stableKeys) {
       previous = remembered[key];
+      if (previous != null && !_compatibleLineupIdentity(previous, player)) {
+        previous = null;
+        continue;
+      }
       if (previous != null) break;
     }
     if (previous == null) {
