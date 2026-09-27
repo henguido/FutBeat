@@ -882,6 +882,39 @@ dynamic _mergeCoach(Json current, Json next) {
       : current['coach'];
 }
 
+String _lineupPlayerKey(Json player) {
+  for (final field in const ['id', 'canonicalId']) {
+    final value = player[field]?.toString().trim();
+    if (value != null && value.isNotEmpty) return '$field:$value';
+  }
+  final name = player['name']?.toString().trim().toLowerCase() ?? '';
+  return name.isEmpty ? '' : 'name:$name';
+}
+
+dynamic _authoritativePlayerList(dynamic current, dynamic next) {
+  if (next is! List) return <dynamic>[];
+  final remembered = <String, Json>{};
+  if (current is List) {
+    for (final item in current.whereType<Map>()) {
+      final player = Map<String, dynamic>.from(item);
+      final key = _lineupPlayerKey(player);
+      if (key.isNotEmpty) remembered[key] = player;
+    }
+  }
+  return next.map((item) {
+    if (item is! Map) return item;
+    final player = Map<String, dynamic>.from(item);
+    final previous = remembered[_lineupPlayerKey(player)];
+    if (previous == null) return player;
+    for (final field in const ['canonicalId', 'image', 'media']) {
+      final value = player[field];
+      final absent = value == null || (value is String && value.trim().isEmpty);
+      if (absent && previous[field] != null) player[field] = previous[field];
+    }
+    return player;
+  }).toList();
+}
+
 Json _mergeDetailSide(Json current, Json next) {
   final nextHasPlayers = _hasLineupPlayers(next);
   return {
@@ -889,10 +922,10 @@ Json _mergeDetailSide(Json current, Json next) {
     ...next,
     'formation': _latestNonEmpty(current['formation'], next['formation']),
     'starters': nextHasPlayers
-        ? (next['starters'] is List ? next['starters'] : <dynamic>[])
+        ? _authoritativePlayerList(current['starters'], next['starters'])
         : current['starters'],
     'substitutes': nextHasPlayers
-        ? (next['substitutes'] is List ? next['substitutes'] : <dynamic>[])
+        ? _authoritativePlayerList(current['substitutes'], next['substitutes'])
         : current['substitutes'],
     'missing': _longerList(current['missing'], next['missing']),
     'coach': _mergeCoach(current, next),

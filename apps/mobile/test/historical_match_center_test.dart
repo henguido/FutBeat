@@ -642,6 +642,43 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('authoritative membership retains missing player enrichment', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        ..._starter,
+        'image': 'https://img.example/player.png',
+        'media': {
+          'url': 'https://img.example/canonical.png',
+          'verificationStatus': 'VERIFIED',
+        },
+      },
+      {'id': 'removed', 'name': 'Jugador Eliminado'},
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['starters'] = [
+      {..._starter, 'canonicalId': null, 'image': null, 'media': null},
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final starters = container
+        .read(matchDetailMemoryProvider)[_match]!
+        .homeStarters;
+    expect(starters, hasLength(1), reason: 'removed membership stays removed');
+    expect(starters.single['canonicalId'], 'fb_player_hist1');
+    expect(starters.single['image'], 'https://img.example/player.png');
+    expect((starters.single['media'] as Map)['verificationStatus'], 'VERIFIED');
+    await _close(tester, container);
+  });
+
   testWidgets('an authoritative bench can clear obsolete starters', (
     tester,
   ) async {
