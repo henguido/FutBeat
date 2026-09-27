@@ -890,7 +890,7 @@ dynamic _mergeCoach(
 
 List<String> _lineupPlayerKeys(Json player, {String nameScope = ''}) {
   final keys = <String>[];
-  for (final field in const ['id', 'canonicalId']) {
+  for (final field in const ['canonicalId', 'id']) {
     final value = player[field]?.toString().trim();
     if (value != null && value.isNotEmpty) keys.add('$field:$value');
   }

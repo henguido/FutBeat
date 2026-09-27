@@ -830,6 +830,50 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('an exact canonical identity beats a provider id alias', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        'name': 'Alias candidato',
+        'id': 'shared-id',
+        'image': 'https://img.example/wrong.png',
+      },
+      {
+        'name': 'Canónico candidato',
+        'id': 'old-id',
+        'canonicalId': 'canonical-player',
+        'image': 'https://img.example/correct.png',
+      },
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        'name': 'Canónico candidato',
+        'id': 'shared-id',
+        'canonicalId': 'canonical-player',
+        'image': null,
+      },
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    expect(
+      container
+          .read(matchDetailMemoryProvider)[_match]!
+          .homeStarters
+          .single['image'],
+      'https://img.example/correct.png',
+    );
+    await _close(tester, container);
+  });
+
   testWidgets('a lower-ranked refresh preserves full lineup and statistics', (
     tester,
   ) async {
