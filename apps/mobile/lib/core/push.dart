@@ -196,6 +196,18 @@ class PushService {
     return null;
   }
 
+  bool? get emailVerified {
+    final user = session?['user'];
+    if (user is! Map) return null;
+    final hasConfirmationClaim =
+        user.containsKey('email_confirmed_at') ||
+        user.containsKey('confirmed_at');
+    if (!hasConfirmationClaim) return null;
+    final value = user['email_confirmed_at'] ?? user['confirmed_at'];
+    if (value == null) return false;
+    return value.toString().trim().isNotEmpty;
+  }
+
   Options get authHeaders => Options(
     headers: {
       'apikey': config.publicKey,
@@ -225,6 +237,34 @@ class PushService {
     await dio.post(
       '${config.supabaseUrl}/auth/v1/signup',
       data: {'email': email.trim(), 'password': password},
+      options: Options(headers: {'apikey': config.publicKey}),
+    );
+  }
+
+  Future<void> requestPasswordReset(String email) async {
+    if (!accountConfigured) {
+      throw StateError('Account service is not configured');
+    }
+    final normalized = email.trim();
+    if (normalized.isEmpty) throw ArgumentError('Email is required');
+    await dio.post(
+      '${config.supabaseUrl}/auth/v1/recover',
+      data: {'email': normalized},
+      options: Options(headers: {'apikey': config.publicKey}),
+    );
+  }
+
+  Future<void> resendEmailConfirmation() async {
+    if (!accountConfigured) {
+      throw StateError('Account service is not configured');
+    }
+    final currentEmail = email;
+    if (currentEmail == null || emailVerified != false) {
+      throw StateError('Email confirmation is not pending');
+    }
+    await dio.post(
+      '${config.supabaseUrl}/auth/v1/resend',
+      data: {'type': 'signup', 'email': currentEmail},
       options: Options(headers: {'apikey': config.publicKey}),
     );
   }
@@ -547,7 +587,38 @@ class PushService {
     }
     session = null;
     token = null;
+    rotation = null;
+    follows = null;
+    renewal = null;
     await storage.delete(key: 'futbeat.push.session');
+  }
+
+  Future<void> deleteAccount() async {
+    if (!accountConfigured || !authenticated) {
+      throw StateError('Authentication required');
+    }
+    await pending.catchError((_) {});
+    final response = await dio.post<Map<String, dynamic>>(
+      '${config.supabaseUrl}/functions/v1/futbeat-delete-account',
+      options: authHeaders,
+    );
+    if (response.data?['deleted'] != true) {
+      throw StateError('Account deletion was not confirmed');
+    }
+
+    await rotation?.cancel();
+    await follows?.cancel();
+    renewal?.cancel();
+    rotation = null;
+    follows = null;
+    renewal = null;
+    enabled = false;
+    token = null;
+    session = null;
+    pending = Future.value();
+    await storage.delete(key: 'futbeat.push.session');
+    await storage.write(key: 'futbeat.push.enabled', value: 'false');
+    await _writeLocalProfile(const UserProfileSettings(), dirty: false);
   }
 
   void dispose() {

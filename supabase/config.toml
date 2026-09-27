@@ -9,6 +9,9 @@ verify_jwt = true
 [functions.futbeat-push-dispatch]
 verify_jwt = true
 
+[functions.futbeat-delete-account]
+verify_jwt = true
+
 [functions.futbeat-country-sync]
 verify_jwt = true
 

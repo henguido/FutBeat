@@ -94,6 +94,45 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (mounted) setState(() => message = 'Perfil actualizado.');
   }
 
+  Future<void> requestPasswordReset(PushService service) async {
+    if (email.text.trim().isEmpty) {
+      setState(() => message = 'Ingresa tu correo para continuar.');
+      return;
+    }
+    await action(
+      () => service.requestPasswordReset(email.text),
+      'Si existe una cuenta con ese correo, recibirás instrucciones para restablecer la contraseña.',
+    );
+  }
+
+  Future<void> confirmAccountDeletion(PushService service) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Eliminar cuenta'),
+        content: const Text(
+          'Se eliminarán tu perfil, favoritos sincronizados, preferencias y avisos asociados. Esta acción no se puede deshacer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Eliminar definitivamente'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await action(service.deleteAccount, 'Cuenta eliminada.');
+    }
+  }
+
   String initials(PushService service) {
     final source = settings.displayName?.trim().isNotEmpty == true
         ? settings.displayName!
@@ -222,7 +261,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
           const SizedBox(height: 20),
           const Text(
-            'Cuenta',
+            'Cuenta y seguridad',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
           ),
           const SizedBox(height: 10),
@@ -265,7 +304,31 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     ),
               child: const Text('Crear cuenta'),
             ),
+            TextButton(
+              onPressed: busy ? null : () => requestPasswordReset(service),
+              child: const Text('¿Olvidaste tu contraseña?'),
+            ),
           ] else ...[
+            if (service.emailVerified == false)
+              Card(
+                color: Theme.of(context).colorScheme.secondaryContainer,
+                child: ListTile(
+                  leading: const Icon(Icons.mark_email_unread_outlined),
+                  title: const Text('Confirma tu correo'),
+                  subtitle: const Text(
+                    'Revisa tu bandeja para completar la verificación.',
+                  ),
+                  trailing: TextButton(
+                    onPressed: busy
+                        ? null
+                        : () => action(
+                            service.resendEmailConfirmation,
+                            'Correo de confirmación reenviado.',
+                          ),
+                    child: const Text('Reenviar correo'),
+                  ),
+                ),
+              ),
             TextField(
               controller: displayName,
               enabled: !busy,
@@ -354,12 +417,25 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ],
           if (service.authenticated) ...[
             const SizedBox(height: 22),
+            const Text(
+              'Cuenta y privacidad',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+            const SizedBox(height: 6),
             TextButton.icon(
               onPressed: busy
                   ? null
                   : () => action(service.signOut, 'Sesión cerrada.'),
               icon: const Icon(Icons.logout),
               label: const Text('Cerrar sesión'),
+            ),
+            TextButton.icon(
+              onPressed: busy ? null : () => confirmAccountDeletion(service),
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
+              ),
+              icon: const Icon(Icons.delete_forever_outlined),
+              label: const Text('Eliminar cuenta'),
             ),
           ],
           if (message != null)
