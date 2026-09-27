@@ -979,6 +979,9 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
           currentStatistics.isNotEmpty
       ? currentStatistics
       : _latestNonEmptyList(currentStatistics, next.json['statistics']);
+  final videos = next.sectionState('videos') == 'unavailable'
+      ? current.json['videos']
+      : next.json['videos'];
   final coverage = <String, dynamic>{
     ...?current.coverage,
     ...?next.coverage,
@@ -1001,7 +1004,7 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
     'away': away,
     'statistics': statistics,
     'incidents': _longerList(current.json['incidents'], next.json['incidents']),
-    'videos': _longerList(current.json['videos'], next.json['videos']),
+    'videos': videos,
     'pending': next.pending,
     'hydrationNeeded': next.hydrationNeeded,
     'coverage': coverage,

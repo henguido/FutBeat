@@ -753,6 +753,65 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('a successful empty video read removes a withdrawn video', (
+    tester,
+  ) async {
+    final remembered = _full()
+      ..['videos'] = [
+        {
+          'videoId': 'abcDEF12345',
+          'url': 'https://www.youtube.com/watch?v=abcDEF12345',
+        },
+      ];
+    final corrected = _full()
+      ..['videos'] = <dynamic>[]
+      ..['coverage'] = {
+        ..._full()['coverage'] as Map<String, dynamic>,
+        'videos': 'available',
+      };
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    expect(container.read(matchDetailMemoryProvider)[_match]!.videos, isEmpty);
+    await _close(tester, container);
+  });
+
+  testWidgets('a failed video read preserves the remembered video', (
+    tester,
+  ) async {
+    final remembered = _full()
+      ..['videos'] = [
+        {
+          'videoId': 'abcDEF12345',
+          'url': 'https://www.youtube.com/watch?v=abcDEF12345',
+        },
+      ];
+    final failed = _full()
+      ..['videos'] = <dynamic>[]
+      ..['coverage'] = {
+        ..._full()['coverage'] as Map<String, dynamic>,
+        'videos': 'unavailable',
+      };
+    final server = _Server((read, _) => read == 0 ? remembered : failed);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    expect(
+      container.read(matchDetailMemoryProvider)[_match]!.videos,
+      hasLength(1),
+    );
+    await _close(tester, container);
+  });
+
   testWidgets('an authoritative bench can clear obsolete starters', (
     tester,
   ) async {

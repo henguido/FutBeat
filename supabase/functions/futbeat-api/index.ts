@@ -320,6 +320,10 @@ export default {
       }
 
       const normalized = normalizeMatchDetail(detail, videosError ? [] : videos, playerMedia) as Record<string, unknown>;
+      normalized.coverage = {
+        ...asRecord(normalized.coverage),
+        videos: videosError ? 'unavailable' : 'available',
+      };
       if (lineupEnrichmentPending) {
         // Partial lineup photos now; the app refreshes once hydration lands.
         normalized.coverage = { ...asRecord(normalized.coverage), lineupEnrichmentPending: true };
