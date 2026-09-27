@@ -1,0 +1,6 @@
+# Copy this file to key.properties and keep the real file outside version control.
+# On Windows, either escape backslashes (C:\\keys\\...) or use forward slashes.
+storeFile=C:\\path\\to\\futbeat-upload-key.jks
+storePassword=CHANGE_ME
+keyAlias=futbeat-upload
+keyPassword=CHANGE_ME

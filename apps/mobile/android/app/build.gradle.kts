@@ -1,8 +1,24 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+val releaseSigningPropertiesFile = rootProject.file("key.properties")
+val releaseSigningProperties = Properties()
+if (releaseSigningPropertiesFile.exists()) {
+    releaseSigningPropertiesFile.inputStream().use(releaseSigningProperties::load)
+}
+
+val requiredReleaseSigningProperties =
+    listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+val missingReleaseSigningProperties =
+    requiredReleaseSigningProperties.filter { releaseSigningProperties.getProperty(it).isNullOrBlank() }
+val releaseArtifactTaskPrefixes =
+    listOf("assemble", "bundle", "package", "sign", "validateSigning")
+val appProjectPath = project.path
 
 android {
     namespace = "com.futbeat.futbeat"
@@ -29,10 +45,22 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (missingReleaseSigningProperties.isEmpty()) {
+            create("release") {
+                storeFile = rootProject.file(releaseSigningProperties.getProperty("storeFile"))
+                storePassword = releaseSigningProperties.getProperty("storePassword")
+                keyAlias = releaseSigningProperties.getProperty("keyAlias")
+                keyPassword = releaseSigningProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own release signing config before store publication.
-            signingConfig = signingConfigs.getByName("debug")
+            if (missingReleaseSigningProperties.isEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }
@@ -46,3 +74,25 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+gradle.taskGraph.whenReady(
+    object : org.gradle.api.Action<org.gradle.api.execution.TaskExecutionGraph> {
+        override fun execute(taskGraph: org.gradle.api.execution.TaskExecutionGraph) {
+            val releaseArtifactRequested =
+                taskGraph.allTasks.any { task ->
+                    task.project.path == appProjectPath &&
+                        task.name.contains("Release", ignoreCase = true) &&
+                        releaseArtifactTaskPrefixes.any { prefix ->
+                            task.name.startsWith(prefix, ignoreCase = true)
+                        }
+                }
+
+            if (releaseArtifactRequested && missingReleaseSigningProperties.isNotEmpty()) {
+                throw GradleException(
+                    "Release signing credentials are not configured. " +
+                        "Copy android/key.properties.example to android/key.properties and provide all required values.",
+                )
+            }
+        }
+    },
+)
