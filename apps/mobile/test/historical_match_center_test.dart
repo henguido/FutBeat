@@ -1050,6 +1050,39 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('first real lineup replaces a formation-only shape', (
+    tester,
+  ) async {
+    final remembered = _detail(level: 'full', lineup: true);
+    remembered['home'] = {
+      'formation': '4-3-3',
+      'starters': <dynamic>[],
+      'substitutes': <dynamic>[],
+      'coach': null,
+    };
+    final live = _detail(level: 'live', lineup: true);
+    live['home'] = {
+      'formation': '3-5-2',
+      'starters': [
+        {'name': 'Primera alineación real'},
+      ],
+      'substitutes': <dynamic>[],
+      'coach': null,
+    };
+    final server = _Server((read, _) => read == 0 ? remembered : live);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.homeStarters.single['name'], 'Primera alineación real');
+    expect(detail.homeFormation, '3-5-2');
+    await _close(tester, container);
+  });
+
   testWidgets('a missing remembered section adopts the latest pending state', (
     tester,
   ) async {
