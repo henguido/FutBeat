@@ -848,6 +848,88 @@ final matchDetailMemoryProvider = Provider<Map<String, MatchDetail>>(
 /// Most recently opened matches kept in [matchDetailMemoryProvider].
 const matchDetailMemoryLimit = 30;
 
+int _detailLevelRank(String level) => switch (level) {
+  'full' => 3,
+  'partial' => 2,
+  'live' => 1,
+  _ => 0,
+};
+
+dynamic _richerList(dynamic current, dynamic next) {
+  final currentLength = current is List ? current.length : 0;
+  final nextLength = next is List ? next.length : 0;
+  return nextLength >= currentLength ? next : current;
+}
+
+dynamic _latestNonEmpty(dynamic current, dynamic next) {
+  if (next == null) return current;
+  if (next is String && next.trim().isEmpty) return current;
+  return next;
+}
+
+Json _mergeDetailSide(Json current, Json next) => {
+  ...current,
+  ...next,
+  'formation': _latestNonEmpty(current['formation'], next['formation']),
+  'starters': _richerList(current['starters'], next['starters']),
+  'substitutes': _richerList(current['substitutes'], next['substitutes']),
+  'missing': _richerList(current['missing'], next['missing']),
+  'coach': _latestNonEmpty(current['coach'], next['coach']),
+};
+
+bool _hasLineup(Json home, Json away) {
+  bool sideHasData(Json side) =>
+      (side['starters'] is List && (side['starters'] as List).isNotEmpty) ||
+      (side['substitutes'] is List &&
+          (side['substitutes'] as List).isNotEmpty) ||
+      side['coach'] is Map ||
+      (side['formation']?.toString().trim().isNotEmpty ?? false);
+  return sideHasData(home) || sideHasData(away);
+}
+
+/// Merges persisted detail monotonically while taking liveness from the
+/// latest answer. Rechecks may add data, but never erase richer UI state.
+MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
+  if (!current.available) return next;
+  final home = _mergeDetailSide(current.home, next.home);
+  final away = _mergeDetailSide(current.away, next.away);
+  final statistics = _richerList(
+    current.json['statistics'],
+    next.json['statistics'],
+  );
+  final coverage = <String, dynamic>{
+    ...?current.coverage,
+    ...?next.coverage,
+    'lineupEnrichmentPending': next.lineupEnrichmentPending,
+  };
+  if (_hasLineup(home, away)) coverage['lineup'] = 'available';
+  if (statistics is List && statistics.isNotEmpty) {
+    coverage['statistics'] = 'available';
+  }
+  final detailLevel =
+      _detailLevelRank(next.detailLevel) >=
+          _detailLevelRank(current.detailLevel)
+      ? next.detailLevel
+      : current.detailLevel;
+  return MatchDetail({
+    ...current.json,
+    ...next.json,
+    'available': true,
+    'detailLevel': detailLevel,
+    'stadium': _latestNonEmpty(current.json['stadium'], next.json['stadium']),
+    'referee': _latestNonEmpty(current.json['referee'], next.json['referee']),
+    'round': _latestNonEmpty(current.json['round'], next.json['round']),
+    'home': home,
+    'away': away,
+    'statistics': statistics,
+    'incidents': _richerList(current.json['incidents'], next.json['incidents']),
+    'videos': _richerList(current.json['videos'], next.json['videos']),
+    'pending': next.pending,
+    'hydrationNeeded': next.hydrationNeeded,
+    'coverage': coverage,
+  });
+}
+
 final matchDetailProvider = StreamProvider.autoDispose
     .family<MatchDetail, String>((ref, id) async* {
       final repository = ref.watch(repositoryProvider);
@@ -890,10 +972,7 @@ final matchDetailProvider = StreamProvider.autoDispose
                     throw TimeoutException('Initial detail deadline');
                   },
                 );
-        // Never replace remembered real data with an emptier answer.
-        current = loaded.available || !current.available
-            ? loaded
-            : MatchDetail({...current.json, 'pending': loaded.pending});
+        current = _monotonicDetail(current, loaded);
         remember(current);
       } catch (_) {
         // A failed read is not evidence that data is absent: keep what we
@@ -928,8 +1007,7 @@ final matchDetailProvider = StreamProvider.autoDispose
                 },
               );
           if (disposed) return;
-          // Never replace real data with an emptier answer.
-          if (next.available || !current.available) current = next;
+          current = _monotonicDetail(current, next);
           remember(current);
           yield current;
         } catch (_) {

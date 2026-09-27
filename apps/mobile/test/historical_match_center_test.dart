@@ -381,7 +381,8 @@ void main() {
       expect(
         find.text('Cargando alineaciones…'),
         findsOneWidget,
-        reason: 'the section may still wait while the global busy signal is gone',
+        reason:
+            'the section may still wait while the global busy signal is gone',
       );
       await _elapse(tester, const Duration(seconds: 51));
       expect(server.detailCalls, [true, false, false, false, false]);
@@ -520,25 +521,78 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('10. reopening the same match paints from memory at once', (
+  testWidgets(
+    '10. reopening paints memory at once and a poorer available response '
+    'does not erase it',
+    (tester) async {
+      final richer = _full();
+      (richer['home'] as Map<String, dynamic>)['starters'] = [
+        _starter,
+        {
+          'id': 'p2',
+          'canonicalId': 'fb_player_hist2',
+          'name': 'Jugador Conservado',
+          'number': '2',
+        },
+      ];
+      (richer['statistics'] as List).add({
+        'label': 'Corner Kicks',
+        'home': 4,
+        'away': 2,
+      });
+      final server = _Server((read, _) => read == 0 ? richer : _full());
+      final container = await _open(tester, server);
+      await _tab(tester, 'Alineación');
+      expect(find.text('AS'), findsWidgets);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const SizedBox(),
+        ),
+      );
+      await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+      final memory = container.read(matchDetailMemoryProvider);
+      memory[_match] = MatchDetail({
+        ...memory[_match]!.json,
+        'coverage': {
+          ...memory[_match]!.coverage!,
+          'lineupEnrichmentPending': true,
+        },
+      });
+      // The server is slow now: the remembered detail is shown meanwhile.
+      server.gate = Completer<void>();
+      await _mount(tester, container);
+      await _tab(tester, 'Alineación');
+      expect(find.text('AS'), findsWidgets);
+      server.gate!.complete();
+      await _elapse(tester, const Duration(seconds: 1));
+      expect(find.text('AS'), findsWidgets);
+      expect(find.text('Conservado'), findsWidgets);
+      expect(memory[_match]!.lineupEnrichmentPending, isFalse);
+      await _tab(tester, 'Estadísticas');
+      expect(find.text('Tiros a puerta'), findsWidgets);
+      expect(find.text('Córners'), findsWidgets);
+      await _close(tester, container);
+    },
+  );
+
+  testWidgets('a missing remembered section adopts the latest pending state', (
     tester,
   ) async {
-    final server = _Server((_, _) => _full());
+    final server = _Server(
+      (read, _) =>
+          read == 0 ? _detail(level: 'full', lineup: true) : _partial(),
+    );
     final container = await _open(tester, server);
-    await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets);
     await tester.pumpWidget(
       UncontrolledProviderScope(container: container, child: const SizedBox()),
     );
     await tester.pump(matchCacheRetention + const Duration(seconds: 1));
-    // The server is slow now: the remembered detail is shown meanwhile.
-    server.gate = Completer<void>();
     await _mount(tester, container);
-    await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets);
-    server.gate!.complete();
     await _elapse(tester, const Duration(seconds: 1));
-    expect(find.text('AS'), findsWidgets);
+    await _tab(tester, 'Estadísticas');
+    expect(find.text('Cargando estadísticas…'), findsOneWidget);
+    expect(find.text('Sin estadísticas'), findsNothing);
     await _close(tester, container);
   });
 
