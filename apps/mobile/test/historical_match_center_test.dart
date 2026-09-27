@@ -757,6 +757,37 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('name-only homonyms retain enrichment from their own side', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {'name': 'Alex Smith', 'image': 'https://img.example/home.png'},
+    ];
+    (remembered['away'] as Map<String, dynamic>)['starters'] = [
+      {'name': 'Alex Smith', 'image': 'https://img.example/away.png'},
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['starters'] = [
+      {'name': 'Alex Smith', 'image': null},
+    ];
+    (corrected['away'] as Map<String, dynamic>)['starters'] = [
+      {'name': 'Alex Smith', 'image': null},
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final detail = container.read(matchDetailMemoryProvider)[_match]!;
+    expect(detail.homeStarters.single['image'], 'https://img.example/home.png');
+    expect(detail.awayStarters.single['image'], 'https://img.example/away.png');
+    await _close(tester, container);
+  });
+
   testWidgets('a lower-ranked refresh preserves full lineup and statistics', (
     tester,
   ) async {

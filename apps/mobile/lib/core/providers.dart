@@ -888,7 +888,7 @@ dynamic _mergeCoach(
       : current['coach'];
 }
 
-List<String> _lineupPlayerKeys(Json player) {
+List<String> _lineupPlayerKeys(Json player, {String nameScope = ''}) {
   final keys = <String>[];
   for (final field in const ['id', 'canonicalId']) {
     final value = player[field]?.toString().trim();
@@ -896,16 +896,23 @@ List<String> _lineupPlayerKeys(Json player) {
   }
   if (keys.isNotEmpty) return keys;
   final name = player['name']?.toString().trim().toLowerCase() ?? '';
-  return name.isEmpty ? const [] : ['name:$name'];
+  return name.isEmpty ? const [] : ['name:$nameScope:$name'];
 }
 
-dynamic _authoritativePlayerList(dynamic current, dynamic next) {
+dynamic _authoritativePlayerList(
+  dynamic current,
+  dynamic next, {
+  required String nameScope,
+}) {
   if (next is! List) return <dynamic>[];
   final remembered = <String, Json>{};
   if (current is List) {
     for (final item in current.whereType<Map>()) {
       final player = Map<String, dynamic>.from(item);
-      for (final key in _lineupPlayerKeys(player)) {
+      for (final key in _lineupPlayerKeys(
+        player,
+        nameScope: player['_memorySide']?.toString() ?? '',
+      )) {
         remembered.putIfAbsent(key, () => player);
       }
     }
@@ -914,7 +921,7 @@ dynamic _authoritativePlayerList(dynamic current, dynamic next) {
     if (item is! Map) return item;
     final player = Map<String, dynamic>.from(item);
     Json? previous;
-    for (final key in _lineupPlayerKeys(player)) {
+    for (final key in _lineupPlayerKeys(player, nameScope: nameScope)) {
       previous = remembered[key];
       if (previous != null) break;
     }
@@ -933,6 +940,7 @@ Json _mergeDetailSide(
   Json next, {
   required bool replaceExisting,
   required List<dynamic> rememberedPlayers,
+  required String side,
 }) {
   final nextHasPlayers = _hasLineupPlayers(next);
   final acceptNextPlayers =
@@ -949,10 +957,18 @@ Json _mergeDetailSide(
         ? _latestNonEmpty(current['formation'], next['formation'])
         : current['formation'],
     'starters': acceptNextPlayers
-        ? _authoritativePlayerList(rememberedPlayers, next['starters'])
+        ? _authoritativePlayerList(
+            rememberedPlayers,
+            next['starters'],
+            nameScope: side,
+          )
         : current['starters'],
     'substitutes': acceptNextPlayers
-        ? _authoritativePlayerList(rememberedPlayers, next['substitutes'])
+        ? _authoritativePlayerList(
+            rememberedPlayers,
+            next['substitutes'],
+            nameScope: side,
+          )
         : current['substitutes'],
     'missing': _longerList(current['missing'], next['missing']),
     'coach': _mergeCoach(current, next, acceptNextPlayers: acceptNextPlayers),
@@ -974,24 +990,28 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
       _detailLevelRank(next.detailLevel) >=
       _detailLevelRank(current.detailLevel);
   final rememberedPlayers = <dynamic>[
-    if (current.home['starters'] is List) ...current.home['starters'] as List,
-    if (current.home['substitutes'] is List)
-      ...current.home['substitutes'] as List,
-    if (current.away['starters'] is List) ...current.away['starters'] as List,
-    if (current.away['substitutes'] is List)
-      ...current.away['substitutes'] as List,
+    for (final player in current.homeStarters)
+      {...player, '_memorySide': 'home'},
+    for (final player in current.homeSubstitutes)
+      {...player, '_memorySide': 'home'},
+    for (final player in current.awayStarters)
+      {...player, '_memorySide': 'away'},
+    for (final player in current.awaySubstitutes)
+      {...player, '_memorySide': 'away'},
   ];
   final home = _mergeDetailSide(
     current.home,
     next.home,
     replaceExisting: replaceExisting,
     rememberedPlayers: rememberedPlayers,
+    side: 'home',
   );
   final away = _mergeDetailSide(
     current.away,
     next.away,
     replaceExisting: replaceExisting,
     rememberedPlayers: rememberedPlayers,
+    side: 'away',
   );
   final currentStatistics = current.json['statistics'];
   final statistics =
