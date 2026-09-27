@@ -928,9 +928,19 @@ dynamic _authoritativePlayerList(
     if (item is! Map) return item;
     final player = Map<String, dynamic>.from(item);
     Json? previous;
-    for (final key in _lineupPlayerKeys(player, nameScope: nameScope)) {
+    final keys = _lineupPlayerKeys(player, nameScope: nameScope);
+    final stableKeys = keys.where((key) => !key.startsWith('name:'));
+    for (final key in stableKeys) {
       previous = remembered[key];
       if (previous != null) break;
+    }
+    if (previous == null) {
+      final nameKey = keys.where((key) => key.startsWith('name:')).firstOrNull;
+      final byName = nameKey == null ? null : remembered[nameKey];
+      final rememberedHasStable =
+          byName != null &&
+          _lineupPlayerKeys(byName).any((key) => !key.startsWith('name:'));
+      if (stableKeys.isEmpty || !rememberedHasStable) previous = byName;
     }
     if (previous == null) return player;
     for (final field in const ['canonicalId', 'image', 'media']) {

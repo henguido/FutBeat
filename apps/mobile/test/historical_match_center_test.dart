@@ -792,6 +792,38 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('conflicting stable identities never merge by name', (
+    tester,
+  ) async {
+    final remembered = _full();
+    (remembered['home'] as Map<String, dynamic>)['starters'] = [
+      {
+        'name': 'Alex Smith',
+        'canonicalId': 'old-alex',
+        'image': 'https://img.example/old.png',
+      },
+    ];
+    final corrected = _full();
+    (corrected['home'] as Map<String, dynamic>)['starters'] = [
+      {'name': 'Alex Smith', 'canonicalId': 'new-alex', 'image': null},
+    ];
+    final server = _Server((read, _) => read == 0 ? remembered : corrected);
+    final container = await _open(tester, server);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(container: container, child: const SizedBox()),
+    );
+    await tester.pump(matchCacheRetention + const Duration(seconds: 1));
+    await _mount(tester, container);
+    await _elapse(tester, const Duration(seconds: 1));
+    final player = container
+        .read(matchDetailMemoryProvider)[_match]!
+        .homeStarters
+        .single;
+    expect(player['canonicalId'], 'new-alex');
+    expect(player['image'], isNull);
+    await _close(tester, container);
+  });
+
   testWidgets('a lower-ranked refresh preserves full lineup and statistics', (
     tester,
   ) async {
