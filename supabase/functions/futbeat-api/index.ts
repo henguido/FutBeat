@@ -91,6 +91,13 @@ export default {
           { p_team_id: id },
         );
         if (squadError) console.warn('team squad demand unavailable');
+        // Missing/stale match coverage records ONE central deduplicated
+        // demand (#150); the worker fetches it later. Never blocks the read.
+        const { error: matchesError } = await ctx.supabaseAdmin.rpc(
+          'futbeat_request_team_matches',
+          { p_team_id: id },
+        );
+        if (matchesError) console.warn('team matches demand unavailable');
       }
 
       const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
@@ -147,6 +154,24 @@ export default {
       if (!page) return reply(404, { error: 'Entidad no encontrada' });
       if (page.schemaVersion !== 1 || page.demo !== false) {
         return reply(503, { error: 'Datos temporalmente no disponibles' });
+      }
+      // End of Resultados: ask centrally for the older window before the
+      // oldest stored result (deduplicated; the server decides if needed).
+      if (bucket === 'results' && page.hasMore !== true) {
+        const matches = Array.isArray(page.matches) ? page.matches : [];
+        const oldest = matches.length
+          ? String(asRecord(matches[matches.length - 1]).startTime ?? '')
+          : '';
+        const before = /^\d{4}-\d{2}-\d{2}/.test(oldest)
+          ? oldest.slice(0, 10)
+          : null;
+        if (before) {
+          const { error: historyError } = await ctx.supabaseAdmin.rpc(
+            'futbeat_request_team_matches',
+            { p_team_id: id, p_before: before },
+          );
+          if (historyError) console.warn('team history demand unavailable');
+        }
       }
       return reply(200, page);
     }
