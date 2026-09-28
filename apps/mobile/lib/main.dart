@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/models.dart';
+import 'core/providers.dart';
 import 'core/theme.dart';
 import 'core/push.dart';
 import 'core/interests.dart';
@@ -127,6 +130,19 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   @override
   void didChangeLocales(List<Locale>? locales) {
     ref.invalidate(detectedCountryProvider);
+    final detected = normalizeCountry(
+      locales != null && locales.isNotEmpty ? locales.first.countryCode : null,
+    );
+    unawaited(_refreshCountry(detected));
+  }
+
+  Future<void> _refreshCountry(String? detected) async {
+    try {
+      await refreshDetectedCountry(ref.read(databaseProvider), detected);
+      if (mounted) ref.invalidate(preferenceProvider);
+    } catch (_) {
+      // The next preference read retries; locale changes must not crash UI.
+    }
   }
 
   @override
@@ -138,9 +154,6 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
 
   @override
   Widget build(BuildContext context) {
-    // Keep automatic country detection live for the whole app session. Android
-    // can deliver a locale change without recreating the activity.
-    ref.watch(preferenceProvider);
     final hourFormat =
         ref.watch(profileSettingsProvider).asData?.value.hourFormat ?? 'system';
 
