@@ -258,6 +258,26 @@ test('Explore is bounded, editorial, activity-based and cached; search ranks cou
   const gbCompetition=(await db.query("select public.futbeat_search_catalog('premier league','GB',50) v")).rows[0].v;
   assert.equal(gbCompetition.competitions[0].id,'fb_comp_cache_0');
   await db.exec(`update futbeat_private.competition_editorial_metadata
+      set country_code=case when competition_id='fb_comp_cache_0' then 'ES' else null end,
+          relevance_score=case when competition_id='fb_comp_cache_0' then 900 else 1 end
+      where competition_id in ('fb_comp_cache_0','fb_comp_cache_1');
+    update futbeat_private.entities set payload=payload||'{"country":"England"}'
+      where id='fb_comp_cache_1';
+    update futbeat_private.entities set payload=payload-'country'-'countryCode'
+      where id='fb_team_cache_home_0';
+    update futbeat_private.competition_editorial_metadata set country_code='CR',relevance_score=1
+      where competition_id='fb_comp_cache_0';`);
+  const sparseTeam=(await db.query("select public.futbeat_search_catalog('manchester','CR',50) v")).rows[0].v;
+  assert.equal(sparseTeam.teams[0].id,'fb_team_cache_home_0');
+  await db.exec(`update futbeat_private.competition_editorial_metadata
+      set country_code=case when competition_id='fb_comp_cache_0' then 'ES' else null end,
+          relevance_score=case when competition_id='fb_comp_cache_0' then 900 else 1 end
+      where competition_id in ('fb_comp_cache_0','fb_comp_cache_1')`);
+  const canonicalCompetition=(await db.query("select public.futbeat_search_catalog('premier league','GB',50) v")).rows[0].v;
+  assert.equal(canonicalCompetition.competitions[0].id,'fb_comp_cache_1');
+  await db.exec(`update futbeat_private.entities set payload=payload||'{"country":"Costa Rica"}'
+      where id='fb_team_cache_home_0'`);
+  await db.exec(`update futbeat_private.competition_editorial_metadata
     set country_code='EUROPE',relevance_score=1 where competition_id='fb_comp_cache_0';
     update futbeat_private.competition_editorial_metadata
     set relevance_score=900 where competition_id='fb_comp_cache_1'`);

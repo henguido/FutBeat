@@ -89,33 +89,27 @@ begin
  ), scored as (
    select e.id,e.kind,e.payload,h.quality,h.similarity,h.whole_word,h.multiword_fuzzy,
      coalesce(meta.relevance_score,100) relevance,
-     case when vc<>'' and (
-       (e.kind='competition' and (meta.country_code=vc or meta.country_code like vc||'-%'
-         or futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
-         or futbeat_private.resolve_country_code(e.payload->>'countryCode') like vc||'-%'
-         or futbeat_private.resolve_country_code(e.payload->>'country')=vc
-         or futbeat_private.resolve_country_code(e.payload->>'country') like vc||'-%'))
-       or (e.kind='team' and (
-         futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
-         or futbeat_private.resolve_country_code(e.payload->>'countryCode') like vc||'-%'
-         or futbeat_private.resolve_country_code(e.payload->>'country')=vc
-         or futbeat_private.resolve_country_code(e.payload->>'country') like vc||'-%'))
-       or (e.kind='player' and (
-         futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
-         or futbeat_private.resolve_country_code(e.payload->>'countryCode') like vc||'-%'
-         or futbeat_private.resolve_country_code(e.payload->>'country')=vc
-         or futbeat_private.resolve_country_code(e.payload->>'country') like vc||'-%'
-         or futbeat_private.resolve_country_code(team.payload->>'countryCode')=vc
-         or futbeat_private.resolve_country_code(team.payload->>'countryCode') like vc||'-%'
-         or futbeat_private.resolve_country_code(team.payload->>'country')=vc
-         or futbeat_private.resolve_country_code(team.payload->>'country') like vc||'-%'))
-     ) then 1 else 0 end country_priority
+     case when vc<>'' and (canonical.country_code=vc
+       or canonical.country_code like vc||'-%') then 1 else 0 end country_priority
    from matches h join futbeat_private.entities e on e.id=h.id and e.kind=h.kind
    left join futbeat_private.entities team on e.kind='player' and team.id=
      futbeat_private.futbeat_resolve_entity_id('team',e.payload->>'teamId')
    left join futbeat_private.competition_editorial_metadata meta on meta.competition_id=
      case when e.kind='competition' then e.id else futbeat_private.futbeat_resolve_entity_id(
        'competition',coalesce(e.payload->>'competitionId',team.payload->>'competitionId')) end
+   cross join lateral (select case e.kind
+     when 'competition' then coalesce(meta.country_code,
+       futbeat_private.resolve_country_code(e.payload->>'countryCode'),
+       futbeat_private.resolve_country_code(e.payload->>'country'))
+     when 'team' then coalesce(
+       futbeat_private.resolve_country_code(e.payload->>'countryCode'),
+       futbeat_private.resolve_country_code(e.payload->>'country'),meta.country_code)
+     when 'player' then coalesce(
+       futbeat_private.resolve_country_code(e.payload->>'countryCode'),
+       futbeat_private.resolve_country_code(e.payload->>'country'),
+       futbeat_private.resolve_country_code(team.payload->>'countryCode'),
+       futbeat_private.resolve_country_code(team.payload->>'country'),meta.country_code)
+     end country_code) canonical
    where e.kind<>'player' or h.quality>=2 or (h.quality=1 and length(qf)>=4)
      or (position(' ' in qf)=0 and h.similarity>=0.5)
      or h.multiword_fuzzy
