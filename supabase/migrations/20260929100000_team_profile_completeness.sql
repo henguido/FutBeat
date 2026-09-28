@@ -20,10 +20,10 @@
 -- Fix (read-model-first; no provider call, cron, quota or secret changes):
 --   * futbeat_read_team_matches: paginated team matches across every
 --     competition, by canonical team id (plus its redirected aliases),
---     classified by the EFFECTIVE status into upcoming / results.
+--     classified by the EFFECTIVE status into live / upcoming / results.
 --   * The entity detail applies match_read_model to its matches, carries the
 --     team entities of every standings row and a coverage.squad state.
---   * Squad state AVAILABLE | STALE | PENDING | CONFIRMED_EMPTY and one
+--   * Squad state AVAILABLE | STALE | PENDING | CONFIRMED_EMPTY | UNAVAILABLE, one
 --     central, deduplicated demand per canonical team (team_squad_demands),
 --     consumed by the existing squad planner inside the existing governor.
 --   * Standings keep position and group; a table whose groups cannot be
@@ -33,14 +33,17 @@
 -- Effective bucket shared by the profile read and the app.
 -- ---------------------------------------------------------------------------
 
--- upcoming = in play, or not started yet (kickoff + 15 min grace, the same
--- window the app uses for "awaiting update"). Everything else is a result:
--- terminal states, suspended/abandoned, and a past kickoff still reported as
--- SCHEDULED with no terminal evidence (awaiting verification, never "next").
+-- live     = in play (effective LIVE/HALFTIME/EXTRA_TIME/PENALTIES).
+-- upcoming = not started yet: future kickoff, or inside the 15-minute grace
+--            (the window the app uses for "awaiting update") while the start
+--            is reconciled.
+-- results  = everything else: finished, postponed, cancelled, abandoned,
+--            suspended, and a past kickoff still reported as SCHEDULED with
+--            no terminal evidence (awaiting verification, never "next").
 create function futbeat_private.team_match_bucket(p_match jsonb)
 returns text language sql stable set search_path='' as $$
   select case
-    when p_match->>'status' in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES') then 'upcoming'
+    when p_match->>'status' in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES') then 'live'
     when p_match->>'status' in ('DISCOVERED','SCHEDULED','PRE_MATCH')
       and now()<=(p_match->>'startTime')::timestamptz+interval '15 minutes' then 'upcoming'
     else 'results'
@@ -64,6 +67,17 @@ $$;
 -- A) Team matches read model (paginated, every competition).
 -- ---------------------------------------------------------------------------
 
+-- The read filters matches by team id. Both indexes were first created by
+-- 20260925060000_match_preview_form_h2h.sql; restated here (idempotent) so
+-- this read model is self-contained on any installation.
+create index if not exists entities_match_home_team_idx
+  on futbeat_private.entities ((payload->>'homeTeamId'))
+  where kind='match';
+
+create index if not exists entities_match_away_team_idx
+  on futbeat_private.entities ((payload->>'awayTeamId'))
+  where kind='match';
+
 create function public.futbeat_read_team_matches(
   p_team_id text,
   p_bucket text,
@@ -85,7 +99,7 @@ declare
   teams_json jsonb;
   competitions_json jsonb;
 begin
-  if p_bucket not in ('upcoming','results') or p_limit is null or p_limit<1 or p_limit>50
+  if p_bucket not in ('live','upcoming','results') or p_limit is null or p_limit<1 or p_limit>50
      or nullif(p_team_id,'') is null then
     raise exception 'Invalid team matches request';
   end if;
@@ -121,20 +135,22 @@ begin
     ) c
     where (
       -- Raw pre-filters that can never drop a row of the bucket: nothing
-      -- older than 6 h is still upcoming, and a future not-started match has
-      -- no evidence (evidence always postdates the kickoff) to end it.
-      (p_bucket='upcoming' and c.start_time>=now()-interval '6 hours')
+      -- older than 6 h is still live or upcoming, nothing in the future is
+      -- live, and a future not-started match has no evidence (evidence always
+      -- postdates the kickoff) to end it.
+      (p_bucket='live' and c.start_time between now()-interval '6 hours' and now())
+      or (p_bucket='upcoming' and c.start_time>=now()-interval '6 hours')
       or (p_bucket='results' and (c.start_time<=now()
         or coalesce(c.payload->>'status','') not in
           ('DISCOVERED','SCHEDULED','PRE_MATCH','LIVE','HALFTIME','EXTRA_TIME','PENALTIES')))
     ) and (
       cursor_time is null
-      or (p_bucket='upcoming' and (c.start_time,c.id)>(cursor_time,cursor_id))
+      or (p_bucket in ('live','upcoming') and (c.start_time,c.id)>(cursor_time,cursor_id))
       or (p_bucket='results' and (c.start_time,c.id)<(cursor_time,cursor_id))
     )
     order by
-      case when p_bucket='upcoming' then c.start_time end asc,
-      case when p_bucket='upcoming' then c.id end asc,
+      case when p_bucket in ('live','upcoming') then c.start_time end asc,
+      case when p_bucket in ('live','upcoming') then c.id end asc,
       case when p_bucket='results' then c.start_time end desc,
       case when p_bucket='results' then c.id end desc
   loop
@@ -208,10 +224,13 @@ $$;
 
 -- AVAILABLE       players and a snapshot inside its 7-day freshness window
 -- STALE           players, snapshot older than the window (shown, revalidated)
--- CONFIRMED_EMPTY no players and the provider confirmed none (NO_DATA still
---                 valid), or there is no provider source for this team
--- PENDING         no players yet: never fetched, in flight, failed and
---                 retrying, or an expired NO_DATA being revalidated
+-- PENDING         a source exists but no valid answer yet: never fetched, in
+--                 flight, failed and retrying, or an expired NO_DATA being
+--                 revalidated
+-- CONFIRMED_EMPTY the source was queried and validly answered "no squad"
+--                 (NO_DATA still valid)
+-- UNAVAILABLE     no usable provider source/mapping for this team: nothing
+--                 proves the squad is empty, there is just nothing to ask
 create function futbeat_private.team_squad_state(p_team_id text)
 returns jsonb language plpgsql stable set search_path='' as $$
 declare
@@ -233,7 +252,7 @@ begin
     and coalesce(cov.next_retry_at,cov.fetched_at+interval '30 days','-infinity')>now() then
     state:='CONFIRMED_EMPTY'; reason:='provider_no_data';
   elsif not futbeat_private.team_squad_mapped(p_team_id) then
-    state:='CONFIRMED_EMPTY'; reason:='no_provider_source';
+    state:='UNAVAILABLE'; reason:='no_provider_source';
   else
     state:='PENDING';
     reason:=case

@@ -85,24 +85,29 @@ List<(String, List<Entity>)> squadGroups(Iterable<Entity> players) {
   ];
 }
 
-/// Competition whose table really contains this team (its own group only),
-/// preferring the main one. Null: no "Tabla" tab.
-String? teamTableCompetitionId(
-  Snapshot data,
-  List<Entity> competitions,
-  String teamId,
-) {
+/// The profile's table, chosen deterministically (never by list order):
+///  1. the team's own main competition (`team.competitionId`) when its table
+///     really contains the team (its own group only);
+///  2. otherwise the only competition whose table contains the team;
+///  3. several candidates and no main-competition signal: none (no "Tabla"
+///     tab) rather than an arbitrary pick.
+/// Match Center keeps its exact competition+season table; this is only for
+/// team / national-team profiles.
+String? teamTableCompetitionId(Snapshot data, Entity team) {
   bool shows(String id) =>
       standingsGroups(
         standingsTableFor(data, id),
         data,
-        focusTeamIds: {teamId},
-      )?.any((group) => group.rows.any((row) => row['teamId'] == teamId)) ==
+        focusTeamIds: {team.id},
+      )?.any((group) => group.rows.any((row) => row['teamId'] == team.id)) ==
       true;
-  for (final competition in competitions) {
-    if (shows(competition.id)) return competition.id;
-  }
-  return null;
+  final main = team.json['competitionId']?.toString() ?? '';
+  if (main.isNotEmpty && shows(main)) return main;
+  final candidates = {
+    for (final table in data.standings)
+      if (table['competitionId'] case final String id when shows(id)) id,
+  };
+  return candidates.length == 1 ? candidates.single : null;
 }
 
 class TeamProfileView extends StatelessWidget {
@@ -124,7 +129,7 @@ class TeamProfileView extends StatelessWidget {
     final players = data.players
         .where((player) => player.json['teamId'] == team.id)
         .toList();
-    final tableId = teamTableCompetitionId(data, competitions, team.id);
+    final tableId = teamTableCompetitionId(data, team);
     final tabs = [
       'Resumen',
       'Partidos',
@@ -202,7 +207,7 @@ class TeamProfileView extends StatelessWidget {
   }
 
   List<Widget> _summary(BuildContext context, List<Entity> players) {
-    final active = matches.where((m) => m.isProfileUpcoming).take(2);
+    final active = matches.where((m) => m.isLive || m.isUpcoming).take(2);
     final finished = matches.where((m) => m.isFinished).toList();
     final main = competitions.firstOrNull;
     return [
@@ -359,9 +364,10 @@ class TeamSquad extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (players.isEmpty) {
-      // Only a confirmed absence says "no disponible"; anything else (never
-      // fetched, in flight, retrying, unknown) is still pending.
-      return state == 'CONFIRMED_EMPTY'
+      // "No disponible" only for a confirmed empty answer or no source at
+      // all (distinct states, same copy); anything else (never fetched, in
+      // flight, retrying, unknown) is still pending.
+      return state == 'CONFIRMED_EMPTY' || state == 'UNAVAILABLE'
           ? const InlineEmpty(Icons.groups_outlined, 'Plantilla no disponible')
           : const InlineEmpty(
               Icons.hourglass_empty_rounded,

@@ -10,8 +10,9 @@ import '../matches/matches_screen.dart';
 import 'profile_widgets.dart';
 import 'team_profile.dart' show matchDayLabel;
 
-/// Team profile "Partidos": Próximos (next first) and Resultados (latest
-/// first) across every competition, paginated by the server's team matches
+/// Team profile "Partidos": En vivo (only when something is in play),
+/// Próximos (next first) and Resultados (latest first) across every
+/// competition, paginated by the server's team matches
 /// read model. The profile's own matches render immediately (cache-first)
 /// until the first page arrives; a failed page never blocks the tab.
 class TeamMatchesTab extends ConsumerStatefulWidget {
@@ -89,6 +90,7 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
   @override
   Widget build(BuildContext context) => ProfileTabList('partidos', [
     if (widget.data.demo) const DemoNotice(),
+    ..._section(TeamMatchesBucket.live, 'En vivo', null),
     ..._section(
       TeamMatchesBucket.upcoming,
       'Próximos',
@@ -97,16 +99,22 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
     ..._section(TeamMatchesBucket.results, 'Resultados', 'Sin resultados'),
   ]);
 
-  List<Widget> _section(TeamMatchesBucket bucket, String title, String empty) {
+  /// A null [empty] hides the whole section while it has no matches.
+  List<Widget> _section(
+    TeamMatchesBucket bucket,
+    String title,
+    String? empty,
+  ) {
     final items = _items(bucket);
     final pages = _pages[bucket]!;
     final loading = _loading.contains(bucket);
     final failed = _failed.contains(bucket);
     final more = pages.isNotEmpty && pages.last.hasMore;
+    if (empty == null && items.isEmpty) return const [];
     return [
       ProfileSectionTitle(title),
       if (items.isEmpty && !loading)
-        InlineEmpty(Icons.event_busy_outlined, empty)
+        InlineEmpty(Icons.event_busy_outlined, empty!)
       else
         for (final item in items) _DatedMatch(item),
       if (loading && (items.isEmpty || more))

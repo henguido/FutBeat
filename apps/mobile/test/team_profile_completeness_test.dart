@@ -18,10 +18,11 @@ import 'package:go_router/go_router.dart';
 String _at(Duration offset) =>
     DateTime.now().toUtc().add(offset).toIso8601String();
 
-Map<String, dynamic> _team(String id, String name) => {
+Map<String, dynamic> _team(String id, String name, {String? competition}) => {
   'id': id,
   'name': name,
   'country': 'Nowhere',
+  'competitionId': ?competition,
 };
 
 Map<String, dynamic> _match(
@@ -64,6 +65,7 @@ Map<String, dynamic> _snapshot({
   List<Map<String, dynamic>> players = const [],
   String? squadState,
   String teamName = 'Selección Sintética',
+  String? teamCompetition,
   Map<String, dynamic>? page,
 }) => {
   'schemaVersion': 1,
@@ -78,7 +80,7 @@ Map<String, dynamic> _snapshot({
     {'id': 'fb_comp_b', 'name': 'Copa Sintética', 'country': 'Nowhere'},
   ],
   'teams': [
-    _team('fb_team', teamName),
+    _team('fb_team', teamName, competition: teamCompetition),
     _team('fb_rival', 'Rival Sintético'),
     ...extraTeams,
   ],
@@ -107,7 +109,7 @@ class _FakeTeamApi extends ApiRepository {
   }) async {
     calls.add('$teamId:$bucket:$cursor');
     if (fail) throw DioException(requestOptions: RequestOptions());
-    return TeamMatchesPage(pages[bucket]![cursor]!);
+    return TeamMatchesPage(pages[bucket]?[cursor] ?? _page(const []));
   }
 }
 
@@ -210,7 +212,13 @@ void main() {
           repository: api,
         );
         await _openTab(tester, 'Partidos');
-        expect(api.calls, ['fb_team:upcoming:null', 'fb_team:results:null']);
+        expect(api.calls, [
+          'fb_team:live:null',
+          'fb_team:upcoming:null',
+          'fb_team:results:null',
+        ]);
+        // Nothing in play: no "En vivo" section at all.
+        expect(find.text('En vivo'), findsNothing);
         expect(find.text('Próximos'), findsOneWidget);
         expect(find.text('Resultados'), findsOneWidget);
         expect(find.text('FINALIZADO'), findsOneWidget);
@@ -329,6 +337,31 @@ void main() {
       },
     );
 
+    testWidgets('a live match is under "En vivo", never under "Próximos"', (
+      tester,
+    ) async {
+      final api = _FakeTeamApi({
+        'live': {
+          null: _page([
+            _match('m_live', const Duration(minutes: -40), status: 'HALFTIME'),
+          ]),
+        },
+        'upcoming': {
+          null: _page([_match('m_next', const Duration(days: 1))]),
+        },
+      });
+      await _pump(tester, _snapshot(), repository: api);
+      await _openTab(tester, 'Partidos');
+      final live = find.text('DESCANSO');
+      expect(live, findsOneWidget);
+      expect(_above(tester, find.text('En vivo'), live), isTrue);
+      expect(_above(tester, live, find.text('Próximos')), isTrue);
+      expect(
+        _above(tester, find.text('Próximos'), find.text('PROGRAMADO')),
+        isTrue,
+      );
+    });
+
     test('bucket helper orders and dedupes by effective status', () {
       final data = Snapshot(
         _snapshot(
@@ -347,7 +380,8 @@ void main() {
         for (final item in orderedProfileMatches(b, [...items, ...items]))
           item.match.id,
       ];
-      expect(ids(TeamMatchesBucket.upcoming), ['live', 'soon', 'late']);
+      expect(ids(TeamMatchesBucket.live), ['live']);
+      expect(ids(TeamMatchesBucket.upcoming), ['soon', 'late']);
       expect(ids(TeamMatchesBucket.results), ['stale', 'recent', 'old']);
     });
   });
@@ -365,14 +399,16 @@ void main() {
       });
     }
 
-    testWidgets('confirmed empty squad says "Plantilla no disponible"', (
-      tester,
-    ) async {
-      await _pump(tester, _snapshot(squadState: 'CONFIRMED_EMPTY'));
-      await _openTab(tester, 'Plantilla');
-      expect(find.text('Plantilla no disponible'), findsOneWidget);
-      expect(find.text('Plantilla pendiente'), findsNothing);
-    });
+    for (final state in ['CONFIRMED_EMPTY', 'UNAVAILABLE']) {
+      testWidgets('squad $state says "Plantilla no disponible"', (
+        tester,
+      ) async {
+        await _pump(tester, _snapshot(squadState: state));
+        await _openTab(tester, 'Plantilla');
+        expect(find.text('Plantilla no disponible'), findsOneWidget);
+        expect(find.text('Plantilla pendiente'), findsNothing);
+      });
+    }
 
     testWidgets(
       'sections are independent: pending squad, matches still shown',
@@ -433,6 +469,93 @@ void main() {
       expect(find.text('Alfa Dos'), findsOneWidget);
       expect(find.text('Beta Uno'), findsNothing);
       expect(find.text('Grupo B'), findsNothing);
+    });
+
+    // Two competitions whose tables both contain the team; the rival rows
+    // tell which table is shown.
+    final twoTables = [
+      {
+        'competitionId': 'fb_comp_a',
+        'rows': [_row('fb_team', 1), _row('fb_a2', 2)],
+      },
+      {
+        'competitionId': 'fb_comp_b',
+        'rows': [_row('fb_b1', 1), _row('fb_team', 2)],
+      },
+    ];
+
+    testWidgets('the main competition wins even when it is not listed first', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        _snapshot(
+          standings: twoTables,
+          extraTeams: groupTeams,
+          teamCompetition: 'fb_comp_b',
+          matches: [_match('m1', const Duration(days: 1))],
+        ),
+      );
+      await _openTab(tester, 'Tabla');
+      expect(find.text('Beta Uno'), findsOneWidget);
+      expect(find.text('Alfa Dos'), findsNothing);
+    });
+
+    testWidgets('fallback: the only table containing the team is used', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        _snapshot(
+          standings: [
+            twoTables.last,
+            {
+              'competitionId': 'fb_comp_a',
+              'rows': [_row('fb_a2', 1), _row('fb_b2', 2)],
+            },
+          ],
+          extraTeams: groupTeams,
+          // Main competition's table does not contain the team.
+          teamCompetition: 'fb_comp_a',
+        ),
+      );
+      await _openTab(tester, 'Tabla');
+      expect(find.text('Beta Uno'), findsOneWidget);
+    });
+
+    testWidgets('several candidate tables and no main signal: no Tabla tab', (
+      tester,
+    ) async {
+      for (final order in [twoTables, twoTables.reversed.toList()]) {
+        await _pump(
+          tester,
+          _snapshot(standings: order, extraTeams: groupTeams),
+        );
+        expect(
+          find.descendant(
+            of: find.byType(TabBar),
+            matching: find.text('Tabla'),
+          ),
+          findsNothing,
+        );
+      }
+    });
+
+    testWidgets('the main competition keeps the team group only', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        _snapshot(
+          standings: [twoTables.last, grouped()],
+          extraTeams: groupTeams,
+          teamCompetition: 'fb_comp_a',
+        ),
+      );
+      await _openTab(tester, 'Tabla');
+      expect(find.text('Grupo A'), findsOneWidget);
+      expect(find.text('Grupo B'), findsNothing);
+      expect(find.text('Alfa Dos'), findsOneWidget);
     });
 
     testWidgets('a row without a known team never renders "Equipo"', (

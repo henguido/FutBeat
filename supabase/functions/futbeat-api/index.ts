@@ -120,7 +120,8 @@ export default {
     }
 
     // Team / national-team matches across every competition (#150): one
-    // bucket (upcoming ascending | results descending) per page, keyset cursor.
+    // bucket (live | upcoming ascending | results descending) per page,
+    // keyset cursor.
     if (path.endsWith('/futbeat-api/v1/team-matches')) {
       const id = requestUrl.searchParams.get('id');
       const bucket = requestUrl.searchParams.get('bucket');
@@ -128,7 +129,7 @@ export default {
       const limit = Number(requestUrl.searchParams.get('limit') ?? '20');
       if (
         !validEntityId(id) ||
-        (bucket !== 'upcoming' && bucket !== 'results') ||
+        (bucket !== 'live' && bucket !== 'upcoming' && bucket !== 'results') ||
         (cursor !== null && (cursor.length < 3 || cursor.length > 200)) ||
         !Number.isInteger(limit) || limit < 1 || limit > 50
       ) {

@@ -131,14 +131,21 @@ test('lifecycle: effective status decides the bucket, never the raw SCHEDULED', 
   await db.query(`insert into futbeat_private.canonical_events(id,match_id,provider,event_type,payload,first_seen_at)
     values('fb_event_tp_ft',$1,'goal_api','FULL_TIME','{}',now()-interval '1 hour')`, [evidenced]);
 
+  const liveRows = (await page(db, t, 'live')).matches;
   const up = (await page(db, t, 'upcoming')).matches;
   const res = (await page(db, t, 'results')).matches;
-  const upIds = up.map((m) => m.id), resIds = res.map((m) => m.id);
-  assert.deepEqual(upIds, [live, justStarted, future]);
+  const liveIds = liveRows.map((m) => m.id), upIds = up.map((m) => m.id), resIds = res.map((m) => m.id);
+  // In play is its own bucket: never under "Próximos".
+  assert.deepEqual(liveIds, [live]);
+  assert.deepEqual(upIds, [justStarted, future]);
   for (const id of [stale, done, postponedPast, postponedFuture, cancelled, staleLive, evidenced]) {
     assert.ok(resIds.includes(id), `${id} must be a result`);
-    assert.ok(!upIds.includes(id), `${id} must never be upcoming`);
+    assert.ok(!upIds.includes(id) && !liveIds.includes(id), `${id} must never be live or upcoming`);
   }
+  // The three buckets partition every match exactly once.
+  const all = [...liveIds, ...upIds, ...resIds];
+  assert.equal(new Set(all).size, all.length);
+  assert.equal(all.length, 10);
   // Nothing is invented for the stale match: still SCHEDULED, no score.
   const staleRow = res.find((m) => m.id === stale);
   assert.equal(staleRow.status, 'SCHEDULED');
@@ -146,6 +153,19 @@ test('lifecycle: effective status decides the bucket, never the raw SCHEDULED', 
   assert.equal(res.find((m) => m.id === evidenced).status, 'FINISHED_PENDING_VERIFICATION');
   assert.equal(res.find((m) => m.id === staleLive).status, 'SCHEDULED');
   assert.equal(res.find((m) => m.id === done).status, 'VERIFIED');
+}));
+
+test('live pagination: in-play matches page once, next kickoff first', () => withDb(async (db) => {
+  const t = await team(db), c = await competition(db);
+  const ids = [];
+  for (let i = 0; i < 5; i++) {
+    const r = await team(db);
+    ids.push(await match(db, c.id, t, r, -(5 - i) * 0.1, {
+      status: i % 2 ? 'HALFTIME' : 'LIVE', provenance: { receivedAt: hours(-0.01) } }));
+  }
+  const rows = await allPages(db, t, 'live', 2);
+  assert.deepEqual(rows.map((m) => m.id), ids);
+  assert.equal((await page(db, t, 'upcoming')).matches.length, 0);
 }));
 
 test('a rescheduled match is listed once, at its new kickoff', () => withDb(async (db) => {
@@ -221,7 +241,7 @@ test('squad PENDING: never fetched, in flight or retrying; never "no disponible"
   assert.equal(st.reason, 'retrying');
 }));
 
-test('squad CONFIRMED_EMPTY: provider confirmed none, or no provider source', () => withDb(async (db) => {
+test('squad CONFIRMED_EMPTY: the provider validly answered no squad', () => withDb(async (db) => {
   const t = await team(db, undefined, { mapped: true });
   await storeSquad(db, t, []);
   assert.equal((await squadState(db, t)).state, 'CONFIRMED_EMPTY');
@@ -230,10 +250,22 @@ test('squad CONFIRMED_EMPTY: provider confirmed none, or no provider source', ()
   // An expired NO_DATA is revalidated, not confirmed forever.
   await db.query(`update futbeat_private.team_detail_coverage set next_retry_at=now()-interval '1 minute' where team_id=$1`, [t]);
   assert.equal((await squadState(db, t)).state, 'PENDING');
+}));
+
+test('squad UNAVAILABLE: no provider source is not a confirmed empty squad', () => withDb(async (db) => {
   const unmapped = await team(db);
-  assert.equal((await squadState(db, unmapped)).state, 'CONFIRMED_EMPTY');
-  assert.equal((await squadState(db, unmapped)).reason, 'no_provider_source');
+  assert.deepEqual(await squadState(db, unmapped), { state: 'UNAVAILABLE', reason: 'no_provider_source', playerCount: 0 });
   assert.equal((await request(db, unmapped)).demandRecorded, false);
+  assert.equal((await demands(db)).length, 0);
+  // Once the provider validly answers "no squad", it becomes CONFIRMED_EMPTY.
+  const mapped = await team(db, undefined, { mapped: true });
+  await storeSquad(db, mapped, []);
+  assert.equal((await squadState(db, mapped)).state, 'CONFIRMED_EMPTY');
+  // A stored squad stays AVAILABLE even if the mapping later disappears.
+  const lost = await team(db, undefined, { mapped: true });
+  await storeSquad(db, lost, [{ id: 'sq-l1', name: 'Uno' }]);
+  await db.query("delete from futbeat_private.provider_entities where kind='team' and canonical_id=$1", [lost]);
+  assert.equal((await squadState(db, lost)).state, 'AVAILABLE');
 }));
 
 test('squad STALE: old snapshot keeps its players and asks for revalidation', () => withDb(async (db) => {
@@ -359,3 +391,16 @@ test('API: team matches route and squad demand only use FutBeat RPCs', async () 
   // The API never talks to a provider: only Supabase RPCs.
   assert.doesNotMatch(source, /goal-api\.com|api-football|\bfetch\(/i);
 });
+
+test('clean install creates both team-match indexes', () => withDb(async (db) => {
+  const rows = (await db.query(`select indexname,indexdef from pg_indexes
+    where schemaname='futbeat_private' and indexname in ('entities_match_home_team_idx','entities_match_away_team_idx')
+    order by indexname`)).rows;
+  assert.deepEqual(rows.map((r) => r.indexname), ['entities_match_away_team_idx', 'entities_match_home_team_idx']);
+  assert.match(rows[0].indexdef, /\(payload ->> 'awayTeamId'::text\)+\s+WHERE \(kind = 'match'::text\)/);
+  assert.match(rows[1].indexdef, /\(payload ->> 'homeTeamId'::text\)+\s+WHERE \(kind = 'match'::text\)/);
+  const { readFile } = await import('node:fs/promises');
+  const sql = await readFile(new URL('../../supabase/migrations/20260929100000_team_profile_completeness.sql', import.meta.url), 'utf8');
+  assert.match(sql, /create index if not exists entities_match_home_team_idx/);
+  assert.match(sql, /create index if not exists entities_match_away_team_idx/);
+}));

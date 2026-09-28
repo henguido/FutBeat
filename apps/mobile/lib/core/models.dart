@@ -600,11 +600,6 @@ class FootballMatch {
   bool get isScheduled =>
       ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status);
   bool get isUpcoming => isScheduled && !isAwaitingUpdate;
-
-  /// Team profile "Próximos": in play or not started yet. A past kickoff still
-  /// reported as scheduled is awaiting verification: it is a result, never
-  /// "next" (same rule as the server's team matches read model).
-  bool get isProfileUpcoming => isLive || isUpcoming;
   bool get hasPlayedEvidence =>
       json['hasPlayedEvidence'] == true ||
       json['score'] != null ||
@@ -816,7 +811,8 @@ class Snapshot {
   bool get standingsStale => coverage?['standingsStale'] == true;
 
   /// Team profile: server-side squad state, one of AVAILABLE | STALE |
-  /// PENDING | CONFIRMED_EMPTY (null when the server does not say).
+  /// PENDING | CONFIRMED_EMPTY | UNAVAILABLE (null when the server does not
+  /// say).
   String? get squadState => (coverage?['squad'] as Map?)?['state'] as String?;
   final bool stale;
   final bool revalidating;
