@@ -182,9 +182,10 @@ void main() {
       final db = AppDatabase(NativeDatabase.memory());
       await db.savePreference(detectedCountry: 'CR', selectedCountry: 'ES');
       await db.markBootstrapDismissed();
-      await db.saveCountries(detectedCountry: 'CR', selectedCountry: 'MX');
+      await db.saveDetectedCountry('US');
+      await db.saveSelectedCountry('MX');
       final saved = await db.watchPreference().first;
-      expect(saved.detectedCountry, 'CR');
+      expect(saved.detectedCountry, 'US');
       expect(saved.selectedCountry, 'MX');
       expect(saved.bootstrapDismissed, isTrue);
       await db.close();
@@ -201,6 +202,10 @@ void main() {
       ]);
       expect(preference.detectedCountry, 'ES');
       expect(preference.effectiveCountry, 'ES');
+      final withoutRegion = await refreshCountryForLocales(db, const [
+        Locale('es'),
+      ]);
+      expect(withoutRegion.detectedCountry, isNull);
       await db.close();
     },
   );
@@ -244,6 +249,34 @@ void main() {
   test('searched entities preserve backend match-quality order', () {
     final searched = onboardingEntitiesForQuery(catalog().teams, 'CR', 'equipo');
     expect(searched.map((entity) => entity.id), ['team_es', 'team_cr']);
+  });
+
+  test('player retries reject stale queries and countries', () {
+    const request = (query: 'messi', country: 'CR');
+    expect(
+      isCurrentOnboardingRequest(
+        request,
+        currentQuery: 'messi',
+        currentCountry: 'CR',
+      ),
+      isTrue,
+    );
+    expect(
+      isCurrentOnboardingRequest(
+        request,
+        currentQuery: 'mes',
+        currentCountry: 'CR',
+      ),
+      isFalse,
+    );
+    expect(
+      isCurrentOnboardingRequest(
+        request,
+        currentQuery: 'messi',
+        currentCountry: 'ES',
+      ),
+      isFalse,
+    );
   });
 
   test('country selector accepts ISO countries but excludes regions', () {

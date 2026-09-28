@@ -24,6 +24,13 @@ String onboardingCountryLabel(String code) {
   return label == 'Global' ? canonical : label;
 }
 
+bool isCurrentOnboardingRequest(
+  ({String query, String? country}) request, {
+  required String currentQuery,
+  required String? currentCountry,
+}) =>
+    request.query == currentQuery && request.country == currentCountry;
+
 List<Entity> rankOnboardingEntities(
   Iterable<Entity> entities,
   String? country,
@@ -91,7 +98,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   String query = '';
   Timer? debounce;
   Timer? remoteRetry;
+  ({String query, String? country})? remoteRetryRequest;
   int remoteAttempts = 0;
+  String pendingQuery = '';
   final searchController = TextEditingController();
   UserProfileSettings? settings;
   bool busy = false;
@@ -103,6 +112,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   void dispose() {
     debounce?.cancel();
     remoteRetry?.cancel();
+    remoteRetryRequest = null;
     searchController.dispose();
     super.dispose();
   }
@@ -122,7 +132,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     debounce?.cancel();
     remoteRetry?.cancel();
     remoteRetry = null;
+    remoteRetryRequest = null;
     remoteAttempts = 0;
+    pendingQuery = '';
     searchController.clear();
     if (step == onboardingStepCount - 1) {
       _finish();
@@ -139,7 +151,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     debounce?.cancel();
     remoteRetry?.cancel();
     remoteRetry = null;
+    remoteRetryRequest = null;
     remoteAttempts = 0;
+    pendingQuery = '';
     searchController.clear();
     if (step > 0) {
       setState(() {
@@ -150,9 +164,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   void _search(String value) {
+    pendingQuery = value.trim();
     debounce?.cancel();
     remoteRetry?.cancel();
     remoteRetry = null;
+    remoteRetryRequest = null;
     remoteAttempts = 0;
     debounce = Timer(const Duration(milliseconds: 275), () {
       if (mounted) setState(() => query = value.trim());
@@ -194,35 +210,65 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       Duration(seconds: 5),
       Duration(seconds: 8),
     ];
+    final currentCountry = ref
+        .read(preferenceProvider)
+        .asData
+        ?.value
+        .effectiveCountry;
+    if (!mounted ||
+        step != 3 ||
+        !isCurrentOnboardingRequest(
+          request,
+          currentQuery: pendingQuery,
+          currentCountry: currentCountry,
+        )) {
+      return;
+    }
+    if (remoteRetry != null && remoteRetryRequest != request) {
+      remoteRetry?.cancel();
+      remoteRetry = null;
+      remoteAttempts = 0;
+    }
     if (remoteRetry != null || remoteAttempts >= delays.length) return;
+    remoteRetryRequest = request;
     remoteRetry = Timer(delays[remoteAttempts], () {
-      if (!mounted || step != 3) return;
+      final latestCountry = mounted
+          ? ref.read(preferenceProvider).asData?.value.effectiveCountry
+          : null;
+      if (!mounted ||
+          step != 3 ||
+          !isCurrentOnboardingRequest(
+            request,
+            currentQuery: pendingQuery,
+            currentCountry: latestCountry,
+          )) {
+        remoteRetry = null;
+        remoteRetryRequest = null;
+        remoteAttempts = 0;
+        return;
+      }
       setState(() {
         remoteAttempts++;
         remoteRetry = null;
+        remoteRetryRequest = null;
       });
       ref.invalidate(searchSnapshotProvider(request));
     });
   }
 
-  Future<void> _selectCountry(
-    CountryPreference preference,
-    String? value,
-  ) async {
+  Future<void> _selectCountry(String? value) async {
     if (countryBusy) return;
     setState(() => countryBusy = true);
     // Capture provider-owned objects before the first await. The route can be
     // dismissed while Drift is saving, after which WidgetRef is no longer safe.
     final database = ref.read(databaseProvider);
     final service = ref.read(pushServiceProvider);
-    await database.saveCountries(
-      detectedCountry: preference.detectedCountry,
-      selectedCountry: value,
-    );
+    await database.saveSelectedCountry(value);
+    final current = await database.watchPreference().first;
     await service.markCountriesDirty();
     if (service.authenticated) {
       try {
-        await service.syncCountries(preference.detectedCountry, value);
+        await service.syncCountries(current.detectedCountry, value);
       } catch (_) {
         // Drift remains authoritative offline; the normal reconcile can retry.
       }
@@ -425,7 +471,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           onChanged: countryBusy
               ? null
               : (value) => _selectCountry(
-                  preference,
                   value == _automaticCountry ? null : value,
                 ),
         ),

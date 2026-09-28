@@ -169,23 +169,29 @@ class AppDatabase extends _$AppDatabase {
     }
   }
 
-  Future<void> saveCountries({
-    required String? detectedCountry,
-    required String? selectedCountry,
-  }) async {
+  Future<void> saveDetectedCountry(String? detectedCountry) async {
     await into(preferences).insert(
       PreferencesCompanion.insert(
         id: const Value(1),
         detectedCountry: Value(detectedCountry),
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+    await (update(preferences)..where((p) => p.id.equals(1))).write(
+      PreferencesCompanion(detectedCountry: Value(detectedCountry)),
+    );
+  }
+
+  Future<void> saveSelectedCountry(String? selectedCountry) async {
+    await into(preferences).insert(
+      PreferencesCompanion.insert(
+        id: const Value(1),
         selectedCountry: Value(selectedCountry),
       ),
       mode: InsertMode.insertOrIgnore,
     );
     await (update(preferences)..where((p) => p.id.equals(1))).write(
-      PreferencesCompanion(
-        detectedCountry: Value(detectedCountry),
-        selectedCountry: Value(selectedCountry),
-      ),
+      PreferencesCompanion(selectedCountry: Value(selectedCountry)),
     );
   }
 

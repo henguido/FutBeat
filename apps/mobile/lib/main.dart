@@ -145,8 +145,17 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   }
 
   Future<void> _refreshCountry(List<Locale>? locales) async {
+    final database = ref.read(databaseProvider);
+    final service = ref.read(pushServiceProvider);
     try {
-      await refreshCountryForLocales(ref.read(databaseProvider), locales);
+      final preference = await refreshCountryForLocales(database, locales);
+      await service.markCountriesDirty();
+      if (service.authenticated) {
+        await service.syncCountries(
+          preference.detectedCountry,
+          preference.selectedCountry,
+        );
+      }
       if (mounted) ref.invalidate(preferenceProvider);
     } catch (_) {
       // The next preference read retries; locale changes must not crash UI.
