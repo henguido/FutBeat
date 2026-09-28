@@ -82,11 +82,17 @@ begin
    select e.id,e.kind,e.payload,h.quality,h.similarity,h.whole_word,h.multiword_fuzzy,
      coalesce(meta.relevance_score,100) relevance,
      case when vc<>'' and (
-       meta.country_code=vc or meta.country_code like vc||'-%'
-       or futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
-       or futbeat_private.resolve_country_code(e.payload->>'country')=vc
-       or futbeat_private.resolve_country_code(team.payload->>'countryCode')=vc
-       or futbeat_private.resolve_country_code(team.payload->>'country')=vc
+       (e.kind='competition' and (meta.country_code=vc or meta.country_code like vc||'-%'
+         or futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
+         or futbeat_private.resolve_country_code(e.payload->>'country')=vc))
+       or (e.kind='team' and (
+         futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
+         or futbeat_private.resolve_country_code(e.payload->>'country')=vc))
+       or (e.kind='player' and (
+         futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
+         or futbeat_private.resolve_country_code(e.payload->>'country')=vc
+         or futbeat_private.resolve_country_code(team.payload->>'countryCode')=vc
+         or futbeat_private.resolve_country_code(team.payload->>'country')=vc))
      ) then 1 else 0 end country_priority
    from matches h join futbeat_private.entities e on e.id=h.id and e.kind=h.kind
    left join futbeat_private.entities team on e.kind='player' and team.id=e.payload->>'teamId'

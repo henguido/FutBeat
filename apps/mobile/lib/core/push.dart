@@ -13,6 +13,12 @@ import 'database.dart';
 import 'live_realtime.dart';
 import 'providers.dart';
 
+String? reconcileSelectedCountry({
+  required String? local,
+  required String? cloud,
+  required bool dirty,
+}) => dirty ? local : local ?? cloud;
+
 class UserProfileSettings {
   const UserProfileSettings({
     this.displayName,
@@ -361,12 +367,17 @@ class PushService {
 
   Future<void> syncCountries(String? detected, String? selected) async {
     if (!authenticated || disposed) return;
+    await markCountriesDirty();
     await dio.post(
       '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_preferences',
       options: authHeaders,
       data: {'p_detected': detected, 'p_selected': selected},
     );
+    await storage.write(key: 'futbeat.country.dirty', value: 'false');
   }
+
+  Future<void> markCountriesDirty() =>
+      storage.write(key: 'futbeat.country.dirty', value: 'true');
 
   Future<void> touchInterest(String type, String id) async {
     if (!authenticated || disposed) return;
@@ -468,10 +479,16 @@ class PushService {
     if (cloudPreferences is Map) {
       final values = Map<String, dynamic>.from(cloudPreferences);
       final current = await database.watchPreference().first;
+      final countryDirty =
+          await storage.read(key: 'futbeat.country.dirty') == 'true';
       final cloudDetected = values['detectedCountry']?.toString();
       final cloudSelected = values['selectedCountry']?.toString();
       final detected = current.detectedCountry ?? cloudDetected;
-      final selected = current.selectedCountry ?? cloudSelected;
+      final selected = reconcileSelectedCountry(
+        local: current.selectedCountry,
+        cloud: cloudSelected,
+        dirty: countryDirty,
+      );
       if (detected != current.detectedCountry ||
           selected != current.selectedCountry) {
         await database.savePreference(

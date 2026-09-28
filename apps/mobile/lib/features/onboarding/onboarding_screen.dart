@@ -15,6 +15,9 @@ import '../../shared/widgets.dart';
 const onboardingStepCount = 6;
 const _automaticCountry = '__automatic__';
 
+bool isSelectableCountryCode(String? value) =>
+    value != null && RegExp(r'^[A-Z]{2}$').hasMatch(value);
+
 List<Entity> rankOnboardingEntities(
   Iterable<Entity> entities,
   String? country,
@@ -86,6 +89,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   final searchController = TextEditingController();
   UserProfileSettings? settings;
   bool busy = false;
+  bool settingsBusy = false;
   String? message;
 
   @override
@@ -153,18 +157,26 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Future<void> _saveSettings(UserProfileSettings next) async {
+    if (settingsBusy) return;
     setState(() {
       settings = next;
+      settingsBusy = true;
       message = null;
     });
     final saved = await saveOnboardingSettings(
       settings: next,
       save: ref.read(pushServiceProvider).saveProfileSettings,
-      invalidate: () => ref.invalidate(profileSettingsProvider),
+      invalidate: () {
+        if (mounted) ref.invalidate(profileSettingsProvider);
+      },
     );
-    if (!saved && mounted) {
+    if (mounted) {
       setState(() {
-        message = 'Guardado en este dispositivo. Se sincronizará al reconectar.';
+        settingsBusy = false;
+        if (!saved) {
+          message =
+              'Guardado en este dispositivo. Se sincronizará al reconectar.';
+        }
       });
     }
   }
@@ -198,6 +210,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           bootstrapDismissed: preference.bootstrapDismissed,
         );
     final service = ref.read(pushServiceProvider);
+    await service.markCountriesDirty();
     if (service.authenticated) {
       try {
         await service.syncCountries(preference.detectedCountry, value);
@@ -353,7 +366,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
     for (final entity in [...?catalog?.competitions, ...?catalog?.teams]) {
       final code = entity.json['countryCode']?.toString().trim().toUpperCase();
-      if (code != null && code.isNotEmpty) {
+      if (isSelectableCountryCode(code)) {
         labels.putIfAbsent(
           code,
           () => entity.country.isEmpty ? code : entity.country,
@@ -600,7 +613,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             contentPadding: EdgeInsets.zero,
             title: Text(item.$1),
             value: item.$2,
-            onChanged: (next) => _saveSettings(item.$3(next)),
+            onChanged: settingsBusy
+                ? null
+                : (next) => _saveSettings(item.$3(next)),
           ),
         const SizedBox(height: 8),
         if (service.authenticated && PushService.configured)

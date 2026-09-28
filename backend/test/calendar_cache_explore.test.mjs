@@ -247,10 +247,14 @@ test('Explore is bounded, editorial, activity-based and cached; search ranks cou
   assert.equal(es.teams[0].id,'fb_team_cache_away_0');
   assert.deepEqual(new Set(cr.teams.map(t=>t.id)),new Set(es.teams.map(t=>t.id)));
   await db.exec(`update futbeat_private.competition_editorial_metadata
-    set country_code='EUROPE' where competition_id='fb_comp_cache_0'`);
+    set country_code='EUROPE',relevance_score=1 where competition_id='fb_comp_cache_0';
+    update futbeat_private.competition_editorial_metadata
+    set relevance_score=900 where competition_id='fb_comp_cache_1'`);
   const ownCountry=(await db.query(`select futbeat_private.catalog_entity(payload,100) v
     from futbeat_private.entities where id='fb_team_cache_home_0'`)).rows[0].v;
   assert.equal(ownCountry.countryCode,'CR');
+  const europe=(await db.query("select public.futbeat_search_catalog('manchester','EUROPE',50) v")).rows[0].v;
+  assert.equal(europe.teams[0].id,'fb_team_cache_away_0');
   await db.exec(`update futbeat_private.entities set payload=payload||'{"aliases":["The Red Devils"]}' where id='fb_team_cache_home_0'`);
   const alias=(await db.query("select public.futbeat_search_catalog('red devils',null,50) v")).rows[0].v;
   assert.equal(alias.teams[0].id,'fb_team_cache_home_0');

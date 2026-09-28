@@ -243,6 +243,23 @@ void main() {
     expect(searched.map((entity) => entity.id), ['team_es', 'team_cr']);
   });
 
+  test('country selector accepts ISO countries but excludes regions', () {
+    expect(isSelectableCountryCode('CR'), isTrue);
+    expect(isSelectableCountryCode('GB-ENG'), isFalse);
+    expect(isSelectableCountryCode('EUROPE'), isFalse);
+  });
+
+  test('dirty Automatic clear is not replaced by a cloud override', () {
+    expect(
+      reconcileSelectedCountry(local: null, cloud: 'ES', dirty: true),
+      isNull,
+    );
+    expect(
+      reconcileSelectedCountry(local: null, cloud: 'ES', dirty: false),
+      'ES',
+    );
+  });
+
   test(
     'alert save contains remote failure and still invalidates settings',
     () async {
