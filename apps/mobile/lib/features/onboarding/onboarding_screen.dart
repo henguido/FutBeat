@@ -99,6 +99,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Timer? debounce;
   Timer? remoteRetry;
   ({String query, String? country})? remoteRetryRequest;
+  ({String query, String? country})? lastRetryRequest;
   int remoteAttempts = 0;
   String pendingQuery = '';
   final searchController = TextEditingController();
@@ -113,6 +114,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     debounce?.cancel();
     remoteRetry?.cancel();
     remoteRetryRequest = null;
+    lastRetryRequest = null;
     searchController.dispose();
     super.dispose();
   }
@@ -133,6 +135,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     remoteRetry?.cancel();
     remoteRetry = null;
     remoteRetryRequest = null;
+    lastRetryRequest = null;
     remoteAttempts = 0;
     pendingQuery = '';
     searchController.clear();
@@ -152,6 +155,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     remoteRetry?.cancel();
     remoteRetry = null;
     remoteRetryRequest = null;
+    lastRetryRequest = null;
     remoteAttempts = 0;
     pendingQuery = '';
     searchController.clear();
@@ -169,6 +173,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     remoteRetry?.cancel();
     remoteRetry = null;
     remoteRetryRequest = null;
+    lastRetryRequest = null;
     remoteAttempts = 0;
     debounce = Timer(const Duration(milliseconds: 275), () {
       if (mounted) setState(() => query = value.trim());
@@ -224,6 +229,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         )) {
       return;
     }
+    if (lastRetryRequest != request) {
+      remoteRetry?.cancel();
+      remoteRetry = null;
+      remoteRetryRequest = null;
+      remoteAttempts = 0;
+      lastRetryRequest = request;
+    }
     if (remoteRetry != null && remoteRetryRequest != request) {
       remoteRetry?.cancel();
       remoteRetry = null;
@@ -244,6 +256,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           )) {
         remoteRetry = null;
         remoteRetryRequest = null;
+        lastRetryRequest = null;
         remoteAttempts = 0;
         return;
       }

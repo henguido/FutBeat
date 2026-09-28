@@ -27,6 +27,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   Timer? debounce;
   Timer? remoteRetry;
   ({String query, String? country})? remoteRetryRequest;
+  ({String query, String? country})? lastRetryRequest;
   int remoteAttempts = 0;
   String pendingQuery = '';
   Snapshot? previous;
@@ -49,6 +50,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         request.country != currentCountry) {
       return;
     }
+    if (lastRetryRequest != request) {
+      remoteRetry?.cancel();
+      remoteRetry = null;
+      remoteRetryRequest = null;
+      remoteAttempts = 0;
+      lastRetryRequest = request;
+    }
     if (remoteRetry != null && remoteRetryRequest != request) {
       remoteRetry?.cancel();
       remoteRetry = null;
@@ -68,6 +76,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           request.country != latestCountry) {
         remoteRetry = null;
         remoteRetryRequest = null;
+        lastRetryRequest = null;
         remoteAttempts = 0;
         return;
       }
@@ -86,6 +95,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     remoteRetry?.cancel();
     remoteRetry = null;
     remoteRetryRequest = null;
+    lastRetryRequest = null;
     remoteAttempts = 0;
     setState(() => typing = true);
     debounce = Timer(const Duration(milliseconds: 275), () {

@@ -44,7 +44,22 @@ Future<CountryPreference> refreshDetectedCountry(
 final preferenceProvider = StreamProvider<CountryPreference>((ref) async* {
   final database = ref.watch(databaseProvider);
   final detected = ref.watch(detectedCountryProvider);
+  final before = await database.watchPreference().first;
   final current = await refreshDetectedCountry(database, detected);
+  if (before.detectedCountry != detected) {
+    final service = ref.read(pushServiceProvider);
+    await service.markCountriesDirty();
+    if (service.authenticated) {
+      try {
+        await service.syncCountries(
+          current.detectedCountry,
+          current.selectedCountry,
+        );
+      } catch (_) {
+        // The dirty marker lets the periodic account loop retry offline.
+      }
+    }
+  }
   yield current;
   yield* database.watchPreference();
 });
