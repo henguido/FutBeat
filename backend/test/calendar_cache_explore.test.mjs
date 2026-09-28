@@ -255,6 +255,13 @@ test('Explore is bounded, editorial, activity-based and cached; search ranks cou
   const ownCountry=(await db.query(`select futbeat_private.catalog_entity(payload,100) v
     from futbeat_private.entities where id='fb_team_cache_home_0'`)).rows[0].v;
   assert.equal(ownCountry.countryCode,'CR');
+  await db.exec(`insert into futbeat_private.entities values(
+    'fb_team_country_alias','team','{"id":"fb_team_country_alias","name":"Alias"}');
+    insert into futbeat_private.entity_redirects(alias_id,canonical_id,kind,reason)
+    values('fb_team_country_alias','fb_team_cache_home_0','team','test')`);
+  const aliasPlayer=(await db.query(`select futbeat_private.catalog_entity(
+    '{"id":"fb_player_alias_country","name":"Player","teamId":"fb_team_country_alias"}',100) v`)).rows[0].v;
+  assert.equal(aliasPlayer.countryCode,'CR');
   const europe=(await db.query("select public.futbeat_search_catalog('manchester','EUROPE',50) v")).rows[0].v;
   assert.equal(europe.teams[0].id,'fb_team_cache_away_0');
   await db.exec(`update futbeat_private.entities set payload=payload||'{"aliases":["The Red Devils"]}' where id='fb_team_cache_home_0'`);

@@ -12,11 +12,13 @@ returns jsonb language sql stable set search_path='' as $$
        futbeat_private.resolve_country_code(p_payload->>'country'),
        (select coalesce(futbeat_private.resolve_country_code(t.payload->>'countryCode'),
                         futbeat_private.resolve_country_code(t.payload->>'country'))
-        from futbeat_private.entities t where t.kind='team' and t.id=p_payload->>'teamId'),
+        from futbeat_private.entities t where t.kind='team' and t.id=
+          futbeat_private.futbeat_resolve_entity_id('team',p_payload->>'teamId')),
        (select m.country_code from futbeat_private.competition_editorial_metadata m
         where m.competition_id=futbeat_private.futbeat_resolve_entity_id('competition',
           (select t.payload->>'competitionId' from futbeat_private.entities t
-           where t.kind='team' and t.id=p_payload->>'teamId'))))
+           where t.kind='team' and t.id=
+             futbeat_private.futbeat_resolve_entity_id('team',p_payload->>'teamId')))))
      when p_payload ? 'competitionId' then coalesce(
        futbeat_private.resolve_country_code(p_payload->>'countryCode'),
        futbeat_private.resolve_country_code(p_payload->>'country'),
@@ -107,7 +109,8 @@ begin
          or futbeat_private.resolve_country_code(team.payload->>'country') like vc||'-%'))
      ) then 1 else 0 end country_priority
    from matches h join futbeat_private.entities e on e.id=h.id and e.kind=h.kind
-   left join futbeat_private.entities team on e.kind='player' and team.id=e.payload->>'teamId'
+   left join futbeat_private.entities team on e.kind='player' and team.id=
+     futbeat_private.futbeat_resolve_entity_id('team',e.payload->>'teamId')
    left join futbeat_private.competition_editorial_metadata meta on meta.competition_id=
      case when e.kind='competition' then e.id else futbeat_private.futbeat_resolve_entity_id(
        'competition',coalesce(e.payload->>'competitionId',team.payload->>'competitionId')) end
