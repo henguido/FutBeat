@@ -118,7 +118,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ),
     );
     if (confirmed == true) {
-      await action(service.deleteAccount, 'Cuenta eliminada.');
+      await action(() async {
+        await service.deleteAccount();
+        ref.invalidate(profileSettingsProvider);
+      }, 'Cuenta eliminada.');
     }
   }
 

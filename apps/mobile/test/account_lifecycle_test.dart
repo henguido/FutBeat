@@ -399,6 +399,11 @@ void main() {
         'access_token': 'a',
         'user': {'email': 'a@b.test', 'email_confirmed_at': 'now'},
       };
+      FlutterSecureStorage.setMockInitialValues({
+        'futbeat.profile.settings': '{"hourFormat":"12h"}',
+        'futbeat.profile.dirty': 'false',
+      });
+      value.http.calls.clear();
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -419,17 +424,33 @@ void main() {
               (ref, keys) async => _emptySnapshot,
             ),
           ],
-          child: const MaterialApp(home: ProfileScreen()),
+          child: MaterialApp(
+            home: Column(
+              children: [
+                Consumer(
+                  builder: (context, ref, child) => Text(
+                    ref.watch(profileSettingsProvider).value?.hourFormat ??
+                        'loading',
+                    key: const Key('global-hour-format'),
+                  ),
+                ),
+                const Expanded(child: ProfileScreen()),
+              ],
+            ),
+          ),
         ),
       );
       await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('12h'), findsOneWidget);
       await tester.drag(find.byType(ListView), const Offset(0, -5000));
       await tester.pump(const Duration(milliseconds: 300));
+      await tester.ensureVisible(find.text('Eliminar cuenta'));
+      await tester.pump();
       await tester.tap(find.text('Eliminar cuenta'));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.text('Eliminar definitivamente'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 500));
       expect(
         value.http.calls.where(
           (call) => call.path.endsWith('futbeat-delete-account'),
@@ -437,7 +458,7 @@ void main() {
         hasLength(1),
       );
       expect(value.service.authenticated, isFalse);
-      expect(find.text('Iniciar sesión'), findsOneWidget);
+      expect(find.text('system'), findsOneWidget);
     },
   );
 }
