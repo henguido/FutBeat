@@ -18,14 +18,12 @@ const onboardingStepCount = 6;
 bool isSelectableCountryCode(String? value) =>
     value != null && RegExp(r'^[A-Z]{2}$').hasMatch(value);
 
-/// Country shown in onboarding: the user's own choice always wins; the
-/// device region is only an initial suggestion and is never stored as the
-/// choice. Unknown codes are never shown raw.
+/// Country shown in onboarding: only the user's own choice. The device
+/// locale is not a location, so it never pre-fills the selector. Unknown
+/// codes are never shown raw.
 String? onboardingCountryCode(CountryPreference preference) {
-  for (final code in [preference.selectedCountry, preference.detectedCountry]) {
-    if (countryDisplayName(code) != null) return code!.trim().toUpperCase();
-  }
-  return null;
+  final code = preference.selectedCountry;
+  return countryDisplayName(code) == null ? null : code!.trim().toUpperCase();
 }
 
 bool isCurrentOnboardingRequest(

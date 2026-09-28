@@ -304,7 +304,7 @@ void main() {
     expect(countryMatches('ES', 'espana'), isTrue);
   });
 
-  test('manual country always wins over the device suggestion', () {
+  test('only the manual country is shown, never the device locale', () {
     // Device locale en-US, user chose Costa Rica.
     expect(
       onboardingCountryCode(
@@ -324,7 +324,17 @@ void main() {
           bootstrapDismissed: false,
         ),
       ),
-      'US',
+      isNull,
+    );
+    expect(
+      onboardingCountryCode(
+        const CountryPreference(
+          detectedCountry: 'CR',
+          selectedCountry: null,
+          bootstrapDismissed: false,
+        ),
+      ),
+      isNull,
     );
     expect(
       onboardingCountryCode(
@@ -368,7 +378,9 @@ void main() {
     addTearDown(db.close);
     final first = await refreshDetectedCountry(db, 'US');
     expect(first.selectedCountry, isNull);
-    expect(onboardingCountryCode(first), 'US');
+    expect(onboardingCountryCode(first), isNull);
+    final again = await refreshDetectedCountry(db, 'CR');
+    expect(again.selectedCountry, isNull);
   });
 
   test('dirty Automatic clear is not replaced by a cloud override', () {
@@ -424,8 +436,10 @@ void main() {
     await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
     await pumpOnboarding(tester, database: db);
     expect(find.text('Bienvenido a FutBeat'), findsOneWidget);
-    expect(find.text('Costa Rica'), findsOneWidget);
-    expect(find.text('Cambiar'), findsOneWidget);
+    // Even a locale that matches is never auto-selected.
+    expect(find.text('Elegir país'), findsOneWidget);
+    expect(find.text('Costa Rica'), findsNothing);
+    expect(find.text('Cambiar'), findsNothing);
     expect(find.text('Continuar'), findsOneWidget);
     expect(find.text('Saltar'), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
@@ -451,7 +465,7 @@ void main() {
     final db = AppDatabase(NativeDatabase.memory());
     addTearDown(db.close);
     await pumpOnboarding(tester, database: db, offline: true);
-    expect(find.text('Costa Rica'), findsOneWidget);
+    expect(find.text('Elegir país'), findsOneWidget);
     await tester.tap(find.text('Continuar'));
     await tester.pump(const Duration(milliseconds: 20));
     expect(find.text('Equipos'), findsOneWidget);
@@ -460,6 +474,25 @@ void main() {
     await tester.tap(find.text('Continuar'));
     await tester.pump(const Duration(milliseconds: 20));
     expect(find.text('Competiciones'), findsOneWidget);
+  });
+
+  testWidgets('device US without a choice shows Elegir país and saves none', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePreference(detectedCountry: 'US', selectedCountry: null);
+    await pumpOnboarding(tester, database: db, livePreference: true);
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('Elegir país'), findsOneWidget);
+    expect(find.text('Estados Unidos'), findsNothing);
+    expect(find.text('Cambiar'), findsNothing);
+    await tester.tap(find.text('Continuar'));
+    await tester.pump(const Duration(milliseconds: 20));
+    final saved = await tester.runAsync(() => db.watchPreference().first);
+    expect(saved?.selectedCountry, isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(Duration.zero);
   });
 
   testWidgets('device US + chosen CR shows Costa Rica', (tester) async {
@@ -502,7 +535,8 @@ void main() {
     await db.savePreference(detectedCountry: 'US', selectedCountry: null);
     await pumpOnboarding(tester, database: db, livePreference: true);
     await tester.pump(const Duration(milliseconds: 20));
-    expect(find.text('Estados Unidos'), findsOneWidget);
+    expect(find.text('Elegir país'), findsOneWidget);
+    expect(find.text('Estados Unidos'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('onboarding-country')));
     await settle(tester);
     expect(find.byKey(const ValueKey('country-picker')), findsOneWidget);
