@@ -6,17 +6,19 @@ import 'package:go_router/go_router.dart';
 import 'core/models.dart';
 import 'core/theme.dart';
 import 'core/push.dart';
+import 'core/interests.dart';
 import 'features/profile/profile_screen.dart';
 import 'features/matches/matches_screen.dart';
 import 'features/matches/match_screen.dart';
 import 'features/entities/entity_screen.dart';
 import 'features/explore/explore_screen.dart';
 import 'features/favorites/favorites_screen.dart';
+import 'features/onboarding/onboarding_screen.dart';
 import 'shared/widgets.dart';
 
 void main() => runApp(const ProviderScope(child: FutBeatApp()));
 
-GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
+GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
   initialLocation: initialLocation,
   errorBuilder: (context, state) => Scaffold(
     appBar: AppBar(title: const Text('FutBeat')),
@@ -28,6 +30,13 @@ GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
     ),
   ),
   routes: [
+    GoRoute(path: '/start', builder: (_, state) => const StartupGate()),
+    GoRoute(
+      path: '/onboarding',
+      builder: (_, state) => OnboardingScreen(
+        reentry: state.uri.queryParameters['reentry'] == '1',
+      ),
+    ),
     ShellRoute(
       builder: (context, state, child) =>
           AppShell(location: state.uri.path, child: child),
@@ -70,6 +79,33 @@ GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
     ),
   ],
 );
+
+class StartupGate extends ConsumerWidget {
+  const StartupGate({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final preference = ref.watch(preferenceProvider);
+    final value = preference.asData?.value;
+    if (value != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        context.go(value.bootstrapDismissed ? '/matches' : '/onboarding');
+      });
+    }
+    if (preference.hasError) {
+      return Scaffold(
+        body: Center(
+          child: FilledButton(
+            onPressed: () => context.go('/matches'),
+            child: const Text('Continuar a Partidos'),
+          ),
+        ),
+      );
+    }
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+}
 
 class FutBeatApp extends ConsumerStatefulWidget {
   const FutBeatApp({super.key, this.router});

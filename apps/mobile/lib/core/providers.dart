@@ -583,13 +583,18 @@ class ApiRepository implements FootballRepository {
     CancelToken? cancelToken,
   }) {
     final normalizedQuery = query.trim().toLowerCase();
+    final normalizedCountry = country?.trim().toUpperCase();
     if (normalizedQuery.length < 2) {
       return loadExplore(cancelToken: cancelToken);
     }
     return _loadCatalog(
-      'search:$normalizedQuery',
+      'search:$normalizedQuery:${normalizedCountry ?? ''}',
       '/v1/search',
-      queryParameters: {'q': normalizedQuery},
+      queryParameters: {
+        'q': normalizedQuery,
+        if (normalizedCountry != null && normalizedCountry.isNotEmpty)
+          'country': normalizedCountry,
+      },
       cancelToken: cancelToken,
     );
   }
@@ -756,7 +761,7 @@ final searchSnapshotProvider = FutureProvider.autoDispose
       if (repository is ApiRepository) {
         return repository.searchCatalog(
           request.query,
-          null,
+          request.country,
           cancelToken: token,
         );
       }

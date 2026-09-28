@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/explore/explore_screen.dart';
@@ -251,6 +252,7 @@ void main() {
     'Explore loads suggestions not empty search, retains results and cancels previous query',
     (tester) async {
       final dio = Dio();
+      final countries = StreamController<CountryPreference>();
       final requests = <RequestOptions>[];
       dio.interceptors.add(
         InterceptorsWrapper(
@@ -273,8 +275,16 @@ void main() {
           overrides: [
             repositoryProvider.overrideWithValue(ApiRepository(dio)),
             followsProvider.overrideWith((ref) => Stream.value({})),
+            preferenceProvider.overrideWith((ref) => countries.stream),
           ],
           child: const MaterialApp(home: ExploreScreen()),
+        ),
+      );
+      countries.add(
+        const CountryPreference(
+          detectedCountry: 'CR',
+          selectedCountry: null,
+          bootstrapDismissed: true,
         ),
       );
       await tester.pumpAndSettle();
@@ -292,6 +302,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
       expect(requests.length, 2);
       expect(requests.last.queryParameters['q'], 'manchester');
+      expect(requests.last.queryParameters['country'], 'CR');
       expect(find.text('Home'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
       await tester.enterText(find.byType(TextField), 'london');
@@ -299,14 +310,26 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
       expect(requests[1].cancelToken!.isCancelled, true);
       expect(requests.last.queryParameters['q'], 'london');
+      countries.add(
+        const CountryPreference(
+          detectedCountry: 'CR',
+          selectedCountry: 'ES',
+          bootstrapDismissed: true,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(requests[2].cancelToken!.isCancelled, true);
+      expect(requests.last.queryParameters['country'], 'ES');
       expect(find.text('Home'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
+      await tester.runAsync(countries.close);
       dio.close(force: true);
     },
   );
   test(
-    'search short cache ignores legacy country and suggestions reuse memory',
+    'search preserves country in HTTP and cache while suggestions reuse memory',
     () async {
       final dio = Dio();
       var calls = 0;
@@ -314,7 +337,9 @@ void main() {
         InterceptorsWrapper(
           onRequest: (o, h) {
             calls++;
-            expect(o.queryParameters.containsKey('country'), false);
+            if (o.path == '/v1/search') {
+              expect(o.queryParameters['country'], anyOf('CR', 'ES'));
+            }
             h.resolve(
               Response(
                 requestOptions: o,
@@ -330,7 +355,7 @@ void main() {
       expect(calls, 1);
       await repo.searchCatalog('Manchester', 'CR');
       await repo.searchCatalog('manchester', 'ES');
-      expect(calls, 2);
+      expect(calls, 3);
       dio.close();
     },
   );

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models.dart';
+import '../../core/interests.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
@@ -68,7 +69,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   @override
   Widget build(BuildContext context) {
     final hasQuery = requestQuery.isNotEmpty;
-    final request = (query: requestQuery, country: null as String?);
+    final country = ref
+        .watch(preferenceProvider)
+        .asData
+        ?.value
+        .effectiveCountry;
+    final request = (query: requestQuery, country: country);
     if (hasQuery) {
       ref.listen(searchSnapshotProvider(request), (_, next) {
         // Ignore the refresh-in-progress state (it still carries old data).
