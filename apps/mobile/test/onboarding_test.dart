@@ -296,6 +296,14 @@ void main() {
       reconcileSelectedCountry(local: null, cloud: 'ES', dirty: false),
       'ES',
     );
+    expect(
+      reconcileSelectedCountry(local: 'CR', cloud: 'ES', dirty: false),
+      'ES',
+    );
+    expect(
+      reconcileSelectedCountry(local: null, cloud: 'CR', dirty: true),
+      isNull,
+    );
   });
 
   test(

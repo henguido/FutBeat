@@ -26,7 +26,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   String requestQuery = '';
   Timer? debounce;
   Timer? remoteRetry;
+  ({String query, String? country})? remoteRetryRequest;
   int remoteAttempts = 0;
+  String pendingQuery = '';
   Snapshot? previous;
   bool typing = false;
   @override
@@ -37,30 +39,59 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 
   void _scheduleRemoteRetry(({String query, String? country}) request) {
+    final currentCountry = ref
+        .read(preferenceProvider)
+        .asData
+        ?.value
+        .effectiveCountry;
+    if (!mounted ||
+        request.query != pendingQuery ||
+        request.country != currentCountry) {
+      return;
+    }
+    if (remoteRetry != null && remoteRetryRequest != request) {
+      remoteRetry?.cancel();
+      remoteRetry = null;
+      remoteAttempts = 0;
+    }
     if (remoteRetry != null ||
         remoteAttempts >= remoteSearchRetryDelays.length) {
       return;
     }
+    remoteRetryRequest = request;
     remoteRetry = Timer(remoteSearchRetryDelays[remoteAttempts], () {
-      if (!mounted) return;
+      final latestCountry = mounted
+          ? ref.read(preferenceProvider).asData?.value.effectiveCountry
+          : null;
+      if (!mounted ||
+          request.query != pendingQuery ||
+          request.country != latestCountry) {
+        remoteRetry = null;
+        remoteRetryRequest = null;
+        remoteAttempts = 0;
+        return;
+      }
       setState(() {
         remoteAttempts++;
         remoteRetry = null;
+        remoteRetryRequest = null;
       });
       ref.invalidate(searchSnapshotProvider(request));
     });
   }
 
   void _onQueryChanged(String value) {
+    pendingQuery = value.trim().length >= 2 ? value.trim() : '';
     debounce?.cancel();
     remoteRetry?.cancel();
     remoteRetry = null;
+    remoteRetryRequest = null;
     remoteAttempts = 0;
     setState(() => typing = true);
     debounce = Timer(const Duration(milliseconds: 275), () {
       if (!mounted) return;
       setState(() {
-        requestQuery = value.trim().length >= 2 ? value.trim() : '';
+        requestQuery = pendingQuery;
         typing = false;
       });
     });

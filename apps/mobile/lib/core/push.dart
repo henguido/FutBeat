@@ -17,7 +17,7 @@ String? reconcileSelectedCountry({
   required String? local,
   required String? cloud,
   required bool dirty,
-}) => dirty ? local : local ?? cloud;
+}) => dirty ? local : cloud;
 
 class UserProfileSettings {
   const UserProfileSettings({
@@ -488,7 +488,11 @@ class PushService {
           await storage.read(key: 'futbeat.country.dirty') == 'true';
       final cloudDetected = values['detectedCountry']?.toString();
       final cloudSelected = values['selectedCountry']?.toString();
-      final detected = current.detectedCountry ?? cloudDetected;
+      final detected = reconcileSelectedCountry(
+        local: current.detectedCountry,
+        cloud: cloudDetected,
+        dirty: countryDirty,
+      );
       final selected = reconcileSelectedCountry(
         local: current.selectedCountry,
         cloud: cloudSelected,
