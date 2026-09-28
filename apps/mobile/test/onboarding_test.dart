@@ -217,6 +217,20 @@ void main() {
     expect(searched.map((entity) => entity.id), ['team_es', 'team_cr']);
   });
 
+  test(
+    'alert save contains remote failure and still invalidates settings',
+    () async {
+      var invalidations = 0;
+      final saved = await saveOnboardingSettings(
+        settings: const UserProfileSettings(notifyGoals: false),
+        save: (_) async => throw Exception('offline'),
+        invalidate: () => invalidations++,
+      );
+      expect(saved, isFalse);
+      expect(invalidations, 1);
+    },
+  );
+
   testWidgets('detected country is visible and onboarding has no bottom nav', (
     tester,
   ) async {

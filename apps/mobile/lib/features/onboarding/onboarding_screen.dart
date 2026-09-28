@@ -54,6 +54,21 @@ List<Entity> onboardingEntitiesForQuery(
   return ordered.take(30).toList();
 }
 
+Future<bool> saveOnboardingSettings({
+  required UserProfileSettings settings,
+  required Future<void> Function(UserProfileSettings) save,
+  required void Function() invalidate,
+}) async {
+  try {
+    await save(settings);
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    invalidate();
+  }
+}
+
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key, this.reentry = false});
   final bool reentry;
@@ -145,9 +160,20 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Future<void> _saveSettings(UserProfileSettings next) async {
-    setState(() => settings = next);
-    await ref.read(pushServiceProvider).saveProfileSettings(next);
-    ref.invalidate(profileSettingsProvider);
+    setState(() {
+      settings = next;
+      message = null;
+    });
+    final saved = await saveOnboardingSettings(
+      settings: next,
+      save: ref.read(pushServiceProvider).saveProfileSettings,
+      invalidate: () => ref.invalidate(profileSettingsProvider),
+    );
+    if (!saved && mounted) {
+      setState(() {
+        message = 'Guardado en este dispositivo. Se sincronizará al reconectar.';
+      });
+    }
   }
 
   void _scheduleRemoteRetry(({String query, String? country}) request) {
