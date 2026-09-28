@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/countries.dart';
 import '../../core/database.dart';
 import '../../core/interests.dart';
 import '../../core/models.dart';
@@ -13,23 +14,23 @@ import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
 const onboardingStepCount = 6;
-const _automaticCountry = '__automatic__';
 
 bool isSelectableCountryCode(String? value) =>
     value != null && RegExp(r'^[A-Z]{2}$').hasMatch(value);
 
-String onboardingCountryLabel(String code) {
-  final canonical = code.trim().toUpperCase();
-  final label = countryName(canonical);
-  return label == 'Global' ? canonical : label;
+/// Country shown in onboarding: only the user's own choice. The device
+/// locale is not a location, so it never pre-fills the selector. Unknown
+/// codes are never shown raw.
+String? onboardingCountryCode(CountryPreference preference) {
+  final code = preference.selectedCountry;
+  return countryDisplayName(code) == null ? null : code!.trim().toUpperCase();
 }
 
 bool isCurrentOnboardingRequest(
   ({String query, String? country}) request, {
   required String currentQuery,
   required String? currentCountry,
-}) =>
-    request.query == currentQuery && request.country == currentCountry;
+}) => request.query == currentQuery && request.country == currentCountry;
 
 List<Entity> rankOnboardingEntities(
   Iterable<Entity> entities,
@@ -202,8 +203,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       setState(() {
         settingsBusy = false;
         if (!saved) {
-          message =
-              'Guardado en este dispositivo. Se sincronizará al reconectar.';
+          message = 'Guardado sin conexión';
         }
       });
     }
@@ -352,10 +352,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   style: Theme.of(context).textTheme.headlineSmall
                       ?.copyWith(fontWeight: FontWeight.w800),
                 ),
-                const SizedBox(height: 6),
-                Text(_subtitle, style: const TextStyle(color: muted)),
                 const SizedBox(height: 18),
-                if (step == 0) _countryStep(preference, catalogState, catalog),
+                if (step == 0) _countryStep(preference),
                 if (step == 1)
                   _entityStep('team', data, follows, catalogState, searchState),
                 if (step == 2)
@@ -408,98 +406,61 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   String get _title => const [
-    'Tu fútbol, más cerca',
-    'Elige tus equipos',
-    'Sigue competiciones',
-    'Jugadores favoritos',
-    'Elige tus alertas',
-    'Tu cuenta es opcional',
+    'País',
+    'Equipos',
+    'Competiciones',
+    'Jugadores',
+    'Alertas',
+    'Cuenta',
   ][step];
 
-  String get _subtitle => const [
-    'Usamos tu país para ordenar sugerencias, nunca para ocultar partidos.',
-    'Puedes elegir varios o continuar sin seleccionar.',
-    'Primero verás lo más relevante para ti.',
-    'Busca un jugador o simplemente omite este paso.',
-    'Guarda ahora tus preferencias. El permiso se pide sólo si tú lo activas.',
-    'Sincroniza favoritos y preferencias entre dispositivos.',
-  ][step];
-
-  Widget _countryStep(
-    CountryPreference? preference,
-    AsyncValue<Snapshot> state,
-    Snapshot? catalog,
-  ) {
+  Widget _countryStep(CountryPreference? preference) {
     if (preference == null) return const LinearProgressIndicator();
-    final labels = <String, String>{};
-    String displayName(String code) {
-      return labels[code] ?? onboardingCountryLabel(code);
-    }
-
-    for (final entity in [...?catalog?.competitions, ...?catalog?.teams]) {
-      final code = entity.json['countryCode']?.toString().trim().toUpperCase();
-      if (isSelectableCountryCode(code)) {
-        final countryCode = code!;
-        // The payload country can lag authoritative metadata. Never pair a
-        // canonical value (for example ES) with that stale display name.
-        labels.putIfAbsent(
-          countryCode,
-          () => onboardingCountryLabel(countryCode),
-        );
-      }
-    }
-    final current = preference.selectedCountry;
-    if (current != null) {
-      labels.putIfAbsent(current, () => displayName(current));
-    }
-    final detected = preference.detectedCountry;
-    if (detected != null) {
-      labels.putIfAbsent(detected, () => displayName(detected));
-    }
-    final entries = labels.entries.toList()
-      ..sort((a, b) => a.value.compareTo(b.value));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (detected != null) Text('Detectado: ${displayName(detected)}'),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          key: ValueKey(current ?? _automaticCountry),
-          initialValue: current ?? _automaticCountry,
-          isExpanded: true,
-          decoration: const InputDecoration(labelText: 'País (opcional)'),
-          items: [
-            DropdownMenuItem(
-              value: _automaticCountry,
+    final code = onboardingCountryCode(preference);
+    final name = countryDisplayName(code);
+    final flag = countryFlag(code);
+    return InkWell(
+      key: const ValueKey('onboarding-country'),
+      borderRadius: BorderRadius.circular(12),
+      onTap: countryBusy ? null : () => _pickCountry(code),
+      child: InputDecorator(
+        decoration: const InputDecoration(labelText: 'País'),
+        child: Row(
+          children: [
+            if (flag != null) ...[
+              Text(flag, style: const TextStyle(fontSize: 22)),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
               child: Text(
-                detected == null
-                    ? 'Automático'
-                    : 'Automático (${displayName(detected)})',
+                name ?? 'Elegir país',
+                key: const ValueKey('onboarding-country-name'),
                 overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            ...entries.map(
-              (entry) => DropdownMenuItem(
-                value: entry.key,
-                child: Text(entry.value, overflow: TextOverflow.ellipsis),
-              ),
-            ),
-          ],
-          onChanged: countryBusy
-              ? null
-              : (value) => _selectCountry(
-                  value == _automaticCountry ? null : value,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
                 ),
+              ),
+            ),
+            Text(
+              name == null ? '' : 'Cambiar',
+              style: const TextStyle(color: lime, fontWeight: FontWeight.w700),
+            ),
+            const Icon(Icons.expand_more_rounded),
+          ],
         ),
-        if (state.hasError)
-          _catalogError(() => ref.invalidate(exploreSnapshotProvider)),
-        if (state.isLoading)
-          const Padding(
-            padding: EdgeInsets.only(top: 12),
-            child: LinearProgressIndicator(),
-          ),
-      ],
+      ),
     );
+  }
+
+  Future<void> _pickCountry(String? current) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => CountryPickerSheet(current: current),
+    );
+    if (picked != null && picked != current) await _selectCountry(picked);
   }
 
   Widget _entityStep(
@@ -546,7 +507,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             follows.contains('$type:${entity.id}'),
           ),
         if (entities.isEmpty && !(searchState ?? catalogState).isLoading)
-          const Text('No hay sugerencias disponibles. Puedes continuar.'),
+          const Text('Sin sugerencias'),
       ],
     );
   }
@@ -612,9 +573,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         if (players.isEmpty && !(searchState ?? catalogState).isLoading)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 20),
-            child: Text(
-              'Busca por nombre. No mostramos sugerencias inventadas.',
-            ),
+            child: Text('Sin resultados'),
           ),
       ],
     );
@@ -646,8 +605,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Widget _catalogError(VoidCallback retry) => Card(
     child: ListTile(
-      title: const Text('No pudimos cargar las sugerencias'),
-      subtitle: const Text('Puedes reintentar o continuar sin conexión.'),
+      title: const Text('Sin conexión'),
       trailing: TextButton(onPressed: retry, child: const Text('Reintentar')),
     ),
   );
@@ -706,13 +664,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     try {
                       await service.enable();
                       if (!mounted) return;
-                      setState(() => message = 'Notificaciones activadas.');
+                      setState(() => message = 'Notificaciones activadas');
                     } catch (_) {
                       if (!mounted) return;
-                      setState(
-                        () => message =
-                            'No se pudieron activar. Puedes continuar.',
-                      );
+                      setState(() => message = 'No se pudieron activar');
                     } finally {
                       if (mounted) setState(() => busy = false);
                     }
@@ -721,9 +676,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             label: const Text('Activar notificaciones'),
           )
         else
-          const Text(
-            'Tus preferencias quedan guardadas. Podrás activar avisos del sistema después de iniciar sesión.',
-          ),
+          const Text('Alertas guardadas'),
       ],
     );
   }
@@ -731,13 +684,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Widget _accountStep() {
     final service = ref.watch(pushServiceProvider);
     if (!service.accountConfigured) {
-      return const Text(
-        'Puedes continuar como invitado. La cuenta no está configurada en esta instalación.',
-      );
+      return const Text('Cuenta no disponible');
     }
     if (service.authenticated) {
       return Text(
-        'Sesión iniciada${service.email == null ? '' : ' como ${service.email}'}. Tus selecciones se sincronizan con el flujo existente.',
+        service.email == null
+            ? 'Sesión iniciada'
+            : 'Sesión iniciada · ${service.email}',
       );
     }
     return Column(
@@ -752,12 +705,76 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           onPressed: _openProfile,
           child: const Text('Iniciar sesión'),
         ),
-        const SizedBox(height: 10),
-        const Text(
-          'También puedes continuar sin cuenta.',
-          textAlign: TextAlign.center,
-        ),
       ],
+    );
+  }
+}
+
+/// Searchable list of every selectable country, localized names only.
+class CountryPickerSheet extends StatefulWidget {
+  const CountryPickerSheet({required this.current, super.key});
+
+  final String? current;
+
+  @override
+  State<CountryPickerSheet> createState() => _CountryPickerSheetState();
+}
+
+class _CountryPickerSheetState extends State<CountryPickerSheet> {
+  String query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final codes =
+        selectableCountryCodes
+            .where((code) => query.isEmpty || countryMatches(code, query))
+            .toList()
+          ..sort(
+            (a, b) => countryDisplayName(a)!.compareTo(countryDisplayName(b)!),
+          );
+    return DraggableScrollableSheet(
+      key: const ValueKey('country-picker'),
+      expand: false,
+      initialChildSize: .8,
+      maxChildSize: .95,
+      builder: (context, controller) => Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: TextField(
+              key: const ValueKey('country-picker-search'),
+              autofocus: false,
+              onChanged: (value) => setState(() => query = value),
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Buscar país',
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              controller: controller,
+              itemCount: codes.length,
+              itemBuilder: (context, index) {
+                final code = codes[index];
+                final selected = code == widget.current;
+                return ListTile(
+                  key: ValueKey('country-$code'),
+                  leading: Text(
+                    countryFlag(code) ?? '',
+                    style: const TextStyle(fontSize: 22),
+                  ),
+                  title: Text(countryDisplayName(code)!),
+                  trailing: selected
+                      ? const Icon(Icons.check_rounded, color: lime)
+                      : null,
+                  onTap: () => Navigator.of(context).pop(code),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
