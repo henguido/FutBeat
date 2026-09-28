@@ -367,9 +367,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     for (final entity in [...?catalog?.competitions, ...?catalog?.teams]) {
       final code = entity.json['countryCode']?.toString().trim().toUpperCase();
       if (isSelectableCountryCode(code)) {
+        final countryCode = code!;
         labels.putIfAbsent(
-          code,
-          () => entity.country.isEmpty ? code : entity.country,
+          countryCode,
+          () => entity.country.isEmpty ? countryCode : entity.country,
         );
       }
     }
