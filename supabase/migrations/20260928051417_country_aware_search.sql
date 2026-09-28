@@ -30,7 +30,13 @@ returns jsonb language sql stable set search_path='' as $$
        futbeat_private.resolve_country_code(p_payload->>'countryCode'),
        futbeat_private.resolve_country_code(p_payload->>'country')) end),
    'media',p_payload->'media','competitionId',p_payload->'competitionId',
-   'teamId',p_payload->'teamId','relevanceScore',p_score))
+   'teamId',p_payload->'teamId','relevanceScore',p_score,
+   'isGlobalRelevant',to_jsonb(coalesce(
+     (select m.is_global_relevant
+      from futbeat_private.competition_editorial_metadata m
+      where not (p_payload ? 'competitionId') and not (p_payload ? 'teamId')
+        and m.competition_id=futbeat_private.futbeat_resolve_entity_id(
+          'competition',p_payload->>'id')),false))))
 $$;
 
 create or replace function public.futbeat_search_catalog(
@@ -87,12 +93,18 @@ begin
          or futbeat_private.resolve_country_code(e.payload->>'country')=vc))
        or (e.kind='team' and (
          futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
-         or futbeat_private.resolve_country_code(e.payload->>'country')=vc))
+         or futbeat_private.resolve_country_code(e.payload->>'countryCode') like vc||'-%'
+         or futbeat_private.resolve_country_code(e.payload->>'country')=vc
+         or futbeat_private.resolve_country_code(e.payload->>'country') like vc||'-%'))
        or (e.kind='player' and (
          futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
+         or futbeat_private.resolve_country_code(e.payload->>'countryCode') like vc||'-%'
          or futbeat_private.resolve_country_code(e.payload->>'country')=vc
+         or futbeat_private.resolve_country_code(e.payload->>'country') like vc||'-%'
          or futbeat_private.resolve_country_code(team.payload->>'countryCode')=vc
-         or futbeat_private.resolve_country_code(team.payload->>'country')=vc))
+         or futbeat_private.resolve_country_code(team.payload->>'countryCode') like vc||'-%'
+         or futbeat_private.resolve_country_code(team.payload->>'country')=vc
+         or futbeat_private.resolve_country_code(team.payload->>'country') like vc||'-%'))
      ) then 1 else 0 end country_priority
    from matches h join futbeat_private.entities e on e.id=h.id and e.kind=h.kind
    left join futbeat_private.entities team on e.kind='player' and team.id=e.payload->>'teamId'

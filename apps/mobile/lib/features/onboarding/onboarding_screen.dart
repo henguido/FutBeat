@@ -90,6 +90,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   UserProfileSettings? settings;
   bool busy = false;
   bool settingsBusy = false;
+  bool countryBusy = false;
   String? message;
 
   @override
@@ -202,12 +203,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     CountryPreference preference,
     String? value,
   ) async {
+    if (countryBusy) return;
+    setState(() => countryBusy = true);
     await ref
         .read(databaseProvider)
-        .savePreference(
+        .saveCountries(
           detectedCountry: preference.detectedCountry,
           selectedCountry: value,
-          bootstrapDismissed: preference.bootstrapDismissed,
         );
     final service = ref.read(pushServiceProvider);
     await service.markCountriesDirty();
@@ -218,6 +220,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         // Drift remains authoritative offline; the normal reconcile can retry.
       }
     }
+    if (mounted) setState(() => countryBusy = false);
   }
 
   Future<void> _openProfile() async {
@@ -411,10 +414,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               ),
             ),
           ],
-          onChanged: (value) => _selectCountry(
-            preference,
-            value == _automaticCountry ? null : value,
-          ),
+          onChanged: countryBusy
+              ? null
+              : (value) => _selectCountry(
+                  preference,
+                  value == _automaticCountry ? null : value,
+                ),
         ),
         if (state.hasError)
           _catalogError(() => ref.invalidate(exploreSnapshotProvider)),

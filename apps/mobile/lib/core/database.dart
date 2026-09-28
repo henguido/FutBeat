@@ -169,6 +169,26 @@ class AppDatabase extends _$AppDatabase {
     }
   }
 
+  Future<void> saveCountries({
+    required String? detectedCountry,
+    required String? selectedCountry,
+  }) async {
+    await into(preferences).insert(
+      PreferencesCompanion.insert(
+        id: const Value(1),
+        detectedCountry: Value(detectedCountry),
+        selectedCountry: Value(selectedCountry),
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+    await (update(preferences)..where((p) => p.id.equals(1))).write(
+      PreferencesCompanion(
+        detectedCountry: Value(detectedCountry),
+        selectedCountry: Value(selectedCountry),
+      ),
+    );
+  }
+
   Future<void> touchInterest(
     String type,
     String id, {

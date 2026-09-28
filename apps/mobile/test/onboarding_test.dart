@@ -182,9 +182,10 @@ void main() {
       final db = AppDatabase(NativeDatabase.memory());
       await db.savePreference(detectedCountry: 'CR', selectedCountry: 'ES');
       await db.markBootstrapDismissed();
+      await db.saveCountries(detectedCountry: 'CR', selectedCountry: 'MX');
       final saved = await db.watchPreference().first;
       expect(saved.detectedCountry, 'CR');
-      expect(saved.selectedCountry, 'ES');
+      expect(saved.selectedCountry, 'MX');
       expect(saved.bootstrapDismissed, isTrue);
       await db.close();
     },

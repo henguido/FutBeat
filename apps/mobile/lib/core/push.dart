@@ -185,6 +185,7 @@ class PushService {
   bool enabled = false;
   bool disposed = false;
   Future<void> pending = Future.value();
+  Future<void> countryPending = Future.value();
   Future<void>? _restoreFuture;
 
   static const configured =
@@ -365,15 +366,19 @@ class PushService {
     );
   }
 
-  Future<void> syncCountries(String? detected, String? selected) async {
-    if (!authenticated || disposed) return;
-    await markCountriesDirty();
-    await dio.post(
-      '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_preferences',
-      options: authHeaders,
-      data: {'p_detected': detected, 'p_selected': selected},
-    );
-    await storage.write(key: 'futbeat.country.dirty', value: 'false');
+  Future<void> syncCountries(String? detected, String? selected) {
+    if (!authenticated || disposed) return Future.value();
+    final operation = countryPending.catchError((_) {}).then((_) async {
+      await markCountriesDirty();
+      await dio.post(
+        '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_preferences',
+        options: authHeaders,
+        data: {'p_detected': detected, 'p_selected': selected},
+      );
+      await storage.write(key: 'futbeat.country.dirty', value: 'false');
+    });
+    countryPending = operation;
+    return operation;
   }
 
   Future<void> markCountriesDirty() =>
@@ -549,6 +554,13 @@ class PushService {
             if (await storage.read(key: 'futbeat.profile.dirty') == 'true') {
               await _syncProfileSettings(await loadProfileSettings());
             }
+            if (await storage.read(key: 'futbeat.country.dirty') == 'true') {
+              final preference = await database.watchPreference().first;
+              await syncCountries(
+                preference.detectedCountry,
+                preference.selectedCountry,
+              );
+            }
             if (enabled) await register(true);
           })
           .catchError((_) {});
@@ -653,6 +665,7 @@ class PushService {
     token = null;
     session = null;
     pending = Future.value();
+    countryPending = Future.value();
     await storage.delete(key: 'futbeat.push.session');
     await storage.write(key: 'futbeat.push.enabled', value: 'false');
     await _writeLocalProfile(const UserProfileSettings(), dirty: false);

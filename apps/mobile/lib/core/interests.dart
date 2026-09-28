@@ -35,7 +35,7 @@ Future<CountryPreference> refreshDetectedCountry(
 ) async {
   var current = await database.watchPreference().first;
   if (detected != null && current.detectedCountry != detected) {
-    await database.savePreference(
+    await database.saveCountries(
       detectedCountry: detected,
       selectedCountry: current.selectedCountry,
     );

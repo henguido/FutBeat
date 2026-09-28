@@ -18,7 +18,8 @@ async function seed(db, count=2, date='2020-01-02', suffix='') {
   await db.query(`insert into futbeat_private.entities select item->>'id',item->>'kind',item-'kind'
     from jsonb_array_elements($1::jsonb) item`,[JSON.stringify(rows)]);
   await db.exec(`update futbeat_private.competition_editorial_metadata set source='editorial',
-    relevance_score=900-right(competition_id,1)::int*10
+    relevance_score=900-right(competition_id,1)::int*10,
+    is_global_relevant=competition_id like '%_0'
     where competition_id like 'fb_comp_cache_%'`);
 }
 async function calendar(db,date='2020-01-02',timezone='UTC') {
@@ -224,6 +225,7 @@ test('Explore is bounded, editorial, activity-based and cached; search ranks cou
   assert.equal(explore.players.length,0);
   assert.equal(explore.matches.length,0);
   assert.equal(explore.competitions[0].relevanceScore,900);
+  assert.equal(explore.competitions[0].isGlobalRelevant,true);
   assert.match(explore.competitions[0].countryCode,/^GB(?:-|$)/);
   assert.ok(explore.teams.every(t=>/^GB(?:-|$)/.test(t.countryCode)));
   assert.ok(explore.teams.every(t=>t.id.startsWith('fb_team_cache_')));
