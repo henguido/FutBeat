@@ -1,4 +1,23 @@
 -- Country is a relevance signal only. It never filters the global catalog.
+-- The compact Explore contract must expose the canonical code used by the
+-- client. Normal ingestion stores human-readable country names in payloads,
+-- while competition metadata owns the authoritative ISO code.
+create or replace function futbeat_private.catalog_entity(p_payload jsonb,p_score integer)
+returns jsonb language sql stable set search_path='' as $$
+ select jsonb_strip_nulls(jsonb_build_object('id',p_payload->'id','name',p_payload->'name',
+   'shortName',p_payload->'shortName','country',p_payload->'country',
+   'countryCode',to_jsonb(coalesce(
+     (select m.country_code from futbeat_private.competition_editorial_metadata m
+      where m.competition_id=futbeat_private.futbeat_resolve_entity_id('competition',
+        coalesce(p_payload->>'competitionId',
+          (select t.payload->>'competitionId' from futbeat_private.entities t
+           where t.kind='team' and t.id=p_payload->>'teamId'),p_payload->>'id'))),
+     futbeat_private.resolve_country_code(p_payload->>'countryCode'),
+     futbeat_private.resolve_country_code(p_payload->>'country'))),
+   'media',p_payload->'media','competitionId',p_payload->'competitionId',
+   'teamId',p_payload->'teamId','relevanceScore',p_score))
+$$;
+
 create or replace function public.futbeat_search_catalog(
  p_query text default '',p_country text default null,p_limit integer default 50)
 returns jsonb language plpgsql volatile security definer
@@ -48,11 +67,11 @@ begin
    select e.id,e.kind,e.payload,h.quality,h.similarity,h.whole_word,h.multiword_fuzzy,
      coalesce(meta.relevance_score,100) relevance,
      case when vc<>'' and (
-       upper(coalesce(e.payload->>'countryCode',''))=vc
-       or upper(coalesce(e.payload->>'countryCode','')) like vc||'-%'
-       or upper(coalesce(e.payload->>'country',''))=vc
-       or upper(coalesce(team.payload->>'countryCode',''))=vc
-       or upper(coalesce(team.payload->>'country',''))=vc
+       meta.country_code=vc or meta.country_code like vc||'-%'
+       or futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
+       or futbeat_private.resolve_country_code(e.payload->>'country')=vc
+       or futbeat_private.resolve_country_code(team.payload->>'countryCode')=vc
+       or futbeat_private.resolve_country_code(team.payload->>'country')=vc
      ) then 1 else 0 end country_priority
    from matches h join futbeat_private.entities e on e.id=h.id and e.kind=h.kind
    left join futbeat_private.entities team on e.kind='player' and team.id=e.payload->>'teamId'

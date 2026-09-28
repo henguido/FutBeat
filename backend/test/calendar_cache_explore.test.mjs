@@ -224,12 +224,21 @@ test('Explore is bounded, editorial, activity-based and cached; search ranks cou
   assert.equal(explore.players.length,0);
   assert.equal(explore.matches.length,0);
   assert.equal(explore.competitions[0].relevanceScore,900);
+  assert.match(explore.competitions[0].countryCode,/^GB(?:-|$)/);
+  assert.ok(explore.teams.every(t=>/^GB(?:-|$)/.test(t.countryCode)));
   assert.ok(explore.teams.every(t=>t.id.startsWith('fb_team_cache_')));
   assert.deepEqual((await db.query('select public.futbeat_read_explore() v')).rows[0].v,explore);
+  // Exercise normal ingestion: payloads carry country names and metadata owns
+  // the canonical ISO code. Synthetic countryCode fixture fields would hide a
+  // production contract regression here.
   await db.exec(`update futbeat_private.entities set payload=payload||
-    case when id='fb_team_cache_home_0' then '{"countryCode":"CR"}'::jsonb
-      else '{"countryCode":"ES"}'::jsonb end
-    where id in ('fb_team_cache_home_0','fb_team_cache_away_0')`);
+    case when id='fb_team_cache_home_0' then '{"country":"Costa Rica"}'::jsonb
+      else '{"country":"Spain","competitionId":"fb_comp_cache_1"}'::jsonb end
+    where id in ('fb_team_cache_home_0','fb_team_cache_away_0');
+    update futbeat_private.competition_editorial_metadata set country_code='CR'
+      where competition_id='fb_comp_cache_0';
+    update futbeat_private.competition_editorial_metadata set country_code='ES'
+      where competition_id='fb_comp_cache_1';`);
   const cr=(await db.query("select public.futbeat_search_catalog('manchester','CR',50) v")).rows[0].v;
   const es=(await db.query("select public.futbeat_search_catalog('manchester','ES',50) v")).rows[0].v;
   assert.equal(cr.teams.length,2);
