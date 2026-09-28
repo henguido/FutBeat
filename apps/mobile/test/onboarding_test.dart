@@ -177,6 +177,39 @@ void main() {
   );
 
   test(
+    'dismissal updates only the gate and preserves country selection',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      await db.savePreference(detectedCountry: 'CR', selectedCountry: 'ES');
+      await db.markBootstrapDismissed();
+      final saved = await db.watchPreference().first;
+      expect(saved.detectedCountry, 'CR');
+      expect(saved.selectedCountry, 'ES');
+      expect(saved.bootstrapDismissed, isTrue);
+      await db.close();
+    },
+  );
+
+  test(
+    'automatic country refreshes when the device locale changes',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          detectedCountryProvider.overrideWithValue('ES'),
+        ],
+      );
+      addTearDown(container.dispose);
+      addTearDown(db.close);
+      final preference = await container.read(preferenceProvider.future);
+      expect(preference.detectedCountry, 'ES');
+      expect(preference.effectiveCountry, 'ES');
+    },
+  );
+
+  test(
     'country selection and follows persist without duplicate rows',
     () async {
       final db = AppDatabase(NativeDatabase.memory());

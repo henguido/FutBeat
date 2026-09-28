@@ -33,7 +33,7 @@ final preferenceProvider = StreamProvider<CountryPreference>((ref) async* {
   final database = ref.watch(databaseProvider);
   final detected = ref.watch(detectedCountryProvider);
   var current = await database.watchPreference().first;
-  if (current.detectedCountry == null && detected != null) {
+  if (detected != null && current.detectedCountry != detected) {
     await database.savePreference(
       detectedCountry: detected,
       selectedCountry: current.selectedCountry,

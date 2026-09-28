@@ -100,14 +100,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (busy) return;
     setState(() => busy = true);
     try {
-      final current = await ref.read(preferenceProvider.future);
-      await ref
-          .read(databaseProvider)
-          .savePreference(
-            detectedCountry: current.detectedCountry,
-            selectedCountry: current.selectedCountry,
-            bootstrapDismissed: true,
-          );
+      await ref.read(databaseProvider).markBootstrapDismissed();
     } finally {
       if (mounted) context.go('/matches');
     }
@@ -215,14 +208,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Future<void> _openProfile() async {
-    final current = await ref.read(preferenceProvider.future);
-    await ref
-        .read(databaseProvider)
-        .savePreference(
-          detectedCountry: current.detectedCountry,
-          selectedCountry: current.selectedCountry,
-          bootstrapDismissed: true,
-        );
+    await ref.read(databaseProvider).markBootstrapDismissed();
     if (mounted) context.push('/profile');
   }
 
@@ -628,8 +614,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     });
                     try {
                       await service.enable();
+                      if (!mounted) return;
                       setState(() => message = 'Notificaciones activadas.');
                     } catch (_) {
+                      if (!mounted) return;
                       setState(
                         () => message =
                             'No se pudieron activar. Puedes continuar.',
