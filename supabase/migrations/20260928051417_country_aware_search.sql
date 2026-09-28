@@ -92,7 +92,9 @@ begin
      case when vc<>'' and (
        (e.kind='competition' and (meta.country_code=vc or meta.country_code like vc||'-%'
          or futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
-         or futbeat_private.resolve_country_code(e.payload->>'country')=vc))
+         or futbeat_private.resolve_country_code(e.payload->>'countryCode') like vc||'-%'
+         or futbeat_private.resolve_country_code(e.payload->>'country')=vc
+         or futbeat_private.resolve_country_code(e.payload->>'country') like vc||'-%'))
        or (e.kind='team' and (
          futbeat_private.resolve_country_code(e.payload->>'countryCode')=vc
          or futbeat_private.resolve_country_code(e.payload->>'countryCode') like vc||'-%'

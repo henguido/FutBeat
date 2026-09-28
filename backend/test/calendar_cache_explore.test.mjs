@@ -248,6 +248,15 @@ test('Explore is bounded, editorial, activity-based and cached; search ranks cou
   assert.equal(cr.teams[0].id,'fb_team_cache_home_0');
   assert.equal(es.teams[0].id,'fb_team_cache_away_0');
   assert.deepEqual(new Set(cr.teams.map(t=>t.id)),new Set(es.teams.map(t=>t.id)));
+  await db.exec(`update futbeat_private.entities set payload=payload||
+    case when id='fb_comp_cache_0' then '{"name":"Premier League","country":"England"}'::jsonb
+      else '{"name":"Premier League","country":"Spain"}'::jsonb end
+    where id in ('fb_comp_cache_0','fb_comp_cache_1');
+    update futbeat_private.competition_editorial_metadata
+      set country_code=null,relevance_score=case when competition_id='fb_comp_cache_0' then 1 else 900 end
+      where competition_id in ('fb_comp_cache_0','fb_comp_cache_1');`);
+  const gbCompetition=(await db.query("select public.futbeat_search_catalog('premier league','GB',50) v")).rows[0].v;
+  assert.equal(gbCompetition.competitions[0].id,'fb_comp_cache_0');
   await db.exec(`update futbeat_private.competition_editorial_metadata
     set country_code='EUROPE',relevance_score=1 where competition_id='fb_comp_cache_0';
     update futbeat_private.competition_editorial_metadata
