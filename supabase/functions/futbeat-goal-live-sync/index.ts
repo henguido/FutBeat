@@ -1284,12 +1284,17 @@ async function syncOneTeamFixtures(attempt: TeamFixturesAttempt) {
 
   const reservationIds: number[] = [];
   const events: unknown[] = [];
+  const failedStatuses: Array<number | null> = [];
   let remaining: number | null = null;
   let complete = true;
+  let succeededPages = 0;
   let page = 0;
   let goalKey = "";
 
-  for (const externalTeamId of externalIds) {
+  // Every planned identity is tried: a 404/500 of one GOAL id says nothing
+  // about the others (a club can carry a stale id next to a live one). A
+  // failed page only closes ITS ledger row; the batch lease is kept.
+  identities: for (const externalTeamId of externalIds) {
     let offset = 0;
     for (let n = 0; n < teamFixturesMaxPages; n++) {
       const reservation = await rpc("futbeat_reserve_goal_team_fixtures_call", {
@@ -1299,14 +1304,12 @@ async function syncOneTeamFixtures(attempt: TeamFixturesAttempt) {
         p_trigger_source: "supabase-cron",
       });
       if (!reservation?.allowed) {
-        // Quota floor/cap or lease: stop here, keep what was fetched.
+        // Quota floor/cap or lease: stop the batch, keep what was fetched.
         attempt.stoppedBy = clean(reservation?.reason) || "not_allowed";
         complete = false;
-        break;
+        break identities;
       }
       const reservationId = Number(reservation.reservationId);
-      reservationIds.push(reservationId);
-      attempt.reservations = reservationIds.length;
       page += 1;
       try {
         goalKey ||= await readGoalKey();
@@ -1327,6 +1330,9 @@ async function syncOneTeamFixtures(attempt: TeamFixturesAttempt) {
         const data = response.payload.data;
         if (!Array.isArray(data)) throw new Error("GOAL team fixtures payload is invalid");
         events.push(...data);
+        reservationIds.push(reservationId);
+        succeededPages += 1;
+        attempt.reservations = page;
         const next = nextResultsOffset({
           pagination: response.payload.pagination as Record<string, unknown> | null,
           rowCount: data.length,
@@ -1342,7 +1348,9 @@ async function syncOneTeamFixtures(attempt: TeamFixturesAttempt) {
         const httpStatus = error instanceof Error
           ? Number(error.message.match(/^GOAL API (?:returned non-JSON )?HTTP (\d{3})$/)?.[1]) || null
           : null;
-        // Failure backs the team off (DB trigger); stored matches stay.
+        remaining = (error as { remaining?: number | null })?.remaining ?? remaining;
+        attempt.reservations = page;
+        failedStatuses.push(httpStatus);
         await completeFailure(
           reservationId,
           "GOAL_TEAM_FIXTURES_FETCH_FAILED",
@@ -1351,41 +1359,59 @@ async function syncOneTeamFixtures(attempt: TeamFixturesAttempt) {
           httpStatus,
           true,
         );
-        reservationIds.pop();
-        attempt.reservations = reservationIds.length;
-        if (reservationIds.length === 0) {
-          return { status: "failed", teamId, reason: "fetch_failed", httpStatus };
-        }
+        // This identity is not validated: the window cannot be complete.
         complete = false;
-        break;
+        continue identities;
       }
     }
-    if (attempt.stoppedBy) break;
   }
 
-  if (reservationIds.length === 0) {
+  if (page === 0) {
+    // Nothing reserved (quota/lease): no lease taken, nothing to report.
     return { status: "skipped", teamId, reason: attempt.stoppedBy ?? "not_allowed" };
+  }
+  if (succeededPages === 0) {
+    // Every attempted page failed: team-level backoff, never NO_DATA.
+    await rpc("futbeat_fail_team_fixtures", {
+      p_team_id: teamId,
+      p_reason: attempt.stoppedBy ? "QUOTA_STOPPED" : "FETCH_FAILED",
+      p_http_statuses: failedStatuses.filter((status) => status != null),
+    });
+    return { status: "failed", teamId, reason: "fetch_failed", httpStatuses: failedStatuses };
   }
 
   const cronToken = await readCronToken();
-  const ingested = await callGlobalIngest(cronToken, {
-    action: "team-fixtures-ingest",
-    teamId,
-    externalTeamIds: externalIds,
-    reservationIds,
-    fromDate,
-    toDate,
-    complete,
-    providerRemaining: remaining,
-    events,
-  });
+  let ingested: Record<string, unknown>;
+  try {
+    ingested = await callGlobalIngest(cronToken, {
+      action: "team-fixtures-ingest",
+      teamId,
+      externalTeamIds: externalIds,
+      reservationIds,
+      fromDate,
+      toDate,
+      complete,
+      providerRemaining: remaining,
+      events,
+    });
+  } catch (error) {
+    // Ingest closed its reservations; release the lease with a backoff.
+    await rpc("futbeat_fail_team_fixtures", {
+      p_team_id: teamId,
+      p_reason: "INGEST_FAILED",
+      p_http_statuses: [],
+    });
+    throw error;
+  }
   return {
     status: "ok",
     teamId,
     received: Number(ingested.received ?? 0),
+    accepted: Number(ingested.accepted ?? 0),
     newMatches: Number(ingested.newMatches ?? 0),
     existingMatches: Number(ingested.existingMatches ?? 0),
-    windowComplete: complete,
+    windowComplete: ingested.windowComplete === true,
+    failedIdentities: failedStatuses.length,
     remaining,
   };
 }

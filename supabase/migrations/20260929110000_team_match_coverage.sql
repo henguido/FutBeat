@@ -121,6 +121,9 @@ begin
     state:=case when cov.covered_from is null then 'PENDING' else 'STALE' end; reason:='in_flight';
   elsif cov.status='NO_DATA' and coalesce(cov.next_retry_at,'-infinity')>now() then
     state:='NO_DATA'; reason:='provider_no_data';
+  elsif cov.covered_from is null and cov.status='AVAILABLE' then
+    -- Fixtures stored, but no identity set/window was fully validated yet.
+    state:='STALE'; reason:='partial';
   elsif cov.covered_from is null then
     state:='PENDING'; reason:=case when cov.status='FETCH_FAILED' then 'retrying' else 'queued' end;
   elsif cov.window_complete and cov.last_success_at>now()-make_interval(days=>(w->>'freshDays')::integer)
@@ -288,52 +291,77 @@ begin
     'externalTeamId',p_external_team_id,'page',p_page);
 end $$;
 
--- A failed page never deletes stored matches: it only backs the team off.
-create function futbeat_private.track_team_fixtures_outcome() returns trigger
-language plpgsql security definer set search_path='' as $$
-declare tid text; failures integer;
-begin
-  if new.call_kind<>'team-fixtures' or old.status<>'RESERVED' or new.status<>'FAILED' then return new; end if;
-  tid:=futbeat_private.futbeat_resolve_entity_id('team',coalesce(old.metadata->>'teamId',new.metadata->>'teamId'));
-  if tid is null then return new; end if;
-  select failure_count+1 into failures from futbeat_private.team_match_coverage where team_id=tid for update;
-  failures:=coalesce(failures,1);
-  update futbeat_private.team_match_coverage set
-    status=case when new.http_status=404 then 'NO_DATA'
-      when covered_from is not null then status else 'FETCH_FAILED' end,
-    failure_count=failures,
-    last_error=left(coalesce(new.error_code,'TEAM_FIXTURES_FETCH_FAILED'),120),
-    lease_until=null,
-    next_retry_at=new.completed_at+case
-      when new.http_status=404 then make_interval(days=>(futbeat_private.team_match_window()->>'noDataDays')::integer)
-      when new.http_status=429 then interval '1 day'
-      else make_interval(secs=>least(86400,900*power(2,least(failures-1,7)))::integer) end
-  where team_id=tid and (last_success_at is null or last_success_at<=old.reserved_at);
-  perform futbeat_private.bump_metric('team_match_fetch_failed');
-  return new;
-end $$;
-create trigger team_fixtures_call_outcome after update of status on futbeat_private.provider_call_ledger
-for each row execute function futbeat_private.track_team_fixtures_outcome();
+-- Page failures are per provider call: a 404/500 of ONE GOAL identity never
+-- changes the team coverage by itself (another identity may still work) and
+-- never releases the batch lease. The worker reports the team-level outcome
+-- once, after every planned identity was tried (futbeat_complete_team_fixtures
+-- or futbeat_fail_team_fixtures).
 
--- How many of these GOAL fixture ids FutBeat already knows (read BEFORE the
--- ingest resolves them), for the new/existing metrics.
+-- Canonical matches that already exist for these GOAL fixture ids, read BEFORE
+-- the ingest resolves them (resolution creates the unknown ones).
 create function public.futbeat_known_goal_fixtures(p_external_ids jsonb)
-returns integer language sql stable security definer set search_path='' as $$
-  select count(distinct pe.external_id)::integer
+returns jsonb language sql stable security definer set search_path='' as $$
+  select coalesce(jsonb_agg(distinct pe.canonical_id),'[]'::jsonb)
   from futbeat_private.provider_entities pe
+  join futbeat_private.entities e on e.id=pe.canonical_id and e.kind='match'
   where pe.provider='goal_api' and pe.kind='match'
     and pe.external_id in (select value from jsonb_array_elements_text(
       case when jsonb_typeof(p_external_ids)='array' then p_external_ids else '[]'::jsonb end))
 $$;
 
--- Called by global ingest after the fixtures were stored. The window only
--- grows when the answer was fully paged; a partial answer keeps what was
--- known and retries soon. An empty full answer is a negative cache.
+-- Team-level failure: no identity gave a usable answer, or the answer could
+-- not be normalized. Never NO_DATA, never a complete window, stored matches
+-- untouched. Every planned identity answering 404 suggests stale mappings:
+-- a long backoff instead of a negative cache.
+create function public.futbeat_fail_team_fixtures(
+  p_team_id text,
+  p_reason text,
+  p_http_statuses jsonb default '[]'::jsonb
+) returns jsonb
+language plpgsql volatile security definer set search_path='' as $$
+declare
+  tid text:=futbeat_private.futbeat_resolve_entity_id('team',p_team_id);
+  statuses integer[];
+  failures integer;
+begin
+  if tid is null or nullif(btrim(p_reason),'') is null then raise exception 'Invalid team fixtures failure'; end if;
+  select coalesce(array_agg(value::integer),array[]::integer[]) into statuses
+  from jsonb_array_elements_text(case when jsonb_typeof(p_http_statuses)='array' then p_http_statuses else '[]'::jsonb end)
+  where value ~ '^\d{3}$';
+  perform pg_catalog.pg_advisory_xact_lock(hashtextextended('team-fixtures:'||tid,0));
+  select failure_count+1 into failures from futbeat_private.team_match_coverage where team_id=tid for update;
+  if failures is null then raise exception 'Team fixtures failure without reservation'; end if;
+  update futbeat_private.team_match_coverage set
+    status=case when covered_from is null then 'FETCH_FAILED' else status end,
+    window_complete=false,
+    failure_count=failures,
+    last_error=left(p_reason,120),
+    lease_until=null,
+    next_retry_at=now()+case
+      when cardinality(statuses)>0 and 404=all(statuses) then interval '7 days'
+      when 429=any(statuses) then interval '1 day'
+      else make_interval(secs=>least(86400,900*power(2,least(failures-1,7)))::integer) end
+  where team_id=tid;
+  perform futbeat_private.bump_metric('team_match_fetch_failed');
+  return futbeat_private.team_match_coverage_state(tid)||jsonb_build_object('teamId',tid);
+end $$;
+
+-- Called by global ingest after the fixtures were stored (every planned
+-- identity was tried). p_raw is the number of distinct raw provider items,
+-- p_received the canonical matches accepted from them.
+--   * p_raw>0 and nothing accepted: normalization/schema failure, never
+--     NO_DATA and never complete (futbeat_fail_team_fixtures).
+--   * fewer accepted than raw: the window is NOT complete.
+--   * NO_DATA only for a complete run (every identity answered, no partial
+--     pagination) with zero raw items: the provider confirmed no fixtures.
+--   * The window only grows for a complete run; otherwise what was known is
+--     kept and the team is retried soon.
 create function public.futbeat_complete_team_fixtures(
   p_team_id text,
   p_from date,
   p_to date,
   p_complete boolean,
+  p_raw integer,
   p_received integer,
   p_new integer,
   p_existing integer
@@ -344,18 +372,25 @@ declare
   tid text:=futbeat_private.futbeat_resolve_entity_id('team',p_team_id);
   cov futbeat_private.team_match_coverage;
   contiguous boolean;
+  full_window boolean;
 begin
   if tid is null or p_from is null or p_to is null or p_from>p_to or p_complete is null
-     or coalesce(p_received,-1)<0 or coalesce(p_new,-1)<0 or coalesce(p_existing,-1)<0 then
+     or coalesce(p_raw,-1)<0 or coalesce(p_received,-1)<0 or coalesce(p_new,-1)<0
+     or coalesce(p_existing,-1)<0 or p_new+p_existing<>p_received then
     raise exception 'Invalid team fixtures completion';
   end if;
+  if p_raw>0 and p_received=0 then
+    return public.futbeat_fail_team_fixtures(tid,'NORMALIZATION_FAILED','[]'::jsonb);
+  end if;
+  full_window:=p_complete and p_received>=p_raw;
   perform pg_catalog.pg_advisory_xact_lock(hashtextextended('team-fixtures:'||tid,0));
   select * into cov from futbeat_private.team_match_coverage where team_id=tid for update;
   if cov.team_id is null then raise exception 'Team fixtures completion without reservation'; end if;
   contiguous:=cov.covered_from is null
     or (p_from<=cov.covered_to+1 and p_to>=cov.covered_from-1);
 
-  if p_complete and p_received=0 then
+  if p_received=0 and full_window then
+    -- Every identity answered 200 with no items: confirmed empty.
     update futbeat_private.team_match_coverage set
       status=case when covered_from is null then 'NO_DATA' else status end,
       -- An empty OLDER window extends the known range (nothing there).
@@ -364,23 +399,31 @@ begin
       next_retry_at=now()+make_interval(days=>(w->>'noDataDays')::integer)
     where team_id=tid;
     perform futbeat_private.bump_metric('team_match_fetch_no_data');
+  elsif p_received=0 then
+    -- Nothing usable and not every identity answered: unknown, retry soon.
+    update futbeat_private.team_match_coverage set
+      status=case when covered_from is null then 'FETCH_FAILED' else status end,
+      window_complete=false,lease_until=null,last_error='PARTIAL_IDENTITIES',
+      next_retry_at=now()+interval '30 minutes'
+    where team_id=tid;
   else
     update futbeat_private.team_match_coverage set
       status='AVAILABLE',
-      covered_from=case when p_complete and contiguous then least(coalesce(covered_from,p_from),p_from) else covered_from end,
-      covered_to=case when p_complete and contiguous then greatest(coalesce(covered_to,p_to),p_to) else covered_to end,
-      window_complete=case when p_complete then (contiguous or window_complete) else false end,
-      last_success_at=now(),lease_until=null,failure_count=0,last_error=null,
+      covered_from=case when full_window and contiguous then least(coalesce(covered_from,p_from),p_from) else covered_from end,
+      covered_to=case when full_window and contiguous then greatest(coalesce(covered_to,p_to),p_to) else covered_to end,
+      window_complete=case when full_window then (contiguous or window_complete) else false end,
+      last_success_at=now(),lease_until=null,failure_count=0,
+      last_error=case when full_window then null else 'PARTIAL_WINDOW' end,
       fixtures_received=p_received,
       -- A partial answer is retried soon; a full one waits for new demand.
-      next_retry_at=case when p_complete then null else now()+interval '30 minutes' end
+      next_retry_at=case when full_window then null else now()+interval '30 minutes' end
     where team_id=tid;
     perform futbeat_private.bump_metric('team_match_fetch_success');
   end if;
-  if p_received>0 then perform futbeat_private.bump_metric('team_match_fixtures_received',p_received); end if;
+  if p_raw>0 then perform futbeat_private.bump_metric('team_match_fixtures_received',p_raw); end if;
   if p_new>0 then perform futbeat_private.bump_metric('team_match_fixtures_new',p_new); end if;
   if p_existing>0 then perform futbeat_private.bump_metric('team_match_fixtures_existing',p_existing); end if;
-  return futbeat_private.team_match_coverage_state(tid)||jsonb_build_object('teamId',tid);
+  return futbeat_private.team_match_coverage_state(tid)||jsonb_build_object('teamId',tid,'windowComplete',full_window);
 end $$;
 
 -- Grants: API / workers (service_role) only.
@@ -388,19 +431,20 @@ revoke all on function
   futbeat_private.team_match_window(),
   futbeat_private.team_goal_external_ids(text,integer),
   futbeat_private.team_match_coverage_state(text),
-  futbeat_private.track_team_fixtures_outcome(),
   public.futbeat_request_team_matches(text,date),
   public.futbeat_team_fixtures_plan(integer),
   public.futbeat_reserve_goal_team_fixtures_call(text,text,integer,text),
   public.futbeat_known_goal_fixtures(jsonb),
-  public.futbeat_complete_team_fixtures(text,date,date,boolean,integer,integer,integer)
+  public.futbeat_fail_team_fixtures(text,text,jsonb),
+  public.futbeat_complete_team_fixtures(text,date,date,boolean,integer,integer,integer,integer)
 from public,anon,authenticated;
 grant execute on function
   public.futbeat_request_team_matches(text,date),
   public.futbeat_team_fixtures_plan(integer),
   public.futbeat_reserve_goal_team_fixtures_call(text,text,integer,text),
   public.futbeat_known_goal_fixtures(jsonb),
-  public.futbeat_complete_team_fixtures(text,date,date,boolean,integer,integer,integer)
+  public.futbeat_fail_team_fixtures(text,text,jsonb),
+  public.futbeat_complete_team_fixtures(text,date,date,boolean,integer,integer,integer,integer)
 to service_role;
 
 notify pgrst,'reload schema';

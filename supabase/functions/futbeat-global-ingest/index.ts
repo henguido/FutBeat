@@ -1116,14 +1116,22 @@ Deno.serve(async (request) => {
     };
 
     try {
-      // Known GOAL fixtures BEFORE resolution (resolution creates the rest).
+      // Distinct raw provider items: the same fixture seen through two GOAL
+      // identities is one item; an item without an id cannot be one of them.
       const externalFixtureIds = [...new Set(events
         .map((event) => String(event.apiId ?? event.id ?? "").trim())
         .filter(Boolean))];
+      const rawDistinct = externalFixtureIds.length +
+        events.filter((event) => !String(event.apiId ?? event.id ?? "").trim()).length;
+
+      // Canonical matches that exist BEFORE resolution (resolution creates
+      // the unknown ones): GOAL-mapped fixtures ...
       const known = await rpc("futbeat_known_goal_fixtures", {
         p_external_ids: externalFixtureIds,
       });
-      const knownCount = Number.isInteger(known) ? Number(known) : 0;
+      const preexisting = new Set<string>(
+        Array.isArray(known) ? known.map((id) => String(id)) : [],
+      );
 
       // Existing matches of the team: an already-known fixture (same teams,
       // same kickoff) keeps its canonical id even without a GOAL mapping.
@@ -1131,6 +1139,11 @@ Deno.serve(async (request) => {
         p_type: "team",
         p_id: input.teamId,
       });
+      // ... and matches already stored without a GOAL mapping, which the
+      // normalizer reuses by (home, away, kickoff) from this same snapshot.
+      for (const match of Array.isArray(existing?.matches) ? existing.matches : []) {
+        if (match && typeof match.id === "string") preexisting.add(match.id);
+      }
       const normalized = await normalizeGoalBatch(
         "goal_api",
         events,
@@ -1143,12 +1156,19 @@ Deno.serve(async (request) => {
       const snapshot = normalized.snapshot;
       const ids = (snapshot.matches as Array<{ id: string }>).map((m) => m.id);
 
-      const existingCount = Math.min(knownCount, ids.length);
+      const existingCount = ids.filter((id) => preexisting.has(id)).length;
+
+      // Raw items that did not normalize are an unknown contract, never an
+      // empty answer: nothing accepted from a non-empty answer is a failure
+      // (the SQL completion refuses NO_DATA and backs off) and fewer
+      // accepted than raw never completes the window.
+      const normalizationFailed = rawDistinct > 0 && ids.length === 0;
+      const windowComplete = input.complete && ids.length >= rawDistinct;
 
       stage = "store";
       // Empty coverage: no calendar day is marked as covered and nothing
       // outside this answer is removed. Same canonical merge as the calendar.
-      const result = await rpc("futbeat_store_calendar_range", {
+      const result = ids.length === 0 ? null : await rpc("futbeat_store_calendar_range", {
         p_provider: "goal_api",
         p_received_at: receivedAt,
         p_coverage: [],
@@ -1160,7 +1180,8 @@ Deno.serve(async (request) => {
         p_team_id: input.teamId,
         p_from: input.fromDate,
         p_to: input.toDate,
-        p_complete: input.complete,
+        p_complete: windowComplete,
+        p_raw: rawDistinct,
         p_received: ids.length,
         p_new: ids.length - existingCount,
         p_existing: existingCount,
@@ -1170,15 +1191,20 @@ Deno.serve(async (request) => {
         stage: "complete",
         received: events.length,
         accepted: ids.length,
+        rawDistinct,
         newMatches: ids.length - existingCount,
         existingMatches: existingCount,
-        windowComplete: input.complete,
+        windowComplete,
+        normalizationFailed,
       });
 
       return Response.json({
         status: "ok",
         teamId: input.teamId,
         received: events.length,
+        rawDistinct,
+        windowComplete,
+        normalizationFailed,
         accepted: ids.length,
         newMatches: ids.length - existingCount,
         existingMatches: existingCount,

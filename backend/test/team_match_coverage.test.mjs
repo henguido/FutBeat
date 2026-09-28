@@ -52,6 +52,10 @@ const metric = (db, name) => db.query('select coalesce(sum(value),0)::int n from
 const ledger = (db) => db.query("select * from futbeat_private.provider_call_ledger where call_kind='team-fixtures' order by id").then((r) => r.rows);
 const state = (db, id) => db.query('select futbeat_private.team_match_coverage_state($1) v', [id]).then((r) => r.rows[0].v);
 
+const complete = (db, id, { from = day(-180), to = day(120), full = true, raw, received, fresh = received, known = 0 }) =>
+  fn(db, 'futbeat_complete_team_fixtures', { p_team_id: id, p_from: from, p_to: to, p_complete: full,
+    p_raw: raw ?? received, p_received: received, p_new: fresh - known, p_existing: known });
+
 async function fullCoverage(db, id, extra = {}) {
   await db.query(`insert into futbeat_private.team_match_coverage(team_id,status,covered_from,covered_to,window_complete,last_success_at)
     values($1,'AVAILABLE',current_date-200,current_date+130,true,now())`, [id]);
@@ -163,42 +167,49 @@ test('quota denied means zero reservation; LIVE keeps its floor; own daily cap',
   assert.equal((await reserve(db, t, 'cov-q')).reason, 'kind_daily_cap');
 }));
 
-test('a failed page backs off without deleting matches; 404 is a negative cache', () => withDb(async (db) => {
-  const t = await team(db, { externals: ['cov-e'] });
+test('one failed page changes nothing team-level; a team failure backs off and is never NO_DATA', () => withDb(async (db) => {
+  const t = await team(db, { externals: ['cov-e', 'cov-e2'] });
   await remaining(db);
   const r = await reserve(db, t, 'cov-e');
   await db.query(`select public.futbeat_complete_provider_call(p_reservation_id=>$1,p_status=>'FAILED',p_provider_remaining=>null,
-    p_http_status=>500,p_error_code=>'X',p_metadata=>'{}')`, [r.reservationId]);
-  const c = await coverage(db, t);
+    p_http_status=>404,p_error_code=>'X',p_metadata=>'{}')`, [r.reservationId]);
+  // The batch keeps its lease: the next identity can still be paged.
+  let c = await coverage(db, t);
+  assert.ok(new Date(c.lease_until) > new Date(), 'lease kept after an individual failure');
+  assert.equal(c.status, 'PENDING');
+  assert.equal((await reserve(db, t, 'cov-e2', 1)).allowed, true);
+  // Every identity 404: long backoff (stale mappings), never NO_DATA.
+  const failed = await fn(db, 'futbeat_fail_team_fixtures', { p_team_id: t, p_reason: 'FETCH_FAILED', p_http_statuses: JSON.stringify([404, 404]) });
+  assert.equal(failed.state, 'PENDING');
+  c = await coverage(db, t);
   assert.equal(c.status, 'FETCH_FAILED');
   assert.equal(c.lease_until, null);
-  assert.ok(new Date(c.next_retry_at) > new Date());
+  assert.equal(c.window_complete, false);
+  assert.ok(new Date(c.next_retry_at) > new Date(Date.now() + 6 * 86400e3));
   assert.equal((await reserve(db, t, 'cov-e')).reason, 'team_fixtures_inflight_or_backoff');
-  assert.equal((await state(db, t)).reason, 'retrying');
-  await db.query('update futbeat_private.team_match_coverage set next_retry_at=now()-interval \'1 second\' where team_id=$1', [t]);
-  const again = await reserve(db, t, 'cov-e');
-  await db.query(`select public.futbeat_complete_provider_call(p_reservation_id=>$1,p_status=>'FAILED',p_provider_remaining=>null,
-    p_http_status=>404,p_error_code=>'X',p_metadata=>'{}')`, [again.reservationId]);
-  assert.equal((await state(db, t)).state, 'NO_DATA');
-  assert.equal((await request(db, t)).demandRecorded, false);
-  assert.ok(await metric(db, 'team_match_fetch_failed') >= 2);
+  // A 500 backs off briefly (exponential), still never NO_DATA.
+  await db.query('update futbeat_private.team_match_coverage set next_retry_at=null where team_id=$1', [t]);
+  await reserve(db, t, 'cov-e');
+  await fn(db, 'futbeat_fail_team_fixtures', { p_team_id: t, p_reason: 'FETCH_FAILED', p_http_statuses: JSON.stringify([500]) });
+  c = await coverage(db, t);
+  assert.ok(new Date(c.next_retry_at) < new Date(Date.now() + 86400e3 + 60e3));
+  assert.notEqual((await state(db, t)).state, 'NO_DATA');
+  assert.equal(await metric(db, 'team_match_fetch_failed'), 2);
 }));
 
-test('partial answers never mark the window complete; empty full answers are a negative cache', () => withDb(async (db) => {
+test('partial answers never mark the window complete; only a confirmed empty answer is NO_DATA', () => withDb(async (db) => {
   const t = await team(db, { externals: ['cov-w'] });
   await remaining(db);
   await reserve(db, t, 'cov-w');
-  const partial = await fn(db, 'futbeat_complete_team_fixtures', { p_team_id: t, p_from: day(-180), p_to: day(120),
-    p_complete: false, p_received: 100, p_new: 100, p_existing: 0 });
-  assert.equal(partial.state, 'PENDING'); // nothing reliable known yet
+  const partial = await complete(db, t, { full: false, received: 100 });
+  assert.deepEqual([partial.state, partial.reason], ['STALE', 'partial']);
   let c = await coverage(db, t);
   assert.equal(c.window_complete, false);
   assert.equal(c.covered_from, null);
   assert.ok(new Date(c.next_retry_at) > new Date());
   await db.query('update futbeat_private.team_match_coverage set next_retry_at=null where team_id=$1', [t]);
   await reserve(db, t, 'cov-w');
-  const full = await fn(db, 'futbeat_complete_team_fixtures', { p_team_id: t, p_from: day(-180), p_to: day(120),
-    p_complete: true, p_received: 40, p_new: 10, p_existing: 30 });
+  const full = await complete(db, t, { received: 40, fresh: 40, known: 30 });
   assert.equal(full.state, 'AVAILABLE');
   c = await coverage(db, t);
   assert.equal(c.window_complete, true);
@@ -207,10 +218,42 @@ test('partial answers never mark the window complete; empty full answers are a n
 
   const empty = await team(db, { externals: ['cov-empty'] });
   await reserve(db, empty, 'cov-empty');
-  const none = await fn(db, 'futbeat_complete_team_fixtures', { p_team_id: empty, p_from: day(-180), p_to: day(120),
-    p_complete: true, p_received: 0, p_new: 0, p_existing: 0 });
+  const none = await complete(db, empty, { raw: 0, received: 0 });
   assert.equal(none.state, 'NO_DATA');
   assert.equal(await metric(db, 'team_match_fetch_no_data'), 1);
+}));
+
+test('raw items that do not normalize are a schema failure, never NO_DATA', () => withDb(async (db) => {
+  const t = await team(db, { externals: ['cov-s'] });
+  await remaining(db);
+  await reserve(db, t, 'cov-s');
+  const out = await complete(db, t, { raw: 10, received: 0 });
+  assert.notEqual(out.state, 'NO_DATA');
+  const c = await coverage(db, t);
+  assert.equal(c.status, 'FETCH_FAILED');
+  assert.equal(c.window_complete, false);
+  assert.equal(c.last_error, 'NORMALIZATION_FAILED');
+  assert.equal(c.lease_until, null);
+  assert.ok(new Date(c.next_retry_at) > new Date(), 'retry is scheduled');
+  assert.equal(await metric(db, 'team_match_fetch_no_data'), 0);
+  // After the backoff the team can be asked again.
+  await db.query('update futbeat_private.team_match_coverage set next_retry_at=now()-interval \'1 second\' where team_id=$1', [t]);
+  assert.equal((await request(db, t)).demandRecorded, true);
+  assert.equal((await plan(db)).length, 1);
+}));
+
+test('fewer accepted than raw never completes the window, even when the worker says complete', () => withDb(async (db) => {
+  const t = await team(db, { externals: ['cov-r'] });
+  await remaining(db);
+  await reserve(db, t, 'cov-r');
+  const out = await complete(db, t, { raw: 12, received: 8 });
+  assert.equal(out.windowComplete, false);
+  const c = await coverage(db, t);
+  assert.equal(c.window_complete, false);
+  assert.equal(c.covered_from, null);
+  assert.equal(c.status, 'AVAILABLE');
+  assert.equal(c.last_error, 'PARTIAL_WINDOW');
+  await assert.rejects(complete(db, t, { raw: 3, received: 3, fresh: 5 }), /Invalid team fixtures completion/);
 }));
 
 test('end of Resultados asks centrally for the older window (backfill)', () => withDb(async (db) => {
@@ -256,7 +299,8 @@ function edge(source, fetch, logs, globals = {}) {
 
 const SQL_RPCS = new Set(['futbeat_team_fixtures_plan', 'futbeat_reserve_goal_team_fixtures_call',
   'futbeat_complete_provider_call', 'futbeat_resolve_global_entities', 'futbeat_read_entity_detail',
-  'futbeat_known_goal_fixtures', 'futbeat_store_calendar_range', 'futbeat_complete_team_fixtures']);
+  'futbeat_known_goal_fixtures', 'futbeat_store_calendar_range', 'futbeat_complete_team_fixtures',
+  'futbeat_fail_team_fixtures']);
 
 function harness(db, provider) {
   const calls = [], logs = [], unexpected = [];
@@ -403,6 +447,124 @@ test('worker: two external ids, several competitions, past + future, dedup with 
   assert.equal(again.value.result.reason, 'no_team_fixtures_due');
   assert.equal(h.providers().length, 2);
   assert.equal((await request(db, t)).demandRecorded, false);
+}));
+
+const storeFixtures = async (db, fixtures, resolveMatch = null) => {
+  const snapshot = await normalizeGoalApiFixtures(fixtures, async (kind, external, identity) => {
+    if (kind === 'match' && resolveMatch) return resolveMatch(external);
+    return (await db.query('select public.futbeat_resolve_global_entity($1,$2,$3,$4) id',
+      ['goal_api', kind, external, identity.name])).rows[0].id;
+  }, new Date().toISOString());
+  await db.query("select public.futbeat_store_calendar_range('goal_api',now(),'[]'::jsonb,$1)", [JSON.stringify(snapshot)]);
+  return snapshot;
+};
+const byIdentity = (answers) => (url) => {
+  const ext = url.pathname.split('/')[3];
+  const answer = answers[ext];
+  if (typeof answer === 'number') return new Response(JSON.stringify({ success: false }), { status: answer });
+  if (Array.isArray(answer)) return goalPage(answer);
+  throw new Error(`unexpected identity ${ext}`);
+};
+const many = (n, ext, prefix) => Array.from({ length: n }, (_, i) => fixture(`${prefix}-${i}`, -24 * (i + 1),
+  { home: [ext, 'Equipo'], away: [`${prefix}-r${i}`, `Rival ${i}`], status: 'FINISHED', score: [1, 0] }));
+
+test('worker: identity A 404 + identity B 20 fixtures stores 20, never NO_DATA', () => withDb(async (db) => {
+  const t = await seedTeam(db, ['id-a', 'id-b']);
+  await request(db, t);
+  const h = harness(db, byIdentity({ 'id-a': 404, 'id-b': many(20, 'id-b', 'fb20') }));
+  const { value } = await h.run();
+  assert.equal(value.result.status, 'ok', JSON.stringify(value));
+  assert.equal(value.providerCalls, 2, 'the second identity is still tried');
+  assert.equal(value.result.accepted, 20);
+  assert.equal(value.result.windowComplete, false);
+  assert.equal(value.result.failedIdentities, 1);
+  const st = await state(db, t);
+  assert.deepEqual([st.state, st.reason], ['STALE', 'partial']);
+  assert.equal((await readTeam(db, t, 'results')).length, 20);
+  const rows = (await ledger(db)).map((r) => [r.metadata.externalTeamId, r.status, r.http_status]);
+  assert.deepEqual(rows, [['id-a', 'FAILED', 404], ['id-b', 'SUCCEEDED', 200]]);
+}));
+
+test('worker: A 404 + B empty 200 is not NO_DATA; A empty + B empty is', () => withDb(async (db) => {
+  const t = await seedTeam(db, ['na-a', 'na-b']);
+  await request(db, t);
+  const h = harness(db, byIdentity({ 'na-a': 404, 'na-b': [] }));
+  const first = await h.run();
+  assert.equal(first.value.result.status, 'ok', JSON.stringify(first.value));
+  const st = await state(db, t);
+  assert.notEqual(st.state, 'NO_DATA');
+  assert.equal((await coverage(db, t)).last_error, 'PARTIAL_IDENTITIES');
+
+  const u = await seedTeam(db, ['ne-a', 'ne-b']);
+  await request(db, u);
+  const h2 = harness(db, byIdentity({ 'ne-a': [], 'ne-b': [] }));
+  const second = await h2.run();
+  assert.equal(second.value.result.status, 'ok', JSON.stringify(second.value));
+  assert.equal(h2.providers().length, 2);
+  assert.equal((await state(db, u)).state, 'NO_DATA');
+}));
+
+test('worker: A 500 + B fixtures keeps the fixtures, window not complete, lease kept for B', () => withDb(async (db) => {
+  const t = await seedTeam(db, ['f5-a', 'f5-b']);
+  await request(db, t);
+  const h = harness(db, byIdentity({ 'f5-a': 500, 'f5-b': many(4, 'f5-b', 'fb5') }));
+  const { value } = await h.run();
+  assert.equal(value.result.status, 'ok', JSON.stringify(value));
+  assert.equal(value.reservations, 2, 'B was reserved after A failed: the lease survived');
+  const c = await coverage(db, t);
+  assert.equal(c.window_complete, false);
+  assert.equal(c.lease_until, null, 'released once, at the end of the batch');
+  assert.equal((await readTeam(db, t, 'results')).length, 4);
+}));
+
+test('worker: 10 raw items the normalizer cannot read are not NO_DATA and keep stored data', () => withDb(async (db) => {
+  const t = await seedTeam(db, ['sch-a']);
+  await storeFixtures(db, [fixture('fx-old', -48, { home: ['sch-a', 'Equipo'], away: ['sch-r', 'Rival'], status: 'FINISHED', score: [2, 1] })]);
+  await request(db, t);
+  // Unknown shape: no league/team objects the normalizer understands.
+  const unknown = Array.from({ length: 10 }, (_, i) => ({ apiId: `raw-${i}`, date: day(-i), teams: `x${i}` }));
+  const h = harness(db, byIdentity({ 'sch-a': unknown }));
+  const { value } = await h.run();
+  assert.equal(value.result.status, 'ok', JSON.stringify(value));
+  assert.equal(value.result.accepted, 0);
+  const c = await coverage(db, t);
+  assert.notEqual(c.status, 'NO_DATA');
+  assert.equal(c.window_complete, false);
+  assert.equal(c.last_error, 'NORMALIZATION_FAILED');
+  assert.ok(new Date(c.next_retry_at) > new Date());
+  assert.equal((await readTeam(db, t, 'results')).length, 1, 'existing data intact');
+}));
+
+test('worker: raw > accepted does not complete the window', () => withDb(async (db) => {
+  const t = await seedTeam(db, ['ra-a']);
+  await request(db, t);
+  const h = harness(db, byIdentity({ 'ra-a': [...many(3, 'ra-a', 'ra'), { apiId: 'ra-bad', nothing: true }] }));
+  const { value } = await h.run();
+  assert.equal(value.result.accepted, 3);
+  assert.equal(value.result.windowComplete, false);
+  assert.equal((await coverage(db, t)).window_complete, false);
+}));
+
+test('worker: a match stored without a GOAL mapping counts as existing, not new', () => withDb(async (db) => {
+  const t = await seedTeam(db, ['ex-a']);
+  // Stored by another path: same teams and kickoff, no GOAL fixture mapping.
+  const kickoff = 30;
+  const stored = await storeFixtures(db,
+    [fixture('other-provider', kickoff, { home: ['ex-a', 'Equipo'], away: ['ex-r', 'Rival'] })],
+    async () => 'fb_match_unmapped_manual');
+  assert.equal(stored.matches[0].id, 'fb_match_unmapped_manual');
+  await request(db, t);
+  const h = harness(db, byIdentity({ 'ex-a': [
+    fixture('goal-fx', kickoff, { home: ['ex-a', 'Equipo'], away: ['ex-r', 'Rival'] }),
+    fixture('goal-new', 24 * 9, { home: ['ex-a', 'Equipo'], away: ['ex-r2', 'Rival Dos'] }),
+  ] }));
+  const { value } = await h.run();
+  assert.equal(value.result.status, 'ok', JSON.stringify(value));
+  assert.equal(value.result.existingMatches, 1);
+  assert.equal(value.result.newMatches, 1);
+  const ids = (await readTeam(db, t, 'upcoming')).map((m) => m.id);
+  assert.ok(ids.includes('fb_match_unmapped_manual'), 'deduplicated onto the existing canonical match');
+  assert.equal(ids.length, 2);
 }));
 
 test('worker: provider error keeps stored data and backs off; quota denial makes no call', () => withDb(async (db) => {

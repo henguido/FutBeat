@@ -58,6 +58,29 @@ The row stores the **exact** window known (`covered_from`, `covered_to`) and
 whether it was fully paged (`window_complete`). A page cap reached with more
 pages left never marks the window complete and never extends it.
 
+### Failures, partial answers and NO_DATA
+
+- A failed page (404, 500, timeout) closes **only its ledger row**. It never
+  changes the team coverage and never releases the batch lease: the worker
+  keeps trying the team's other GOAL identities.
+- The team outcome is reported once, after every planned identity was
+  tried:
+  - no successful page → `futbeat_fail_team_fixtures` (backoff: every
+    identity 404 → 7 days, 429 → 1 day, else 15 min × 2ⁿ ≤ 1 day). The
+    status becomes `FETCH_FAILED` only if nothing was ever known; it is
+    never `NO_DATA`.
+  - raw items > 0 but none normalized → schema/normalization failure
+    (`NORMALIZATION_FAILED`): same backoff path, never `NO_DATA`, never a
+    complete window, stored matches untouched.
+  - fewer accepted than distinct raw items, a failed identity, a quota stop
+    or the page cap → the fixtures are stored, the window is **not**
+    complete, retry in 30 minutes.
+- **NO_DATA** only when every planned identity answered 200, no pagination
+  was cut, there was no normalization failure and the combined answer had
+  zero raw items.
+- Metrics count canonical matches: `team_match_fixtures_existing` includes
+  matches stored before without a GOAL mapping (reused by teams + kickoff).
+
 ## Identity and duplicates
 
 - Match identity is the GOAL fixture id (`provider_entities` kind `match`):
@@ -75,8 +98,8 @@ pages left never marks the window complete and never extends it.
 - Kind `team-fixtures`, class `coverage` (floor 300 vs LIVE 20, results 20,
   user_high 150), own daily cap **60** request units.
 - One reservation per provider page, under `lock_provider_quota`; a denial
-  stops the run before any call. A failed page backs the team off (15 min ×
-  2ⁿ, max 1 day; 429 → 1 day; 404 → NO_DATA 14 days) and never deletes data.
+  stops the run before any call. Failures back the team off (see above) and
+  never delete data.
 
 ### Estimate
 
