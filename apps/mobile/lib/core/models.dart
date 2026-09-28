@@ -809,6 +809,11 @@ class Snapshot {
 
   /// Match Center: the exact table shown is older than its freshness window.
   bool get standingsStale => coverage?['standingsStale'] == true;
+
+  /// Team profile: server-side squad state, one of AVAILABLE | STALE |
+  /// PENDING | CONFIRMED_EMPTY | UNAVAILABLE (null when the server does not
+  /// say).
+  String? get squadState => (coverage?['squad'] as Map?)?['state'] as String?;
   final bool stale;
   final bool revalidating;
   final DateTime updatedAt;

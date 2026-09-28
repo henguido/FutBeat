@@ -1333,6 +1333,8 @@ class MatchStandingsTab extends StatelessWidget {
             data,
             competitionId,
             selectableView: true,
+            // The match's own group, never several groups as one table.
+            focusTeamIds: {?homeTeamId, ?awayTeamId},
             highlightedTeams: {?homeTeamId: lime, ?awayTeamId: awaySideColor},
             // In-play evidence from the snapshot itself (never the clock).
             liveTeamIds: liveTeamIds(data, competitionId),

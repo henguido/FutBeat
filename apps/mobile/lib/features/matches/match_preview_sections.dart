@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/models.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
+import '../entities/standings.dart';
 import 'match_screen.dart';
 
 // Match Center 2.0 phase 2 (#99): recent form, the two sides' table rows and
@@ -150,7 +151,7 @@ class _FormRow extends StatelessWidget {
         ],
         Expanded(
           child: Text(
-            team?.name ?? 'Equipo',
+            team?.name ?? '',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.w700),
@@ -242,10 +243,13 @@ class StandingsSnapshotCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final table = data.standings
-        .where((s) => s['competitionId'] == match.competitionId)
-        .firstOrNull;
-    final rows = (table?['rows'] as List? ?? const []).cast<Json>();
+    // The match's own group only; a table that cannot be resolved is hidden.
+    final groups = standingsGroups(
+      standingsTableFor(data, match.competitionId),
+      data,
+      focusTeamIds: {match.homeId, match.awayId},
+    );
+    final rows = groups?.length == 1 ? groups!.single.rows : const <Json>[];
     (int, Json)? find(String teamId) {
       for (var i = 0; i < rows.length; i++) {
         if (rows[i]['teamId'] == teamId) {
@@ -304,7 +308,7 @@ class _PositionRow extends StatelessWidget {
       ],
       Expanded(
         child: Text(
-          team?.name ?? 'Equipo',
+          team?.name ?? '',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontWeight: FontWeight.w700),
@@ -513,7 +517,7 @@ class _MeetingRow extends StatelessWidget {
           ],
           Flexible(
             child: Text(
-              entity?.name ?? 'Equipo',
+              entity?.name ?? '',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: end ? TextAlign.end : TextAlign.start,

@@ -193,6 +193,13 @@ test('P2 helpers remain private and planner is deterministic/read-only with unch
   const current = (await definition(db, 'futbeat_private.futbeat_team_squad_plan(integer)')).replace(/\r\n/g, '\n');
   assert.equal(current.slice(current.indexOf('  if tier=0 then'), current.indexOf('  elsif tier=2 then')),
     old.slice(old.indexOf('  if tier=0 then'), old.indexOf('  elsif tier=2 then')));
-  assert.equal(current.slice(current.indexOf('  elsif tier in (3,4) then'), current.indexOf(' return result;')),
-    old.slice(old.indexOf('  elsif tier in (3,4) then'), old.indexOf(' return result;', old.indexOf('  elsif tier in (3,4) then'))));
+  // Tiers 3-5 are unchanged; #111 only adds tier 6 ('requested') to the
+  // priority/reason mapping (checked below), so compare up to it.
+  const tail = (text) => {
+    const from = text.indexOf('  elsif tier in (3,4) then');
+    return text.slice(from, text.indexOf('  select result||', from));
+  };
+  assert.equal(tail(current), tail(old));
+  assert.match(current, /'priority',case when tier=6 then 45000 else 60000-tier\*10000 end/);
+  assert.match(current, /\['live','favorite','upcoming','followed_competition','editorial_relevance','recently_opened','requested'\]\)\[tier\+1\]/);
 }));
