@@ -368,14 +368,24 @@ class PushService {
 
   Future<void> syncCountries(String? detected, String? selected) {
     if (!authenticated || disposed) return Future.value();
+    final sessionToken = session?['access_token']?.toString();
     final operation = countryPending.catchError((_) {}).then((_) async {
       await markCountriesDirty();
+      if (disposed || session?['access_token']?.toString() != sessionToken) {
+        return;
+      }
       await dio.post(
         '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_preferences',
         options: authHeaders,
         data: {'p_detected': detected, 'p_selected': selected},
       );
-      await storage.write(key: 'futbeat.country.dirty', value: 'false');
+      final current = await database.watchPreference().first;
+      if (!disposed &&
+          session?['access_token']?.toString() == sessionToken &&
+          current.detectedCountry == detected &&
+          current.selectedCountry == selected) {
+        await storage.write(key: 'futbeat.country.dirty', value: 'false');
+      }
     });
     countryPending = operation;
     return operation;
@@ -500,11 +510,12 @@ class PushService {
       );
       if (detected != current.detectedCountry ||
           selected != current.selectedCountry) {
-        await database.savePreference(
-          detectedCountry: detected,
-          selectedCountry: selected,
-          bootstrapDismissed: current.bootstrapDismissed,
-        );
+        if (detected != current.detectedCountry) {
+          await database.saveDetectedCountry(detected);
+        }
+        if (selected != current.selectedCountry) {
+          await database.saveSelectedCountry(selected);
+        }
       }
       final effective = await database.watchPreference().first;
       await syncCountries(effective.detectedCountry, effective.selectedCountry);
