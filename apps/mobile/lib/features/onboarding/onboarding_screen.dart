@@ -13,6 +13,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
 const onboardingStepCount = 6;
+const _automaticCountry = '__automatic__';
 
 List<Entity> rankOnboardingEntities(
   Iterable<Entity> entities,
@@ -322,6 +323,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   ) {
     if (preference == null) return const LinearProgressIndicator();
     final labels = <String, String>{};
+    String displayName(String code) {
+      final fallback = countryName(code);
+      return labels[code] ?? (fallback == 'Global' ? code : fallback);
+    }
+
     for (final entity in [...?catalog?.competitions, ...?catalog?.teams]) {
       final code = entity.json['countryCode']?.toString().trim().toUpperCase();
       if (code != null && code.isNotEmpty) {
@@ -333,34 +339,45 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     }
     final current = preference.selectedCountry;
     if (current != null) {
-      labels.putIfAbsent(current, () => countryName(current));
+      labels.putIfAbsent(current, () => displayName(current));
     }
     final detected = preference.detectedCountry;
     if (detected != null) {
-      labels.putIfAbsent(detected, () => countryName(detected));
+      labels.putIfAbsent(detected, () => displayName(detected));
     }
     final entries = labels.entries.toList()
       ..sort((a, b) => a.value.compareTo(b.value));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (detected != null)
-          Text('Detectado: ${labels[detected] ?? countryName(detected)}'),
+        if (detected != null) Text('Detectado: ${displayName(detected)}'),
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
-          key: ValueKey(current ?? detected),
-          initialValue: current,
+          key: ValueKey(current ?? _automaticCountry),
+          initialValue: current ?? _automaticCountry,
           isExpanded: true,
           decoration: const InputDecoration(labelText: 'País (opcional)'),
-          items: entries
-              .map(
-                (entry) => DropdownMenuItem(
-                  value: entry.key,
-                  child: Text(entry.value, overflow: TextOverflow.ellipsis),
-                ),
-              )
-              .toList(),
-          onChanged: (value) => _selectCountry(preference, value),
+          items: [
+            DropdownMenuItem(
+              value: _automaticCountry,
+              child: Text(
+                detected == null
+                    ? 'Automático'
+                    : 'Automático (${displayName(detected)})',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            ...entries.map(
+              (entry) => DropdownMenuItem(
+                value: entry.key,
+                child: Text(entry.value, overflow: TextOverflow.ellipsis),
+              ),
+            ),
+          ],
+          onChanged: (value) => _selectCountry(
+            preference,
+            value == _automaticCountry ? null : value,
+          ),
         ),
         if (state.hasError)
           _catalogError(() => ref.invalidate(exploreSnapshotProvider)),

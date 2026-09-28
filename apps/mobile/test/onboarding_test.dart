@@ -69,12 +69,12 @@ Future<void> pumpOnboarding(
   required AppDatabase database,
   double width = 390,
   Set<String> follows = const {},
-}) async {
-  const preference = CountryPreference(
+  CountryPreference preference = const CountryPreference(
     detectedCountry: 'CR',
     selectedCountry: null,
     bootstrapDismissed: false,
-  );
+  ),
+}) async {
   tester.view.physicalSize = Size(width, 844);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -222,6 +222,30 @@ void main() {
     expect(find.text('Detectado: Costa Rica'), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
     expect(find.text('Saltar'), findsOneWidget);
+  });
+
+  testWidgets('unknown ISO is shown accurately and manual country can reset', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePreference(detectedCountry: 'JP', selectedCountry: 'ES');
+    await pumpOnboarding(
+      tester,
+      database: db,
+      preference: const CountryPreference(
+        detectedCountry: 'JP',
+        selectedCountry: 'ES',
+        bootstrapDismissed: true,
+      ),
+    );
+    expect(find.text('Detectado: JP'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Automático (JP)').last);
+    await tester.pump(const Duration(milliseconds: 20));
+    final saved = await tester.runAsync(() => db.watchPreference().first);
+    expect(saved?.selectedCountry, isNull);
   });
 
   testWidgets('team multi-select and deselect use local follows', (
