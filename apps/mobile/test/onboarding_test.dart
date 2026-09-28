@@ -232,13 +232,23 @@ void main() {
         child: FutBeatApp(router: router),
       ),
     );
-    await tester.pumpAndSettle();
-    final initial = await tester.runAsync(() => db.watchPreference().first);
+    await tester.pump();
+    Future<CountryPreference?> waitForCountry(String code) => tester.runAsync(
+      () async {
+        for (var attempt = 0; attempt < 100; attempt++) {
+          final value = await db.watchPreference().first;
+          if (value.detectedCountry == code) return value;
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        throw StateError('Country $code was not persisted');
+      },
+    );
+    final initial = await waitForCountry('CR');
     expect(initial?.detectedCountry, 'CR');
 
     tester.binding.platformDispatcher.localeTestValue = const Locale('es', 'ES');
-    await tester.pumpAndSettle();
-    final refreshed = await tester.runAsync(() => db.watchPreference().first);
+    await tester.pump();
+    final refreshed = await waitForCountry('ES');
     expect(refreshed?.detectedCountry, 'ES');
   });
 
