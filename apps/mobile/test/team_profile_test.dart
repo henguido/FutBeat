@@ -252,7 +252,9 @@ void main() {
       'Transferencias',
     ]);
     await _openTab(tester, 'Plantilla');
-    expect(find.text('Plantilla no disponible'), findsOneWidget);
+    // No server squad state: still pending, never a confirmed absence.
+    expect(find.text('Plantilla pendiente'), findsOneWidget);
+    expect(find.text('Plantilla no disponible'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     await _openTab(tester, 'Transferencias');
     expect(find.text('Sin cambios de plantilla disponibles'), findsOneWidget);

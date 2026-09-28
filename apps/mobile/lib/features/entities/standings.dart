@@ -26,6 +26,60 @@ Set<String> liveTeamIds(Snapshot data, String competitionId) => {
     ],
 };
 
+/// One displayable group of a standings table ([label] null for a single,
+/// unnamed table).
+typedef StandingsGroup = ({String? label, List<Json> rows});
+
+/// The groups of [table] that can be shown, or null when the table must not
+/// be shown at all ("Tabla no disponible"):
+///  * no rows, or the server could not tell its groups apart;
+///  * a row whose team entity is unknown (never a placeholder name);
+///  * a repeated position inside one group (unlabelled groups mixed).
+/// With [focusTeamIds] and several groups, only the group holding every
+/// focus team is returned (null when there is none): a Match Center shows
+/// the match's group and a team profile the team's group, never a mix.
+List<StandingsGroup>? standingsGroups(
+  Json? table,
+  Snapshot data, {
+  Set<String> focusTeamIds = const {},
+}) {
+  final rows = (table?['rows'] as List? ?? const []).cast<Json>();
+  if (table == null || rows.isEmpty || table['groupsResolved'] == false) {
+    return null;
+  }
+  final groups = <String, List<Json>>{};
+  for (final row in rows) {
+    final teamId = row['teamId']?.toString() ?? '';
+    if (teamId.isEmpty || data.team(teamId) == null) return null;
+    groups.putIfAbsent(row['group']?.toString() ?? '', () => []).add(row);
+  }
+  for (final group in groups.values) {
+    final positions = [
+      for (final row in group)
+        if (row['position'] != null) (row['position'] as num).toInt(),
+    ];
+    if (positions.toSet().length != positions.length) return null;
+  }
+  final all = [
+    for (final entry in groups.entries)
+      (label: entry.key.isEmpty ? null : entry.key, rows: entry.value),
+  ];
+  if (focusTeamIds.isEmpty || all.length == 1) return all;
+  final holding = [
+    for (final group in all)
+      if (focusTeamIds.every(
+        (id) => group.rows.any((row) => row['teamId'] == id),
+      ))
+        group,
+  ];
+  return holding.length == 1 ? holding : null;
+}
+
+/// The table of [competitionId] in [data] (first one), if any.
+Json? standingsTableFor(Snapshot data, String competitionId) => data.standings
+    .where((s) => s['competitionId'] == competitionId)
+    .firstOrNull;
+
 class Standings extends StatefulWidget {
   const Standings(
     this.data,
@@ -34,10 +88,15 @@ class Standings extends StatefulWidget {
     this.highlightedTeams = const {},
     this.liveTeamIds = const {},
     this.selectableView = false,
+    this.focusTeamIds = const {},
   });
 
   final Snapshot data;
   final String competitionId;
+
+  /// Teams whose group is shown when the table has several groups (see
+  /// [standingsGroups]).
+  final Set<String> focusTeamIds;
 
   /// Team id -> accent color (e.g. the selected match's home/away sides).
   final Map<String, Color> highlightedTeams;
@@ -59,20 +118,54 @@ class _StandingsState extends State<Standings> {
   @override
   Widget build(BuildContext context) {
     final data = widget.data;
-    final table = data.standings
-        .where((s) => s['competitionId'] == widget.competitionId)
-        .firstOrNull;
-    final rows = (table?['rows'] as List? ?? const []).cast<Json>();
-    if (table == null || rows.isEmpty) {
-      return const EmptyState(
-        'Tabla no disponible',
-        'La clasificación aparecerá cuando exista una fuente disponible.',
+    final table = standingsTableFor(data, widget.competitionId);
+    final groups = standingsGroups(
+      table,
+      data,
+      focusTeamIds: widget.focusTeamIds,
+    );
+    if (table == null || groups == null) {
+      return const Padding(
+        key: ValueKey('standings-unavailable'),
+        padding: EdgeInsets.symmetric(vertical: 32),
+        child: Column(
+          children: [
+            Icon(Icons.table_rows_outlined, size: 36, color: muted),
+            SizedBox(height: 10),
+            Text('Tabla no disponible', style: TextStyle(color: muted)),
+          ],
+        ),
       );
     }
     final view = widget.selectableView ? _view : StandingsView.full;
-    final entries = [
-      for (var i = 0; i < rows.length; i++) _Entry.from(rows[i], i, data),
-    ];
+    Widget table0(List<_Entry> entries) => view == StandingsView.compact
+        ? _Table(
+            key: const ValueKey('standings-compact'),
+            entries: entries,
+            columns: _compactColumns,
+            highlightedTeams: widget.highlightedTeams,
+            liveTeamIds: widget.liveTeamIds,
+          )
+        : LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minWidth: constraints.maxWidth,
+                  maxWidth: constraints.maxWidth > _fullMinWidth
+                      ? constraints.maxWidth
+                      : _fullMinWidth,
+                ),
+                child: _Table(
+                  key: const ValueKey('standings-full'),
+                  entries: entries,
+                  columns: _fullColumns,
+                  highlightedTeams: widget.highlightedTeams,
+                  liveTeamIds: widget.liveTeamIds,
+                ),
+              ),
+            ),
+          );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -95,35 +188,21 @@ class _StandingsState extends State<Standings> {
           ),
           const SizedBox(height: 10),
         ],
-        if (view == StandingsView.compact)
-          _Table(
-            key: const ValueKey('standings-compact'),
-            entries: entries,
-            columns: _compactColumns,
-            highlightedTeams: widget.highlightedTeams,
-            liveTeamIds: widget.liveTeamIds,
-          )
-        else
-          LayoutBuilder(
-            builder: (context, constraints) => SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minWidth: constraints.maxWidth,
-                  maxWidth: constraints.maxWidth > _fullMinWidth
-                      ? constraints.maxWidth
-                      : _fullMinWidth,
-                ),
-                child: _Table(
-                  key: const ValueKey('standings-full'),
-                  entries: entries,
-                  columns: _fullColumns,
-                  highlightedTeams: widget.highlightedTeams,
-                  liveTeamIds: widget.liveTeamIds,
-                ),
+        for (var g = 0; g < groups.length; g++) ...[
+          if (groups[g].label != null)
+            Padding(
+              padding: EdgeInsets.only(top: g == 0 ? 0 : 14, bottom: 6),
+              child: Text(
+                groups[g].label!,
+                key: ValueKey('standings-group-${groups[g].label}'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
               ),
             ),
-          ),
+          table0([
+            for (var i = 0; i < groups[g].rows.length; i++)
+              _Entry.from(groups[g].rows[i], i, data),
+          ]),
+        ],
       ],
     );
   }
@@ -147,7 +226,8 @@ class _Entry {
     final ga = value('ga');
     return _Entry(
       teamId: teamId,
-      team: data.team(teamId),
+      // standingsGroups only lets through rows whose team is known.
+      team: data.team(teamId)!,
       position: (row['position'] as num?)?.toInt() ?? index + 1,
       values: {
         'played': value('played'),
@@ -163,11 +243,11 @@ class _Entry {
   }
 
   final String teamId;
-  final Entity? team;
+  final Entity team;
   final int position;
   final Map<String, int> values;
 
-  String get name => team?.name ?? 'Equipo';
+  String get name => team.name;
 }
 
 class _Column {
@@ -353,10 +433,8 @@ class _TeamRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              if (team != null) ...[
-                EntityAvatar(team, size: 22),
-                const SizedBox(width: 8),
-              ],
+              EntityAvatar(team, size: 22),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   entry.name,

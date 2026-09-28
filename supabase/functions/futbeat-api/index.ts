@@ -83,6 +83,15 @@ export default {
           enrichmentPending = asRecord(demand).enrichmentPending === true;
         }
       }
+      // Opening a team whose squad is missing or stale records ONE central
+      // deduplicated demand (#111); the squad planner fetches it later.
+      if (type === 'team') {
+        const { error: squadError } = await ctx.supabaseAdmin.rpc(
+          'futbeat_request_team_squad',
+          { p_team_id: id },
+        );
+        if (squadError) console.warn('team squad demand unavailable');
+      }
 
       const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
         'futbeat_read_entity_detail',
@@ -108,6 +117,37 @@ export default {
         return replyNoStore(200, snapshot);
       }
       return reply(200, snapshot);
+    }
+
+    // Team / national-team matches across every competition (#150): one
+    // bucket (upcoming ascending | results descending) per page, keyset cursor.
+    if (path.endsWith('/futbeat-api/v1/team-matches')) {
+      const id = requestUrl.searchParams.get('id');
+      const bucket = requestUrl.searchParams.get('bucket');
+      const cursor = requestUrl.searchParams.get('cursor');
+      const limit = Number(requestUrl.searchParams.get('limit') ?? '20');
+      if (
+        !validEntityId(id) ||
+        (bucket !== 'upcoming' && bucket !== 'results') ||
+        (cursor !== null && (cursor.length < 3 || cursor.length > 200)) ||
+        !Number.isInteger(limit) || limit < 1 || limit > 50
+      ) {
+        return reply(400, { error: 'Solicitud inválida' });
+      }
+      const { data: page, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_read_team_matches',
+        { p_team_id: id, p_bucket: bucket, p_cursor: cursor, p_limit: limit },
+      );
+      if (error) {
+        return reply(error.message?.includes('cursor') ? 400 : 503, {
+          error: 'Datos temporalmente no disponibles',
+        });
+      }
+      if (!page) return reply(404, { error: 'Entidad no encontrada' });
+      if (page.schemaVersion !== 1 || page.demo !== false) {
+        return reply(503, { error: 'Datos temporalmente no disponibles' });
+      }
+      return reply(200, page);
     }
 
     if (path.endsWith('/futbeat-api/v1/explore')) {

@@ -7,6 +7,7 @@ import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
 import 'profile_widgets.dart';
 import 'standings.dart';
+import 'team_matches_tab.dart';
 
 /// Squad sections in display order; "Otros" holds unclassifiable positions.
 const squadGroupOrder = [
@@ -84,15 +85,22 @@ List<(String, List<Entity>)> squadGroups(Iterable<Entity> players) {
   ];
 }
 
-/// Competition with real standings rows for this team, preferring the main one.
-String? teamTableCompetitionId(Snapshot data, List<Entity> competitions) {
-  bool hasRows(String id) => data.standings.any(
-    (table) =>
-        table['competitionId'] == id &&
-        (table['rows'] as List? ?? const []).isNotEmpty,
-  );
+/// Competition whose table really contains this team (its own group only),
+/// preferring the main one. Null: no "Tabla" tab.
+String? teamTableCompetitionId(
+  Snapshot data,
+  List<Entity> competitions,
+  String teamId,
+) {
+  bool shows(String id) =>
+      standingsGroups(
+        standingsTableFor(data, id),
+        data,
+        focusTeamIds: {teamId},
+      )?.any((group) => group.rows.any((row) => row['teamId'] == teamId)) ==
+      true;
   for (final competition in competitions) {
-    if (hasRows(competition.id)) return competition.id;
+    if (shows(competition.id)) return competition.id;
   }
   return null;
 }
@@ -116,7 +124,7 @@ class TeamProfileView extends StatelessWidget {
     final players = data.players
         .where((player) => player.json['teamId'] == team.id)
         .toList();
-    final tableId = teamTableCompetitionId(data, competitions);
+    final tableId = teamTableCompetitionId(data, competitions, team.id);
     final tabs = [
       'Resumen',
       'Partidos',
@@ -132,17 +140,14 @@ class TeamProfileView extends StatelessWidget {
         if (data.demo) const DemoNotice(),
         ..._summary(context, players),
       ]),
-      'Partidos' => ProfileTabList('partidos', [
-        if (data.demo) const DemoNotice(),
-        ..._matchList(),
-      ]),
+      'Partidos' => TeamMatchesTab(team: team, data: data, matches: matches),
       'Tabla' => ProfileTabList('tabla', [
         if (data.demo) const DemoNotice(),
-        Standings(data, tableId!),
+        Standings(data, tableId!, focusTeamIds: {team.id}),
       ]),
       'Plantilla' => ProfileTabList('plantilla', [
         if (data.demo) const DemoNotice(),
-        TeamSquad(players, demo: data.demo),
+        TeamSquad(players, demo: data.demo, state: data.squadState),
       ]),
       'Noticias' => ProfileTabList('noticias', [
         if (data.demo) const DemoNotice(),
@@ -180,7 +185,6 @@ class TeamProfileView extends StatelessWidget {
                 team: team,
                 competition: competitions.firstOrNull,
                 players: players.length,
-                matches: matches.length,
               ),
             ),
             SliverOverlapAbsorber(
@@ -198,16 +202,13 @@ class TeamProfileView extends StatelessWidget {
   }
 
   List<Widget> _summary(BuildContext context, List<Entity> players) {
-    final active = matches.where((m) => m.isLive || m.isUpcoming).take(2);
+    final active = matches.where((m) => m.isProfileUpcoming).take(2);
     final finished = matches.where((m) => m.isFinished).toList();
     final main = competitions.firstOrNull;
     return [
       const ProfileSectionTitle('Partidos destacados'),
       if (active.isEmpty)
-        const InlineEmpty(
-          Icons.event_outlined,
-          'Sin próximos partidos publicados',
-        )
+        const InlineEmpty(Icons.event_outlined, 'Sin partidos próximos')
       else
         for (final match in active) MatchCard(match, data),
       if (finished.isNotEmpty) ...[
@@ -216,10 +217,7 @@ class TeamProfileView extends StatelessWidget {
       ],
       const ProfileSectionTitle('Competiciones'),
       if (competitions.isEmpty)
-        const InlineEmpty(
-          Icons.emoji_events_outlined,
-          'Aparecerán según los partidos publicados',
-        )
+        const InlineEmpty(Icons.emoji_events_outlined, 'Sin competiciones')
       else
         for (final competition in competitions.take(3))
           EntityTile(competition, 'competition'),
@@ -230,44 +228,7 @@ class TeamProfileView extends StatelessWidget {
           (Icons.emoji_events_outlined, 'Competición principal', main.name),
         if (players.isNotEmpty)
           (Icons.groups_outlined, 'Jugadores', '${players.length}'),
-        (Icons.sports_soccer, 'Partidos publicados', '${matches.length}'),
       ]),
-    ];
-  }
-
-  List<Widget> _matchList() {
-    if (matches.isEmpty) {
-      return const [
-        InlineEmpty(Icons.event_busy_outlined, 'Sin partidos disponibles'),
-      ];
-    }
-    final upcoming = matches.where((m) => !m.isFinished).toList();
-    final results = matches.where((m) => m.isFinished).toList().reversed;
-    Widget dated(FootballMatch match) => Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 4, top: 4),
-            child: Text(
-              '${matchDayLabel(match.startTime)} · ${match.startTime.year}',
-              style: const TextStyle(color: muted, fontSize: 12),
-            ),
-          ),
-          MatchCard(match, data),
-        ],
-      ),
-    );
-    return [
-      if (upcoming.isNotEmpty) ...[
-        const ProfileSectionTitle('Próximos'),
-        for (final match in upcoming) dated(match),
-      ],
-      if (results.isNotEmpty) ...[
-        const ProfileSectionTitle('Resultados'),
-        for (final match in results) dated(match),
-      ],
     ];
   }
 }
@@ -296,14 +257,12 @@ class TeamHeader extends StatelessWidget {
     required this.team,
     required this.competition,
     required this.players,
-    required this.matches,
     super.key,
   });
 
   final Entity team;
   final Entity? competition;
   final int players;
-  final int matches;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -378,11 +337,6 @@ class TeamHeader extends StatelessWidget {
                       icon: Icons.groups_outlined,
                       label: '$players jugadores',
                     ),
-                  if (matches > 0)
-                    ProfileHeaderChip(
-                      icon: Icons.sports_soccer,
-                      label: '$matches partidos',
-                    ),
                 ],
               ),
             ],
@@ -394,19 +348,26 @@ class TeamHeader extends StatelessWidget {
 }
 
 class TeamSquad extends StatelessWidget {
-  const TeamSquad(this.players, {this.demo = false, super.key});
+  const TeamSquad(this.players, {this.demo = false, this.state, super.key});
 
   final List<Entity> players;
   final bool demo;
 
+  /// Server squad state (see [Snapshot.squadState]).
+  final String? state;
+
   @override
   Widget build(BuildContext context) {
     if (players.isEmpty) {
-      return const InlineEmpty(
-        Icons.groups_outlined,
-        'Plantilla no disponible',
-        detail: 'No hay jugadores publicados para este equipo.',
-      );
+      // Only a confirmed absence says "no disponible"; anything else (never
+      // fetched, in flight, retrying, unknown) is still pending.
+      return state == 'CONFIRMED_EMPTY'
+          ? const InlineEmpty(Icons.groups_outlined, 'Plantilla no disponible')
+          : const InlineEmpty(
+              Icons.hourglass_empty_rounded,
+              'Plantilla pendiente',
+              key: ValueKey('squad-pending'),
+            );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

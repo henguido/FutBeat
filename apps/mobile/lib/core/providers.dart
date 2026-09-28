@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'database.dart';
 import 'live_realtime.dart';
 import 'models.dart';
+import 'team_matches.dart';
 
 abstract interface class FootballRepository {
   Future<Snapshot> load();
@@ -525,6 +526,26 @@ class ApiRepository implements FootballRepository {
     'entity:$type:$id',
     '/v1/entity',
     queryParameters: {'type': type, 'id': id},
+  );
+
+  /// One page of a team's matches across every competition (#150). One
+  /// attempt: the profile already shows its own matches meanwhile.
+  Future<TeamMatchesPage> loadTeamMatches(
+    String teamId,
+    String bucket, {
+    String? cursor,
+    int limit = teamMatchesPageSize,
+  }) async => TeamMatchesPage(
+    await _getJson(
+      '/v1/team-matches',
+      queryParameters: {
+        'id': teamId,
+        'bucket': bucket,
+        'cursor': ?cursor,
+        'limit': limit,
+      },
+      maxAttempts: 1,
+    ),
   );
 
   Future<Snapshot> loadMatchContext(String id) => _loadSnapshot(
