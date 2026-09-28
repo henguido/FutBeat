@@ -205,13 +205,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   ) async {
     if (countryBusy) return;
     setState(() => countryBusy = true);
-    await ref
-        .read(databaseProvider)
-        .saveCountries(
-          detectedCountry: preference.detectedCountry,
-          selectedCountry: value,
-        );
+    // Capture provider-owned objects before the first await. The route can be
+    // dismissed while Drift is saving, after which WidgetRef is no longer safe.
+    final database = ref.read(databaseProvider);
     final service = ref.read(pushServiceProvider);
+    await database.saveCountries(
+      detectedCountry: preference.detectedCountry,
+      selectedCountry: value,
+    );
     await service.markCountriesDirty();
     if (service.authenticated) {
       try {
