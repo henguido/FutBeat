@@ -13,18 +13,6 @@ String? normalizeCountry(String? value) {
       : null;
 }
 
-String countryName(String? code) =>
-    const {
-      'CR': 'Costa Rica',
-      'MX': 'México',
-      'AR': 'Argentina',
-      'BR': 'Brasil',
-      'ES': 'España',
-      'US': 'Estados Unidos',
-      'GB': 'Reino Unido',
-    }[code] ??
-    'Global';
-
 final detectedCountryProvider = Provider<String?>(
   (_) => normalizeCountry(PlatformDispatcher.instance.locale.countryCode),
 );
