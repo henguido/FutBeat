@@ -171,6 +171,7 @@ class PushService {
   final storage = const FlutterSecureStorage();
 
   Map<String, dynamic>? session;
+  String? pendingConfirmationEmail;
   String? token;
   StreamSubscription<String>? rotation;
   StreamSubscription<Set<String>>? follows;
@@ -196,6 +197,18 @@ class PushService {
     return null;
   }
 
+  bool? get emailVerified {
+    final user = session?['user'];
+    if (user is! Map) return null;
+    final hasConfirmationClaim =
+        user.containsKey('email_confirmed_at') ||
+        user.containsKey('confirmed_at');
+    if (!hasConfirmationClaim) return null;
+    final value = user['email_confirmed_at'] ?? user['confirmed_at'];
+    if (value == null) return false;
+    return value.toString().trim().isNotEmpty;
+  }
+
   Options get authHeaders => Options(
     headers: {
       'apikey': config.publicKey,
@@ -213,6 +226,8 @@ class PushService {
       options: Options(headers: {'apikey': config.publicKey}),
     );
     session = result.data;
+    pendingConfirmationEmail = null;
+    await storage.delete(key: 'futbeat.auth.pendingConfirmationEmail');
     await _persistSession();
     await _reconcileAccount();
     await _startAccountSync();
@@ -222,9 +237,30 @@ class PushService {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
+    final normalized = email.trim();
     await dio.post(
       '${config.supabaseUrl}/auth/v1/signup',
-      data: {'email': email.trim(), 'password': password},
+      data: {'email': normalized, 'password': password},
+      options: Options(headers: {'apikey': config.publicKey}),
+    );
+    pendingConfirmationEmail = normalized;
+    await storage.write(
+      key: 'futbeat.auth.pendingConfirmationEmail',
+      value: normalized,
+    );
+  }
+
+  Future<void> resendEmailConfirmation() async {
+    if (!accountConfigured) {
+      throw StateError('Account service is not configured');
+    }
+    final currentEmail = authenticated ? email : pendingConfirmationEmail;
+    if (currentEmail == null || (authenticated && emailVerified != false)) {
+      throw StateError('Email confirmation is not pending');
+    }
+    await dio.post(
+      '${config.supabaseUrl}/auth/v1/resend',
+      data: {'type': 'signup', 'email': currentEmail},
       options: Options(headers: {'apikey': config.publicKey}),
     );
   }
@@ -234,6 +270,9 @@ class PushService {
   Future<void> _restore() async {
     if (!accountConfigured || disposed) return;
     try {
+      pendingConfirmationEmail = await storage.read(
+        key: 'futbeat.auth.pendingConfirmationEmail',
+      );
       final saved = await storage.read(key: 'futbeat.push.session');
       if (saved == null || disposed) return;
       session = jsonDecode(saved) as Map<String, dynamic>;
@@ -547,7 +586,59 @@ class PushService {
     }
     session = null;
     token = null;
+    rotation = null;
+    follows = null;
+    renewal = null;
     await storage.delete(key: 'futbeat.push.session');
+  }
+
+  Future<void> deleteAccount() async {
+    if (!accountConfigured || !authenticated) {
+      throw StateError('Authentication required');
+    }
+    final wasEnabled = enabled;
+    await rotation?.cancel();
+    await follows?.cancel();
+    renewal?.cancel();
+    rotation = null;
+    follows = null;
+    renewal = null;
+    await pending.catchError((_) {});
+    try {
+      final response = await dio.post<Map<String, dynamic>>(
+        '${config.supabaseUrl}/functions/v1/futbeat-delete-account',
+        options: authHeaders,
+      );
+      if (response.data?['deleted'] != true) {
+        throw StateError('Account deletion was not confirmed');
+      }
+    } catch (_) {
+      if (authenticated && !disposed) {
+        await _startAccountSync();
+        if (wasEnabled) {
+          enabled = true;
+          rotation = tokens.rotations.listen((value) {
+            pending = pending
+                .catchError((_) {})
+                .then((_) async {
+                  if (disposed || !enabled) return;
+                  token = value;
+                  await register(true);
+                })
+                .catchError((_) {});
+          });
+        }
+      }
+      rethrow;
+    }
+
+    enabled = false;
+    token = null;
+    session = null;
+    pending = Future.value();
+    await storage.delete(key: 'futbeat.push.session');
+    await storage.write(key: 'futbeat.push.enabled', value: 'false');
+    await _writeLocalProfile(const UserProfileSettings(), dirty: false);
   }
 
   void dispose() {
