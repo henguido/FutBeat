@@ -18,6 +18,12 @@ const _automaticCountry = '__automatic__';
 bool isSelectableCountryCode(String? value) =>
     value != null && RegExp(r'^[A-Z]{2}$').hasMatch(value);
 
+String onboardingCountryLabel(String code) {
+  final canonical = code.trim().toUpperCase();
+  final label = countryName(canonical);
+  return label == 'Global' ? canonical : label;
+}
+
 List<Entity> rankOnboardingEntities(
   Iterable<Entity> entities,
   String? country,
@@ -364,17 +370,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (preference == null) return const LinearProgressIndicator();
     final labels = <String, String>{};
     String displayName(String code) {
-      final fallback = countryName(code);
-      return labels[code] ?? (fallback == 'Global' ? code : fallback);
+      return labels[code] ?? onboardingCountryLabel(code);
     }
 
     for (final entity in [...?catalog?.competitions, ...?catalog?.teams]) {
       final code = entity.json['countryCode']?.toString().trim().toUpperCase();
       if (isSelectableCountryCode(code)) {
         final countryCode = code!;
+        // The payload country can lag authoritative metadata. Never pair a
+        // canonical value (for example ES) with that stale display name.
         labels.putIfAbsent(
           countryCode,
-          () => entity.country.isEmpty ? countryCode : entity.country,
+          () => onboardingCountryLabel(countryCode),
         );
       }
     }

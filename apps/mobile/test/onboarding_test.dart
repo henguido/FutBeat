@@ -248,6 +248,8 @@ void main() {
     expect(isSelectableCountryCode('CR'), isTrue);
     expect(isSelectableCountryCode('GB-ENG'), isFalse);
     expect(isSelectableCountryCode('EUROPE'), isFalse);
+    expect(onboardingCountryLabel('ES'), 'España');
+    expect(onboardingCountryLabel('JP'), 'JP');
   });
 
   test('dirty Automatic clear is not replaced by a cloud override', () {
