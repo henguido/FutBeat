@@ -233,11 +233,13 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect((await db.watchPreference().first).detectedCountry, 'CR');
+    final initial = await tester.runAsync(() => db.watchPreference().first);
+    expect(initial?.detectedCountry, 'CR');
 
     tester.binding.platformDispatcher.localeTestValue = const Locale('es', 'ES');
     await tester.pumpAndSettle();
-    expect((await db.watchPreference().first).detectedCountry, 'ES');
+    final refreshed = await tester.runAsync(() => db.watchPreference().first);
+    expect(refreshed?.detectedCountry, 'ES');
   });
 
   test(
