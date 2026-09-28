@@ -12,7 +12,6 @@ import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
-import 'package:futbeat/features/profile/password_recovery_screen.dart';
 import 'package:futbeat/features/profile/profile_screen.dart';
 
 class _Tokens implements PushTokenSource {
@@ -24,12 +23,7 @@ class _Tokens implements PushTokenSource {
 }
 
 class _Http {
-  _Http({
-    this.fail = const {},
-    this.pkceGates = const {},
-    this.passwordUpdateGate,
-    this.onDelete,
-  }) {
+  _Http({this.fail = const {}, this.onDelete}) {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -57,18 +51,10 @@ class _Http {
                 'email_confirmed_at': '2026-09-27T00:00:00Z',
               },
             };
-          } else if (options.path.contains('grant_type=pkce')) {
-            final code = options.data['auth_code']?.toString();
-            final gate = pkceGates[code];
-            if (gate != null) await gate.future;
-            data = {'access_token': 'recovery-access-$code'};
           } else if (options.path.endsWith('futbeat_read_user_profile')) {
             data = {'preferences': <String, dynamic>{}, 'follows': <dynamic>[]};
           } else if (options.path.endsWith('futbeat-delete-account')) {
             data = {'deleted': true};
-          }
-          if (options.method == 'PUT' && passwordUpdateGate != null) {
-            await passwordUpdateGate!.future;
           }
           handler.resolve(
             Response(requestOptions: options, statusCode: 200, data: data),
@@ -80,26 +66,17 @@ class _Http {
 
   final dio = Dio();
   final Set<String> fail;
-  final Map<String, Completer<void>> pkceGates;
-  final Completer<void>? passwordUpdateGate;
   final void Function()? onDelete;
   final calls = <RequestOptions>[];
 }
 
 Future<({PushService service, AppDatabase db, _Http http})> _service({
   Set<String> fail = const {},
-  Map<String, Completer<void>> pkceGates = const {},
-  Completer<void>? passwordUpdateGate,
   void Function()? onDelete,
 }) async {
   FlutterSecureStorage.setMockInitialValues({});
   final db = AppDatabase(NativeDatabase.memory());
-  final http = _Http(
-    fail: fail,
-    pkceGates: pkceGates,
-    passwordUpdateGate: passwordUpdateGate,
-    onDelete: onDelete,
-  );
+  final http = _Http(fail: fail, onDelete: onDelete);
   final service = PushService(
     const LiveRealtimeConfig(
       supabaseUrl: 'https://supabase.test',
@@ -208,43 +185,6 @@ void main() {
     );
   });
 
-  test(
-    'password reset trims email, is neutral, and exposes recoverable failure',
-    () async {
-      final value = await _service();
-      addTearDown(() async {
-        value.service.dispose();
-        await value.db.close();
-      });
-      await value.service.requestPasswordReset(' person@example.com ');
-      final resetUri = Uri.parse(value.http.calls.single.path);
-      expect(resetUri.path, endsWith('/auth/v1/recover'));
-      expect(
-        resetUri.queryParameters['redirect_to'],
-        PushService.passwordRecoveryRedirect,
-      );
-      expect(value.http.calls.single.data['email'], 'person@example.com');
-      expect(value.http.calls.single.data['code_challenge_method'], 's256');
-      expect(value.http.calls.single.data['code_challenge'], isNotEmpty);
-      await expectLater(
-        value.service.requestPasswordReset('  '),
-        throwsArgumentError,
-      );
-
-      final failed = await _service(
-        fail: {'https://supabase.test/auth/v1/recover'},
-      );
-      addTearDown(() async {
-        failed.service.dispose();
-        await failed.db.close();
-      });
-      await expectLater(
-        failed.service.requestPasswordReset('a@b.test'),
-        throwsA(isA<DioException>()),
-      );
-    },
-  );
-
   test('pending signup can resend while signed out', () async {
     final value = await _service();
     addTearDown(() async {
@@ -258,192 +198,6 @@ void main() {
       'type': 'signup',
       'email': 'pending@example.com',
     });
-  });
-
-  test('recovery link updates password with its short-lived token', () async {
-    final value = await _service();
-    addTearDown(() async {
-      value.service.dispose();
-      await value.db.close();
-    });
-    await value.service.requestPasswordReset('person@example.com');
-    value.http.calls.clear();
-    await value.service.beginPasswordRecovery(
-      Uri.parse('futbeat://auth/recovery?code=one-time-code'),
-    );
-    final exchange = value.http.calls.single;
-    expect(exchange.path, contains('grant_type=pkce'));
-    expect(exchange.data['auth_code'], 'one-time-code');
-    expect(exchange.data['code_verifier'], isNotEmpty);
-    value.http.calls.clear();
-    await value.service.updateRecoveredPassword('new-password');
-    final request = value.http.calls.single;
-    expect(request.method, 'PUT');
-    expect(request.path, endsWith('/auth/v1/user'));
-    expect(request.data, {'password': 'new-password'});
-    expect(
-      request.headers['Authorization'],
-      'Bearer recovery-access-one-time-code',
-    );
-    expect(value.service.recoveryAccessToken, isNull);
-  });
-
-  test(
-    'a stale PKCE exchange cannot replace the newest recovery token',
-    () async {
-      final firstGate = Completer<void>();
-      final secondGate = Completer<void>();
-      final value = await _service(
-        pkceGates: {'first': firstGate, 'second': secondGate},
-      );
-      addTearDown(() async {
-        value.service.dispose();
-        await value.db.close();
-      });
-      await value.service.requestPasswordReset('person@example.com');
-      final first = value.service.beginPasswordRecovery(
-        Uri.parse('futbeat://auth/recovery?code=first'),
-      );
-      final second = value.service.beginPasswordRecovery(
-        Uri.parse('futbeat://auth/recovery?code=second'),
-      );
-      secondGate.complete();
-      await second;
-      firstGate.complete();
-      await first;
-      expect(value.service.recoveryAccessToken, 'recovery-access-second');
-    },
-  );
-
-  test(
-    'password updates are serialized and the newest recovery wins',
-    () async {
-      final updateGate = Completer<void>();
-      final value = await _service(passwordUpdateGate: updateGate);
-      addTearDown(() async {
-        value.service.dispose();
-        await value.db.close();
-      });
-      await value.service.requestPasswordReset('person@example.com');
-      await value.service.beginPasswordRecovery(
-        Uri.parse('futbeat://auth/recovery?code=first'),
-      );
-      final oldUpdate = value.service.updateRecoveredPassword('old-password');
-      await Future<void>.delayed(Duration.zero);
-      await value.service.requestPasswordReset('person@example.com');
-      await value.service.beginPasswordRecovery(
-        Uri.parse('futbeat://auth/recovery?code=second'),
-      );
-      final newUpdate = value.service.updateRecoveredPassword('new-password');
-      await Future<void>.delayed(Duration.zero);
-      expect(
-        value.http.calls.where((call) => call.method == 'PUT'),
-        hasLength(1),
-      );
-      updateGate.complete();
-      await Future.wait([oldUpdate, newUpdate]);
-      expect(
-        value.http.calls
-            .where((call) => call.method == 'PUT')
-            .map((call) => call.data),
-        [
-          {'password': 'old-password'},
-          {'password': 'new-password'},
-        ],
-      );
-      expect(value.service.recoveryAccessToken, isNull);
-    },
-  );
-
-  test(
-    'invalid recovery links and short passwords are rejected locally',
-    () async {
-      final value = await _service();
-      addTearDown(() async {
-        value.service.dispose();
-        await value.db.close();
-      });
-      await expectLater(
-        value.service.beginPasswordRecovery(
-          Uri.parse('futbeat://auth/recovery'),
-        ),
-        throwsStateError,
-      );
-      await value.service.requestPasswordReset('person@example.com');
-      await value.service.beginPasswordRecovery(
-        Uri.parse('futbeat://auth/recovery?code=one-time-code'),
-      );
-      await expectLater(
-        value.service.updateRecoveredPassword('short'),
-        throwsArgumentError,
-      );
-    },
-  );
-
-  testWidgets('recovery screen completes password update', (tester) async {
-    final value = await _service();
-    addTearDown(() async {
-      value.service.dispose();
-      await value.db.close();
-    });
-    await tester.runAsync(
-      () => value.service.requestPasswordReset('person@example.com'),
-    );
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [pushServiceProvider.overrideWithValue(value.service)],
-        child: MaterialApp(
-          home: PasswordRecoveryScreen(
-            uri: Uri.parse('futbeat://auth/recovery?code=screen-code'),
-          ),
-        ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 500));
-    await tester.enterText(find.byType(TextField).at(0), 'new-password');
-    await tester.enterText(find.byType(TextField).at(1), 'new-password');
-    await tester.tap(find.text('Actualizar contraseña'));
-    await tester.pump(const Duration(milliseconds: 500));
-    expect(
-      find.text('Contraseña actualizada. Ya puedes iniciar sesión.'),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('an open recovery screen exchanges a newly received code', (
-    tester,
-  ) async {
-    final value = await _service();
-    addTearDown(() async {
-      value.service.dispose();
-      await value.db.close();
-    });
-    Future<void> request() => tester.runAsync(
-      () => value.service.requestPasswordReset('person@example.com'),
-    );
-    Widget screen(String code) => ProviderScope(
-      overrides: [pushServiceProvider.overrideWithValue(value.service)],
-      child: MaterialApp(
-        home: PasswordRecoveryScreen(
-          uri: Uri.parse('futbeat://auth/recovery?code=$code'),
-        ),
-      ),
-    );
-
-    await request();
-    await tester.pumpWidget(screen('first-code'));
-    await tester.pump(const Duration(milliseconds: 500));
-    await request();
-    await tester.pumpWidget(screen('second-code'));
-    await tester.pump(const Duration(milliseconds: 500));
-
-    final exchanges = value.http.calls
-        .where((call) => call.path.contains('grant_type=pkce'))
-        .toList();
-    expect(exchanges.map((call) => call.data['auth_code']), [
-      'first-code',
-      'second-code',
-    ]);
   });
 
   test(
@@ -577,7 +331,6 @@ void main() {
     await tester.drag(find.byType(ListView), const Offset(0, -1400));
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Crear cuenta'), findsOneWidget);
-    expect(find.text('¿Olvidaste tu contraseña?'), findsOneWidget);
     expect(find.text('Eliminar cuenta'), findsNothing);
   });
 

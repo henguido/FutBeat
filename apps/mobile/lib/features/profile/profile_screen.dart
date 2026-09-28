@@ -94,17 +94,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (mounted) setState(() => message = 'Perfil actualizado.');
   }
 
-  Future<void> requestPasswordReset(PushService service) async {
-    if (email.text.trim().isEmpty) {
-      setState(() => message = 'Ingresa tu correo para continuar.');
-      return;
-    }
-    await action(
-      () => service.requestPasswordReset(email.text),
-      'Si existe una cuenta con ese correo, recibirás instrucciones para restablecer la contraseña.',
-    );
-  }
-
   Future<void> confirmAccountDeletion(PushService service) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -321,10 +310,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       'Cuenta creada. Revisa tu correo para confirmarla.',
                     ),
               child: const Text('Crear cuenta'),
-            ),
-            TextButton(
-              onPressed: busy ? null : () => requestPasswordReset(service),
-              child: const Text('¿Olvidaste tu contraseña?'),
             ),
           ] else ...[
             if (service.emailVerified == false)

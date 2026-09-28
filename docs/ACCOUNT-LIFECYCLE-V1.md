@@ -1,7 +1,7 @@
 # Account lifecycle v1
 
-This phase keeps guest usage optional while adding password recovery, email
-confirmation status/resend, and authenticated self-service account deletion.
+This phase keeps guest usage optional while adding email confirmation
+status/resend and authenticated self-service account deletion.
 
 ## Deletion ownership
 
@@ -24,9 +24,8 @@ release:
 
 1. apply `20260927174752_account_deletion_cascade.sql`;
 2. deploy `futbeat-delete-account` with JWT verification enabled;
-3. add `futbeat://auth/recovery` to the target Supabase Auth redirect allow
-   list, then verify the recovery and signup-confirmation email templates;
-4. exercise recovery, confirmation resend, deletion, retry, and guest fallback
+3. verify the signup-confirmation email template;
+4. exercise confirmation resend, deletion, retry, and guest fallback
    with non-production test accounts before publishing the mobile build.
 
 The mobile app retains its local sports catalog, match cache, and local
@@ -38,9 +37,10 @@ and locally stored cloud profile settings.
 
 Public Privacy Policy and Terms URLs were not found in the repository. No dead
 or invented links are shown; the real public URLs remain a Google Play launch
-prerequisite. Android and iOS register the `futbeat://auth/recovery` deep link,
-and the app exchanges the single-use recovery code with a PKCE verifier kept
-in secure storage before allowing the password update. This prevents another
-app claiming the custom scheme from using an intercepted callback. The target
-project's redirect allow list must still be configured and tested before
-release.
+prerequisite. Password recovery also remains pending: the repository has no
+owned HTTPS domain configured for verified Android App Links and iOS Universal
+Links. The app intentionally does not register or expose a custom-scheme
+recovery callback because another installed app could claim that scheme and
+redeem a recovery initiated with its own verifier. Add an owned HTTPS callback,
+the platform association files, and the Supabase Auth allow-list entry before
+exposing recovery in a release.

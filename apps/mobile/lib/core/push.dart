@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
-import 'package:crypto/crypto.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -155,7 +154,6 @@ class FirebasePushTokens implements PushTokenSource {
 }
 
 class PushService {
-  static const passwordRecoveryRedirect = 'futbeat://auth/recovery';
   PushService(this.config, this.database, this.tokens, {Dio? dio})
     : dio =
           dio ??
@@ -174,9 +172,6 @@ class PushService {
 
   Map<String, dynamic>? session;
   String? pendingConfirmationEmail;
-  String? recoveryAccessToken;
-  int recoveryGeneration = 0;
-  Future<void> recoveryUpdates = Future.value();
   String? token;
   StreamSubscription<String>? rotation;
   StreamSubscription<Set<String>>? follows;
@@ -255,36 +250,6 @@ class PushService {
     );
   }
 
-  Future<void> requestPasswordReset(String email) async {
-    if (!accountConfigured) {
-      throw StateError('Account service is not configured');
-    }
-    final normalized = email.trim();
-    if (normalized.isEmpty) throw ArgumentError('Email is required');
-    final endpoint = Uri.parse('${config.supabaseUrl}/auth/v1/recover')
-        .replace(queryParameters: {'redirect_to': passwordRecoveryRedirect});
-    final bytes = List<int>.generate(48, (_) => Random.secure().nextInt(256));
-    final verifier = base64UrlEncode(bytes).replaceAll('=', '');
-    final challenge = base64UrlEncode(
-      sha256.convert(utf8.encode(verifier)).bytes,
-    ).replaceAll('=', '');
-    await storage.write(key: 'futbeat.auth.recoveryVerifier', value: verifier);
-    try {
-      await dio.post(
-        endpoint.toString(),
-        data: {
-          'email': normalized,
-          'code_challenge': challenge,
-          'code_challenge_method': 's256',
-        },
-        options: Options(headers: {'apikey': config.publicKey}),
-      );
-    } catch (_) {
-      await storage.delete(key: 'futbeat.auth.recoveryVerifier');
-      rethrow;
-    }
-  }
-
   Future<void> resendEmailConfirmation() async {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
@@ -326,60 +291,6 @@ class PushService {
 
   Future<void> _persistSession() =>
       storage.write(key: 'futbeat.push.session', value: jsonEncode(session));
-
-  Future<void> beginPasswordRecovery(Uri uri) async {
-    final generation = ++recoveryGeneration;
-    recoveryAccessToken = null;
-    final code = uri.queryParameters['code'];
-    final verifier = await storage.read(key: 'futbeat.auth.recoveryVerifier');
-    if (code == null || code.isEmpty || verifier == null || verifier.isEmpty) {
-      throw StateError('Invalid recovery link');
-    }
-    final result = await dio.post<Map<String, dynamic>>(
-      '${config.supabaseUrl}/auth/v1/token?grant_type=pkce',
-      data: {'auth_code': code, 'code_verifier': verifier},
-      options: Options(headers: {'apikey': config.publicKey}),
-    );
-    final token = result.data?['access_token']?.toString();
-    if (token == null || token.isEmpty) {
-      throw StateError('Invalid recovery session');
-    }
-    if (generation != recoveryGeneration) return;
-    recoveryAccessToken = token;
-    await storage.delete(key: 'futbeat.auth.recoveryVerifier');
-  }
-
-  Future<void> updateRecoveredPassword(String password) async {
-    final token = recoveryAccessToken;
-    final generation = recoveryGeneration;
-    if (!accountConfigured || token == null) {
-      throw StateError('Password recovery is not active');
-    }
-    if (password.length < 8) {
-      throw ArgumentError('Password must contain at least 8 characters');
-    }
-    final operation = recoveryUpdates.catchError((_) {}).then((_) async {
-      if (generation != recoveryGeneration || token != recoveryAccessToken) {
-        return;
-      }
-      await dio.put(
-        '${config.supabaseUrl}/auth/v1/user',
-        data: {'password': password},
-        options: Options(
-          headers: {
-            'apikey': config.publicKey,
-            'Authorization': 'Bearer $token',
-          },
-        ),
-      );
-      if (generation == recoveryGeneration && token == recoveryAccessToken) {
-        recoveryAccessToken = null;
-        recoveryGeneration++;
-      }
-    });
-    recoveryUpdates = operation;
-    await operation;
-  }
 
   Future<void> refreshSession() async {
     if (!authenticated || disposed) return;
@@ -675,8 +586,6 @@ class PushService {
     }
     session = null;
     token = null;
-    recoveryAccessToken = null;
-    recoveryGeneration++;
     rotation = null;
     follows = null;
     renewal = null;
@@ -726,8 +635,6 @@ class PushService {
     enabled = false;
     token = null;
     session = null;
-    recoveryAccessToken = null;
-    recoveryGeneration++;
     pending = Future.value();
     await storage.delete(key: 'futbeat.push.session');
     await storage.write(key: 'futbeat.push.enabled', value: 'false');
