@@ -54,6 +54,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   int step = 0;
   String query = '';
   Timer? debounce;
+  final searchController = TextEditingController();
   UserProfileSettings? settings;
   bool busy = false;
   String? message;
@@ -61,6 +62,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   @override
   void dispose() {
     debounce?.cancel();
+    searchController.dispose();
     super.dispose();
   }
 
@@ -83,6 +85,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   void _next() {
     FocusScope.of(context).unfocus();
+    debounce?.cancel();
+    searchController.clear();
     if (step == onboardingStepCount - 1) {
       _finish();
     } else {
@@ -95,6 +99,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   void _back() {
     FocusScope.of(context).unfocus();
+    debounce?.cancel();
+    searchController.clear();
     if (step > 0) {
       setState(() {
         step--;
@@ -118,6 +124,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     setState(() => settings = next);
     await ref.read(pushServiceProvider).saveProfileSettings(next);
     ref.invalidate(profileSettingsProvider);
+  }
+
+  Future<void> _openProfile() async {
+    final current = await ref.read(preferenceProvider.future);
+    await ref
+        .read(databaseProvider)
+        .savePreference(
+          detectedCountry: current.detectedCountry,
+          selectedCountry: current.selectedCountry,
+          bootstrapDismissed: true,
+        );
+    if (mounted) context.push('/profile');
   }
 
   @override
@@ -293,7 +311,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 bootstrapDismissed: preference.bootstrapDismissed,
               ),
         ),
-        if (state.hasError) _catalogError(),
+        if (state.hasError)
+          _catalogError(() => ref.invalidate(exploreSnapshotProvider)),
         if (state.isLoading)
           const Padding(
             padding: EdgeInsets.only(top: 12),
@@ -318,6 +337,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     return Column(
       children: [
         TextField(
+          controller: searchController,
           onChanged: _search,
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.search),
@@ -328,7 +348,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         ),
         if (searchState?.isLoading == true)
           const LinearProgressIndicator(minHeight: 2),
-        if ((searchState ?? catalogState).hasError) _catalogError(),
+        if ((searchState ?? catalogState).hasError)
+          _catalogError(
+            () => searchState == null
+                ? ref.invalidate(exploreSnapshotProvider)
+                : ref.invalidate(
+                    searchSnapshotProvider((query: query, country: country)),
+                  ),
+          ),
         const SizedBox(height: 10),
         for (final entity in entities)
           _selectableEntity(
@@ -364,6 +391,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     return Column(
       children: [
         TextField(
+          controller: searchController,
           onChanged: _search,
           decoration: const InputDecoration(
             prefixIcon: Icon(Icons.search),
@@ -372,7 +400,21 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         ),
         if (searchState?.isLoading == true)
           const LinearProgressIndicator(minHeight: 2),
-        if ((searchState ?? catalogState).hasError) _catalogError(),
+        if ((searchState ?? catalogState).hasError)
+          _catalogError(
+            () => searchState == null
+                ? ref.invalidate(exploreSnapshotProvider)
+                : ref.invalidate(
+                    searchSnapshotProvider((
+                      query: query,
+                      country: ref
+                          .read(preferenceProvider)
+                          .asData
+                          ?.value
+                          .effectiveCountry,
+                    )),
+                  ),
+          ),
         const SizedBox(height: 10),
         for (final player in players.take(30))
           _selectableEntity(
@@ -415,14 +457,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     ),
   );
 
-  Widget _catalogError() => Card(
+  Widget _catalogError(VoidCallback retry) => Card(
     child: ListTile(
       title: const Text('No pudimos cargar las sugerencias'),
       subtitle: const Text('Puedes reintentar o continuar sin conexión.'),
-      trailing: TextButton(
-        onPressed: () => ref.invalidate(exploreSnapshotProvider),
-        child: const Text('Reintentar'),
-      ),
+      trailing: TextButton(onPressed: retry, child: const Text('Reintentar')),
     ),
   );
 
@@ -514,12 +553,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         FilledButton.tonal(
-          onPressed: () => context.push('/profile'),
+          onPressed: _openProfile,
           child: const Text('Crear cuenta'),
         ),
         const SizedBox(height: 8),
         OutlinedButton(
-          onPressed: () => context.push('/profile'),
+          onPressed: _openProfile,
           child: const Text('Iniciar sesión'),
         ),
         const SizedBox(height: 10),

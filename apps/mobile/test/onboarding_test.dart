@@ -243,6 +243,25 @@ void main() {
     expect(await tester.runAsync(() => db.watchFollows().first), isEmpty);
   });
 
+  testWidgets('changing steps clears visible and debounced search text', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+    await pumpOnboarding(tester, database: db);
+    await tester.tap(find.text('Continuar'));
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.enterText(find.byType(TextField), 'Manchester');
+    await tester.tap(find.text('Continuar'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.widgetWithText(TextField, 'Manchester'), findsNothing);
+    expect(
+      find.widgetWithText(TextField, 'Buscar competiciones'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('player step has real search and remains optional', (
     tester,
   ) async {

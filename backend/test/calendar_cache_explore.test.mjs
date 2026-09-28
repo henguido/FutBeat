@@ -213,7 +213,7 @@ test('compact builder resolves home, chained away and competition aliases withou
   await db.exec(model);
  } finally {await db.close();}
 });
-test('Explore is bounded, editorial, activity-based and cached; search ignores country and tracks aliases',async()=>{
+test('Explore is bounded, editorial, activity-based and cached; search ranks country and tracks aliases',async()=>{
  const db=await openDatabase();
  try {
   const today=(await db.query("select (now() at time zone 'UTC')::date::text d")).rows[0].d;
@@ -226,10 +226,17 @@ test('Explore is bounded, editorial, activity-based and cached; search ignores c
   assert.equal(explore.competitions[0].relevanceScore,900);
   assert.ok(explore.teams.every(t=>t.id.startsWith('fb_team_cache_')));
   assert.deepEqual((await db.query('select public.futbeat_read_explore() v')).rows[0].v,explore);
+  await db.exec(`update futbeat_private.entities set payload=payload||
+    case when id='fb_team_cache_home_0' then '{"countryCode":"CR"}'::jsonb
+      else '{"countryCode":"ES"}'::jsonb end
+    where id in ('fb_team_cache_home_0','fb_team_cache_away_0')`);
   const cr=(await db.query("select public.futbeat_search_catalog('manchester','CR',50) v")).rows[0].v;
   const es=(await db.query("select public.futbeat_search_catalog('manchester','ES',50) v")).rows[0].v;
-  assert.deepEqual(cr.teams,es.teams);
   assert.equal(cr.teams.length,2);
+  assert.equal(es.teams.length,2);
+  assert.equal(cr.teams[0].id,'fb_team_cache_home_0');
+  assert.equal(es.teams[0].id,'fb_team_cache_away_0');
+  assert.deepEqual(new Set(cr.teams.map(t=>t.id)),new Set(es.teams.map(t=>t.id)));
   await db.exec(`update futbeat_private.entities set payload=payload||'{"aliases":["The Red Devils"]}' where id='fb_team_cache_home_0'`);
   const alias=(await db.query("select public.futbeat_search_catalog('red devils',null,50) v")).rows[0].v;
   assert.equal(alias.teams[0].id,'fb_team_cache_home_0');
