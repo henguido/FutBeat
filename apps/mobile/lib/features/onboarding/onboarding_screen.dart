@@ -54,6 +54,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   int step = 0;
   String query = '';
   Timer? debounce;
+  Timer? remoteRetry;
+  int remoteAttempts = 0;
   final searchController = TextEditingController();
   UserProfileSettings? settings;
   bool busy = false;
@@ -62,6 +64,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   @override
   void dispose() {
     debounce?.cancel();
+    remoteRetry?.cancel();
     searchController.dispose();
     super.dispose();
   }
@@ -86,6 +89,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   void _next() {
     FocusScope.of(context).unfocus();
     debounce?.cancel();
+    remoteRetry?.cancel();
+    remoteRetry = null;
+    remoteAttempts = 0;
     searchController.clear();
     if (step == onboardingStepCount - 1) {
       _finish();
@@ -100,6 +106,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   void _back() {
     FocusScope.of(context).unfocus();
     debounce?.cancel();
+    remoteRetry?.cancel();
+    remoteRetry = null;
+    remoteAttempts = 0;
     searchController.clear();
     if (step > 0) {
       setState(() {
@@ -111,6 +120,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   void _search(String value) {
     debounce?.cancel();
+    remoteRetry?.cancel();
+    remoteRetry = null;
+    remoteAttempts = 0;
     debounce = Timer(const Duration(milliseconds: 275), () {
       if (mounted) setState(() => query = value.trim());
     });
@@ -124,6 +136,44 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     setState(() => settings = next);
     await ref.read(pushServiceProvider).saveProfileSettings(next);
     ref.invalidate(profileSettingsProvider);
+  }
+
+  void _scheduleRemoteRetry(({String query, String? country}) request) {
+    const delays = [
+      Duration(seconds: 3),
+      Duration(seconds: 5),
+      Duration(seconds: 8),
+    ];
+    if (remoteRetry != null || remoteAttempts >= delays.length) return;
+    remoteRetry = Timer(delays[remoteAttempts], () {
+      if (!mounted || step != 3) return;
+      setState(() {
+        remoteAttempts++;
+        remoteRetry = null;
+      });
+      ref.invalidate(searchSnapshotProvider(request));
+    });
+  }
+
+  Future<void> _selectCountry(
+    CountryPreference preference,
+    String? value,
+  ) async {
+    await ref
+        .read(databaseProvider)
+        .savePreference(
+          detectedCountry: preference.detectedCountry,
+          selectedCountry: value,
+          bootstrapDismissed: preference.bootstrapDismissed,
+        );
+    final service = ref.read(pushServiceProvider);
+    if (service.authenticated) {
+      try {
+        await service.syncCountries(preference.detectedCountry, value);
+      } catch (_) {
+        // Drift remains authoritative offline; the normal reconcile can retry.
+      }
+    }
   }
 
   Future<void> _openProfile() async {
@@ -150,6 +200,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final searchState = query.length >= 2 && const {1, 2, 3}.contains(step)
         ? ref.watch(searchSnapshotProvider(searchRequest))
         : null;
+    if (step == 3 && searchState != null) {
+      ref.listen(searchSnapshotProvider(searchRequest), (_, next) {
+        if (!next.isLoading && next.asData?.value.pendingRemote == true) {
+          _scheduleRemoteRetry(searchRequest);
+        }
+      });
+    }
     final data = searchState?.asData?.value ?? catalog;
     settings ??= ref.watch(profileSettingsProvider).asData?.value;
 
@@ -303,13 +360,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 ),
               )
               .toList(),
-          onChanged: (value) => ref
-              .read(databaseProvider)
-              .savePreference(
-                detectedCountry: detected,
-                selectedCountry: value,
-                bootstrapDismissed: preference.bootstrapDismissed,
-              ),
+          onChanged: (value) => _selectCountry(preference, value),
         ),
         if (state.hasError)
           _catalogError(() => ref.invalidate(exploreSnapshotProvider)),
@@ -400,6 +451,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         ),
         if (searchState?.isLoading == true)
           const LinearProgressIndicator(minHeight: 2),
+        if (data?.pendingRemote == true && remoteAttempts < 3)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Text('Buscando más jugadores…'),
+          ),
         if ((searchState ?? catalogState).hasError)
           _catalogError(
             () => searchState == null
