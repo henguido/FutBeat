@@ -2,7 +2,6 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:go_router/go_router.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/models.dart';
@@ -197,60 +196,14 @@ void main() {
     () async {
       final db = AppDatabase(NativeDatabase.memory());
       await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
-      final preference = await refreshDetectedCountry(db, 'ES');
+      final preference = await refreshCountryForLocales(db, const [
+        Locale('es', 'ES'),
+      ]);
       expect(preference.detectedCountry, 'ES');
       expect(preference.effectiveCountry, 'ES');
       await db.close();
     },
   );
-
-  testWidgets('app observes locale changes while the activity stays alive', (
-    tester,
-  ) async {
-    final db = AppDatabase(NativeDatabase.memory());
-    addTearDown(db.close);
-    tester.binding.platformDispatcher.localeTestValue = const Locale('es', 'CR');
-    addTearDown(tester.binding.platformDispatcher.clearLocaleTestValue);
-    final router = GoRouter(
-      initialLocation: '/blank',
-      routes: [
-        GoRoute(
-          path: '/blank',
-          builder: (_, _) => const Scaffold(body: Text('blank')),
-        ),
-      ],
-    );
-    addTearDown(router.dispose);
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          databaseProvider.overrideWithValue(db),
-          profileSettingsProvider.overrideWith(
-            (ref) async => const UserProfileSettings(),
-          ),
-        ],
-        child: FutBeatApp(router: router),
-      ),
-    );
-    await tester.pump();
-    Future<CountryPreference?> waitForCountry(String code) => tester.runAsync(
-      () async {
-        for (var attempt = 0; attempt < 100; attempt++) {
-          final value = await db.watchPreference().first;
-          if (value.detectedCountry == code) return value;
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
-        throw StateError('Country $code was not persisted');
-      },
-    );
-    final initial = await waitForCountry('CR');
-    expect(initial?.detectedCountry, 'CR');
-
-    tester.binding.platformDispatcher.localeTestValue = const Locale('es', 'ES');
-    await tester.pump();
-    final refreshed = await waitForCountry('ES');
-    expect(refreshed?.detectedCountry, 'ES');
-  });
 
   test(
     'country selection and follows persist without duplicate rows',

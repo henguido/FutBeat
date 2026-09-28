@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/database.dart';
 import 'core/models.dart';
 import 'core/providers.dart';
 import 'core/theme.dart';
@@ -20,6 +21,16 @@ import 'features/onboarding/onboarding_screen.dart';
 import 'shared/widgets.dart';
 
 void main() => runApp(const ProviderScope(child: FutBeatApp()));
+
+Future<CountryPreference> refreshCountryForLocales(
+  AppDatabase database,
+  List<Locale>? locales,
+) {
+  final detected = normalizeCountry(
+    locales != null && locales.isNotEmpty ? locales.first.countryCode : null,
+  );
+  return refreshDetectedCountry(database, detected);
+}
 
 GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
   initialLocation: initialLocation,
@@ -130,15 +141,12 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   @override
   void didChangeLocales(List<Locale>? locales) {
     ref.invalidate(detectedCountryProvider);
-    final detected = normalizeCountry(
-      locales != null && locales.isNotEmpty ? locales.first.countryCode : null,
-    );
-    unawaited(_refreshCountry(detected));
+    unawaited(_refreshCountry(locales));
   }
 
-  Future<void> _refreshCountry(String? detected) async {
+  Future<void> _refreshCountry(List<Locale>? locales) async {
     try {
-      await refreshDetectedCountry(ref.read(databaseProvider), detected);
+      await refreshCountryForLocales(ref.read(databaseProvider), locales);
       if (mounted) ref.invalidate(preferenceProvider);
     } catch (_) {
       // The next preference read retries; locale changes must not crash UI.
