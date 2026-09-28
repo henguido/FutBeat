@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { openDatabase } from '../storage/database.mjs';
+import { normalizeFixtureEvents } from '../../supabase/functions/_shared/live_events.ts';
+import { normalizeMatchDetail } from '../../supabase/functions/_shared/match_detail.ts';
 
 // #106 Free player alerts against the real migrations in PGlite: official
 // lineup starter/bench and LIVE player events, fanned out internally from
@@ -183,8 +185,9 @@ test('7-13. player events: goal, assist, yellow, red, in, out, missed penalty ->
     ];
     for (let i = 1; i <= events.length; i++) await live(db, ids, events.slice(0, i), { minute: events[i - 1].minute });
     const titles = async (uid) => (await outbox(db, uid)).map((r) => r.message.title.replace(/^\S+ \d+' /, ''));
-    assert.deepEqual(await titles(fanStar), ['Gol de Estrella', 'Amarilla para Estrella', 'Sale Estrella', 'Penal fallado por Estrella']);
-    assert.deepEqual(await titles(fanMate), ['Asistencia de Compañero', 'Roja para Compañero', 'Entra Compañero']);
+    // SUBSTITUTION: playerId (mate) leaves, assistPlayerId (star) enters.
+    assert.deepEqual(await titles(fanStar), ['Gol de Estrella', 'Amarilla para Estrella', 'Entra Estrella', 'Penal fallado por Estrella']);
+    assert.deepEqual(await titles(fanMate), ['Asistencia de Compañero', 'Roja para Compañero', 'Sale Compañero']);
     for (const row of await outbox(db, fanStar)) {
       assert.equal(row.message.playerId, ids.star);
       assert.deepEqual(row.message.subjectRefs, [{ type: 'player', id: ids.star }]);
@@ -304,5 +307,25 @@ test('new helpers and the lineup state table stay private', async () => {
     assert.equal(rows.length, 4);
     assert.ok(rows.every((r) => !r.anon && !r.auth));
     assert.equal((await db.query("select has_table_privilege('authenticated','futbeat_private.lineup_player_alerts','select') v")).rows[0].v, false);
+  } finally { await db.close(); }
+});
+
+test('P1 regression: a raw GOAL substitution "OUT|IN" tells the outgoing follower "Sale" and the incoming one "Entra"', async () => {
+  const db = await openDatabase();
+  try {
+    const ids = await world(db);
+    const fanOut = await user(db, [['player', ids.mate]]);
+    const fanIn = await user(db, [['player', ids.star]]);
+    const raw = { id: 'sub-raw', team: 'home', time: '67', substitutionPlayerId: `${ids.pMate}|${ids.pStar}` };
+    // The detail normalizer (the app's source of truth) reads it as OUT|IN.
+    const [detailSub] = normalizeMatchDetail({ payload: { substitutions: [raw] } }).incidents;
+    assert.deepEqual([detailSub.outPlayerId, detailSub.inPlayerId], [ids.pMate, ids.pStar]);
+    // The live path, from the same raw row.
+    const [liveSub] = normalizeFixtureEvents({ homeTeam: { id: ids.homeExt }, awayTeam: { id: ids.awayExt }, substitutions: [raw] });
+    await started(db, ids);
+    await live(db, ids, [liveSub], { minute: 67 });
+    const titleOf = async (uid) => (await outbox(db, uid)).map((r) => r.message.title);
+    assert.deepEqual(await titleOf(fanOut), ["🔄 67' Sale Compañero"]);
+    assert.deepEqual(await titleOf(fanIn), ["🔄 67' Entra Estrella"]);
   } finally { await db.close(); }
 });

@@ -63,8 +63,10 @@ begin
     when ev->>'type'='GOAL' and p_role='assist' then '🅰️'||v_minute||' Asistencia de '||v_name
     when ev->>'type'='YELLOW_CARD' and p_role='primary' then '🟨'||v_minute||' Amarilla para '||v_name
     when ev->>'type'='RED_CARD' and p_role='primary' then '🟥'||v_minute||' Roja para '||v_name
-    when ev->>'type'='SUBSTITUTION' and p_role='primary' then '🔄'||v_minute||' Entra '||v_name
-    when ev->>'type'='SUBSTITUTION' and p_role='assist' then '🔄'||v_minute||' Sale '||v_name
+    -- GOAL substitutionPlayerId is "OUT|IN" (as the detail normalizer's
+    -- outPlayerId/inPlayerId): playerId leaves, assistPlayerId enters.
+    when ev->>'type'='SUBSTITUTION' and p_role='primary' then '🔄'||v_minute||' Sale '||v_name
+    when ev->>'type'='SUBSTITUTION' and p_role='assist' then '🔄'||v_minute||' Entra '||v_name
     when ev->>'type'='MISSED_PENALTY' and p_role='primary' then '❌'||v_minute||' Penal fallado por '||v_name
   end;
   if v_title is null then return null; end if;
@@ -109,7 +111,7 @@ begin
   msg:=futbeat_private.event_message(ev,m);
   if msg is null then return; end if;
 
-  -- #106: followed players first (scorer / carded / in before assist / out),
+  -- #106: followed players first (scorer / carded / out, then assist / in),
   -- so the player copy wins the (event,user,device) slot.
   if not futbeat_private.player_event_is_stale(ev) then
     for involved in
