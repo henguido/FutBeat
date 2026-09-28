@@ -18,7 +18,8 @@ async function seed(db, count=2, date='2020-01-02', suffix='') {
   await db.query(`insert into futbeat_private.entities select item->>'id',item->>'kind',item-'kind'
     from jsonb_array_elements($1::jsonb) item`,[JSON.stringify(rows)]);
   await db.exec(`update futbeat_private.competition_editorial_metadata set source='editorial',
-    relevance_score=900-right(competition_id,1)::int*10
+    relevance_score=900-right(competition_id,1)::int*10,
+    is_global_relevant=competition_id like '%_0'
     where competition_id like 'fb_comp_cache_%'`);
 }
 async function calendar(db,date='2020-01-02',timezone='UTC') {
@@ -213,7 +214,7 @@ test('compact builder resolves home, chained away and competition aliases withou
   await db.exec(model);
  } finally {await db.close();}
 });
-test('Explore is bounded, editorial, activity-based and cached; search ignores country and tracks aliases',async()=>{
+test('Explore is bounded, editorial, activity-based and cached; search ranks country and tracks aliases',async()=>{
  const db=await openDatabase();
  try {
   const today=(await db.query("select (now() at time zone 'UTC')::date::text d")).rows[0].d;
@@ -224,12 +225,74 @@ test('Explore is bounded, editorial, activity-based and cached; search ignores c
   assert.equal(explore.players.length,0);
   assert.equal(explore.matches.length,0);
   assert.equal(explore.competitions[0].relevanceScore,900);
+  assert.equal(explore.competitions[0].isGlobalRelevant,true);
+  assert.match(explore.competitions[0].countryCode,/^GB(?:-|$)/);
+  assert.ok(explore.teams.every(t=>/^GB(?:-|$)/.test(t.countryCode)));
   assert.ok(explore.teams.every(t=>t.id.startsWith('fb_team_cache_')));
   assert.deepEqual((await db.query('select public.futbeat_read_explore() v')).rows[0].v,explore);
+  // Exercise normal ingestion: payloads carry country names and metadata owns
+  // the canonical ISO code. Synthetic countryCode fixture fields would hide a
+  // production contract regression here.
+  await db.exec(`update futbeat_private.entities set payload=payload||
+    case when id='fb_team_cache_home_0' then '{"country":"Costa Rica"}'::jsonb
+      else '{"country":"Spain","competitionId":"fb_comp_cache_1"}'::jsonb end
+    where id in ('fb_team_cache_home_0','fb_team_cache_away_0');
+    update futbeat_private.competition_editorial_metadata set country_code='CR'
+      where competition_id='fb_comp_cache_0';
+    update futbeat_private.competition_editorial_metadata set country_code='ES'
+      where competition_id='fb_comp_cache_1';`);
   const cr=(await db.query("select public.futbeat_search_catalog('manchester','CR',50) v")).rows[0].v;
   const es=(await db.query("select public.futbeat_search_catalog('manchester','ES',50) v")).rows[0].v;
-  assert.deepEqual(cr.teams,es.teams);
   assert.equal(cr.teams.length,2);
+  assert.equal(es.teams.length,2);
+  assert.equal(cr.teams[0].id,'fb_team_cache_home_0');
+  assert.equal(es.teams[0].id,'fb_team_cache_away_0');
+  assert.deepEqual(new Set(cr.teams.map(t=>t.id)),new Set(es.teams.map(t=>t.id)));
+  await db.exec(`update futbeat_private.entities set payload=payload||
+    case when id='fb_comp_cache_0' then '{"name":"Premier League","country":"England"}'::jsonb
+      else '{"name":"Premier League","country":"Spain"}'::jsonb end
+    where id in ('fb_comp_cache_0','fb_comp_cache_1');
+    update futbeat_private.competition_editorial_metadata
+      set country_code=null,relevance_score=case when competition_id='fb_comp_cache_0' then 1 else 900 end
+      where competition_id in ('fb_comp_cache_0','fb_comp_cache_1');`);
+  const gbCompetition=(await db.query("select public.futbeat_search_catalog('premier league','GB',50) v")).rows[0].v;
+  assert.equal(gbCompetition.competitions[0].id,'fb_comp_cache_0');
+  await db.exec(`update futbeat_private.competition_editorial_metadata
+      set country_code=case when competition_id='fb_comp_cache_0' then 'ES' else null end,
+          relevance_score=case when competition_id='fb_comp_cache_0' then 900 else 1 end
+      where competition_id in ('fb_comp_cache_0','fb_comp_cache_1');
+    update futbeat_private.entities set payload=payload||'{"country":"England"}'
+      where id='fb_comp_cache_1';
+    update futbeat_private.entities set payload=payload-'country'-'countryCode'
+      where id='fb_team_cache_home_0';
+    update futbeat_private.competition_editorial_metadata set country_code='CR',relevance_score=1
+      where competition_id='fb_comp_cache_0';`);
+  const sparseTeam=(await db.query("select public.futbeat_search_catalog('manchester','CR',50) v")).rows[0].v;
+  assert.equal(sparseTeam.teams[0].id,'fb_team_cache_home_0');
+  await db.exec(`update futbeat_private.competition_editorial_metadata
+      set country_code=case when competition_id='fb_comp_cache_0' then 'ES' else null end,
+          relevance_score=case when competition_id='fb_comp_cache_0' then 900 else 1 end
+      where competition_id in ('fb_comp_cache_0','fb_comp_cache_1')`);
+  const canonicalCompetition=(await db.query("select public.futbeat_search_catalog('premier league','GB',50) v")).rows[0].v;
+  assert.equal(canonicalCompetition.competitions[0].id,'fb_comp_cache_1');
+  await db.exec(`update futbeat_private.entities set payload=payload||'{"country":"Costa Rica"}'
+      where id='fb_team_cache_home_0'`);
+  await db.exec(`update futbeat_private.competition_editorial_metadata
+    set country_code='EUROPE',relevance_score=1 where competition_id='fb_comp_cache_0';
+    update futbeat_private.competition_editorial_metadata
+    set relevance_score=900 where competition_id='fb_comp_cache_1'`);
+  const ownCountry=(await db.query(`select futbeat_private.catalog_entity(payload,100) v
+    from futbeat_private.entities where id='fb_team_cache_home_0'`)).rows[0].v;
+  assert.equal(ownCountry.countryCode,'CR');
+  await db.exec(`insert into futbeat_private.entities values(
+    'fb_team_country_alias','team','{"id":"fb_team_country_alias","name":"Alias"}');
+    insert into futbeat_private.entity_redirects(alias_id,canonical_id,kind,reason)
+    values('fb_team_country_alias','fb_team_cache_home_0','team','test')`);
+  const aliasPlayer=(await db.query(`select futbeat_private.catalog_entity(
+    '{"id":"fb_player_alias_country","name":"Player","teamId":"fb_team_country_alias"}',100) v`)).rows[0].v;
+  assert.equal(aliasPlayer.countryCode,'CR');
+  const europe=(await db.query("select public.futbeat_search_catalog('manchester','EUROPE',50) v")).rows[0].v;
+  assert.equal(europe.teams[0].id,'fb_team_cache_away_0');
   await db.exec(`update futbeat_private.entities set payload=payload||'{"aliases":["The Red Devils"]}' where id='fb_team_cache_home_0'`);
   const alias=(await db.query("select public.futbeat_search_catalog('red devils',null,50) v")).rows[0].v;
   assert.equal(alias.teams[0].id,'fb_team_cache_home_0');

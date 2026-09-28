@@ -52,6 +52,15 @@ test('durable aggregation deduplicates work and removes deleted favorites', asyn
         JSON.stringify([{ type: 'team', id: 'fb_team_interest' }]),
       ]);
     }
+    await db.query("select public.futbeat_sync_user_preferences('CR','ES')");
+    await db.query("select public.futbeat_sync_user_preference_fields('US',null,true,false)");
+    let preference=(await db.query(`select detected_country,selected_country
+      from futbeat_private.user_preferences where user_id=auth.uid()`)).rows[0];
+    assert.deepEqual(preference,{detected_country:'US',selected_country:'ES'});
+    await db.query("select public.futbeat_sync_user_preference_fields(null,'MX',false,true)");
+    preference=(await db.query(`select detected_country,selected_country
+      from futbeat_private.user_preferences where user_id=auth.uid()`)).rows[0];
+    assert.deepEqual(preference,{detected_country:'US',selected_country:'MX'});
     let row = (await db.query("select * from futbeat_private.coverage_interests where subject_type='team' and subject_id='fb_team_interest'")).rows[0];
     assert.equal(row.explicit_followers, 2);
     assert.equal(row.depth, 'DEEP');

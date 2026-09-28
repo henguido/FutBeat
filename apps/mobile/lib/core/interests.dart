@@ -29,16 +29,39 @@ final detectedCountryProvider = Provider<String?>(
   (_) => normalizeCountry(PlatformDispatcher.instance.locale.countryCode),
 );
 
+Future<CountryPreference> refreshDetectedCountry(
+  AppDatabase database,
+  String? detected,
+) async {
+  var current = await database.watchPreference().first;
+  if (current.detectedCountry != detected) {
+    await database.saveDetectedCountry(detected);
+    current = await database.watchPreference().first;
+  }
+  return current;
+}
+
 final preferenceProvider = StreamProvider<CountryPreference>((ref) async* {
   final database = ref.watch(databaseProvider);
   final detected = ref.watch(detectedCountryProvider);
-  var current = await database.watchPreference().first;
-  if (current.detectedCountry == null && detected != null) {
-    await database.savePreference(
-      detectedCountry: detected,
-      selectedCountry: current.selectedCountry,
-    );
+  final before = await database.watchPreference().first;
+  final current = await refreshDetectedCountry(database, detected);
+  if (before.detectedCountry != detected) {
+    final service = ref.read(pushServiceProvider);
+    await service.markDetectedCountryDirty();
+    if (service.authenticated) {
+      try {
+        await service.syncCountries(
+          current.detectedCountry,
+          current.selectedCountry,
+          updateSelected: false,
+        );
+      } catch (_) {
+        // The dirty marker lets the periodic account loop retry offline.
+      }
+    }
   }
+  yield current;
   yield* database.watchPreference();
 });
 

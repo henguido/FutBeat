@@ -1,22 +1,38 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/database.dart';
 import 'core/models.dart';
+import 'core/providers.dart';
 import 'core/theme.dart';
 import 'core/push.dart';
+import 'core/interests.dart';
 import 'features/profile/profile_screen.dart';
 import 'features/matches/matches_screen.dart';
 import 'features/matches/match_screen.dart';
 import 'features/entities/entity_screen.dart';
 import 'features/explore/explore_screen.dart';
 import 'features/favorites/favorites_screen.dart';
+import 'features/onboarding/onboarding_screen.dart';
 import 'shared/widgets.dart';
 
 void main() => runApp(const ProviderScope(child: FutBeatApp()));
 
-GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
+Future<CountryPreference> refreshCountryForLocales(
+  AppDatabase database,
+  List<Locale>? locales,
+) {
+  final detected = normalizeCountry(
+    locales != null && locales.isNotEmpty ? locales.first.countryCode : null,
+  );
+  return refreshDetectedCountry(database, detected);
+}
+
+GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
   initialLocation: initialLocation,
   errorBuilder: (context, state) => Scaffold(
     appBar: AppBar(title: const Text('FutBeat')),
@@ -28,6 +44,13 @@ GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
     ),
   ),
   routes: [
+    GoRoute(path: '/start', builder: (_, state) => const StartupGate()),
+    GoRoute(
+      path: '/onboarding',
+      builder: (_, state) => OnboardingScreen(
+        reentry: state.uri.queryParameters['reentry'] == '1',
+      ),
+    ),
     ShellRoute(
       builder: (context, state, child) =>
           AppShell(location: state.uri.path, child: child),
@@ -71,6 +94,33 @@ GoRouter createRouter({String initialLocation = '/matches'}) => GoRouter(
   ],
 );
 
+class StartupGate extends ConsumerWidget {
+  const StartupGate({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final preference = ref.watch(preferenceProvider);
+    final value = preference.asData?.value;
+    if (value != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        context.go(value.bootstrapDismissed ? '/matches' : '/onboarding');
+      });
+    }
+    if (preference.hasError) {
+      return Scaffold(
+        body: Center(
+          child: FilledButton(
+            onPressed: () => context.go('/matches'),
+            child: const Text('Continuar a Partidos'),
+          ),
+        ),
+      );
+    }
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+}
+
 class FutBeatApp extends ConsumerStatefulWidget {
   const FutBeatApp({super.key, this.router});
   final GoRouter? router;
@@ -78,10 +128,44 @@ class FutBeatApp extends ConsumerStatefulWidget {
   ConsumerState<FutBeatApp> createState() => _FutBeatAppState();
 }
 
-class _FutBeatAppState extends ConsumerState<FutBeatApp> {
+class _FutBeatAppState extends ConsumerState<FutBeatApp>
+    with WidgetsBindingObserver {
   late final GoRouter router = widget.router ?? createRouter();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeLocales(List<Locale>? locales) {
+    ref.invalidate(detectedCountryProvider);
+    unawaited(_refreshCountry(locales));
+  }
+
+  Future<void> _refreshCountry(List<Locale>? locales) async {
+    final database = ref.read(databaseProvider);
+    final service = ref.read(pushServiceProvider);
+    try {
+      final preference = await refreshCountryForLocales(database, locales);
+      await service.markDetectedCountryDirty();
+      if (service.authenticated) {
+        await service.syncCountries(
+          preference.detectedCountry,
+          preference.selectedCountry,
+          updateSelected: false,
+        );
+      }
+      if (mounted) ref.invalidate(preferenceProvider);
+    } catch (_) {
+      // The next preference read retries; locale changes must not crash UI.
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (widget.router == null) router.dispose();
     super.dispose();
   }
