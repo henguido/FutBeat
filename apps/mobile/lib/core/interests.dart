@@ -29,16 +29,26 @@ final detectedCountryProvider = Provider<String?>(
   (_) => normalizeCountry(PlatformDispatcher.instance.locale.countryCode),
 );
 
-final preferenceProvider = StreamProvider<CountryPreference>((ref) async* {
-  final database = ref.watch(databaseProvider);
-  final detected = ref.watch(detectedCountryProvider);
+Future<CountryPreference> refreshDetectedCountry(
+  AppDatabase database,
+  String? detected,
+) async {
   var current = await database.watchPreference().first;
   if (detected != null && current.detectedCountry != detected) {
     await database.savePreference(
       detectedCountry: detected,
       selectedCountry: current.selectedCountry,
     );
+    current = await database.watchPreference().first;
   }
+  return current;
+}
+
+final preferenceProvider = StreamProvider<CountryPreference>((ref) async* {
+  final database = ref.watch(databaseProvider);
+  final detected = ref.watch(detectedCountryProvider);
+  final current = await refreshDetectedCountry(database, detected);
+  yield current;
   yield* database.watchPreference();
 });
 

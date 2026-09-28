@@ -195,17 +195,10 @@ void main() {
     () async {
       final db = AppDatabase(NativeDatabase.memory());
       await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
-      final container = ProviderContainer(
-        overrides: [
-          databaseProvider.overrideWithValue(db),
-          detectedCountryProvider.overrideWithValue('ES'),
-        ],
-      );
-      addTearDown(container.dispose);
-      addTearDown(db.close);
-      final preference = await container.read(preferenceProvider.future);
+      final preference = await refreshDetectedCountry(db, 'ES');
       expect(preference.detectedCountry, 'ES');
       expect(preference.effectiveCountry, 'ES');
+      await db.close();
     },
   );
 
