@@ -41,6 +41,42 @@ returns jsonb language sql stable set search_path='' as $$
           'competition',p_payload->>'id')),false))))
 $$;
 
+-- Country detection and a manual override are independent preferences. A
+-- client must not overwrite one with a stale cached value while updating the
+-- other, so expose an explicitly partial synchronization contract.
+create or replace function futbeat_private.sync_user_preference_fields(
+  p_detected text,p_selected text,p_update_detected boolean,p_update_selected boolean)
+returns void language plpgsql security definer set search_path='' as $$
+declare uid uuid:=auth.uid();
+begin
+ if uid is null then raise exception 'Authentication required' using errcode='42501'; end if;
+ p_detected:=nullif(upper(trim(p_detected)),'');
+ p_selected:=nullif(upper(trim(p_selected)),'');
+ if (p_update_detected and p_detected is not null and p_detected!~'^[A-Z]{2}$')
+   or (p_update_selected and p_selected is not null and p_selected!~'^[A-Z]{2}$')
+  then raise exception 'Invalid country'; end if;
+ insert into futbeat_private.user_preferences(user_id,detected_country,selected_country,updated_at)
+ values(uid,case when p_update_detected then p_detected end,
+   case when p_update_selected then p_selected end,now())
+ on conflict(user_id) do update set
+   detected_country=case when p_update_detected then excluded.detected_country
+     else futbeat_private.user_preferences.detected_country end,
+   selected_country=case when p_update_selected then excluded.selected_country
+     else futbeat_private.user_preferences.selected_country end,
+   updated_at=now();
+ perform futbeat_private.refresh_interest_aggregates();
+end $$;
+create or replace function public.futbeat_sync_user_preference_fields(
+  p_detected text,p_selected text,p_update_detected boolean,p_update_selected boolean)
+returns void language sql security invoker set search_path='' as $$
+ select futbeat_private.sync_user_preference_fields(
+   p_detected,p_selected,p_update_detected,p_update_selected)
+$$;
+revoke all on function futbeat_private.sync_user_preference_fields(text,text,boolean,boolean),
+ public.futbeat_sync_user_preference_fields(text,text,boolean,boolean) from public,anon;
+grant execute on function futbeat_private.sync_user_preference_fields(text,text,boolean,boolean),
+ public.futbeat_sync_user_preference_fields(text,text,boolean,boolean) to authenticated;
+
 create or replace function public.futbeat_search_catalog(
  p_query text default '',p_country text default null,p_limit integer default 50)
 returns jsonb language plpgsql volatile security definer

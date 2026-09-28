@@ -366,33 +366,69 @@ class PushService {
     );
   }
 
-  Future<void> syncCountries(String? detected, String? selected) {
+  Future<void> syncCountries(
+    String? detected,
+    String? selected, {
+    bool updateDetected = true,
+    bool updateSelected = true,
+  }) {
     if (!authenticated || disposed) return Future.value();
     final sessionToken = session?['access_token']?.toString();
     final operation = countryPending.catchError((_) {}).then((_) async {
-      await markCountriesDirty();
+      if (updateDetected) await markDetectedCountryDirty();
+      if (updateSelected) await markSelectedCountryDirty();
       if (disposed || session?['access_token']?.toString() != sessionToken) {
         return;
       }
       await dio.post(
-        '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_preferences',
+        '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_preference_fields',
         options: authHeaders,
-        data: {'p_detected': detected, 'p_selected': selected},
+        data: {
+          'p_detected': detected,
+          'p_selected': selected,
+          'p_update_detected': updateDetected,
+          'p_update_selected': updateSelected,
+        },
       );
       final current = await database.watchPreference().first;
       if (!disposed &&
           session?['access_token']?.toString() == sessionToken &&
           current.detectedCountry == detected &&
           current.selectedCountry == selected) {
-        await storage.write(key: 'futbeat.country.dirty', value: 'false');
+        if (updateDetected) {
+          await storage.write(
+            key: 'futbeat.country.detected.dirty',
+            value: 'false',
+          );
+        }
+        if (updateSelected) {
+          await storage.write(
+            key: 'futbeat.country.selected.dirty',
+            value: 'false',
+          );
+        }
+        final detectedDirty =
+            await storage.read(key: 'futbeat.country.detected.dirty') == 'true';
+        final selectedDirty =
+            await storage.read(key: 'futbeat.country.selected.dirty') == 'true';
+        if (!detectedDirty && !selectedDirty) {
+          await storage.write(key: 'futbeat.country.dirty', value: 'false');
+        }
       }
     });
     countryPending = operation;
     return operation;
   }
 
-  Future<void> markCountriesDirty() =>
-      storage.write(key: 'futbeat.country.dirty', value: 'true');
+  Future<void> markDetectedCountryDirty() async {
+    await storage.write(key: 'futbeat.country.detected.dirty', value: 'true');
+    await storage.write(key: 'futbeat.country.dirty', value: 'true');
+  }
+
+  Future<void> markSelectedCountryDirty() async {
+    await storage.write(key: 'futbeat.country.selected.dirty', value: 'true');
+    await storage.write(key: 'futbeat.country.dirty', value: 'true');
+  }
 
   Future<void> touchInterest(String type, String id) async {
     if (!authenticated || disposed) return;
@@ -494,19 +530,27 @@ class PushService {
     if (cloudPreferences is Map) {
       final values = Map<String, dynamic>.from(cloudPreferences);
       final current = await database.watchPreference().first;
-      final countryDirty =
+      final legacyCountryDirty =
           await storage.read(key: 'futbeat.country.dirty') == 'true';
+      var detectedDirty =
+          await storage.read(key: 'futbeat.country.detected.dirty') == 'true';
+      var selectedDirty =
+          await storage.read(key: 'futbeat.country.selected.dirty') == 'true';
+      if (legacyCountryDirty && !detectedDirty && !selectedDirty) {
+        detectedDirty = true;
+        selectedDirty = true;
+      }
       final cloudDetected = values['detectedCountry']?.toString();
       final cloudSelected = values['selectedCountry']?.toString();
       final detected = reconcileSelectedCountry(
         local: current.detectedCountry,
         cloud: cloudDetected,
-        dirty: countryDirty,
+        dirty: detectedDirty,
       );
       final selected = reconcileSelectedCountry(
         local: current.selectedCountry,
         cloud: cloudSelected,
-        dirty: countryDirty,
+        dirty: selectedDirty,
       );
       if (detected != current.detectedCountry ||
           selected != current.selectedCountry) {
@@ -517,8 +561,15 @@ class PushService {
           await database.saveSelectedCountry(selected);
         }
       }
-      final effective = await database.watchPreference().first;
-      await syncCountries(effective.detectedCountry, effective.selectedCountry);
+      if (detectedDirty || selectedDirty) {
+        final effective = await database.watchPreference().first;
+        await syncCountries(
+          effective.detectedCountry,
+          effective.selectedCountry,
+          updateDetected: detectedDirty,
+          updateSelected: selectedDirty,
+        );
+      }
     }
 
     final local = await database.watchFollows().first;
@@ -569,11 +620,27 @@ class PushService {
             if (await storage.read(key: 'futbeat.profile.dirty') == 'true') {
               await _syncProfileSettings(await loadProfileSettings());
             }
-            if (await storage.read(key: 'futbeat.country.dirty') == 'true') {
+            final detectedDirty =
+                await storage.read(
+                  key: 'futbeat.country.detected.dirty',
+                ) ==
+                'true';
+            final selectedDirty =
+                await storage.read(
+                  key: 'futbeat.country.selected.dirty',
+                ) ==
+                'true';
+            final legacyDirty =
+                await storage.read(key: 'futbeat.country.dirty') == 'true';
+            if (detectedDirty || selectedDirty || legacyDirty) {
               final preference = await database.watchPreference().first;
               await syncCountries(
                 preference.detectedCountry,
                 preference.selectedCountry,
+                updateDetected: detectedDirty ||
+                    (legacyDirty && !detectedDirty && !selectedDirty),
+                updateSelected: selectedDirty ||
+                    (legacyDirty && !detectedDirty && !selectedDirty),
               );
             }
             if (enabled) await register(true);

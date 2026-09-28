@@ -278,10 +278,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final service = ref.read(pushServiceProvider);
     await database.saveSelectedCountry(value);
     final current = await database.watchPreference().first;
-    await service.markCountriesDirty();
+    await service.markSelectedCountryDirty();
     if (service.authenticated) {
       try {
-        await service.syncCountries(current.detectedCountry, value);
+        await service.syncCountries(
+          current.detectedCountry,
+          value,
+          updateDetected: false,
+        );
       } catch (_) {
         // Drift remains authoritative offline; the normal reconcile can retry.
       }

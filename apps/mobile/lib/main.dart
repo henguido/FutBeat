@@ -149,11 +149,12 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     final service = ref.read(pushServiceProvider);
     try {
       final preference = await refreshCountryForLocales(database, locales);
-      await service.markCountriesDirty();
+      await service.markDetectedCountryDirty();
       if (service.authenticated) {
         await service.syncCountries(
           preference.detectedCountry,
           preference.selectedCountry,
+          updateSelected: false,
         );
       }
       if (mounted) ref.invalidate(preferenceProvider);

@@ -48,12 +48,13 @@ final preferenceProvider = StreamProvider<CountryPreference>((ref) async* {
   final current = await refreshDetectedCountry(database, detected);
   if (before.detectedCountry != detected) {
     final service = ref.read(pushServiceProvider);
-    await service.markCountriesDirty();
+    await service.markDetectedCountryDirty();
     if (service.authenticated) {
       try {
         await service.syncCountries(
           current.detectedCountry,
           current.selectedCountry,
+          updateSelected: false,
         );
       } catch (_) {
         // The dirty marker lets the periodic account loop retry offline.
