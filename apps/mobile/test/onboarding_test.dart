@@ -212,6 +212,11 @@ void main() {
     });
   });
 
+  test('searched entities preserve backend match-quality order', () {
+    final searched = onboardingEntitiesForQuery(catalog().teams, 'CR', 'equipo');
+    expect(searched.map((entity) => entity.id), ['team_es', 'team_cr']);
+  });
+
   testWidgets('detected country is visible and onboarding has no bottom nav', (
     tester,
   ) async {

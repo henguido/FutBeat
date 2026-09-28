@@ -6,14 +6,29 @@ create or replace function futbeat_private.catalog_entity(p_payload jsonb,p_scor
 returns jsonb language sql stable set search_path='' as $$
  select jsonb_strip_nulls(jsonb_build_object('id',p_payload->'id','name',p_payload->'name',
    'shortName',p_payload->'shortName','country',p_payload->'country',
-   'countryCode',to_jsonb(coalesce(
-     (select m.country_code from futbeat_private.competition_editorial_metadata m
-      where m.competition_id=futbeat_private.futbeat_resolve_entity_id('competition',
-        coalesce(p_payload->>'competitionId',
+   'countryCode',to_jsonb(case
+     when p_payload ? 'teamId' then coalesce(
+       futbeat_private.resolve_country_code(p_payload->>'countryCode'),
+       futbeat_private.resolve_country_code(p_payload->>'country'),
+       (select coalesce(futbeat_private.resolve_country_code(t.payload->>'countryCode'),
+                        futbeat_private.resolve_country_code(t.payload->>'country'))
+        from futbeat_private.entities t where t.kind='team' and t.id=p_payload->>'teamId'),
+       (select m.country_code from futbeat_private.competition_editorial_metadata m
+        where m.competition_id=futbeat_private.futbeat_resolve_entity_id('competition',
           (select t.payload->>'competitionId' from futbeat_private.entities t
-           where t.kind='team' and t.id=p_payload->>'teamId'),p_payload->>'id'))),
-     futbeat_private.resolve_country_code(p_payload->>'countryCode'),
-     futbeat_private.resolve_country_code(p_payload->>'country'))),
+           where t.kind='team' and t.id=p_payload->>'teamId'))))
+     when p_payload ? 'competitionId' then coalesce(
+       futbeat_private.resolve_country_code(p_payload->>'countryCode'),
+       futbeat_private.resolve_country_code(p_payload->>'country'),
+       (select m.country_code from futbeat_private.competition_editorial_metadata m
+        where m.competition_id=futbeat_private.futbeat_resolve_entity_id(
+          'competition',p_payload->>'competitionId')))
+     else coalesce(
+       (select m.country_code from futbeat_private.competition_editorial_metadata m
+        where m.competition_id=futbeat_private.futbeat_resolve_entity_id(
+          'competition',p_payload->>'id')),
+       futbeat_private.resolve_country_code(p_payload->>'countryCode'),
+       futbeat_private.resolve_country_code(p_payload->>'country')) end),
    'media',p_payload->'media','competitionId',p_payload->'competitionId',
    'teamId',p_payload->'teamId','relevanceScore',p_score))
 $$;

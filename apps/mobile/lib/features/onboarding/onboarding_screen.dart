@@ -43,6 +43,17 @@ List<Entity> rankOnboardingEntities(
   return result;
 }
 
+List<Entity> onboardingEntitiesForQuery(
+  Iterable<Entity> entities,
+  String? country,
+  String query,
+) {
+  final ordered = query.trim().length >= 2
+      ? entities.toList()
+      : rankOnboardingEntities(entities, country);
+  return ordered.take(30).toList();
+}
+
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key, this.reentry = false});
   final bool reentry;
@@ -401,7 +412,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         ? data?.teams ?? <Entity>[]
         : data?.competitions ?? <Entity>[];
     final country = ref.read(preferenceProvider).asData?.value.effectiveCountry;
-    final entities = rankOnboardingEntities(source, country).take(30).toList();
+    // Search is already ordered by match quality, country and relevance on the
+    // backend. Only the unsearched Explore suggestions need local reranking.
+    final entities = onboardingEntitiesForQuery(source, country, query);
     return Column(
       children: [
         TextField(
