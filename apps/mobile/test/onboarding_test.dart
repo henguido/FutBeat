@@ -2,6 +2,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/models.dart';
@@ -202,6 +203,42 @@ void main() {
       await db.close();
     },
   );
+
+  testWidgets('app observes locale changes while the activity stays alive', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    tester.binding.platformDispatcher.localeTestValue = const Locale('es', 'CR');
+    addTearDown(tester.binding.platformDispatcher.clearLocaleTestValue);
+    final router = GoRouter(
+      initialLocation: '/blank',
+      routes: [
+        GoRoute(
+          path: '/blank',
+          builder: (_, _) => const Scaffold(body: Text('blank')),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          profileSettingsProvider.overrideWith(
+            (ref) async => const UserProfileSettings(),
+          ),
+        ],
+        child: FutBeatApp(router: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect((await db.watchPreference().first).detectedCountry, 'CR');
+
+    tester.binding.platformDispatcher.localeTestValue = const Locale('es', 'ES');
+    await tester.pumpAndSettle();
+    expect((await db.watchPreference().first).detectedCountry, 'ES');
+  });
 
   test(
     'country selection and follows persist without duplicate rows',

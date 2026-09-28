@@ -114,16 +114,33 @@ class FutBeatApp extends ConsumerStatefulWidget {
   ConsumerState<FutBeatApp> createState() => _FutBeatAppState();
 }
 
-class _FutBeatAppState extends ConsumerState<FutBeatApp> {
+class _FutBeatAppState extends ConsumerState<FutBeatApp>
+    with WidgetsBindingObserver {
   late final GoRouter router = widget.router ?? createRouter();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeLocales(List<Locale>? locales) {
+    ref.invalidate(detectedCountryProvider);
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (widget.router == null) router.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Keep automatic country detection live for the whole app session. Android
+    // can deliver a locale change without recreating the activity.
+    ref.watch(preferenceProvider);
     final hourFormat =
         ref.watch(profileSettingsProvider).asData?.value.hourFormat ?? 'system';
 
