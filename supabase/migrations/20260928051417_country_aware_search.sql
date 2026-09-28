@@ -80,7 +80,10 @@ grant execute on function futbeat_private.sync_user_preference_fields(text,text,
 create or replace function public.futbeat_search_catalog(
  p_query text default '',p_country text default null,p_limit integer default 50)
 returns jsonb language plpgsql volatile security definer
-set search_path='' set pg_trgm.strict_word_similarity_threshold='0.5' as $$
+-- No function-level pg_trgm setting: Supabase rejects it (42501, permission
+-- denied to set parameter). The pg_trgm default strict threshold is 0.5,
+-- which is what operator(extensions.<<%) below relies on.
+set search_path='' as $$
 declare qr text:=lower(btrim(coalesce(p_query,''))); pr text; qf text; pf text;
  vc text:=upper(btrim(coalesce(p_country,''))); v_result jsonb;
  v_player_ok boolean; v_demand jsonb;
