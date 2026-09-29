@@ -235,10 +235,12 @@ void main() {
     );
     // The unfollowed match of LaLiga stays under its competition.
     expect(_row('m_es_long'), findsOneWidget);
-    // LaLiga header count only counts what is left below (followed moved up).
+    // LaLiga keeps only its unfollowed match under the header.
     expect(
-      find.byKey(const ValueKey('competition-count-c_es')),
-      findsOneWidget,
+      tester
+          .widget<Text>(find.byKey(const ValueKey('competition-count-c_es')))
+          .data,
+      '1',
     );
     expect(tester.takeException(), isNull);
   });
@@ -296,43 +298,113 @@ void main() {
     );
   });
 
-  testWidgets('awaiting matches follow the MatchCard kickoff/score rules', (
+  // Kickoffs of the awaiting fixtures are 00:00 CR; the "past kickoff by more
+  // than 15 minutes" precondition cannot hold in the first minutes of the day.
+  final nearMidnight = costaRicaNow().hour == 0 && costaRicaNow().minute < 20;
+
+  testWidgets(
+    'awaiting matches show Por confirmar, never an upcoming kickoff',
+    (tester) async {
+      final data = _snapshot();
+      final awaiting = data.matches.firstWhere((m) => m.id == 'm_es_awaiting');
+      final partial = data.matches.firstWhere((m) => m.id == 'm_es_partial');
+      expect(awaiting.isAwaitingUpdate, isTrue);
+      expect(partial.showKickoff, isFalse);
+
+      await _pump(tester, data: data);
+      // Played evidence past kickoff: score + "Marcador parcial", no kickoff.
+      final p = _row('m_es_partial');
+      expect(
+        find.descendant(of: p, matching: find.text('2 - 1')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: p, matching: find.text('Marcador parcial')),
+        findsOneWidget,
+      );
+      // No evidence: dash + "Por confirmar", no kickoff time, no "Programado".
+      final a = _row('m_es_awaiting');
+      expect(
+        find.descendant(of: a, matching: find.text('Por confirmar')),
+        findsOneWidget,
+      );
+      expect(find.descendant(of: a, matching: find.text('—')), findsOneWidget);
+      expect(
+        find.descendant(of: a, matching: find.text('Programado')),
+        findsNothing,
+      );
+      final kickoff = MaterialLocalizations.of(tester.element(a))
+          .formatTimeOfDay(TimeOfDay.fromDateTime(awaiting.startTime));
+      expect(
+        find.descendant(of: a, matching: find.text(kickoff)),
+        findsNothing,
+      );
+    },
+    skip: nearMidnight,
+  );
+
+  testWidgets('a directly followed match (match:<id>) is lifted once', (
     tester,
   ) async {
-    final data = _snapshot();
-    final awaiting = data.matches.firstWhere((m) => m.id == 'm_es_awaiting');
-    final partial = data.matches.firstWhere((m) => m.id == 'm_es_partial');
-    // Precondition: kickoff (00:00 CR) is more than 15 min in the past.
-    expect(awaiting.isAwaitingUpdate, isTrue);
-    expect(partial.showKickoff, isFalse);
+    await _pump(tester, follows: {'match:m_es_1'});
+    expect(find.text('Siguiendo'), findsOneWidget);
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
+    expect(_row('m_es_1'), findsOneWidget);
+    expect(
+      tester.getTopLeft(_row('m_es_1')).dy,
+      lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
+    );
+    // LaLiga keeps its other three matches under its header.
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('competition-count-c_es')))
+          .data,
+      '3',
+    );
+  });
 
-    await _pump(tester, data: data);
-    // Played evidence past kickoff: score + "Marcador parcial", no kickoff.
-    final p = _row('m_es_partial');
-    expect(
-      find.descendant(of: p, matching: find.text('2 - 1')),
-      findsOneWidget,
+  testWidgets(
+    'collapsed header shows live marker; live filter ignores collapse',
+    (tester) async {
+      await _pump(tester);
+      expect(find.byKey(const ValueKey('competition-live-c_cr')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('competition-toggle-c_cr')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('competition-live-c_cr')))
+            .data,
+        '1 en vivo',
+      );
+      expect(_row('m_cr_live'), findsNothing);
+      await tester.tap(find.text('En vivo'));
+      await tester.pumpAndSettle();
+      expect(_row('m_cr_live'), findsOneWidget);
+      expect(find.byKey(const ValueKey('competition-live-c_cr')), findsNothing);
+    },
+  );
+
+  testWidgets('changing the date clears collapsed competitions', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await tester.tap(find.byKey(const ValueKey('competition-toggle-c_cr')));
+    await tester.pumpAndSettle();
+    expect(_row('m_cr_live'), findsNothing);
+    // Next day and back to today.
+    await tester.fling(
+      find.byKey(const ValueKey('matches-date-swipe')),
+      const Offset(-300, 0),
+      1000,
     );
-    expect(
-      find.descendant(of: p, matching: find.text('Marcador parcial')),
-      findsOneWidget,
+    await tester.pumpAndSettle();
+    await tester.fling(
+      find.byKey(const ValueKey('matches-date-swipe')),
+      const Offset(300, 0),
+      1000,
     );
-    // No evidence: same as MatchCard (kickoff + "Programado", never a score).
-    final a = _row('m_es_awaiting');
-    expect(
-      find.descendant(
-        of: a,
-        matching: find.text(
-          MaterialLocalizations.of(tester.element(a))
-              .formatTimeOfDay(TimeOfDay.fromDateTime(awaiting.startTime)),
-        ),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: a, matching: find.text('Programado')),
-      findsOneWidget,
-    );
+    await tester.pumpAndSettle();
+    expect(_row('m_cr_live'), findsOneWidget);
   });
 
   for (final width in [320.0, 360.0, 390.0]) {
@@ -357,6 +429,16 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await _pump(tester, size: const Size(320, 4000), follows: {'team:t_long1'});
     expect(tester.takeException(), isNull);
+    for (final row in tester.widgetList<FeedMatchRow>(
+      find.byType(FeedMatchRow),
+    )) {
+      expect(
+        tester.getSize(_row(row.match.id)).height,
+        greaterThanOrEqualTo(48),
+      );
+    }
+    expect(find.text('Saprissa'), findsOneWidget);
+    expect(find.text('Alajuelense'), findsOneWidget);
   });
 
   testWidgets('tapping a row opens /match/<id>', (tester) async {

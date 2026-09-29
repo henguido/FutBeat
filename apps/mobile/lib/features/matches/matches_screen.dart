@@ -11,6 +11,7 @@ import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
 bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
+    follows.contains('match:${match.id}') ||
     follows.contains('team:${match.homeId}') ||
     follows.contains('team:${match.awayId}');
 
@@ -116,6 +117,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
   // Competitions collapsed by the user in this session (headers stay).
   final Set<String> _collapsed = <String>{};
 
+  void _setDate(DateTime value) => setState(() {
+    date = value;
+    _collapsed.clear();
+  });
+
   void _toggleCollapsed(String competitionId) => setState(() {
     if (!_collapsed.remove(competitionId)) _collapsed.add(competitionId);
   });
@@ -127,7 +133,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
-    if (picked != null && mounted) setState(() => date = picked);
+    if (picked != null && mounted) _setDate(picked);
   }
 
   Widget _centeredDateOption(int offset, DateTime selected, DateTime today) {
@@ -139,7 +145,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           label: _dateContextLabel(candidate, today),
           date: candidate,
           selected: offset == 0,
-          onTap: () => setState(() => date = candidate),
+          onTap: () => _setDate(candidate),
         ),
       ),
     );
@@ -232,11 +238,14 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                 const <FootballMatch>[];
             if (competitionMatches.isEmpty) return;
 
-            final collapsed = _collapsed.contains(competition.id);
+            // The live filter always shows its rows.
+            final collapsed =
+                filter != 'En vivo' && _collapsed.contains(competition.id);
             feedItems.add(
               () => _CompetitionHeader(
                 competition: competition,
                 count: competitionMatches.length,
+                liveCount: competitionMatches.where((m) => m.isLive).length,
                 collapsed: collapsed,
                 onOpen: () => context.push('/competition/${competition.id}'),
                 onToggle: () => _toggleCollapsed(competition.id),
@@ -347,9 +356,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               ),
             );
             for (final match in followedGames) {
-              final competition = data.competition(match.competitionId)!;
+              final competition = data.competition(match.competitionId);
               feedItems.add(
-                () => FeedMatchRow(match, data, caption: competition.name),
+                () => FeedMatchRow(match, data, caption: competition?.name),
               );
             }
             feedItems.add(() => const SizedBox(height: 12));
@@ -391,8 +400,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             onHorizontalDragEnd: (details) {
               final velocity = details.primaryVelocity ?? 0;
               if (velocity.abs() < _dateSwipeMinVelocity) return;
-              setState(
-                () => date = DateUtils.dateOnly(
+              _setDate(
+                DateUtils.dateOnly(
                   selected.add(Duration(days: velocity < 0 ? 1 : -1)),
                 ),
               );
@@ -532,6 +541,7 @@ class _CompetitionHeader extends StatelessWidget {
   const _CompetitionHeader({
     required this.competition,
     required this.count,
+    required this.liveCount,
     required this.collapsed,
     required this.onOpen,
     required this.onToggle,
@@ -539,6 +549,7 @@ class _CompetitionHeader extends StatelessWidget {
 
   final Entity competition;
   final int count;
+  final int liveCount;
   final bool collapsed;
   final VoidCallback onOpen;
   final VoidCallback onToggle;
@@ -588,19 +599,36 @@ class _CompetitionHeader extends StatelessWidget {
             ),
           ),
         ),
+        if (collapsed && liveCount > 0) ...[
+          Text(
+            key: ValueKey('competition-live-${competition.id}'),
+            '$liveCount en vivo',
+            style: const TextStyle(
+              color: lime,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
         Text(
           '$count',
           key: ValueKey('competition-count-${competition.id}'),
           style: const TextStyle(color: muted, fontWeight: FontWeight.w700),
         ),
-        IconButton(
-          key: ValueKey('competition-toggle-${competition.id}'),
-          tooltip: collapsed ? 'Mostrar partidos' : 'Ocultar partidos',
-          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-          onPressed: onToggle,
-          icon: Icon(
-            collapsed ? Icons.expand_more : Icons.expand_less,
-            color: muted,
+        Semantics(
+          expanded: !collapsed,
+          child: IconButton(
+            key: ValueKey('competition-toggle-${competition.id}'),
+            tooltip: collapsed
+                ? 'Mostrar partidos de ${competition.name}'
+                : 'Ocultar partidos de ${competition.name}',
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            onPressed: onToggle,
+            icon: Icon(
+              collapsed ? Icons.expand_more : Icons.expand_less,
+              color: muted,
+            ),
           ),
         ),
       ],
@@ -623,7 +651,16 @@ class FeedMatchRow extends StatelessWidget {
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
     final latestEvent = match.latestEvent;
-    final status = match.statusLabel;
+    // Past kickoff with no evidence of play: never an upcoming kickoff.
+    final unconfirmed = match.isAwaitingUpdate && !match.hasPlayedEvidence;
+    final status = unconfirmed ? 'Por confirmar' : match.statusLabel;
+    final centre = unconfirmed
+        ? '—'
+        : match.showKickoff
+        ? localTime(context, match.startTime)
+        : match.score;
+    void open() =>
+        context.push('/match/${match.id}', extra: data.forMatch(match.id));
     const nameStyle = TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600);
     final second = <Widget>[
       if (caption != null)
@@ -646,79 +683,84 @@ class FeedMatchRow extends StatelessWidget {
           ),
         ),
     ];
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () =>
-          context.push('/match/${match.id}', extra: data.forMatch(match.id)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 48),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  EntityAvatar(home, size: 22),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      home.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: nameStyle,
+    final label = StringBuffer('${home.name} contra ${away.name}, $centre');
+    if (status.isNotEmpty) label.write(', $status');
+    return Semantics(
+      button: true,
+      excludeSemantics: true,
+      label: label.toString(),
+      onTap: open,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: open,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    EntityAvatar(home, size: 22),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        home.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: nameStyle,
+                      ),
                     ),
-                  ),
-                  SizedBox(
-                    width: 84,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            match.showKickoff
-                                ? localTime(context, match.startTime)
-                                : match.score,
-                            maxLines: 1,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        if (status.isNotEmpty)
+                    SizedBox(
+                      width: 84,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                           FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
-                              status,
+                              centre,
                               maxLines: 1,
-                              style: TextStyle(
-                                color: match.isLive ? lime : muted,
-                                fontSize: 9.5,
-                                fontWeight: FontWeight.w700,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                           ),
-                      ],
+                          if (status.isNotEmpty)
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                status,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  color: match.isLive ? lime : muted,
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                  Expanded(
-                    child: Text(
-                      away.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.right,
-                      style: nameStyle,
+                    Expanded(
+                      child: Text(
+                        away.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        style: nameStyle,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  EntityAvatar(away, size: 22),
-                ],
-              ),
-              for (final line in second)
-                Padding(padding: const EdgeInsets.only(top: 2), child: line),
-            ],
+                    const SizedBox(width: 6),
+                    EntityAvatar(away, size: 22),
+                  ],
+                ),
+                for (final line in second)
+                  Padding(padding: const EdgeInsets.only(top: 2), child: line),
+              ],
+            ),
           ),
         ),
       ),
