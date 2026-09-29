@@ -208,8 +208,9 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('Partidos destacados'), findsOneWidget);
-    expect(find.text('Último resultado'), findsOneWidget);
+    // Summary v2 (#156): no upcoming match -> no empty "next match" card.
+    expect(find.text('Partido siguiente'), findsNothing);
+    expect(find.text('Últimos partidos'), findsOneWidget);
 
     await _openTab(tester, 'Plantilla');
     for (final label in squadGroupOrder) {

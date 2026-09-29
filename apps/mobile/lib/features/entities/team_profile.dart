@@ -6,11 +6,11 @@ import '../../core/models.dart';
 import '../../core/profile_context.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
-import '../matches/matches_screen.dart';
 import 'profile_context_bar.dart';
 import 'profile_widgets.dart';
 import 'standings.dart';
 import 'team_matches_tab.dart';
+import 'team_summary.dart';
 
 /// Squad sections in display order; "Otros" holds unclassifiable positions.
 const squadGroupOrder = [
@@ -172,6 +172,25 @@ class TeamProfileView extends ConsumerWidget {
             ) ==
             selected.seasonKey;
     final contextTable = selected != null;
+    // The table the summary shows: the selected context's exact table, or
+    // (no context) the profile's own table choice.
+    final summaryTable = selected != null
+        ? (teamContext!.standings.isNotEmpty
+              ? (
+                  snapshot: teamContext.tableSnapshot(data),
+                  competitionId: selected.competitionId,
+                  label: selected.label,
+                )
+              : cachedCurrent
+              ? (snapshot: data, competitionId: tableId, label: selected.label)
+              : null)
+        : tableId == null
+        ? null
+        : (
+            snapshot: data,
+            competitionId: tableId,
+            label: data.competition(tableId)?.name ?? 'Tabla',
+          );
     final tabs = [
       'Resumen',
       'Partidos',
@@ -185,7 +204,24 @@ class TeamProfileView extends ConsumerWidget {
     Widget body(String tab) => switch (tab) {
       'Resumen' => ProfileTabList('resumen', [
         if (data.demo) const DemoNotice(),
-        ..._summary(context, players),
+        Builder(
+          builder: (tabContext) => TeamSummary(
+            data: data,
+            team: team,
+            matches: matches,
+            competitions: competitions,
+            players: players.length,
+            table: summaryTable?.snapshot,
+            tableCompetitionId: summaryTable?.competitionId,
+            tableLabel: summaryTable?.label,
+            onOpenTab: (tab) {
+              final index = tabs.indexOf(tab);
+              if (index >= 0) {
+                DefaultTabController.of(tabContext).animateTo(index);
+              }
+            },
+          ),
+        ),
       ]),
       'Partidos' => TeamMatchesTab(
         team: team,
@@ -279,37 +315,6 @@ class TeamProfileView extends ConsumerWidget {
         ),
       ),
     );
-  }
-
-  List<Widget> _summary(BuildContext context, List<Entity> players) {
-    final active = matches.where((m) => m.isLive || m.isUpcoming).take(2);
-    final finished = matches.where((m) => m.isFinished).toList();
-    final main = competitions.firstOrNull;
-    return [
-      const ProfileSectionTitle('Partidos destacados'),
-      if (active.isEmpty)
-        const InlineEmpty(Icons.event_outlined, 'Sin partidos próximos')
-      else
-        for (final match in active) MatchCard(match, data),
-      if (finished.isNotEmpty) ...[
-        const ProfileSectionTitle('Último resultado'),
-        MatchCard(finished.last, data),
-      ],
-      const ProfileSectionTitle('Competiciones'),
-      if (competitions.isEmpty)
-        const InlineEmpty(Icons.emoji_events_outlined, 'Sin competiciones')
-      else
-        for (final competition in competitions.take(3))
-          EntityTile(competition, 'competition'),
-      const ProfileSectionTitle('Información'),
-      ProfileInfoCard([
-        if (team.country.isNotEmpty) (Icons.public, 'País', team.country),
-        if (main != null)
-          (Icons.emoji_events_outlined, 'Competición principal', main.name),
-        if (players.isNotEmpty)
-          (Icons.groups_outlined, 'Jugadores', '${players.length}'),
-      ]),
-    ];
   }
 }
 
