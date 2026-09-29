@@ -328,16 +328,25 @@ export default {
     if (path.endsWith('/futbeat-api/v1/standings-form')) {
       const competitionId = requestUrl.searchParams.get('competitionId');
       const season = (requestUrl.searchParams.get('season') ?? '').trim();
+      // Optional cap: the published table's updatedAt (ISO 8601).
+      const until = requestUrl.searchParams.get('until');
       if (
         !validEntityId(competitionId) ||
         !competitionId?.startsWith('fb_comp_') ||
-        season.length < 1 || season.length > 20
+        season.length < 1 || season.length > 20 ||
+        (until !== null && (until.length > 40 ||
+          !/^\d{4}-\d{2}-\d{2}T/.test(until) || Number.isNaN(Date.parse(until))))
       ) {
         return reply(400, { error: 'Solicitud inválida' });
       }
       const { data: form, error } = await ctx.supabaseAdmin.rpc(
         'futbeat_read_standings_form',
-        { p_competition_id: competitionId, p_season_key: season, p_limit: 5 },
+        {
+          p_competition_id: competitionId,
+          p_season_key: season,
+          p_limit: 5,
+          p_until: until,
+        },
       );
       if (error) {
         return replyNoStore(503, { error: 'Datos temporalmente no disponibles' });

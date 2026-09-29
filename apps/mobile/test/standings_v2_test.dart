@@ -44,6 +44,12 @@ Snapshot _snapshot({
   bool grouped = false,
   bool groupsResolved = true,
   String season = '2026',
+  String? tableSeason,
+  String? seasonKey,
+  String? updatedAt,
+  bool? provisional,
+  List<Map<String, dynamic>> extraRows = const [],
+  Map<String, String> rowAliases = const {},
   List<Map<String, dynamic>> matches = const [],
 }) {
   final teams = grouped
@@ -51,35 +57,44 @@ Snapshot _snapshot({
           for (final g in ['A', 'B', 'C']) ..._teamsOf(g),
         ]
       : _teamsOf('A');
+  String stored(String id) => rowAliases[id] ?? id;
   return Snapshot({
     'schemaVersion': 1,
     'demo': false,
     'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    'entityRedirects': {
+      for (final MapEntry(:key, :value) in rowAliases.entries) value: key,
+    },
     'competitions': [
       {'id': _comp, 'name': 'Liga Tabla Dos', 'season': season},
     ],
     'teams': [
       for (final id in teams)
         {'id': id, 'name': id.endsWith('a1') ? _longName : 'Equipo $id'},
+      for (final alias in rowAliases.values)
+        {'id': alias, 'name': 'Equipo $alias'},
     ],
     'players': <dynamic>[],
     'matches': matches,
     'standings': [
       {
         'competitionId': _comp,
-        'season': season,
+        'season': tableSeason ?? season,
+        'seasonKey': ?seasonKey,
+        'updatedAt': ?updatedAt,
+        'provisional': ?provisional,
         'grouped': grouped,
         'groupsResolved': groupsResolved,
-        'rows': grouped
-            ? [
-                for (final g in ['A', 'B', 'C'])
-                  for (final (i, id) in _teamsOf(g).indexed)
-                    _row(id, i + 1, group: 'Grupo $g', points: 12 - 3 * i),
-              ]
-            : [
-                for (final (i, id) in _teamsOf('A').indexed)
-                  _row(id, i + 1, points: 12 - 3 * i),
-              ],
+        'rows': [
+          if (grouped)
+            for (final g in ['A', 'B', 'C'])
+              for (final (i, id) in _teamsOf(g).indexed)
+                _row(stored(id), i + 1, group: 'Grupo $g', points: 12 - 3 * i)
+          else
+            for (final (i, id) in _teamsOf('A').indexed)
+              _row(stored(id), i + 1, points: 12 - 3 * i),
+          ...extraRows,
+        ],
       },
     ],
   });
@@ -588,16 +603,139 @@ void main() {
     );
     expect(find.byKey(const ValueKey('standings-view-full')), findsOneWidget);
     expect(find.byKey(const ValueKey('standings-view-form')), findsNothing);
+    // An unlabelled table is never given the competition's CURRENT season
+    // (at a rollover it may be last season's table): Forma is hidden.
     await _pump(
       tester,
       _matchTab(
-        _snapshot(season: ''),
+        _snapshot(tableSeason: ''),
         home: 'fb_team_tv2_a1',
         away: 'fb_team_tv2_a2',
       ),
       repository: ApiRepository(_FormServer().dio()),
     );
+    expect(find.byKey(const ValueKey('standings-view-full')), findsOneWidget);
     expect(find.byKey(const ValueKey('standings-view-form')), findsNothing);
+  });
+
+  test(
+    'Forma season: seasonKey, else the table label, never the competition',
+    () {
+      expect(
+        standingsSeason({'seasonKey': '2025-2026', 'season': ''}),
+        '2025-2026',
+      );
+      expect(standingsSeason({'season': '2025/26'}), '2025/26');
+      expect(standingsSeason({'season': ''}), isNull);
+      expect(standingsSeason({'season': '   '}), isNull);
+    },
+  );
+
+  testWidgets('Forma is capped at a published table updatedAt; provisional '
+      'and seasonKey tables read without a cap', (tester) async {
+    final published = _FormServer();
+    await _pump(
+      tester,
+      _matchTab(
+        _snapshot(updatedAt: '2026-09-20T10:00:00Z', provisional: false),
+        home: 'fb_team_tv2_a1',
+        away: 'fb_team_tv2_a2',
+      ),
+      repository: ApiRepository(published.dio()),
+    );
+    await tester.tap(find.byKey(const ValueKey('standings-view-form')));
+    await _settle(tester);
+    expect(published.lastQuery, {
+      'competitionId': _comp,
+      'season': '2026',
+      'until': '2026-09-20T10:00:00Z',
+    });
+    final provisional = _FormServer();
+    await _pump(
+      tester,
+      _matchTab(
+        _snapshot(
+          tableSeason: '',
+          seasonKey: '2025-2026',
+          updatedAt: '2026-09-20T10:00:00Z',
+          provisional: true,
+        ),
+        home: 'fb_team_tv2_a1',
+        away: 'fb_team_tv2_a2',
+      ),
+      repository: ApiRepository(provisional.dio()),
+    );
+    await tester.tap(find.byKey(const ValueKey('standings-view-form')));
+    await _settle(tester);
+    expect(provisional.lastQuery, {
+      'competitionId': _comp,
+      'season': '2025-2026',
+    });
+  });
+
+  testWidgets('Forma of a row stored under an alias id: resolved canonically', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _matchTab(
+        _snapshot(rowAliases: {'fb_team_tv2_a1': 'fb_team_tv2_old1'}),
+        home: 'fb_team_tv2_a2',
+        away: 'fb_team_tv2_a3',
+      ),
+      repository: ApiRepository(_FormServer().dio()),
+    );
+    await tester.tap(find.byKey(const ValueKey('standings-view-form')));
+    await _settle(tester);
+    expect(_chipLetters(tester, 'fb_team_tv2_old1'), ['G', 'E', 'P']);
+    expect(
+      find.byKey(const ValueKey('standings-form-none-fb_team_tv2_old1')),
+      findsNothing,
+    );
+  });
+
+  test('a team in two groups (group + ranking of thirds): its own group, or '
+      'fail closed', () {
+    // Grupo A plus a ranking of third-placed teams holding a3 and b3.
+    final thirds = [
+      _row('fb_team_tv2_a3', 1, group: 'Mejores terceros'),
+      _row('fb_team_tv2_b3', 2, group: 'Mejores terceros'),
+    ];
+    final data = _snapshot(grouped: true, extraRows: thirds);
+    final table = standingsTableFor(data, _comp);
+    List<String?>? labels(Set<String> focus) => standingsGroups(
+      table,
+      data,
+      focusTeamIds: focus,
+    )?.map((g) => g.label).toList();
+    // One group holds both teams: only that group (old rule).
+    expect(labels({'fb_team_tv2_a1', 'fb_team_tv2_a3'}), ['Grupo A']);
+    expect(labels({'fb_team_tv2_a3'}), isNull, reason: 'A and the ranking');
+    // Only the ranking holds both teams: that table.
+    expect(labels({'fb_team_tv2_a3', 'fb_team_tv2_b3'}), ['Mejores terceros']);
+    // Cross-group where a team sits in two candidate groups: fail closed.
+    expect(labels({'fb_team_tv2_a3', 'fb_team_tv2_c1'}), isNull);
+    // Two groups hold both teams: ambiguous, fail closed.
+    final both = _snapshot(
+      grouped: true,
+      extraRows: [
+        _row('fb_team_tv2_a1', 1, group: 'Mejores terceros'),
+        _row('fb_team_tv2_a3', 2, group: 'Mejores terceros'),
+      ],
+    );
+    expect(
+      standingsGroups(
+        standingsTableFor(both, _comp),
+        both,
+        focusTeamIds: {'fb_team_tv2_a1', 'fb_team_tv2_a3'},
+      ),
+      isNull,
+    );
+    // Cross-group, each team in exactly one group: both groups.
+    expect(labels({'fb_team_tv2_a1', 'fb_team_tv2_c1'}), [
+      'Grupo A',
+      'Grupo C',
+    ]);
   });
 
   test('StandingsForm keeps only real results', () {
@@ -664,5 +802,39 @@ void main() {
     expect(find.text('Grupo C'), findsOneWidget);
     expect(find.text('#1'), findsOneWidget);
     expect(find.text('#2'), findsOneWidget);
+  });
+
+  testWidgets('Posición en la tabla: a team also in a ranking keeps its own '
+      'group position', (tester) async {
+    final data = _snapshot(
+      grouped: true,
+      extraRows: [
+        _row('fb_team_tv2_a3', 1, group: 'Mejores terceros'),
+        _row('fb_team_tv2_b3', 2, group: 'Mejores terceros'),
+      ],
+      matches: [
+        {
+          'id': 'fb_match_tv2_grp',
+          'competitionId': _comp,
+          'homeTeamId': 'fb_team_tv2_a1',
+          'awayTeamId': 'fb_team_tv2_a3',
+          'startTime': DateTime.now()
+              .toUtc()
+              .add(const Duration(days: 2))
+              .toIso8601String(),
+          'status': 'SCHEDULED',
+          'events': <dynamic>[],
+          'statistics': <dynamic>[],
+        },
+      ],
+    );
+    await _pump(
+      tester,
+      StandingsSnapshotCard(data: data, match: data.matches.single),
+    );
+    expect(find.text('#1'), findsOneWidget);
+    expect(find.text('#3'), findsOneWidget);
+    expect(find.text('Mejores terceros'), findsNothing);
+    expect(find.text('Grupo A'), findsNothing);
   });
 }

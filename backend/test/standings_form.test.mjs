@@ -38,8 +38,16 @@ async function match(db, { comp, home, away, at, status = 'VERIFIED', score = [1
 const redirect = (db, kind, alias, canonical) => db.query(
   'insert into futbeat_private.entity_redirects(alias_id,canonical_id,kind,reason) values($1,$2,$3,$4)',
   [alias, canonical, kind, 'test']);
-const form = async (db, comp, season = '2026', limit = 5) =>
-  (await db.query('select public.futbeat_read_standings_form($1,$2,$3) v', [comp, season, limit])).rows[0].v;
+const form = async (db, comp, season = '2026', limit = 5, until = null) =>
+  (await db.query('select public.futbeat_read_standings_form($1,$2,$3,$4) v', [comp, season, limit, until])).rows[0].v;
+// A stored table (standings_snapshots) for comp+season; groups: [[teamId...], ...].
+async function snapshot(db, comp, groups, { season = '2026', labelled = true } = {}) {
+  const rows = groups.flatMap((teams, g) => teams.map((teamId, i) => ({
+    teamId, position: i + 1, ...(labelled ? { group: `Grupo ${String.fromCharCode(65 + g)}` } : {}),
+    played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, points: 0 })));
+  await db.query(`insert into futbeat_private.standings_snapshots(competition_id,season_key,season,table_payload,fetched_at)
+    values($1,$2,$2,$3,now())`, [comp, season, JSON.stringify({ competitionId: comp, season, rows })]);
+}
 
 test('newest first, WIN/DRAW/LOSS from each side, reversed home/away by id', () => withDb(async (db) => {
   const comp = await competition(db);
@@ -136,6 +144,7 @@ test('limit: at most p_limit per team (default 5, clamped to 1..10)', () => with
   assert.equal((await form(db, comp, '2026', 50)).limit, 10);
   assert.equal((await form(db, comp, '2026', 0)).teams[A].results.length, 1);
   const def = (await db.query("select public.futbeat_read_standings_form($1,'2026') v", [comp])).rows[0].v;
+  assert.equal(def.until, null);
   assert.equal(def.limit, 5);
   assert.equal(def.matchesConsidered, 12);
 }));
@@ -148,7 +157,7 @@ test('unknown competition or blank season: null', () => withDb(async (db) => {
 }));
 
 test('grants: service_role only; security definer with empty search_path', () => withDb(async (db) => {
-  const fn = 'public.futbeat_read_standings_form(text,text,integer)';
+  const fn = 'public.futbeat_read_standings_form(text,text,integer,timestamptz)';
   for (const role of ['anon', 'authenticated', 'public']) {
     const ok = role === 'public'
       ? (await db.query(`select exists(select 1 from pg_proc p, aclexplode(p.proacl) a
@@ -180,7 +189,7 @@ test('candidates come from the competitionId index (no global scan of matches)',
   assert.match(plan, /entities_match_competition_idx/);
   assert.doesNotMatch(plan, /Seq Scan on entities/);
   // The function uses that same predicate shape.
-  const def = (await db.query("select pg_get_functiondef('public.futbeat_read_standings_form(text,text,integer)'::regprocedure) d")).rows[0].d;
+  const def = (await db.query("select pg_get_functiondef('public.futbeat_read_standings_form(text,text,integer,timestamptz)'::regprocedure) d")).rows[0].d;
   assert.match(def, /e\.payload->>'competitionId'=any\(comp_ids\)/);
   // Real data through the function still works with the synthetic catalog.
   await db.query("insert into futbeat_private.entities values('fb_comp_sfx1','competition','{\"id\":\"fb_comp_sfx1\",\"name\":\"X\"}')");
@@ -225,7 +234,9 @@ test('API: validates ids and season; normal cache policy; one DB-only read', () 
   const { call, rpcs } = await api(db);
   for (const bad of ['', `?competitionId=${comp}`, '?competitionId=fb_team_abcdef&season=2026',
     `?competitionId=${comp}&season=`, `?competitionId=${comp}&season=${'x'.repeat(21)}`,
-    '?competitionId=fb_comp_%27;drop&season=2026', '?competitionId=comp_1234&season=2026']) {
+    '?competitionId=fb_comp_%27;drop&season=2026', '?competitionId=comp_1234&season=2026',
+    `?competitionId=${comp}&season=2026&until=yesterday`, `?competitionId=${comp}&season=2026&until=2026-13-45T00:00:00Z`,
+    `?competitionId=${comp}&season=2026&until=${'2026-09-01T00:00:00Z'.padEnd(41, '0')}`]) {
     const r = await call(bad);
     assert.equal(r.status, 400, bad);
   }
@@ -235,6 +246,89 @@ test('API: validates ids and season; normal cache policy; one DB-only read', () 
   assert.deepEqual(ok.body.teams[A].results, ['WIN']);
   assert.match(ok.cache, /max-age=30/);
   assert.deepEqual(rpcs, ['futbeat_read_standings_form']);
+  const capped = await call(`?competitionId=${comp}&season=2026&until=${encodeURIComponent(new Date(Date.now() - 2 * DAY).toISOString())}`);
+  assert.equal(capped.status, 200);
+  assert.deepEqual(capped.body.teams, {});
   const missing = await call('?competitionId=fb_comp_nothere&season=2026');
   assert.equal(missing.status, 404);
+}));
+
+// ---------------------------------------------------------------------------
+// Review follow-ups: groups, published-table cap, terminal shortcut
+// ---------------------------------------------------------------------------
+
+test('grouped table: only matches between two teams of the same group count (knockout never)', () => withDb(async (db) => {
+  const comp = await competition(db);
+  const [A1, A2, B1, B2] = [await team(db), await team(db), await team(db), await team(db)];
+  const a1Alias = await team(db);
+  await redirect(db, 'team', a1Alias, A1);
+  await snapshot(db, comp, [[a1Alias, A2], [B1, B2]]);
+  const now = Date.now();
+  const group = await match(db, { comp, home: A1, away: A2, at: now - 9 * DAY, score: [1, 0] });
+  const groupB = await match(db, { comp, home: B2, away: B1, at: now - 8 * DAY, score: [2, 2] });
+  // Knockout stage of the same season: cross-group, never in the group form.
+  await match(db, { comp, home: A1, away: B1, at: now - 2 * DAY, score: [0, 3] });
+  const f = await form(db, comp);
+  assert.equal(f.groupFilter, true);
+  assert.deepEqual(f.teams[A1], { results: ['WIN'], matchIds: [group] });
+  assert.deepEqual(f.teams[B1], { results: ['DRAW'], matchIds: [groupB] });
+  assert.equal(f.matchesConsidered, 2);
+}));
+
+test('single-group table: a team outside the table never brings its matches in', () => withDb(async (db) => {
+  const comp = await competition(db);
+  const [A, B, X] = [await team(db), await team(db), await team(db)];
+  await snapshot(db, comp, [[A, B]], { labelled: false });
+  const now = Date.now();
+  const league = await match(db, { comp, home: A, away: B, at: now - 5 * DAY });
+  await match(db, { comp, home: X, away: A, at: now - DAY, score: [5, 0] });
+  const f = await form(db, comp);
+  assert.deepEqual(f.teams[A].matchIds, [league]);
+  assert.equal(f.teams[X], undefined);
+}));
+
+test('p_until: a published table never gets results newer than itself (3 h margin)', () => withDb(async (db) => {
+  const comp = await competition(db);
+  const [A, B] = [await team(db), await team(db)];
+  const now = Date.now();
+  const older = await match(db, { comp, home: A, away: B, at: now - 5 * DAY, score: [1, 0] });
+  await match(db, { comp, home: A, away: B, at: now - 2 * DAY, score: [0, 1] });
+  // Kicked off 1 h before the table was fetched: possibly not in J/Pts.
+  await match(db, { comp, home: A, away: B, at: now - 4 * DAY - 3600e3, score: [0, 2] });
+  const f = await form(db, comp, '2026', 5, iso(now - 4 * DAY));
+  assert.deepEqual(f.teams[A], { results: ['WIN'], matchIds: [older] });
+  assert.equal(f.until !== null, true);
+  assert.equal((await form(db, comp)).teams[A].results.length, 3);
+}));
+
+test('shootouts: the stored draw counts as DRAW', () => withDb(async (db) => {
+  const comp = await competition(db);
+  const [A, B] = [await team(db), await team(db)];
+  await match(db, { comp, home: A, away: B, at: Date.now() - DAY, score: [1, 1], extra: { penalties: { home: 4, away: 3 } } });
+  const f = await form(db, comp);
+  assert.deepEqual([f.teams[A].results, f.teams[B].results], [['DRAW'], ['DRAW']]);
+}));
+
+test('terminal shortcut is equivalent: match_read_model_core keeps a terminal payload status and score', () => withDb(async (db) => {
+  const comp = await competition(db);
+  const [A, B] = [await team(db), await team(db)];
+  const at = Date.now() - DAY;
+  for (const status of ['VERIFIED', 'FINISHED_PENDING_VERIFICATION']) {
+    const id = await match(db, { comp, home: A, away: B, at, status, score: [2, 1],
+      extra: { provenance: { receivedAt: iso(at + 3 * 3600e3) } } });
+    // Later contradicting evidence: a LIVE observation with another score.
+    await db.query(`insert into futbeat_private.provider_observations(provider,external_match_id,canonical_match_id,
+        received_at,provider_observed_at,status,minute,home_score,away_score,events,payload_hash,raw_payload)
+      values('goal_api',$1,$2,$3,$3,'LIVE',80,0,0,'[]'::jsonb,$4,'{}'::jsonb)`,
+    [`sf-obs-${id}`, id, iso(at + 4 * 3600e3), (status[0] === 'V' ? 'a' : 'b').repeat(64)]);
+    const payload = (await db.query('select payload from futbeat_private.entities where id=$1', [id])).rows[0].payload;
+    const model = (await db.query('select futbeat_private.match_read_model_core($1,false) m', [payload])).rows[0].m;
+    assert.equal(model.status, status);
+    assert.deepEqual(model.score, { home: 2, away: 1 });
+  }
+  const f = await form(db, comp);
+  assert.deepEqual(f.teams[A].results, ['WIN', 'WIN']);
+  // A non-integer stored score is never taken as final (same as the model).
+  await match(db, { comp, home: A, away: B, at: at + 3600e3, status: 'VERIFIED', score: [1.5, 0] });
+  assert.equal((await form(db, comp)).matchesConsidered, 2);
 }));

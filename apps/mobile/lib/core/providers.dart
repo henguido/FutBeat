@@ -676,13 +676,20 @@ class ApiRepository implements FootballRepository {
 
   /// Tabla v2 "Forma" (#158), loaded only when the user opens it. DB-only on
   /// the server. One attempt: the table itself is already on screen.
+  /// [until]: a published table's updatedAt, so the chips never show a
+  /// result its J/Pts do not include yet.
   Future<StandingsForm> loadStandingsForm(
     String competitionId,
-    String season,
-  ) async => StandingsForm(
+    String season, {
+    String? until,
+  }) async => StandingsForm(
     await _getJson(
       '/v1/standings-form',
-      queryParameters: {'competitionId': competitionId, 'season': season},
+      queryParameters: {
+        'competitionId': competitionId,
+        'season': season,
+        'until': ?until,
+      },
       maxAttempts: 1,
     ),
   );

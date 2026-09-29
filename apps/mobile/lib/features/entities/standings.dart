@@ -41,13 +41,15 @@ typedef StandingsGroup = ({String? label, List<Json> rows});
 ///  * no rows, or the server could not tell its groups apart;
 ///  * a row whose team entity is unknown (never a placeholder name);
 ///  * a repeated position inside one group (unlabelled groups mixed).
-/// With [focusTeamIds] and several groups, only the groups holding a focus
-/// team are returned: a team profile shows the team's group and a Match
-/// Center the match's group. When the match's teams sit in different groups
-/// (e.g. a knockout between group winners) each team's own group is
-/// returned, as separate labelled tables, never merged into one. Null when a
-/// focus team is in no group, or when several groups would be shown and one
-/// has no label (they could not be told apart).
+/// With [focusTeamIds] and several groups:
+///  * one group holds every focus team: only that group (a team profile
+///    shows the team's group, a Match Center the match's group);
+///  * several groups hold them all (e.g. "Grupo A" plus a ranking of
+///    third-placed teams): null, the right one cannot be told;
+///  * no group holds them all (a knockout between teams of different
+///    groups): each focus team's own group, as separate labelled tables,
+///    never merged. Null when a focus team is in no group or in more than
+///    one, or when one of those groups has no label.
 List<StandingsGroup>? standingsGroups(
   Json? table,
   Snapshot data, {
@@ -77,27 +79,30 @@ List<StandingsGroup>? standingsGroups(
   if (focusTeamIds.isEmpty || all.length == 1) return all;
   bool holds(StandingsGroup group, String id) =>
       group.rows.any((row) => row['teamId'] == id);
-  final holding = [
+  final whole = [
     for (final group in all)
-      if (focusTeamIds.any((id) => holds(group, id))) group,
+      if (focusTeamIds.every((id) => holds(group, id))) group,
   ];
-  if (!focusTeamIds.every((id) => holding.any((g) => holds(g, id)))) {
-    return null;
+  if (whole.isNotEmpty) return whole.length == 1 ? whole : null;
+  final picked = <int>{};
+  for (final id in focusTeamIds) {
+    final candidates = [
+      for (var i = 0; i < all.length; i++)
+        if (holds(all[i], id)) i,
+    ];
+    if (candidates.length != 1) return null;
+    picked.add(candidates.single);
   }
-  if (holding.length > 1 && holding.any((group) => group.label == null)) {
-    return null;
-  }
-  return holding;
+  final own = [for (final i in picked.toList()..sort()) all[i]];
+  return own.any((group) => group.label == null) ? null : own;
 }
 
-/// Normalized-enough season label of [table] for the Forma read: the
-/// table's own label, else the competition's current season (the same rule
-/// the server uses to file an unlabelled table). Null when unknown.
-String? standingsSeason(Snapshot data, Json table) {
-  for (final value in [
-    table['season'],
-    data.competition(table['competitionId']?.toString() ?? '')?.json['season'],
-  ]) {
+/// Season of [table] for the Forma read: its exact key (`seasonKey`, set
+/// when the table was filed) or its own label. Null when the table carries
+/// neither: Forma is then hidden, never guessed from the competition's
+/// current season (an old table at a rollover would get the new season).
+String? standingsSeason(Json table) {
+  for (final value in [table['seasonKey'], table['season']]) {
     final text = value?.toString().trim() ?? '';
     if (text.isNotEmpty && text.length <= 20) return text;
   }
@@ -146,17 +151,25 @@ class Standings extends StatefulWidget {
   State<Standings> createState() => _StandingsState();
 }
 
+/// What one Forma read is for: a competition, the table's season and, for a
+/// published (non-provisional) table, its updatedAt as the upper bound.
+typedef _FormIdentity = ({String competitionId, String season, String? until});
+
 class _StandingsState extends State<Standings> {
   StandingsView _view = StandingsView.compact;
   bool _restored = false;
 
-  // Forma: loaded once per competition+season, only when opened.
-  String? _formKey;
+  // Forma: loaded once per identity, only when opened.
+  _FormIdentity? _formKey;
   StandingsForm? _form;
   bool _formLoading = false;
   bool _formFailed = false;
 
-  String get _storageId => 'standings-view-${widget.competitionId}';
+  String get _storageId {
+    final table = standingsTableFor(widget.data, widget.competitionId);
+    final season = table == null ? null : _season(table);
+    return 'standings-view-${widget.competitionId}-${season ?? ''}';
+  }
 
   @override
   void didChangeDependencies() {
@@ -167,6 +180,18 @@ class _StandingsState extends State<Standings> {
     final saved = PageStorage.maybeOf(context)
         ?.readState(context, identifier: _storageId);
     if (saved is StandingsView) _view = saved;
+  }
+
+  @override
+  void didUpdateWidget(Standings oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_formKey != null && _formKey != _formIdentity()) {
+      // Another table (competition/season/publication): read Forma again.
+      _formKey = null;
+      _form = null;
+      _formFailed = false;
+      _formLoading = false;
+    }
   }
 
   /// The API repository when the app reads the cloud (demo/tests: null).
@@ -182,13 +207,27 @@ class _StandingsState extends State<Standings> {
     }
   }
 
-  /// competition|season of the Forma read, or null when Forma is hidden.
-  String? _formIdentity(Json table) {
-    if (widget.data.demo || _api() == null) return null;
-    final season = widget.season?.trim().isNotEmpty == true
-        ? widget.season!.trim()
-        : standingsSeason(widget.data, table);
-    return season == null ? null : '${widget.competitionId}|$season';
+  String? _season(Json table) => widget.season?.trim().isNotEmpty == true
+      ? widget.season!.trim()
+      : standingsSeason(table);
+
+  /// The Forma read of the current table, or null when Forma is hidden.
+  _FormIdentity? _formIdentity() {
+    if (!widget.selectableView || widget.data.demo || _api() == null) {
+      return null;
+    }
+    final table = standingsTableFor(widget.data, widget.competitionId);
+    final season = table == null ? null : _season(table);
+    if (table == null || season == null) return null;
+    final updatedAt = table['updatedAt']?.toString() ?? '';
+    return (
+      competitionId: widget.competitionId,
+      season: season,
+      // A provisional table already includes recent results: no bound.
+      until: table['provisional'] == true || updatedAt.isEmpty
+          ? null
+          : updatedAt,
+    );
   }
 
   void _select(StandingsView view) {
@@ -197,10 +236,9 @@ class _StandingsState extends State<Standings> {
         ?.writeState(context, view, identifier: _storageId);
   }
 
-  Future<void> _loadForm(String identity) async {
+  Future<void> _loadForm(_FormIdentity identity) async {
     final api = _api();
     if (api == null || _formLoading) return;
-    final separator = identity.indexOf('|');
     setState(() {
       _formKey = identity;
       _formLoading = true;
@@ -208,8 +246,9 @@ class _StandingsState extends State<Standings> {
     });
     try {
       final form = await api.loadStandingsForm(
-        identity.substring(0, separator),
-        identity.substring(separator + 1),
+        identity.competitionId,
+        identity.season,
+        until: identity.until,
       );
       if (mounted && _formKey == identity) setState(() => _form = form);
     } catch (_) {
@@ -243,14 +282,7 @@ class _StandingsState extends State<Standings> {
         ),
       );
     }
-    final formIdentity = widget.selectableView ? _formIdentity(table) : null;
-    if (_formKey != null && _formKey != formIdentity) {
-      // Another table (competition/season): its Forma is read again.
-      _formKey = null;
-      _form = null;
-      _formFailed = false;
-      _formLoading = false;
-    }
+    final formIdentity = _formIdentity();
     final views = [
       StandingsView.compact,
       StandingsView.full,
@@ -406,6 +438,7 @@ const double _fullMinWidth = 560;
 class _Entry {
   _Entry({
     required this.teamId,
+    required this.formTeamId,
     required this.team,
     required this.position,
     required this.values,
@@ -418,6 +451,7 @@ class _Entry {
     final ga = value('ga');
     return _Entry(
       teamId: teamId,
+      formTeamId: data.resolveEntityId(teamId),
       // standingsGroups only lets through rows whose team is known.
       team: data.team(teamId)!,
       position: (row['position'] as num?)?.toInt() ?? index + 1,
@@ -435,6 +469,9 @@ class _Entry {
   }
 
   final String teamId;
+
+  /// [teamId] through the snapshot's entity redirects (canonical id).
+  final String formTeamId;
   final Entity team;
   final int position;
   final Map<String, int> values;
@@ -511,7 +548,8 @@ class _Table extends StatelessWidget {
               accent: highlightedTeams[entries[i].teamId],
               live: liveTeamIds.contains(entries[i].teamId),
               divider: i > 0,
-              form: form?.results(entries[i].teamId) ?? const [],
+              // Stored rows may carry an alias; Forma is keyed canonically.
+              form: form?.results(entries[i].formTeamId) ?? const [],
             ),
         ],
       ),
