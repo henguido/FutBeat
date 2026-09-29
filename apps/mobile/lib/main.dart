@@ -86,8 +86,13 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
         for (final type in ['team', 'player', 'competition'])
           GoRoute(
             path: '/$type/:id',
-            builder: (_, state) =>
-                EntityScreen(type: type, id: state.pathParameters['id']!),
+            builder: (_, state) => EntityScreen(
+              type: type,
+              id: state.pathParameters['id']!,
+              // Opened from a match: that competition + season (#161).
+              competitionId: state.uri.queryParameters['competitionId'],
+              season: state.uri.queryParameters['season'],
+            ),
           ),
       ],
     ),

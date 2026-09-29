@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
-import '../matches/matches_screen.dart';
+import 'profile_context_bar.dart';
 import 'profile_widgets.dart';
 import 'standings.dart';
 import 'team_matches_tab.dart';
+import 'team_summary.dart';
 
 /// Squad sections in display order; "Otros" holds unclassifiable positions.
 const squadGroupOrder = [
@@ -59,10 +62,31 @@ int? _shirtNumber(Entity player) {
   return int.tryParse(value?.toString() ?? '');
 }
 
-/// Players grouped by position, each group sorted by shirt number then name.
+/// Age in whole years from `age` or `dateOfBirth` (null when unknown).
+int? playerAge(Entity player, {DateTime? now}) {
+  final value = player.json['age'];
+  final born = DateTime.tryParse(player.json['dateOfBirth']?.toString() ?? '');
+  if (born != null) {
+    final today = now ?? DateTime.now();
+    var years = today.year - born.year;
+    if (today.month < born.month ||
+        (today.month == born.month && today.day < born.day)) {
+      years--;
+    }
+    // An implausible birth date falls back to the provider's age.
+    if (years > 0 && years < 80) return years;
+  }
+  if (value is num && value > 0 && value < 80) return value.toInt();
+  return null;
+}
+
+/// Players grouped by position, each group sorted by shirt number then name;
+/// each canonical player once.
 List<(String, List<Entity>)> squadGroups(Iterable<Entity> players) {
   final groups = <String, List<Entity>>{};
+  final seen = <String>{};
   for (final player in players) {
+    if (!seen.add(player.id)) continue;
     groups
         .putIfAbsent(squadGroupOf(player.json['position']), () => [])
         .add(player);
@@ -110,12 +134,14 @@ String? teamTableCompetitionId(Snapshot data, Entity team) {
   return candidates.length == 1 ? candidates.single : null;
 }
 
-class TeamProfileView extends StatelessWidget {
+class TeamProfileView extends ConsumerWidget {
   const TeamProfileView({
     required this.data,
     required this.team,
     required this.competitions,
     required this.matches,
+    this.initialCompetitionId,
+    this.initialSeason,
     super.key,
   });
 
@@ -124,16 +150,72 @@ class TeamProfileView extends StatelessWidget {
   final List<Entity> competitions;
   final List<FootballMatch> matches;
 
+  /// Context of the match the profile was opened from (#161), if any.
+  final String? initialCompetitionId;
+  final String? initialSeason;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final players = data.players
         .where((player) => player.json['teamId'] == team.id)
         .toList();
+    // Competition + season context: the user's choice this session, else the
+    // match it was opened from, else the server's default.
+    final request = profileContextRequest(
+      ref,
+      team.id,
+      initialCompetitionId: initialCompetitionId,
+      initialSeason: initialSeason,
+    );
+    // Loading or failed: the last context shown (or the profile's own
+    // snapshot) stays; the profile is never blocked.
+    ref.listen(teamContextProvider(request), (_, next) {
+      final value = next.asData?.value;
+      if (value != null) {
+        ref.read(lastTeamContextProvider.notifier).remember(value);
+      }
+    });
+    final current = ref.watch(teamContextProvider(request));
+    final teamContext =
+        current.asData?.value ?? ref.watch(lastTeamContextProvider)[team.id];
+    // The requested context failed: the last one stays, and says so.
+    final switchFailed = current.hasError && teamContext != null;
+    final selected = teamContext?.selected;
     final tableId = teamTableCompetitionId(data, team);
+    // The selected season's exact table; for the competition's current
+    // season the profile's own cached table is the same table.
+    final cachedCurrent =
+        selected != null &&
+        selected.currentSeason &&
+        tableId == selected.competitionId &&
+        normalizeSeasonKey(
+              standingsTableFor(data, tableId!)?['season']?.toString(),
+            ) ==
+            selected.seasonKey;
+    final contextTable = selected != null;
+    // The table the summary shows: the selected context's exact table, or
+    // (no context) the profile's own table choice.
+    final summaryTable = selected != null
+        ? (teamContext!.standings.isNotEmpty
+              ? (
+                  snapshot: teamContext.tableSnapshot(data),
+                  competitionId: selected.competitionId,
+                  label: selected.label,
+                )
+              : cachedCurrent
+              ? (snapshot: data, competitionId: tableId, label: selected.label)
+              : null)
+        : tableId == null
+        ? null
+        : (
+            snapshot: data,
+            competitionId: tableId,
+            label: data.competition(tableId)?.name ?? 'Tabla',
+          );
     final tabs = [
       'Resumen',
       'Partidos',
-      if (tableId != null) 'Tabla',
+      if (contextTable || tableId != null) 'Tabla',
       'Plantilla',
       'Noticias',
       'Transferencias',
@@ -143,16 +225,61 @@ class TeamProfileView extends StatelessWidget {
     Widget body(String tab) => switch (tab) {
       'Resumen' => ProfileTabList('resumen', [
         if (data.demo) const DemoNotice(),
-        ..._summary(context, players),
+        Builder(
+          builder: (tabContext) => TeamSummary(
+            data: data,
+            team: team,
+            matches: matches,
+            competitions: competitions,
+            players: players.length,
+            table: summaryTable?.snapshot,
+            tableCompetitionId: summaryTable?.competitionId,
+            tableLabel: summaryTable?.label,
+            onOpenTab: (tab) {
+              final index = tabs.indexOf(tab);
+              if (index >= 0) {
+                DefaultTabController.of(tabContext).animateTo(index);
+              }
+            },
+          ),
+        ),
       ]),
-      'Partidos' => TeamMatchesTab(team: team, data: data, matches: matches),
+      'Partidos' => TeamMatchesTab(
+        team: team,
+        data: data,
+        matches: matches,
+        contextOption: selected,
+      ),
       'Tabla' => ProfileTabList('tabla', [
         if (data.demo) const DemoNotice(),
-        Standings(data, tableId!, focusTeamIds: {team.id}),
+        if (contextTable)
+          if (teamContext!.standings.isEmpty && cachedCurrent)
+            Standings(data, tableId, focusTeamIds: {team.id})
+          else if (teamContext.standings.isEmpty)
+            const InlineEmpty(
+              Icons.table_rows_outlined,
+              'Tabla no disponible',
+              key: ValueKey('profile-context-no-table'),
+            )
+          else
+            Standings(
+              teamContext.tableSnapshot(data),
+              selected.competitionId,
+              focusTeamIds: {team.id},
+            )
+        else
+          Standings(data, tableId!, focusTeamIds: {team.id}),
       ]),
       'Plantilla' => ProfileTabList('plantilla', [
         if (data.demo) const DemoNotice(),
-        TeamSquad(players, demo: data.demo, state: data.squadState),
+        TeamSquad(
+          players,
+          demo: data.demo,
+          state: data.squadState,
+          updatedAt: DateTime.tryParse(
+            ((data.coverage?['squad'] as Map?)?['updatedAt'])?.toString() ?? '',
+          ),
+        ),
       ]),
       'Noticias' => ProfileTabList('noticias', [
         if (data.demo) const DemoNotice(),
@@ -192,6 +319,18 @@ class TeamProfileView extends StatelessWidget {
                 players: players.length,
               ),
             ),
+            if (teamContext != null && selected != null)
+              SliverToBoxAdapter(
+                child: ProfileContextBar(
+                  options: teamContext.options,
+                  selected: selected,
+                  failed: switchFailed,
+                  onRetry: () => ref.invalidate(teamContextProvider(request)),
+                  onSelect: (option) => ref
+                      .read(profileContextSelectionProvider.notifier)
+                      .select(team.id, option),
+                ),
+              ),
             SliverOverlapAbsorber(
               handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
               sliver: SliverPersistentHeader(
@@ -204,37 +343,6 @@ class TeamProfileView extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  List<Widget> _summary(BuildContext context, List<Entity> players) {
-    final active = matches.where((m) => m.isLive || m.isUpcoming).take(2);
-    final finished = matches.where((m) => m.isFinished).toList();
-    final main = competitions.firstOrNull;
-    return [
-      const ProfileSectionTitle('Partidos destacados'),
-      if (active.isEmpty)
-        const InlineEmpty(Icons.event_outlined, 'Sin partidos próximos')
-      else
-        for (final match in active) MatchCard(match, data),
-      if (finished.isNotEmpty) ...[
-        const ProfileSectionTitle('Último resultado'),
-        MatchCard(finished.last, data),
-      ],
-      const ProfileSectionTitle('Competiciones'),
-      if (competitions.isEmpty)
-        const InlineEmpty(Icons.emoji_events_outlined, 'Sin competiciones')
-      else
-        for (final competition in competitions.take(3))
-          EntityTile(competition, 'competition'),
-      const ProfileSectionTitle('Información'),
-      ProfileInfoCard([
-        if (team.country.isNotEmpty) (Icons.public, 'País', team.country),
-        if (main != null)
-          (Icons.emoji_events_outlined, 'Competición principal', main.name),
-        if (players.isNotEmpty)
-          (Icons.groups_outlined, 'Jugadores', '${players.length}'),
-      ]),
-    ];
   }
 }
 
@@ -353,13 +461,22 @@ class TeamHeader extends StatelessWidget {
 }
 
 class TeamSquad extends StatelessWidget {
-  const TeamSquad(this.players, {this.demo = false, this.state, super.key});
+  const TeamSquad(
+    this.players, {
+    this.demo = false,
+    this.state,
+    this.updatedAt,
+    super.key,
+  });
 
   final List<Entity> players;
   final bool demo;
 
   /// Server squad state (see [Snapshot.squadState]).
   final String? state;
+
+  /// When the stored squad was last confirmed (shown only while STALE).
+  final DateTime? updatedAt;
 
   @override
   Widget build(BuildContext context) {
@@ -375,19 +492,39 @@ class TeamSquad extends StatelessWidget {
               key: ValueKey('squad-pending'),
             );
     }
+    final groups = squadGroups(players);
+    final count = groups.fold<int>(0, (sum, g) => sum + g.$2.length);
+    final stale = state == 'STALE';
+    // Costa Rica day, like the rest of the profile; a future date (clock
+    // skew) is never shown.
+    final now = costaRicaNow();
+    final raw = updatedAt;
+    final since = raw == null ? null : costaRicaTime(raw.toUtc());
+    final sinceShown = since != null && !since.isAfter(now) ? since : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(2, 8, 2, 0),
           child: Text(
-            demo
-                ? 'Selección de jugadores de demostración'
-                : '${players.length} jugadores',
+            [
+              demo
+                  ? 'Selección de jugadores de demostración'
+                  : count == 1
+                  ? '1 jugador'
+                  : '$count jugadores',
+              // Stored squad older than its freshness window: say since when.
+              if (stale && sinceShown != null)
+                'Actualizada el ${sinceShown.day} ${_months[sinceShown.month - 1]}'
+                    '${sinceShown.year == now.year ? '' : ' ${sinceShown.year}'}'
+              else if (stale)
+                'Pendiente de actualizar',
+            ].join(' · '),
+            key: const ValueKey('squad-summary'),
             style: const TextStyle(color: muted, fontSize: 12),
           ),
         ),
-        for (final (label, group) in squadGroups(players)) ...[
+        for (final (label, group) in groups) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(2, 14, 2, 8),
             child: Row(
@@ -446,8 +583,10 @@ class SquadPlayerRow extends StatelessWidget {
     final position =
         _groupSingular[group] ??
         playerPositionLabel(player.json['position']?.toString() ?? '');
+    final age = playerAge(player);
     final subtitle = [
       if (position.isNotEmpty) position,
+      if (age != null) '$age años',
       if (nationality.isNotEmpty) nationality,
     ].join(' · ');
     return InkWell(

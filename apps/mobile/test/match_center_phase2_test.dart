@@ -388,7 +388,14 @@ void main() {
     final bar = tester.widget<TabBar>(find.byType(TabBar));
     expect(
       [for (final t in bar.tabs) (t as Tab).text],
-      ['Previa', 'En vivo', 'Alineación', 'Tabla', 'Estadísticas', 'Cara a cara'],
+      [
+        'Previa',
+        'En vivo',
+        'Alineación',
+        'Tabla',
+        'Estadísticas',
+        'Cara a cara',
+      ],
     );
     expect(bar.controller!.length, 6);
     expect(bar.isScrollable, true);
@@ -525,10 +532,7 @@ void main() {
     await _tab(tester, 'Cara a cara');
     // #99 v2: a cache miss is not "no previous meetings".
     expect(find.text('Cargando historial'), findsOneWidget);
-    expect(
-      find.text('Sin enfrentamientos previos registrados'),
-      findsNothing,
-    );
+    expect(find.text('Sin enfrentamientos previos registrados'), findsNothing);
     expect(find.text('Sin enfrentamientos anteriores'), findsNothing);
     expect(find.textContaining('nunca', findRichText: true), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);

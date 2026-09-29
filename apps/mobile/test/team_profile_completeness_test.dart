@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/models.dart';
+import 'package:futbeat/core/profile_context.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/team_matches.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
@@ -106,11 +107,21 @@ class _FakeTeamApi extends ApiRepository {
     String bucket, {
     String? cursor,
     int limit = teamMatchesPageSize,
+    String? competitionId,
+    String? season,
   }) async {
     calls.add('$teamId:$bucket:$cursor');
     if (fail) throw DioException(requestOptions: RequestOptions());
     return TeamMatchesPage(pages[bucket]?[cursor] ?? _page(const []));
   }
+
+  // No profile context server here: the profile keeps its own snapshot.
+  @override
+  Future<TeamContext> loadTeamContext(
+    String teamId, {
+    String? competitionId,
+    String? season,
+  }) async => throw DioException(requestOptions: RequestOptions());
 }
 
 Map<String, dynamic> _page(
@@ -148,6 +159,8 @@ Future<void> _pump(
         (ref, request) async => Snapshot(profile),
       ),
       followsProvider.overrideWith((ref) => Stream.value({})),
+      // No profile context server in these tests (#161 has its own).
+      teamContextProvider.overrideWith((ref, request) async => null),
       if (repository != null) repositoryProvider.overrideWithValue(repository),
     ],
   );
@@ -180,6 +193,15 @@ Future<void> _openTab(WidgetTester tester, String label) async {
 /// Vertical order of two texts on screen.
 bool _above(WidgetTester tester, Finder a, Finder b) =>
     tester.getTopLeft(a).dy < tester.getTopLeft(b).dy;
+
+/// Compact profile match rows (#157), by match id / all of them.
+Finder _matchRow(String id) => find.byKey(ValueKey('profile-match-$id'));
+final _matchRows = find.byWidgetPredicate(
+  (w) =>
+      w.key is ValueKey<String> &&
+      (w.key! as ValueKey<String>).value.startsWith('profile-match-') &&
+      !(w.key! as ValueKey<String>).value.startsWith('profile-match-result-'),
+);
 
 void main() {
   group('Partidos', () {
@@ -221,8 +243,22 @@ void main() {
         expect(find.text('En vivo'), findsNothing);
         expect(find.text('Próximos'), findsOneWidget);
         expect(find.text('Resultados'), findsOneWidget);
-        expect(find.text('FINALIZADO'), findsOneWidget);
-        expect(find.text('PROGRAMADO'), findsNWidgets(2));
+        expect(_matchRow('m_res1'), findsOneWidget);
+        expect(_matchRow('m_up1'), findsOneWidget);
+        expect(_matchRow('m_up2'), findsOneWidget);
+        // Each in its own bucket, in order.
+        expect(
+          _above(tester, find.text('Próximos'), _matchRow('m_up1')),
+          isTrue,
+        );
+        expect(
+          _above(tester, _matchRow('m_up2'), find.text('Resultados')),
+          isTrue,
+        );
+        expect(
+          _above(tester, find.text('Resultados'), _matchRow('m_res1')),
+          isTrue,
+        );
         expect(find.byType(CircularProgressIndicator), findsNothing);
       },
     );
@@ -247,15 +283,15 @@ void main() {
       );
       await _openTab(tester, 'Partidos');
       expect(
-        _above(tester, find.text('Próximos'), find.text('PROGRAMADO')),
+        _above(tester, find.text('Próximos'), _matchRow('m_next')),
         isTrue,
       );
       expect(
-        _above(tester, find.text('PROGRAMADO'), find.text('Resultados')),
+        _above(tester, _matchRow('m_next'), find.text('Resultados')),
         isTrue,
       );
       expect(
-        _above(tester, find.text('Resultados'), find.text('FINALIZADO')),
+        _above(tester, find.text('Resultados'), _matchRow('m_old')),
         isTrue,
       );
     });
@@ -280,7 +316,8 @@ void main() {
       });
       await _pump(tester, _snapshot(), repository: api);
       await _openTab(tester, 'Partidos');
-      expect(find.text('FINALIZADO'), findsNWidgets(2));
+      expect(_matchRow('m_r1'), findsOneWidget);
+      expect(_matchRow('m_r2'), findsOneWidget);
       final more = find.byKey(const ValueKey('team-matches-more-results'));
       expect(more, findsOneWidget);
       await tester.ensureVisible(more);
@@ -288,14 +325,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(api.calls.last, 'fb_team:results:c1');
       await tester.scrollUntilVisible(
-        find.text('FINALIZADO').last,
+        _matchRow('m_r3'),
         200,
         scrollable: find.byType(Scrollable).last,
       );
-      final texts = tester
-          .widgetList<Text>(find.textContaining('FINALIZADO'))
-          .length;
-      expect(texts, 3);
+      expect(_matchRows, findsNWidgets(3));
       expect(more, findsNothing);
       expect(find.text('Sin partidos próximos'), findsOneWidget);
     });
@@ -332,7 +366,7 @@ void main() {
         );
         await _openTab(tester, 'Partidos');
         expect(find.byType(CircularProgressIndicator), findsNothing);
-        expect(find.text('PROGRAMADO'), findsOneWidget);
+        expect(_matchRow('m_next'), findsOneWidget);
         expect(find.text('Reintentar'), findsNWidgets(2));
       },
     );
@@ -352,12 +386,16 @@ void main() {
       });
       await _pump(tester, _snapshot(), repository: api);
       await _openTab(tester, 'Partidos');
-      final live = find.text('DESCANSO');
+      final live = _matchRow('m_live');
       expect(live, findsOneWidget);
+      expect(
+        find.descendant(of: live, matching: find.textContaining('Descanso')),
+        findsOneWidget,
+      );
       expect(_above(tester, find.text('En vivo'), live), isTrue);
       expect(_above(tester, live, find.text('Próximos')), isTrue);
       expect(
-        _above(tester, find.text('Próximos'), find.text('PROGRAMADO')),
+        _above(tester, find.text('Próximos'), _matchRow('m_next')),
         isTrue,
       );
     });
@@ -429,7 +467,7 @@ void main() {
           findsNothing,
         );
         await _openTab(tester, 'Partidos');
-        expect(find.text('PROGRAMADO'), findsOneWidget);
+        expect(_matchRow('m_next'), findsOneWidget);
         await _openTab(tester, 'Plantilla');
         expect(find.text('Plantilla pendiente'), findsOneWidget);
         expect(tester.takeException(), isNull);
@@ -598,7 +636,7 @@ void main() {
           findsNothing,
         );
         await _openTab(tester, 'Partidos');
-        expect(find.text('PROGRAMADO'), findsOneWidget);
+        expect(_matchRow('m1'), findsOneWidget);
       },
     );
 
@@ -638,10 +676,15 @@ void main() {
         )!.single.label,
         'Grupo B',
       );
-      // Teams from different groups: no single correct table.
+      // Teams from different groups (#147): each team's own labelled
+      // group, never one mixed table.
       expect(
-        standingsGroups(table, data, focusTeamIds: {'fb_team', 'fb_b1'}),
-        isNull,
+        standingsGroups(
+          table,
+          data,
+          focusTeamIds: {'fb_team', 'fb_b1'},
+        )!.map((group) => group.label),
+        ['Grupo A', 'Grupo B'],
       );
       expect(standingsGroups(table, data)!.length, 2);
       // Unlabelled groups sent together: repeated positions -> unavailable.

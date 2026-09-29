@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/interests.dart';
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
@@ -82,8 +83,17 @@ List<Entity> competitionTeams(Snapshot data, String competitionId) {
 }
 
 class EntityScreen extends ConsumerStatefulWidget {
-  const EntityScreen({super.key, required this.type, required this.id});
+  const EntityScreen({
+    super.key,
+    required this.type,
+    required this.id,
+    this.competitionId,
+    this.season,
+  });
   final String type, id;
+
+  /// Initial profile context (opened from a match), when given.
+  final String? competitionId, season;
   @override
   ConsumerState<EntityScreen> createState() => _EntityScreenState();
 }
@@ -104,6 +114,19 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     Future.microtask(
       () => recordTemporaryInterest(ref, widget.type, widget.id),
     );
+    // Fresh profile context on every open (#161): only this request, only
+    // when an answer (or a failure) is already cached; one read per open.
+    if (widget.type == 'team') {
+      final choice = ref.read(profileContextSelectionProvider)[widget.id];
+      final request = (
+        teamId: widget.id,
+        competitionId: choice?.competitionId ?? widget.competitionId,
+        season: choice != null ? choice.season : widget.season,
+      );
+      if (ref.exists(teamContextProvider(request))) {
+        ref.invalidate(teamContextProvider(request));
+      }
+    }
   }
 
   @override
@@ -210,6 +233,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             team: entity,
             competitions: teamCompetitions,
             matches: matches,
+            initialCompetitionId: widget.competitionId,
+            initialSeason: widget.season,
           );
         }
         if (type == 'player') {

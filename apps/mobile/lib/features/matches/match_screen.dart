@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/interests.dart';
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
@@ -1002,9 +1003,9 @@ class MatchHero extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: _HeaderTeam(home, accent: lime)),
+              Expanded(child: _HeaderTeam(home, match, accent: lime)),
               SizedBox(width: 120, child: _HeaderCenter(match)),
-              Expanded(child: _HeaderTeam(away, accent: awaySideColor)),
+              Expanded(child: _HeaderTeam(away, match, accent: awaySideColor)),
             ],
           ),
           if (scorers != null) ...[
@@ -1018,9 +1019,12 @@ class MatchHero extends StatelessWidget {
 }
 
 class _HeaderTeam extends StatelessWidget {
-  const _HeaderTeam(this.team, {required this.accent});
+  const _HeaderTeam(this.team, this.match, {required this.accent});
 
   final Entity team;
+
+  /// Opens the profile in this match's competition + season (#161).
+  final FootballMatch match;
 
   /// Side color (home lime / away blue), shared with the standings highlight.
   final Color accent;
@@ -1031,7 +1035,15 @@ class _HeaderTeam extends StatelessWidget {
     label: team.name,
     child: InkWell(
       borderRadius: BorderRadius.circular(14),
-      onTap: () => context.push('/team/${team.id}'),
+      onTap: () => context.push(
+        Uri(
+          path: '/team/${team.id}',
+          queryParameters: {
+            'competitionId': match.competitionId,
+            'season': normalizeSeasonKey(match.season) ?? noSeason,
+          },
+        ).toString(),
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         child: Column(
@@ -1332,8 +1344,11 @@ class MatchStandingsTab extends StatelessWidget {
           Standings(
             data,
             competitionId,
+            // Keeps the chosen view (and a loaded Forma) across refreshes.
+            key: ValueKey('match-standings-$competitionId'),
             selectableView: true,
-            // The match's own group, never several groups as one table.
+            // The match's own group; teams from different groups each get
+            // their own labelled group, never one mixed table.
             focusTeamIds: {?homeTeamId, ?awayTeamId},
             highlightedTeams: {?homeTeamId: lime, ?awayTeamId: awaySideColor},
             // In-play evidence from the snapshot itself (never the clock).
