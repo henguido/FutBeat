@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'database.dart';
 import 'live_realtime.dart';
 import 'models.dart';
+import 'profile_context.dart';
 import 'team_matches.dart';
 
 abstract interface class FootballRepository {
@@ -535,6 +536,8 @@ class ApiRepository implements FootballRepository {
     String bucket, {
     String? cursor,
     int limit = teamMatchesPageSize,
+    String? competitionId,
+    String? season,
   }) async => TeamMatchesPage(
     await _getJson(
       '/v1/team-matches',
@@ -543,6 +546,27 @@ class ApiRepository implements FootballRepository {
         'bucket': bucket,
         'cursor': ?cursor,
         'limit': limit,
+        'competitionId': ?competitionId,
+        if (competitionId != null) 'season': ?season,
+      },
+      maxAttempts: 1,
+    ),
+  );
+
+  /// The team's real (competition, season) options and the selected one's
+  /// exact table (#161). One attempt: the profile falls back to its own
+  /// snapshot when it fails.
+  Future<TeamContext> loadTeamContext(
+    String teamId, {
+    String? competitionId,
+    String? season,
+  }) async => TeamContext(
+    await _getJson(
+      '/v1/team-context',
+      queryParameters: {
+        'id': teamId,
+        'competitionId': ?competitionId,
+        if (competitionId != null) 'season': ?season,
       },
       maxAttempts: 1,
     ),

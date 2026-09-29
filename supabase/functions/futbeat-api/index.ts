@@ -36,6 +36,12 @@ const validEntityType = (value: string | null) =>
 const validEntityId = (value: string | null) =>
   value !== null && /^fb_[A-Za-z0-9_-]{3,120}$/.test(value);
 
+// Season: a raw label ('2026/27', 'Apertura 2026') or a normalized key
+// (the server normalizes both), or '-' for the seasonless option.
+const validSeasonKey = (value: string | null) =>
+  value === null || value === '-' ||
+  /^[\p{L}\p{N}][\p{L}\p{N} ._/-]{0,39}$/u.test(value);
+
 export default {
   fetch: withSupabase({ auth: 'none' }, async (request, ctx) => {
     if (request.method !== 'GET') {
@@ -126,25 +132,63 @@ export default {
       return reply(200, snapshot);
     }
 
+    // Profile context (#161): the team's real (competition, season)
+    // combinations, the selected one (requested when real, else the
+    // deterministic default) and its exact table.
+    if (path.endsWith('/futbeat-api/v1/team-context')) {
+      const id = requestUrl.searchParams.get('id');
+      const competitionId = requestUrl.searchParams.get('competitionId');
+      const season = requestUrl.searchParams.get('season');
+      if (
+        !validEntityId(id) ||
+        (competitionId !== null && !validEntityId(competitionId)) ||
+        !validSeasonKey(season) ||
+        (season !== null && competitionId === null)
+      ) {
+        return reply(400, { error: 'Solicitud inválida' });
+      }
+      const { data: context, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_read_team_context',
+        { p_team_id: id, p_competition_id: competitionId, p_season_key: season },
+      );
+      if (error) return reply(503, { error: 'Datos temporalmente no disponibles' });
+      if (!context) return reply(404, { error: 'Entidad no encontrada' });
+      if (context.schemaVersion !== 1) {
+        return reply(503, { error: 'Datos temporalmente no disponibles' });
+      }
+      return reply(200, context);
+    }
+
     // Team / national-team matches across every competition (#150): one
     // bucket (live | upcoming ascending | results descending) per page,
-    // keyset cursor.
+    // keyset cursor; optionally one competition / season (#161).
     if (path.endsWith('/futbeat-api/v1/team-matches')) {
       const id = requestUrl.searchParams.get('id');
       const bucket = requestUrl.searchParams.get('bucket');
       const cursor = requestUrl.searchParams.get('cursor');
       const limit = Number(requestUrl.searchParams.get('limit') ?? '20');
+      const competitionId = requestUrl.searchParams.get('competitionId');
+      const season = requestUrl.searchParams.get('season');
       if (
         !validEntityId(id) ||
         (bucket !== 'live' && bucket !== 'upcoming' && bucket !== 'results') ||
         (cursor !== null && (cursor.length < 3 || cursor.length > 200)) ||
-        !Number.isInteger(limit) || limit < 1 || limit > 50
+        !Number.isInteger(limit) || limit < 1 || limit > 50 ||
+        (competitionId !== null && !validEntityId(competitionId)) ||
+        !validSeasonKey(season) ||
+        (season !== null && competitionId === null)
       ) {
         return reply(400, { error: 'Solicitud inválida' });
       }
+      const filtered = competitionId !== null;
       const { data: page, error } = await ctx.supabaseAdmin.rpc(
         'futbeat_read_team_matches',
-        { p_team_id: id, p_bucket: bucket, p_cursor: cursor, p_limit: limit },
+        filtered
+          ? {
+            p_team_id: id, p_bucket: bucket, p_cursor: cursor, p_limit: limit,
+            p_competition_id: competitionId, p_season_key: season,
+          }
+          : { p_team_id: id, p_bucket: bucket, p_cursor: cursor, p_limit: limit },
       );
       if (error) {
         return reply(error.message?.includes('cursor') ? 400 : 503, {
@@ -157,21 +201,38 @@ export default {
       }
       // End of Resultados: ask centrally for the older window before the
       // oldest stored result (deduplicated; the server decides if needed).
-      if (bucket === 'results' && page.hasMore !== true) {
+      // No stored result and a confirmed-empty recent window (NO_DATA): the
+      // window before that range. A filtered list ending is not the end of
+      // the team's history. Only a demand is recorded (floor, dedup,
+      // backoff, lease, quota and wake are the central lane's).
+      let historyRequested = false;
+      if (bucket === 'results' && page.hasMore !== true && !filtered) {
         const matches = Array.isArray(page.matches) ? page.matches : [];
+        const coverage = asRecord(asRecord(page.coverage).teamMatches);
         const oldest = matches.length
           ? String(asRecord(matches[matches.length - 1]).startTime ?? '')
+          : coverage.state === 'NO_DATA'
+          ? String(coverage.emptyFrom ?? '')
           : '';
         const before = /^\d{4}-\d{2}-\d{2}/.test(oldest)
           ? oldest.slice(0, 10)
           : null;
         if (before) {
-          const { error: historyError } = await ctx.supabaseAdmin.rpc(
+          const { data: history, error: historyError } = await ctx.supabaseAdmin.rpc(
             'futbeat_request_team_matches',
             { p_team_id: id, p_before: before },
           );
           if (historyError) console.warn('team history demand unavailable');
+          historyRequested = !historyError && asRecord(history).backfill === true;
         }
+      }
+      if (historyRequested) {
+        // Older history is being asked: never a cached "no results".
+        page.coverage = {
+          ...asRecord(page.coverage),
+          teamMatches: { ...asRecord(asRecord(page.coverage).teamMatches), history: 'requested' },
+        };
+        return replyNoStore(200, page);
       }
       return reply(200, page);
     }

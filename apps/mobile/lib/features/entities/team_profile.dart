@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
+import 'profile_context_bar.dart';
 import 'profile_widgets.dart';
 import 'standings.dart';
 import 'team_matches_tab.dart';
@@ -110,12 +113,14 @@ String? teamTableCompetitionId(Snapshot data, Entity team) {
   return candidates.length == 1 ? candidates.single : null;
 }
 
-class TeamProfileView extends StatelessWidget {
+class TeamProfileView extends ConsumerWidget {
   const TeamProfileView({
     required this.data,
     required this.team,
     required this.competitions,
     required this.matches,
+    this.initialCompetitionId,
+    this.initialSeason,
     super.key,
   });
 
@@ -124,16 +129,53 @@ class TeamProfileView extends StatelessWidget {
   final List<Entity> competitions;
   final List<FootballMatch> matches;
 
+  /// Context of the match the profile was opened from (#161), if any.
+  final String? initialCompetitionId;
+  final String? initialSeason;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final players = data.players
         .where((player) => player.json['teamId'] == team.id)
         .toList();
+    // Competition + season context: the user's choice this session, else the
+    // match it was opened from, else the server's default.
+    final request = profileContextRequest(
+      ref,
+      team.id,
+      initialCompetitionId: initialCompetitionId,
+      initialSeason: initialSeason,
+    );
+    // Loading or failed: the last context shown (or the profile's own
+    // snapshot) stays; the profile is never blocked.
+    ref.listen(teamContextProvider(request), (_, next) {
+      final value = next.asData?.value;
+      if (value != null) {
+        ref.read(lastTeamContextProvider.notifier).remember(value);
+      }
+    });
+    final current = ref.watch(teamContextProvider(request));
+    final teamContext =
+        current.asData?.value ?? ref.watch(lastTeamContextProvider)[team.id];
+    // The requested context failed: the last one stays, and says so.
+    final switchFailed = current.hasError && teamContext != null;
+    final selected = teamContext?.selected;
     final tableId = teamTableCompetitionId(data, team);
+    // The selected season's exact table; for the competition's current
+    // season the profile's own cached table is the same table.
+    final cachedCurrent =
+        selected != null &&
+        selected.currentSeason &&
+        tableId == selected.competitionId &&
+        normalizeSeasonKey(
+              standingsTableFor(data, tableId!)?['season']?.toString(),
+            ) ==
+            selected.seasonKey;
+    final contextTable = selected != null;
     final tabs = [
       'Resumen',
       'Partidos',
-      if (tableId != null) 'Tabla',
+      if (contextTable || tableId != null) 'Tabla',
       'Plantilla',
       'Noticias',
       'Transferencias',
@@ -145,10 +187,31 @@ class TeamProfileView extends StatelessWidget {
         if (data.demo) const DemoNotice(),
         ..._summary(context, players),
       ]),
-      'Partidos' => TeamMatchesTab(team: team, data: data, matches: matches),
+      'Partidos' => TeamMatchesTab(
+        team: team,
+        data: data,
+        matches: matches,
+        contextOption: selected,
+      ),
       'Tabla' => ProfileTabList('tabla', [
         if (data.demo) const DemoNotice(),
-        Standings(data, tableId!, focusTeamIds: {team.id}),
+        if (contextTable)
+          if (teamContext!.standings.isEmpty && cachedCurrent)
+            Standings(data, tableId, focusTeamIds: {team.id})
+          else if (teamContext.standings.isEmpty)
+            const InlineEmpty(
+              Icons.table_rows_outlined,
+              'Tabla no disponible',
+              key: ValueKey('profile-context-no-table'),
+            )
+          else
+            Standings(
+              teamContext.tableSnapshot(data),
+              selected.competitionId,
+              focusTeamIds: {team.id},
+            )
+        else
+          Standings(data, tableId!, focusTeamIds: {team.id}),
       ]),
       'Plantilla' => ProfileTabList('plantilla', [
         if (data.demo) const DemoNotice(),
@@ -192,6 +255,18 @@ class TeamProfileView extends StatelessWidget {
                 players: players.length,
               ),
             ),
+            if (teamContext != null && selected != null)
+              SliverToBoxAdapter(
+                child: ProfileContextBar(
+                  options: teamContext.options,
+                  selected: selected,
+                  failed: switchFailed,
+                  onRetry: () => ref.invalidate(teamContextProvider(request)),
+                  onSelect: (option) => ref
+                      .read(profileContextSelectionProvider.notifier)
+                      .select(team.id, option),
+                ),
+              ),
             SliverOverlapAbsorber(
               handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
               sliver: SliverPersistentHeader(

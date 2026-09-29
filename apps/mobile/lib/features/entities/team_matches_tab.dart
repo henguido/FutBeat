@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/providers.dart';
 import '../../core/team_matches.dart';
 import '../../core/theme.dart';
@@ -15,17 +16,21 @@ import 'team_profile.dart' show matchDayLabel;
 /// competition, paginated by the server's team matches
 /// read model. The profile's own matches render immediately (cache-first)
 /// until the first page arrives; a failed page never blocks the tab.
+/// With a profile context (#161) the list can be narrowed to that
+/// competition + season ("Todos" stays the default).
 class TeamMatchesTab extends ConsumerStatefulWidget {
   const TeamMatchesTab({
     required this.team,
     required this.data,
     required this.matches,
+    this.contextOption,
     super.key,
   });
 
   final Entity team;
   final Snapshot data;
   final List<FootballMatch> matches;
+  final ProfileContextOption? contextOption;
 
   @override
   ConsumerState<TeamMatchesTab> createState() => _TeamMatchesTabState();
@@ -38,6 +43,37 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
   final _loading = <TeamMatchesBucket>{};
   final _failed = <TeamMatchesBucket>{};
   ApiRepository? _api;
+
+  /// Only the profile context's competition + season.
+  bool _filtered = false;
+
+  /// Bumped on every filter change: answers of an older list are dropped.
+  int _generation = 0;
+
+  ProfileContextOption? get _filter => _filtered ? widget.contextOption : null;
+
+  @override
+  void didUpdateWidget(TeamMatchesTab old) {
+    super.didUpdateWidget(old);
+    if (_filtered && old.contextOption?.key != widget.contextOption?.key) {
+      _reset(filtered: widget.contextOption != null);
+    }
+  }
+
+  void _reset({required bool filtered}) {
+    setState(() {
+      _filtered = filtered;
+      _generation++;
+      for (final pages in _pages.values) {
+        pages.clear();
+      }
+      _loading.clear();
+      _failed.clear();
+    });
+    for (final bucket in TeamMatchesBucket.values) {
+      _load(bucket);
+    }
+  }
 
   @override
   void initState() {
@@ -56,6 +92,8 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
     final pages = _pages[bucket]!;
     if (api == null || _loading.contains(bucket)) return;
     if (pages.isNotEmpty && !pages.last.hasMore) return;
+    final generation = _generation;
+    final filter = _filter;
     setState(() {
       _loading.add(bucket);
       _failed.remove(bucket);
@@ -65,13 +103,28 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
         widget.team.id,
         bucket.wire,
         cursor: pages.lastOrNull?.nextCursor,
+        competitionId: filter?.competitionId,
+        season: filter?.seasonParam,
       );
-      if (mounted) setState(() => pages.add(page));
+      if (mounted && generation == _generation) {
+        setState(() => pages.add(page));
+      }
     } catch (_) {
-      if (mounted) setState(() => _failed.add(bucket));
+      if (mounted && generation == _generation) {
+        setState(() => _failed.add(bucket));
+      }
     } finally {
-      if (mounted) setState(() => _loading.remove(bucket));
+      if (mounted && generation == _generation) {
+        setState(() => _loading.remove(bucket));
+      }
     }
+  }
+
+  bool _inFilter(FootballMatch match) {
+    final filter = _filter;
+    return filter == null ||
+        (match.competitionId == filter.competitionId &&
+            normalizeSeasonKey(match.season) == filter.seasonKey);
   }
 
   List<ProfileMatch> _items(TeamMatchesBucket bucket) {
@@ -79,7 +132,10 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
     return orderedProfileMatches(
       bucket,
       pages.isEmpty
-          ? [for (final m in widget.matches) (match: m, data: widget.data)]
+          ? [
+              for (final m in widget.matches)
+                if (_inFilter(m)) (match: m, data: widget.data),
+            ]
           : [
               for (final page in pages)
                 for (final m in page.data.matches) (match: m, data: page.data),
@@ -88,16 +144,58 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
   }
 
   @override
-  Widget build(BuildContext context) => ProfileTabList('partidos', [
-    if (widget.data.demo) const DemoNotice(),
-    ..._section(TeamMatchesBucket.live, 'En vivo', null),
-    ..._section(
-      TeamMatchesBucket.upcoming,
-      'Próximos',
-      'Sin partidos próximos',
-    ),
-    ..._section(TeamMatchesBucket.results, 'Resultados', 'Sin resultados'),
-  ]);
+  Widget build(BuildContext context) {
+    final option = widget.contextOption;
+    return ProfileTabList('partidos', [
+      if (widget.data.demo) const DemoNotice(),
+      if (option != null && _api != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                key: const ValueKey('team-matches-filter-all'),
+                label: const Text('Todos'),
+                selected: !_filtered,
+                onSelected: (_) {
+                  if (_filtered) _reset(filtered: false);
+                },
+              ),
+              ChoiceChip(
+                key: const ValueKey('team-matches-filter-context'),
+                label: Text(option.label),
+                selected: _filtered,
+                onSelected: (_) {
+                  if (!_filtered) _reset(filtered: true);
+                },
+              ),
+            ],
+          ),
+        ),
+      ..._section(TeamMatchesBucket.live, 'En vivo', null),
+      ..._section(
+        TeamMatchesBucket.upcoming,
+        'Próximos',
+        'Sin partidos próximos',
+      ),
+      ..._section(TeamMatchesBucket.results, 'Resultados', 'Sin resultados'),
+    ]);
+  }
+
+  /// Empty copy from the team's central coverage: still arriving and "no
+  /// source" are never shown as a confirmed empty list.
+  String _emptyCopy(TeamMatchesBucket bucket, String fallback) {
+    final last = _pages[bucket]!.lastOrNull;
+    // Recent window confirmed empty, older history being asked: not final.
+    if (last != null && last.historyRequested) return 'Cargando historial';
+    return switch (last?.coverageState) {
+      'PENDING' => 'Cargando partidos',
+      'UNAVAILABLE' => 'Partidos no disponibles',
+      _ => fallback,
+    };
+  }
 
   /// A null [empty] hides the whole section while it has no matches.
   List<Widget> _section(TeamMatchesBucket bucket, String title, String? empty) {
@@ -110,7 +208,11 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
     return [
       ProfileSectionTitle(title),
       if (items.isEmpty && !loading)
-        InlineEmpty(Icons.event_busy_outlined, empty!)
+        InlineEmpty(
+          Icons.event_busy_outlined,
+          _emptyCopy(bucket, empty!),
+          key: ValueKey('team-matches-empty-${bucket.wire}'),
+        )
       else
         for (final item in items) _DatedMatch(item),
       if (loading && (items.isEmpty || more))
