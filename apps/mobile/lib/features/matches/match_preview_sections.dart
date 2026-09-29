@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../entities/standings.dart';
@@ -348,7 +352,7 @@ class _PositionRow extends StatelessWidget {
 // Cara a cara
 // ---------------------------------------------------------------------------
 
-class HeadToHeadTab extends StatefulWidget {
+class HeadToHeadTab extends ConsumerStatefulWidget {
   const HeadToHeadTab({
     required this.preview,
     required this.data,
@@ -365,12 +369,217 @@ class HeadToHeadTab extends StatefulWidget {
   final VoidCallback? onRetry;
 
   @override
-  State<HeadToHeadTab> createState() => _HeadToHeadTabState();
+  ConsumerState<HeadToHeadTab> createState() => _HeadToHeadTabState();
 }
 
-class _HeadToHeadTabState extends State<HeadToHeadTab> {
+class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   /// "Este torneo": only meetings of the selected match's competition.
   bool _thisCompetition = false;
+
+  /// Server pages per scope (false = Todos, true = Este torneo). Once a
+  /// scope has pages, they replace the preview's first meetings: the server
+  /// order and totals are the only source from then on.
+  final Map<bool, List<H2hPage>> _pages = {false: [], true: []};
+  final Set<bool> _loading = {};
+  final Set<bool> _failed = {};
+
+  /// Older-history extension (central coverage, both teams).
+  bool _extending = false;
+  bool _extendPending = false;
+
+  /// Server's word on older history (window.canExtend and not already in
+  /// flight); null = not asked yet. The offer only shows on `true`.
+  bool? _canExtend;
+  bool _windowAsked = false;
+  String? _verifiedFrom;
+  Timer? _poll;
+
+  /// Bumped when an extension lands: page answers of the older list are
+  /// dropped.
+  int _generation = 0;
+
+  /// After an extension the preview's first meetings/totals are outdated:
+  /// every scope is read from the server.
+  bool _previewStale = false;
+
+  /// Todos rows shown when the extension was asked (re-read that many).
+  int _shownAll = 0;
+
+  /// Re-reads while the extension is in flight; then it is left pending.
+  static const extendPollDelays = [
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(seconds: 60),
+  ];
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  ApiRepository? get _api {
+    final repository = ref.read(repositoryProvider);
+    return repository is ApiRepository ? repository : null;
+  }
+
+  /// The first page asks from the top (no cursor) for what the preview
+  /// showed plus one more page, so ties and gaps in the preview's cut never
+  /// hide a meeting; later pages follow the server's cursor.
+  Future<void> _loadMore(bool competition, int shown) async {
+    final api = _api;
+    if (api == null || _loading.contains(competition)) return;
+    final pages = _pages[competition]!;
+    final generation = _generation;
+    setState(() {
+      _loading.add(competition);
+      _failed.remove(competition);
+    });
+    try {
+      final page = await api.loadMatchH2h(
+        widget.match.id,
+        scope: competition ? 'competition' : 'all',
+        cursor: pages.isEmpty ? null : pages.last.nextCursor,
+        limit: pages.isEmpty ? math.min(50, shown + 20) : 20,
+      );
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _pages[competition]!.add(page);
+        _verifiedFrom = page.verifiedFrom ?? _verifiedFrom;
+        _canExtend = page.canExtend && !page.extending;
+      });
+    } catch (_) {
+      if (mounted && generation == _generation) {
+        setState(() => _failed.add(competition));
+      }
+    } finally {
+      if (mounted) setState(() => _loading.remove(competition));
+    }
+  }
+
+  int get _rereadLimit => math.min(50, math.max(20, _shownAll));
+
+  /// Once per tab, at the end of the list: the server's window (a team with
+  /// a confirmed-empty recent window has no preview `verifiedFrom` but may
+  /// still have older history to ask for).
+  Future<void> _askWindow() async {
+    final api = _api;
+    if (api == null || _windowAsked) return;
+    _windowAsked = true;
+    try {
+      final page = await api.loadMatchH2h(widget.match.id, limit: 1);
+      if (!mounted || _canExtend != null) return;
+      setState(() {
+        _verifiedFrom = page.verifiedFrom ?? _verifiedFrom;
+        _canExtend = page.canExtend && !page.extending;
+      });
+    } catch (_) {
+      // No offer without the server's word.
+    }
+  }
+
+  /// Older-history control at the end of the list: in flight, pending, or
+  /// the offer (only when the server said it can extend).
+  Widget? _extendControl(int shown) {
+    if (_extending) {
+      return const Padding(
+        key: ValueKey('h2h-extending'),
+        padding: EdgeInsets.symmetric(vertical: 10),
+        child: Center(
+          child: Text('Cargando historial', style: TextStyle(color: muted)),
+        ),
+      );
+    }
+    if (_extendPending) {
+      return const Padding(
+        key: ValueKey('h2h-extend-pending'),
+        padding: EdgeInsets.symmetric(vertical: 10),
+        child: Center(
+          child: Text('Historial pendiente', style: TextStyle(color: muted)),
+        ),
+      );
+    }
+    if (_api == null) return null;
+    if (_canExtend == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _askWindow());
+      return null;
+    }
+    if (_canExtend != true) return null;
+    return Center(
+      child: TextButton(
+        key: const ValueKey('h2h-extend'),
+        onPressed: () {
+          if (!_thisCompetition) _shownAll = shown;
+          _extend();
+        },
+        child: const Text('Cargar historial anterior'),
+      ),
+    );
+  }
+
+  Future<void> _extend() async {
+    final api = _api;
+    if (api == null || _extending) return;
+    setState(() => _extending = true);
+    try {
+      _settle(
+        await api.loadMatchH2h(
+          widget.match.id,
+          extend: true,
+          limit: _rereadLimit,
+        ),
+        0,
+      );
+    } catch (_) {
+      if (mounted) setState(() => _extending = false);
+    }
+  }
+
+  /// Applies an extension answer: done -> fresh first page of Todos (new
+  /// meetings and totals); still in flight -> re-read later, a bounded
+  /// number of times, then left as pending.
+  void _settle(H2hPage page, int attempt) {
+    if (!mounted) return;
+    if (!page.extending) {
+      setState(() {
+        _generation++;
+        _extending = false;
+        _previewStale = true;
+        _pages[false] = [page];
+        _pages[true] = [];
+        _loading.clear();
+        _failed.clear();
+        _verifiedFrom = page.verifiedFrom ?? _verifiedFrom;
+        _canExtend = page.canExtend;
+      });
+      if (_thisCompetition) _loadMore(true, 0);
+      return;
+    }
+    if (attempt >= extendPollDelays.length) {
+      setState(() {
+        _extending = false;
+        _extendPending = true;
+      });
+      return;
+    }
+    _poll = Timer(extendPollDelays[attempt], () async {
+      final api = _api;
+      if (api == null || !mounted) return;
+      try {
+        _settle(
+          await api.loadMatchH2h(widget.match.id, limit: _rereadLimit),
+          attempt + 1,
+        );
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _extending = false;
+            _extendPending = true;
+          });
+        }
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) => widget.preview.when(
@@ -396,16 +605,31 @@ class _HeadToHeadTabState extends State<HeadToHeadTab> {
 
   Widget _content(MatchPreview value) {
     final match = widget.match;
-    Entity? team(String id) => widget.data.team(id) ?? value.team(id);
+    final loaded = [..._pages[false]!, ..._pages[true]!];
+    Entity? team(String id) =>
+        widget.data.team(id) ??
+        value.team(id) ??
+        loaded.map((p) => p.teams[id]).nonNulls.firstOrNull;
+    String? competitionName(String? id) =>
+        value.competitionName(id) ??
+        (id == null
+            ? null
+            : loaded.map((p) => p.competitions[id]).nonNulls.firstOrNull);
     final competitionId = value.h2hCompetitionId ?? match.competitionId;
     final all = value.h2hMeetings;
     final current = value.h2hCurrent;
     final availability = value.h2hAvailability;
-    if (all.isEmpty && current == null) {
+    // Once an extension landed, the server pages (not the preview) decide.
+    if (all.isEmpty && current == null && _pages[false]!.isEmpty) {
       return switch (availability) {
-        'CONFIRMED_EMPTY' => const _H2hMessage(
-          'Sin enfrentamientos anteriores',
-          key: ValueKey('h2h-empty'),
+        'CONFIRMED_EMPTY' => Column(
+          children: [
+            const _H2hMessage(
+              'Sin enfrentamientos anteriores',
+              key: ValueKey('h2h-empty'),
+            ),
+            ?_extendControl(0),
+          ],
         ),
         'UNAVAILABLE' => const _H2hMessage(
           'Historial no disponible',
@@ -422,15 +646,30 @@ class _HeadToHeadTabState extends State<HeadToHeadTab> {
         ),
       };
     }
-    final meetings = _thisCompetition
+    final base = _thisCompetition
         ? [
             for (final item in all)
               if (item['competitionId'] == competitionId) item,
           ]
         : all;
+    final pages = _pages[_thisCompetition]!;
+    // Before any page: the preview's newest meetings. After: the server's
+    // pages only, each id once.
+    final seen = <String>{};
+    final meetings = [
+      for (final item in pages.isEmpty ? base : pages.expand((p) => p.meetings))
+        if (seen.add(item['matchId']?.toString() ?? '')) item,
+    ];
     final totals =
+        (pages.isEmpty ? null : pages.last.totals) ??
         value.h2hTotals(competition: _thisCompetition) ??
         _countTotals(meetings, match.homeId);
+    // More stored meetings than shown: the server said so, or (before any
+    // page) the scope's totals count more than the preview listed.
+    final more = pages.isNotEmpty
+        ? pages.last.hasMore
+        : meetings.length < totals.total;
+    final verifiedFrom = _verifiedFrom ?? value.h2hVerifiedFrom;
     final showCurrent =
         current != null &&
         (!_thisCompetition || current['competitionId'] == competitionId);
@@ -456,33 +695,98 @@ class _HeadToHeadTabState extends State<HeadToHeadTab> {
               key: const ValueKey('h2h-filter-competition'),
               label: 'Este torneo',
               selected: _thisCompetition,
-              onTap: () => setState(() => _thisCompetition = true),
+              onTap: () {
+                setState(() => _thisCompetition = true);
+                if (_previewStale && _pages[true]!.isEmpty) _loadMore(true, 0);
+              },
             ),
           ],
         ),
+        if (verifiedFrom != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Historial verificado desde ${_monthYear(verifiedFrom)}',
+              key: const ValueKey('h2h-window'),
+              style: const TextStyle(color: muted, fontSize: 12),
+            ),
+          ),
         const SizedBox(height: 12),
         if (showCurrent) ...[
           _MeetingRow(
             key: const ValueKey('h2h-current'),
             item: current,
             team: team,
-            preview: value,
+            competitionName: competitionName,
             label: _currentLabel(current),
           ),
           const SizedBox(height: 8),
         ],
-        if (meetings.isEmpty)
-          const _H2hMessage(
-            'Sin enfrentamientos en este torneo',
-            key: ValueKey('h2h-empty-competition'),
-          )
+        if (meetings.isEmpty && !more)
+          _thisCompetition
+              ? const _H2hMessage(
+                  'Sin enfrentamientos en este torneo',
+                  key: ValueKey('h2h-empty-competition'),
+                )
+              : const _H2hMessage(
+                  'Sin enfrentamientos anteriores',
+                  key: ValueKey('h2h-empty'),
+                )
         else
           for (final item in meetings) ...[
-            _MeetingRow(item: item, team: team, preview: value),
+            _MeetingRow(
+              item: item,
+              team: team,
+              competitionName: competitionName,
+            ),
             const SizedBox(height: 8),
           ],
+        if (_loading.contains(_thisCompetition))
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Center(
+              child: SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          )
+        else if ((more || _failed.contains(_thisCompetition)) && _api != null)
+          Center(
+            child: TextButton(
+              key: const ValueKey('h2h-more'),
+              onPressed: () => _loadMore(_thisCompetition, meetings.length),
+              child: Text(
+                _failed.contains(_thisCompetition) ? 'Reintentar' : 'Ver más',
+              ),
+            ),
+          )
+        else
+          ?_extendControl(meetings.length),
       ],
     );
+  }
+
+  static const _months = [
+    'ene',
+    'feb',
+    'mar',
+    'abr',
+    'may',
+    'jun',
+    'jul',
+    'ago',
+    'sep',
+    'oct',
+    'nov',
+    'dic',
+  ];
+
+  static String _monthYear(String date) {
+    final parsed = DateTime.tryParse(date);
+    return parsed == null
+        ? date
+        : '${_months[parsed.month - 1]} ${parsed.year}';
   }
 
   static String _currentLabel(Json item) =>
@@ -671,14 +975,14 @@ class _MeetingRow extends StatelessWidget {
   const _MeetingRow({
     required this.item,
     required this.team,
-    required this.preview,
+    required this.competitionName,
     this.label,
     super.key,
   });
 
   final Json item;
   final Entity? Function(String id) team;
-  final MatchPreview preview;
+  final String? Function(String? id) competitionName;
 
   /// Status of the selected match when it is not final (never counted).
   final String? label;
@@ -692,9 +996,7 @@ class _MeetingRow extends StatelessWidget {
     final score = item['score'] is Map
         ? '${item['score']['home']} - ${item['score']['away']}'
         : '–';
-    final competition = preview.competitionName(
-      item['competitionId'] as String?,
-    );
+    final competition = competitionName(item['competitionId'] as String?);
     Widget side(Entity? entity, {required bool end}) => Expanded(
       child: Row(
         mainAxisAlignment: end

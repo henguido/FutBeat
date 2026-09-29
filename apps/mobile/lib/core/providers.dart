@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'database.dart';
 import 'live_realtime.dart';
 import 'models.dart';
+import 'profile_context.dart';
 import 'team_matches.dart';
 
 abstract interface class FootballRepository {
@@ -535,6 +536,8 @@ class ApiRepository implements FootballRepository {
     String bucket, {
     String? cursor,
     int limit = teamMatchesPageSize,
+    String? competitionId,
+    String? season,
   }) async => TeamMatchesPage(
     await _getJson(
       '/v1/team-matches',
@@ -543,6 +546,27 @@ class ApiRepository implements FootballRepository {
         'bucket': bucket,
         'cursor': ?cursor,
         'limit': limit,
+        'competitionId': ?competitionId,
+        if (competitionId != null) 'season': ?season,
+      },
+      maxAttempts: 1,
+    ),
+  );
+
+  /// The team's real (competition, season) options and the selected one's
+  /// exact table (#161). One attempt: the profile falls back to its own
+  /// snapshot when it fails.
+  Future<TeamContext> loadTeamContext(
+    String teamId, {
+    String? competitionId,
+    String? season,
+  }) async => TeamContext(
+    await _getJson(
+      '/v1/team-context',
+      queryParameters: {
+        'id': teamId,
+        'competitionId': ?competitionId,
+        if (competitionId != null) 'season': ?season,
       },
       maxAttempts: 1,
     ),
@@ -560,6 +584,29 @@ class ApiRepository implements FootballRepository {
     await _getJson(
       '/v1/match-preview',
       queryParameters: {'id': id},
+      maxAttempts: 1,
+    ),
+  );
+
+  /// One page of the pair's stored head-to-head (#155). `extend` asks the
+  /// server to extend both teams' central coverage one step back (never a
+  /// provider call from the app). One attempt: optional content.
+  Future<H2hPage> loadMatchH2h(
+    String id, {
+    String scope = 'all',
+    String? cursor,
+    int limit = 20,
+    bool extend = false,
+  }) async => H2hPage(
+    await _getJson(
+      '/v1/match-h2h',
+      queryParameters: {
+        'id': id,
+        'scope': scope,
+        'cursor': ?cursor,
+        'limit': limit,
+        if (extend) 'extend': '1',
+      },
       maxAttempts: 1,
     ),
   );

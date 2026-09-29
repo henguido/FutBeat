@@ -621,14 +621,10 @@ class PushService {
               await _syncProfileSettings(await loadProfileSettings());
             }
             final detectedDirty =
-                await storage.read(
-                  key: 'futbeat.country.detected.dirty',
-                ) ==
+                await storage.read(key: 'futbeat.country.detected.dirty') ==
                 'true';
             final selectedDirty =
-                await storage.read(
-                  key: 'futbeat.country.selected.dirty',
-                ) ==
+                await storage.read(key: 'futbeat.country.selected.dirty') ==
                 'true';
             final legacyDirty =
                 await storage.read(key: 'futbeat.country.dirty') == 'true';
@@ -637,9 +633,11 @@ class PushService {
               await syncCountries(
                 preference.detectedCountry,
                 preference.selectedCountry,
-                updateDetected: detectedDirty ||
+                updateDetected:
+                    detectedDirty ||
                     (legacyDirty && !detectedDirty && !selectedDirty),
-                updateSelected: selectedDirty ||
+                updateSelected:
+                    selectedDirty ||
                     (legacyDirty && !detectedDirty && !selectedDirty),
               );
             }

@@ -257,9 +257,7 @@ void main() {
       tester
           .getSemantics(
             find.byKey(
-              const ValueKey(
-                'match-section-loading-Cargando alineaciones…',
-              ),
+              const ValueKey('match-section-loading-Cargando alineaciones…'),
             ),
           )
           .label,
