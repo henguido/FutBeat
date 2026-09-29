@@ -100,11 +100,7 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
   ]);
 
   /// A null [empty] hides the whole section while it has no matches.
-  List<Widget> _section(
-    TeamMatchesBucket bucket,
-    String title,
-    String? empty,
-  ) {
+  List<Widget> _section(TeamMatchesBucket bucket, String title, String? empty) {
     final items = _items(bucket);
     final pages = _pages[bucket]!;
     final loading = _loading.contains(bucket);

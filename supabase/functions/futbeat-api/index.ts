@@ -322,6 +322,51 @@ export default {
       return reply(200, preview);
     }
 
+    // Full stored head-to-head of the pair (#155): keyset pages for 'all' or
+    // 'competition', totals independent of the page, and the verified
+    // window. `extend=1` asks the central per-team coverage for one older
+    // step of both teams (deduplicated; never a provider call here).
+    if (path.endsWith('/futbeat-api/v1/match-h2h')) {
+      const id = requestUrl.searchParams.get('id');
+      const scope = requestUrl.searchParams.get('scope') ?? 'all';
+      const cursor = requestUrl.searchParams.get('cursor');
+      const limit = Number(requestUrl.searchParams.get('limit') ?? '20');
+      const extend = requestUrl.searchParams.get('extend') === '1';
+      if (
+        !validEntityId(id) || !id?.startsWith('fb_match_') ||
+        (scope !== 'all' && scope !== 'competition') ||
+        (cursor !== null && (cursor.length < 3 || cursor.length > 200)) ||
+        !Number.isInteger(limit) || limit < 1 || limit > 50
+      ) {
+        return replyNoStore(400, { error: 'Solicitud inválida' });
+      }
+      if (extend) {
+        const { error: historyError } = await ctx.supabaseAdmin.rpc(
+          'futbeat_request_match_h2h_history',
+          { p_match_id: id },
+        );
+        if (historyError) console.warn('h2h history demand unavailable');
+      }
+      const { data: page, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_read_match_h2h',
+        { p_match_id: id, p_scope: scope, p_cursor: cursor, p_limit: limit },
+      );
+      if (error) {
+        return replyNoStore(error.message?.includes('cursor') ? 400 : 503, {
+          error: 'Cara a cara temporalmente no disponible',
+        });
+      }
+      if (!page) return replyNoStore(404, { error: 'Partido no encontrado' });
+      if (page.schemaVersion !== 1) {
+        return replyNoStore(503, { error: 'Cara a cara temporalmente no disponible' });
+      }
+      // An extension in progress changes the answer soon: never cache it.
+      if (extend || asRecord(page.window).extending === true) {
+        return replyNoStore(200, page);
+      }
+      return reply(200, page);
+    }
+
     if (path.endsWith('/futbeat-api/v1/match-detail')) {
       const id = requestUrl.searchParams.get('id');
       if (!validEntityId(id) || !id?.startsWith('fb_match_')) {
