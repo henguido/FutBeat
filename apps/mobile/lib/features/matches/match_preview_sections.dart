@@ -373,7 +373,11 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   /// Older-history extension (central coverage, both teams).
   bool _extending = false;
   bool _extendPending = false;
+
+  /// Server's word on older history (window.canExtend and not already in
+  /// flight); null = not asked yet. The offer only shows on `true`.
   bool? _canExtend;
+  bool _windowAsked = false;
   String? _verifiedFrom;
   Timer? _poll;
 
@@ -429,7 +433,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
       setState(() {
         _pages[competition]!.add(page);
         _verifiedFrom = page.verifiedFrom ?? _verifiedFrom;
-        _canExtend = page.canExtend;
+        _canExtend = page.canExtend && !page.extending;
       });
     } catch (_) {
       if (mounted && generation == _generation) {
@@ -441,6 +445,64 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   }
 
   int get _rereadLimit => math.min(50, math.max(20, _shownAll));
+
+  /// Once per tab, at the end of the list: the server's window (a team with
+  /// a confirmed-empty recent window has no preview `verifiedFrom` but may
+  /// still have older history to ask for).
+  Future<void> _askWindow() async {
+    final api = _api;
+    if (api == null || _windowAsked) return;
+    _windowAsked = true;
+    try {
+      final page = await api.loadMatchH2h(widget.match.id, limit: 1);
+      if (!mounted || _canExtend != null) return;
+      setState(() {
+        _verifiedFrom = page.verifiedFrom ?? _verifiedFrom;
+        _canExtend = page.canExtend && !page.extending;
+      });
+    } catch (_) {
+      // No offer without the server's word.
+    }
+  }
+
+  /// Older-history control at the end of the list: in flight, pending, or
+  /// the offer (only when the server said it can extend).
+  Widget? _extendControl(int shown) {
+    if (_extending) {
+      return const Padding(
+        key: ValueKey('h2h-extending'),
+        padding: EdgeInsets.symmetric(vertical: 10),
+        child: Center(
+          child: Text('Cargando historial', style: TextStyle(color: muted)),
+        ),
+      );
+    }
+    if (_extendPending) {
+      return const Padding(
+        key: ValueKey('h2h-extend-pending'),
+        padding: EdgeInsets.symmetric(vertical: 10),
+        child: Center(
+          child: Text('Historial pendiente', style: TextStyle(color: muted)),
+        ),
+      );
+    }
+    if (_api == null) return null;
+    if (_canExtend == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _askWindow());
+      return null;
+    }
+    if (_canExtend != true) return null;
+    return Center(
+      child: TextButton(
+        key: const ValueKey('h2h-extend'),
+        onPressed: () {
+          if (!_thisCompetition) _shownAll = shown;
+          _extend();
+        },
+        child: const Text('Cargar historial anterior'),
+      ),
+    );
+  }
 
   Future<void> _extend() async {
     final api = _api;
@@ -544,11 +606,17 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
     final all = value.h2hMeetings;
     final current = value.h2hCurrent;
     final availability = value.h2hAvailability;
-    if (all.isEmpty && current == null) {
+    // Once an extension landed, the server pages (not the preview) decide.
+    if (all.isEmpty && current == null && _pages[false]!.isEmpty) {
       return switch (availability) {
-        'CONFIRMED_EMPTY' => const _H2hMessage(
-          'Sin enfrentamientos anteriores',
-          key: ValueKey('h2h-empty'),
+        'CONFIRMED_EMPTY' => Column(
+          children: [
+            const _H2hMessage(
+              'Sin enfrentamientos anteriores',
+              key: ValueKey('h2h-empty'),
+            ),
+            ?_extendControl(0),
+          ],
         ),
         'UNAVAILABLE' => const _H2hMessage(
           'Historial no disponible',
@@ -642,10 +710,15 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
           const SizedBox(height: 8),
         ],
         if (meetings.isEmpty && !more)
-          const _H2hMessage(
-            'Sin enfrentamientos en este torneo',
-            key: ValueKey('h2h-empty-competition'),
-          )
+          _thisCompetition
+              ? const _H2hMessage(
+                  'Sin enfrentamientos en este torneo',
+                  key: ValueKey('h2h-empty-competition'),
+                )
+              : const _H2hMessage(
+                  'Sin enfrentamientos anteriores',
+                  key: ValueKey('h2h-empty'),
+                )
         else
           for (final item in meetings) ...[
             _MeetingRow(
@@ -675,36 +748,8 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
               ),
             ),
           )
-        else if (_extending)
-          const Padding(
-            key: ValueKey('h2h-extending'),
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: Center(
-              child: Text('Cargando historial', style: TextStyle(color: muted)),
-            ),
-          )
-        else if (_extendPending)
-          const Padding(
-            key: ValueKey('h2h-extend-pending'),
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: Center(
-              child: Text(
-                'Historial pendiente',
-                style: TextStyle(color: muted),
-              ),
-            ),
-          )
-        else if (verifiedFrom != null && _canExtend != false && _api != null)
-          Center(
-            child: TextButton(
-              key: const ValueKey('h2h-extend'),
-              onPressed: () {
-                if (!_thisCompetition) _shownAll = meetings.length;
-                _extend();
-              },
-              child: const Text('Cargar historial anterior'),
-            ),
-          ),
+        else
+          ?_extendControl(meetings.length),
       ],
     );
   }

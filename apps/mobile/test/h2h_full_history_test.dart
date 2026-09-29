@@ -84,11 +84,24 @@ Map<String, dynamic> _preview(
 }
 
 class _FakeH2hApi extends ApiRepository {
-  _FakeH2hApi(this.all, {this.fail = false, this.extendingReads = 0})
-    : super(Dio());
+  _FakeH2hApi(
+    this.all, {
+    this.fail = false,
+    this.extendingReads = 0,
+    this.serverCanExtend = true,
+    this.serverVerifiedFrom = '2026-04-02',
+    this.afterExtend,
+  }) : super(Dio());
+
+  /// Stored meetings once the extension landed (null = unchanged).
+  final List<Map<String, dynamic>>? afterExtend;
 
   final List<Map<String, dynamic>> all;
   final bool fail;
+
+  /// The server's window (canExtend / verifiedFrom) on every read.
+  final bool serverCanExtend;
+  final String? serverVerifiedFrom;
 
   /// Reads after an extend that still report `extending` (-1 = forever).
   int extendingReads;
@@ -113,8 +126,11 @@ class _FakeH2hApi extends ApiRepository {
       extending = true;
       if (extendingReads > 0) extendingReads--;
     }
+    final source = _extendAsked && !extending && afterExtend != null
+        ? afterExtend!
+        : all;
     final scoped = [
-      for (final m in all)
+      for (final m in source)
         if (scope == 'all' || m['competitionId'] == _liga) m,
     ];
     var start = 0;
@@ -133,8 +149,8 @@ class _FakeH2hApi extends ApiRepository {
           ? '${page.last['startTime']}|${page.last['matchId']}'
           : null,
       'window': {
-        'verifiedFrom': '2026-04-02',
-        'canExtend': !extending,
+        'verifiedFrom': ?serverVerifiedFrom,
+        'canExtend': serverCanExtend && !extending,
         'extending': extending,
       },
       'teams': [
@@ -256,7 +272,8 @@ void main() {
     await _pump(tester, _preview(all), api);
     expect(_rows(tester), 1);
     expect(find.byKey(const ValueKey('h2h-more')), findsNothing);
-    expect(api.calls, isEmpty);
+    // No page: only the server's window, once (limit 1).
+    expect(api.calls, ['all|-|1|']);
   });
 
   testWidgets('Este torneo pages its own meetings', (tester) async {
@@ -284,7 +301,7 @@ void main() {
     await _pump(tester, _preview(all, verifiedFrom: '2026-04-02'), api);
     expect(find.text('Historial verificado desde abr 2026'), findsOneWidget);
     await _tap(tester, find.byKey(const ValueKey('h2h-extend')));
-    expect(api.calls.single, endsWith('|extend'));
+    expect(api.calls, ['all|-|1|', 'all|-|20|extend']);
     expect(find.byKey(const ValueKey('h2h-extending')), findsOneWidget);
     expect(find.text('Cargando historial'), findsOneWidget);
     expect(find.byKey(const ValueKey('h2h-extend')), findsNothing);
@@ -292,7 +309,7 @@ void main() {
     // The next re-read finds it done: fresh list, no waiting text left.
     await tester.pump(const Duration(seconds: 15));
     await tester.pumpAndSettle();
-    expect(api.calls, hasLength(2));
+    expect(api.calls, hasLength(3));
     expect(api.calls.last, 'all|-|20|');
     expect(find.byKey(const ValueKey('h2h-extending')), findsNothing);
     expect(_rows(tester), 3);
@@ -326,7 +343,11 @@ void main() {
       await tester.pump(Duration(seconds: delay));
     }
     await tester.pumpAndSettle();
-    expect(api.calls, hasLength(4), reason: 'one extend + 3 bounded re-reads');
+    expect(
+      api.calls,
+      hasLength(5),
+      reason: 'window + one extend + 3 bounded re-reads',
+    );
     expect(find.text('Historial pendiente'), findsOneWidget);
     expect(find.byKey(const ValueKey('h2h-extending')), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -349,14 +370,49 @@ void main() {
     expect(find.byKey(const ValueKey('h2h-more')), findsNothing);
   });
 
-  testWidgets('no window, no extension offer; nothing claims a total history', (
+  testWidgets('a confirmed-empty pair shows what an extension brings', (
     tester,
   ) async {
+    final older = _history(2);
+    final api = _FakeH2hApi(const [], afterExtend: older);
+    final empty = _preview(const [])
+      ..['h2h'] = {
+        'availability': 'CONFIRMED_EMPTY',
+        'meetings': <dynamic>[],
+        'coverage': <String, dynamic>{},
+        'totals': {'homeWins': 0, 'draws': 0, 'awayWins': 0, 'counted': 0},
+      };
+    await _pump(tester, empty, api);
+    expect(find.byKey(const ValueKey('h2h-empty')), findsOneWidget);
+    await _tap(tester, find.byKey(const ValueKey('h2h-extend')));
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pumpAndSettle();
+    expect(_rows(tester), 2);
+    expect(find.byKey(const ValueKey('h2h-empty')), findsNothing);
+  });
+
+  testWidgets('the server says nothing older can be asked (floor / no '
+      'source): no offer, no window claimed', (tester) async {
     final all = _history(3);
-    await _pump(tester, _preview(all), _FakeH2hApi(all));
-    expect(find.byKey(const ValueKey('h2h-window')), findsNothing);
+    final api = _FakeH2hApi(
+      all,
+      serverCanExtend: false,
+      serverVerifiedFrom: null,
+    );
+    await _pump(tester, _preview(all, verifiedFrom: '2026-04-02'), api);
+    expect(api.calls, ['all|-|1|'], reason: 'asked once');
     expect(find.byKey(const ValueKey('h2h-extend')), findsNothing);
     expect(find.textContaining('historial completo'), findsNothing);
+  });
+
+  testWidgets('a confirmed-empty recent window (no preview verifiedFrom) '
+      'still offers older history when the server can extend', (tester) async {
+    final all = _history(2);
+    final api = _FakeH2hApi(all, serverVerifiedFrom: '2026-04-02');
+    await _pump(tester, _preview(all), api);
+    expect(find.byKey(const ValueKey('h2h-extend')), findsOneWidget);
+    await _tap(tester, find.byKey(const ValueKey('h2h-extend')));
+    expect(api.calls.last, 'all|-|20|extend');
   });
 
   testWidgets('a failed page offers Reintentar, never an endless spinner', (
