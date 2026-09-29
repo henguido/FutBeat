@@ -259,6 +259,98 @@ async function resolveIdentityItems(
   }
 }
 
+
+// GOAL fixtures -> canonical snapshot: resolve base identities, discover the
+// matches still unknown, resolve them, then normalize. Shared by the calendar
+// ingest and the team-fixtures ingest so both use one identity path.
+async function normalizeGoalBatch(
+  provider: string,
+  events: Array<Record<string, unknown>>,
+  existing: unknown,
+  receivedAt: string,
+  onStage: (stage: string) => void,
+) {
+  let resolvedBase = 0;
+  let resolvedMatches = 0;
+  let snapshot;
+  const resolved = new Map<string, string>();
+
+  onStage("resolve-base");
+  const baseIdentities = collectGoalApiBaseIdentities(events);
+  await resolveIdentityItems(
+    provider,
+    baseIdentities,
+    resolved,
+  );
+  resolvedBase = resolved.size;
+
+  onStage("discover-matches");
+  const pendingMatches = new Map<string, {
+    kind: string;
+    external: string;
+    name: string;
+    country: string;
+    shortName: string;
+  }>();
+  const temporaryIds = new Map<string, string>();
+  let sequence = 0;
+
+  const discoveryResolver = async (
+    kind: string,
+    external: string,
+    identity: { name?: string; country?: string; shortName?: string },
+  ) => {
+    if (kind !== "match") {
+      const canonical = resolved.get(entityKey(kind, external));
+      if (!canonical) {
+        throw new Error(`Missing base canonical identity for ${kind}:${external}`);
+      }
+      return canonical;
+    }
+
+    const key = entityKey(kind, external);
+    if (!pendingMatches.has(key)) {
+      pendingMatches.set(key, {
+        kind,
+        external,
+        name: identity.name ?? "",
+        country: identity.country ?? "",
+        shortName: identity.shortName ?? "",
+      });
+    }
+    if (!temporaryIds.has(key)) {
+      sequence += 1;
+      temporaryIds.set(key, `fb_match_pending_${sequence}`);
+    }
+    return temporaryIds.get(key)!;
+  };
+
+  await normalizeGoalApiFixtures(
+    events,
+    discoveryResolver,
+    receivedAt,
+    existing,
+  );
+
+  onStage("resolve-matches");
+  const matchIdentities = [...pendingMatches.values()];
+  await resolveIdentityItems(
+    provider,
+    matchIdentities,
+    resolved,
+  );
+  resolvedMatches = matchIdentities.length;
+
+  onStage("normalize");
+  snapshot = await normalizeGoalApiFixtures(
+    events,
+    localResolver(resolved),
+    receivedAt,
+    existing,
+  );
+  return { snapshot, resolvedBase, resolvedMatches };
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
 
@@ -292,6 +384,9 @@ Deno.serve(async (request) => {
     providerTotal?: number | null;
     players?: unknown;
     reservationId?: number;
+    reservationIds?: unknown[];
+    externalTeamIds?: unknown[];
+    complete?: boolean;
     errorCode?: string;
     providerCode?: string;
     httpStatus?: number | null;
@@ -312,7 +407,8 @@ Deno.serve(async (request) => {
 
   if (
     authorizedWorkflow === "supabase-cron" &&
-    input.action !== "squad-ingest"
+    input.action !== "squad-ingest" &&
+    input.action !== "team-fixtures-ingest"
   ) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -955,6 +1051,182 @@ Deno.serve(async (request) => {
     }
   }
 
+  if (input.action === "team-fixtures-ingest") {
+    const reservationIds = Array.isArray(input.reservationIds)
+      ? input.reservationIds
+      : [];
+    const externalIds = Array.isArray(input.externalTeamIds)
+      ? input.externalTeamIds
+      : [];
+    if (
+      typeof input.teamId !== "string" ||
+      !input.teamId.startsWith("fb_team_") ||
+      !validDate(input.fromDate) ||
+      !validDate(input.toDate) ||
+      String(input.fromDate) > String(input.toDate) ||
+      typeof input.complete !== "boolean" ||
+      !Array.isArray(input.events) ||
+      input.events.length > 900 ||
+      reservationIds.length < 1 ||
+      reservationIds.length > 9 ||
+      !reservationIds.every((id) => Number.isInteger(id) && Number(id) > 0) ||
+      externalIds.length < 1 ||
+      externalIds.length > 3 ||
+      !externalIds.every((id) => typeof id === "string" && id.trim().length > 0) ||
+      (
+        input.providerRemaining != null &&
+        (!Number.isInteger(input.providerRemaining) || input.providerRemaining < 0)
+      )
+    ) {
+      return Response.json({ error: "Invalid team fixtures payload" }, {
+        status: 400,
+      });
+    }
+    const events = input.events.filter(
+      (event): event is Record<string, unknown> =>
+        Boolean(event && typeof event === "object" && !Array.isArray(event)),
+    );
+    if (events.length !== input.events.length) {
+      return Response.json({ error: "Invalid event item" }, { status: 400 });
+    }
+
+    const receivedAt = new Date().toISOString();
+    const started = performance.now();
+    let stage = "read-current";
+    const complete = async (status: "SUCCEEDED" | "FAILED", metadata: Record<string, unknown>) => {
+      for (const id of reservationIds) {
+        await rpc("futbeat_complete_provider_call", {
+          p_reservation_id: Number(id),
+          p_status: status,
+          p_provider_remaining: input.providerRemaining ?? null,
+          p_http_status: status === "SUCCEEDED" ? 200 : null,
+          p_error_code: status === "SUCCEEDED" ? null : "TEAM_FIXTURES_INGEST_FAILED",
+          p_metadata: {
+            ...metadata,
+            mode: "team-fixtures",
+            teamId: input.teamId,
+            durationMs: Math.round(performance.now() - started),
+            transport: authorizedWorkflow === "supabase-cron"
+              ? "supabase-cron"
+              : "github-actions-oidc",
+            provider: "GOAL API",
+          },
+        });
+      }
+    };
+
+    try {
+      // Distinct raw provider items: the same fixture seen through two GOAL
+      // identities is one item; an item without an id cannot be one of them.
+      const externalFixtureIds = [...new Set(events
+        .map((event) => String(event.apiId ?? event.id ?? "").trim())
+        .filter(Boolean))];
+      const rawDistinct = externalFixtureIds.length +
+        events.filter((event) => !String(event.apiId ?? event.id ?? "").trim()).length;
+
+      // Canonical matches that exist BEFORE resolution (resolution creates
+      // the unknown ones): GOAL-mapped fixtures ...
+      const known = await rpc("futbeat_known_goal_fixtures", {
+        p_external_ids: externalFixtureIds,
+      });
+      const preexisting = new Set<string>(
+        Array.isArray(known) ? known.map((id) => String(id)) : [],
+      );
+
+      // Existing matches of the team: an already-known fixture (same teams,
+      // same kickoff) keeps its canonical id even without a GOAL mapping.
+      const existing = await rpc("futbeat_read_entity_detail", {
+        p_type: "team",
+        p_id: input.teamId,
+      });
+      // ... and matches already stored without a GOAL mapping, which the
+      // normalizer reuses by (home, away, kickoff) from this same snapshot.
+      for (const match of Array.isArray(existing?.matches) ? existing.matches : []) {
+        if (match && typeof match.id === "string") preexisting.add(match.id);
+      }
+      const normalized = await normalizeGoalBatch(
+        "goal_api",
+        events,
+        existing,
+        receivedAt,
+        (next) => {
+          stage = next;
+        },
+      );
+      const snapshot = normalized.snapshot;
+      const ids = (snapshot.matches as Array<{ id: string }>).map((m) => m.id);
+
+      const existingCount = ids.filter((id) => preexisting.has(id)).length;
+
+      // Raw items that did not normalize are an unknown contract, never an
+      // empty answer: nothing accepted from a non-empty answer is a failure
+      // (the SQL completion refuses NO_DATA and backs off) and fewer
+      // accepted than raw never completes the window.
+      const normalizationFailed = rawDistinct > 0 && ids.length === 0;
+      const windowComplete = input.complete && ids.length >= rawDistinct;
+
+      stage = "store";
+      // Empty coverage: no calendar day is marked as covered and nothing
+      // outside this answer is removed. Same canonical merge as the calendar.
+      const result = ids.length === 0 ? null : await rpc("futbeat_store_calendar_range", {
+        p_provider: "goal_api",
+        p_received_at: receivedAt,
+        p_coverage: [],
+        p_snapshot: snapshot,
+      }, 60000);
+
+      stage = "complete-coverage";
+      const coverage = await rpc("futbeat_complete_team_fixtures", {
+        p_team_id: input.teamId,
+        p_from: input.fromDate,
+        p_to: input.toDate,
+        p_complete: windowComplete,
+        p_raw: rawDistinct,
+        p_received: ids.length,
+        p_new: ids.length - existingCount,
+        p_existing: existingCount,
+      });
+
+      await complete("SUCCEEDED", {
+        stage: "complete",
+        received: events.length,
+        accepted: ids.length,
+        rawDistinct,
+        newMatches: ids.length - existingCount,
+        existingMatches: existingCount,
+        windowComplete,
+        normalizationFailed,
+      });
+
+      return Response.json({
+        status: "ok",
+        teamId: input.teamId,
+        received: events.length,
+        rawDistinct,
+        windowComplete,
+        normalizationFailed,
+        accepted: ids.length,
+        newMatches: ids.length - existingCount,
+        existingMatches: existingCount,
+        coverage,
+        result,
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message.slice(0, 300) : "unknown";
+      try {
+        await complete("FAILED", { stage, detail });
+      } catch {
+        // Preserve the original ingestion error.
+      }
+      console.error("team fixtures ingest failed", stage, detail);
+      return Response.json(
+        { error: "Team fixtures ingest failed", stage },
+        { status: 502 },
+      );
+    }
+  }
+
   if (input.action === "squad-ingest") {
     if (
       typeof input.teamId !== "string" ||
@@ -1219,81 +1491,18 @@ Deno.serve(async (request) => {
 
     let snapshot;
     if (input.source === "GOAL API") {
-      const resolved = new Map<string, string>();
-
-      stage = "resolve-base";
-      const baseIdentities = collectGoalApiBaseIdentities(events);
-      await resolveIdentityItems(
+      const normalized = await normalizeGoalBatch(
         provider,
-        baseIdentities,
-        resolved,
-      );
-      resolvedBase = resolved.size;
-
-      stage = "discover-matches";
-      const pendingMatches = new Map<string, {
-        kind: string;
-        external: string;
-        name: string;
-        country: string;
-        shortName: string;
-      }>();
-      const temporaryIds = new Map<string, string>();
-      let sequence = 0;
-
-      const discoveryResolver = async (
-        kind: string,
-        external: string,
-        identity: { name?: string; country?: string; shortName?: string },
-      ) => {
-        if (kind !== "match") {
-          const canonical = resolved.get(entityKey(kind, external));
-          if (!canonical) {
-            throw new Error(`Missing base canonical identity for ${kind}:${external}`);
-          }
-          return canonical;
-        }
-
-        const key = entityKey(kind, external);
-        if (!pendingMatches.has(key)) {
-          pendingMatches.set(key, {
-            kind,
-            external,
-            name: identity.name ?? "",
-            country: identity.country ?? "",
-            shortName: identity.shortName ?? "",
-          });
-        }
-        if (!temporaryIds.has(key)) {
-          sequence += 1;
-          temporaryIds.set(key, `fb_match_pending_${sequence}`);
-        }
-        return temporaryIds.get(key)!;
-      };
-
-      await normalizeGoalApiFixtures(
         events,
-        discoveryResolver,
-        receivedAt,
         existing,
-      );
-
-      stage = "resolve-matches";
-      const matchIdentities = [...pendingMatches.values()];
-      await resolveIdentityItems(
-        provider,
-        matchIdentities,
-        resolved,
-      );
-      resolvedMatches = matchIdentities.length;
-
-      stage = "normalize";
-      snapshot = await normalizeGoalApiFixtures(
-        events,
-        localResolver(resolved),
         receivedAt,
-        existing,
+        (next) => {
+          stage = next;
+        },
       );
+      snapshot = normalized.snapshot;
+      resolvedBase = normalized.resolvedBase;
+      resolvedMatches = normalized.resolvedMatches;
     } else {
       stage = "normalize";
       const resolve = (

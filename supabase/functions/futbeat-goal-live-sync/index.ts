@@ -1236,6 +1236,206 @@ async function syncOneSquad(attempt?: SquadAttempt) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Team match coverage (#150). Manual trigger only: no cron runs this lane.
+// One demanded canonical team per run; every GOAL identity of that team
+// (up to 3, most recently seen first) is paged over the planned window with
+// ONE reservation per provider page (central quota manager, 'coverage').
+// ---------------------------------------------------------------------------
+
+type TeamFixturesAttempt = {
+  candidate: Record<string, unknown> | null;
+  reservations: number;
+  providerCalls: number;
+  stoppedBy: string | null;
+};
+
+const teamFixturesPageLimit = 100;
+const teamFixturesMaxPages = 3;
+
+async function syncOneTeamFixtures(attempt: TeamFixturesAttempt) {
+  const plan = await rpc("futbeat_team_fixtures_plan", { p_limit: 1 });
+  if (!Array.isArray(plan) || plan.length === 0) {
+    return { status: "skipped", reason: "no_team_fixtures_due" };
+  }
+  const row = plan[0] as Record<string, unknown>;
+  const teamId = clean(row.teamId);
+  const fromDate = clean(row.from);
+  const toDate = clean(row.to);
+  const externalIds = Array.isArray(row.externalTeamIds)
+    ? row.externalTeamIds.map(clean).filter(Boolean).slice(0, 3)
+    : [];
+  if (
+    !teamId.startsWith("fb_team_") ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(fromDate) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(toDate) ||
+    externalIds.length === 0
+  ) {
+    throw new Error("Invalid team fixtures plan row");
+  }
+  attempt.candidate = {
+    teamId,
+    externalTeamIds: externalIds,
+    from: fromDate,
+    to: toDate,
+    mode: row.mode ?? null,
+    reason: row.reason ?? null,
+  };
+
+  const reservationIds: number[] = [];
+  const events: unknown[] = [];
+  const failedStatuses: Array<number | null> = [];
+  let remaining: number | null = null;
+  let complete = true;
+  let succeededPages = 0;
+  let page = 0;
+  let goalKey = "";
+
+  // Every planned identity is tried: a 404/500 of one GOAL id says nothing
+  // about the others (a club can carry a stale id next to a live one). A
+  // failed page only closes ITS ledger row; the batch lease is kept.
+  identities: for (const externalTeamId of externalIds) {
+    let offset = 0;
+    for (let n = 0; n < teamFixturesMaxPages; n++) {
+      const reservation = await rpc("futbeat_reserve_goal_team_fixtures_call", {
+        p_team_id: teamId,
+        p_external_team_id: externalTeamId,
+        p_page: page,
+        p_trigger_source: "supabase-cron",
+      });
+      if (!reservation?.allowed) {
+        // Quota floor/cap or lease: stop the batch, keep what was fetched.
+        attempt.stoppedBy = clean(reservation?.reason) || "not_allowed";
+        complete = false;
+        break identities;
+      }
+      const reservationId = Number(reservation.reservationId);
+      page += 1;
+      try {
+        goalKey ||= await readGoalKey();
+        attempt.providerCalls += 1;
+        const query = new URLSearchParams({
+          from: fromDate,
+          to: toDate,
+          limit: String(teamFixturesPageLimit),
+          offset: String(offset),
+        });
+        const response = await fetchGoal(
+          goalKey,
+          `/teams/${encodeURIComponent(externalTeamId)}/fixtures?${query}`,
+          30000,
+          true,
+        );
+        remaining = response.remaining;
+        const data = response.payload.data;
+        if (!Array.isArray(data)) throw new Error("GOAL team fixtures payload is invalid");
+        events.push(...data);
+        reservationIds.push(reservationId);
+        succeededPages += 1;
+        attempt.reservations = page;
+        const next = nextResultsOffset({
+          pagination: response.payload.pagination as Record<string, unknown> | null,
+          rowCount: data.length,
+          added: data.length,
+          currentOffset: offset,
+          requestedLimit: teamFixturesPageLimit,
+        });
+        if (next == null) break;
+        offset = next;
+        // Page cap reached with more pages left: the window is partial.
+        if (n === teamFixturesMaxPages - 1) complete = false;
+      } catch (error) {
+        const httpStatus = error instanceof Error
+          ? Number(error.message.match(/^GOAL API (?:returned non-JSON )?HTTP (\d{3})$/)?.[1]) || null
+          : null;
+        remaining = (error as { remaining?: number | null })?.remaining ?? remaining;
+        attempt.reservations = page;
+        failedStatuses.push(httpStatus);
+        await completeFailure(
+          reservationId,
+          "GOAL_TEAM_FIXTURES_FETCH_FAILED",
+          { mode: "team-fixtures", teamId, externalTeamId, page: page - 1 },
+          remaining,
+          httpStatus,
+          true,
+        );
+        // This identity is not validated: the window cannot be complete.
+        complete = false;
+        continue identities;
+      }
+    }
+  }
+
+  if (page === 0) {
+    // Nothing reserved (quota/lease): no lease taken, nothing to report.
+    return { status: "skipped", teamId, reason: attempt.stoppedBy ?? "not_allowed" };
+  }
+  if (succeededPages === 0) {
+    // Every attempted page failed: team-level backoff, never NO_DATA.
+    await rpc("futbeat_fail_team_fixtures", {
+      p_team_id: teamId,
+      p_reason: attempt.stoppedBy ? "QUOTA_STOPPED" : "FETCH_FAILED",
+      p_http_statuses: failedStatuses.filter((status) => status != null),
+    });
+    return { status: "failed", teamId, reason: "fetch_failed", httpStatuses: failedStatuses };
+  }
+
+  const cronToken = await readCronToken();
+  let ingested: Record<string, unknown>;
+  try {
+    ingested = await callGlobalIngest(cronToken, {
+      action: "team-fixtures-ingest",
+      teamId,
+      externalTeamIds: externalIds,
+      reservationIds,
+      fromDate,
+      toDate,
+      complete,
+      providerRemaining: remaining,
+      events,
+    });
+  } catch (error) {
+    // Ingest closed its reservations; release the lease with a backoff.
+    await rpc("futbeat_fail_team_fixtures", {
+      p_team_id: teamId,
+      p_reason: "INGEST_FAILED",
+      p_http_statuses: [],
+    });
+    throw error;
+  }
+  return {
+    status: "ok",
+    teamId,
+    received: Number(ingested.received ?? 0),
+    accepted: Number(ingested.accepted ?? 0),
+    newMatches: Number(ingested.newMatches ?? 0),
+    existingMatches: Number(ingested.existingMatches ?? 0),
+    windowComplete: ingested.windowComplete === true,
+    failedIdentities: failedStatuses.length,
+    remaining,
+  };
+}
+
+async function syncTeamFixturesOnly() {
+  const attempt: TeamFixturesAttempt = {
+    candidate: null,
+    reservations: 0,
+    providerCalls: 0,
+    stoppedBy: null,
+  };
+  try {
+    const result = await syncOneTeamFixtures(attempt);
+    return { trigger: "team-fixtures-only", ...attempt, result };
+  } catch {
+    // Never expose provider/RPC text, credentials or request headers.
+    return {
+      trigger: "team-fixtures-only",
+      ...attempt,
+      result: { status: "failed", error: "GOAL_TEAM_FIXTURES_SYNC_FAILED" },
+    };
+  }
+}
+
 async function syncSquadOnly() {
   const attempt: SquadAttempt = {
     candidate: null,
@@ -1559,6 +1759,16 @@ Deno.serve(async (request) => {
         });
       }
       return Response.json(await syncSquadOnly());
+    }
+    if (trigger === "team-fixtures-only") {
+      // Manual/controlled runs only (#150): no team, provider URL, window or
+      // quota override is accepted; the central planner decides.
+      if (Object.keys(body).some((key) => key !== "trigger")) {
+        return Response.json({ error: "team-fixtures-only accepts only trigger" }, {
+          status: 400,
+        });
+      }
+      return Response.json(await syncTeamFixturesOnly());
     }
     if (trigger === "results-only") {
       try {
