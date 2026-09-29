@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -360,25 +363,45 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   /// "Este torneo": only meetings of the selected match's competition.
   bool _thisCompetition = false;
 
-  /// Pages loaded after the preview's first meetings, per scope
-  /// (false = Todos, true = Este torneo).
+  /// Server pages per scope (false = Todos, true = Este torneo). Once a
+  /// scope has pages, they replace the preview's first meetings: the server
+  /// order and totals are the only source from then on.
   final Map<bool, List<H2hPage>> _pages = {false: [], true: []};
   final Set<bool> _loading = {};
   final Set<bool> _failed = {};
 
   /// Older-history extension (central coverage, both teams).
   bool _extending = false;
+  bool _extendPending = false;
   bool? _canExtend;
   String? _verifiedFrom;
+  Timer? _poll;
+
+  /// Re-reads while the extension is in flight; then it is left pending.
+  static const extendPollDelays = [
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(seconds: 60),
+  ];
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
 
   ApiRepository? get _api {
     final repository = ref.read(repositoryProvider);
     return repository is ApiRepository ? repository : null;
   }
 
-  Future<void> _loadMore(bool competition, String cursor) async {
+  /// The first page asks from the top (no cursor) for what the preview
+  /// showed plus one more page, so ties and gaps in the preview's cut never
+  /// hide a meeting; later pages follow the server's cursor.
+  Future<void> _loadMore(bool competition, int shown) async {
     final api = _api;
     if (api == null || _loading.contains(competition)) return;
+    final pages = _pages[competition]!;
     setState(() {
       _loading.add(competition);
       _failed.remove(competition);
@@ -387,7 +410,8 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
       final page = await api.loadMatchH2h(
         widget.match.id,
         scope: competition ? 'competition' : 'all',
-        cursor: cursor,
+        cursor: pages.isEmpty ? null : pages.last.nextCursor,
+        limit: pages.isEmpty ? math.min(50, shown + 20) : 20,
       );
       if (!mounted) return;
       setState(() {
@@ -407,15 +431,49 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
     if (api == null || _extending) return;
     setState(() => _extending = true);
     try {
-      final page = await api.loadMatchH2h(widget.match.id, extend: true);
-      if (!mounted) return;
-      setState(() {
-        _extending = page.extending;
-        _canExtend = page.canExtend && !page.extending;
-      });
+      _settle(await api.loadMatchH2h(widget.match.id, extend: true), 0);
     } catch (_) {
       if (mounted) setState(() => _extending = false);
     }
+  }
+
+  /// Applies an extension answer: done -> fresh first page of Todos (new
+  /// meetings and totals); still in flight -> re-read later, a bounded
+  /// number of times, then left as pending.
+  void _settle(H2hPage page, int attempt) {
+    if (!mounted) return;
+    if (!page.extending) {
+      setState(() {
+        _extending = false;
+        _pages[false] = [page];
+        _pages[true] = [];
+        _failed.clear();
+        _verifiedFrom = page.verifiedFrom ?? _verifiedFrom;
+        _canExtend = page.canExtend;
+      });
+      return;
+    }
+    if (attempt >= extendPollDelays.length) {
+      setState(() {
+        _extending = false;
+        _extendPending = true;
+      });
+      return;
+    }
+    _poll = Timer(extendPollDelays[attempt], () async {
+      final api = _api;
+      if (api == null || !mounted) return;
+      try {
+        _settle(await api.loadMatchH2h(widget.match.id), attempt + 1);
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _extending = false;
+            _extendPending = true;
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -484,13 +542,15 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
           ]
         : all;
     final pages = _pages[_thisCompetition]!;
-    // The preview's newest meetings, then every loaded page, each id once.
+    // Before any page: the preview's newest meetings. After: the server's
+    // pages only, each id once.
     final seen = <String>{};
     final meetings = [
-      for (final item in [...base, ...pages.expand((p) => p.meetings)])
+      for (final item in pages.isEmpty ? base : pages.expand((p) => p.meetings))
         if (seen.add(item['matchId']?.toString() ?? '')) item,
     ];
     final totals =
+        (pages.isEmpty ? null : pages.last.totals) ??
         value.h2hTotals(competition: _thisCompetition) ??
         _countTotals(meetings, match.homeId);
     // More stored meetings than shown: the server said so, or (before any
@@ -499,9 +559,6 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
         ? pages.last.hasMore
         : meetings.length < totals.total;
     final verifiedFrom = _verifiedFrom ?? value.h2hVerifiedFrom;
-    final lastCursor = meetings.isEmpty
-        ? null
-        : '${meetings.last['startTime']}|${meetings.last['matchId']}';
     final showCurrent =
         current != null &&
         (!_thisCompetition || current['competitionId'] == competitionId);
@@ -535,7 +592,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
-              'Registros desde ${_monthYear(verifiedFrom)}',
+              'Historial verificado desde ${_monthYear(verifiedFrom)}',
               key: const ValueKey('h2h-window'),
               style: const TextStyle(color: muted, fontSize: 12),
             ),
@@ -551,7 +608,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
           ),
           const SizedBox(height: 8),
         ],
-        if (meetings.isEmpty)
+        if (meetings.isEmpty && !more)
           const _H2hMessage(
             'Sin enfrentamientos en este torneo',
             key: ValueKey('h2h-empty-competition'),
@@ -575,13 +632,11 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
               ),
             ),
           )
-        else if ((more || _failed.contains(_thisCompetition)) &&
-            lastCursor != null &&
-            _api != null)
+        else if ((more || _failed.contains(_thisCompetition)) && _api != null)
           Center(
             child: TextButton(
               key: const ValueKey('h2h-more'),
-              onPressed: () => _loadMore(_thisCompetition, lastCursor),
+              onPressed: () => _loadMore(_thisCompetition, meetings.length),
               child: Text(
                 _failed.contains(_thisCompetition) ? 'Reintentar' : 'Ver más',
               ),
@@ -593,6 +648,17 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
             padding: EdgeInsets.symmetric(vertical: 10),
             child: Center(
               child: Text('Cargando historial', style: TextStyle(color: muted)),
+            ),
+          )
+        else if (_extendPending)
+          const Padding(
+            key: ValueKey('h2h-extend-pending'),
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Center(
+              child: Text(
+                'Historial pendiente',
+                style: TextStyle(color: muted),
+              ),
             ),
           )
         else if (verifiedFrom != null && _canExtend != false && _api != null)

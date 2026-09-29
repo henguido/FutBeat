@@ -209,11 +209,29 @@ test('window: at the 3-year floor there is nothing more to ask; unmapped teams n
   const p = await read(db, s.target);
   assert.equal(p.window.canExtend, false);
   const r = (await db.query('select public.futbeat_request_match_h2h_history($1) v', [s.target])).rows[0].v;
-  assert.equal(r.home.backfill, false);
+  assert.equal(r.requested, false, 'nothing older to ask for');
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.team_match_demands')).rows[0].n, 0);
   const X = await team(db, 'Sin fuente', { mapped: false }); const Y = await team(db, 'Sin fuente 2', { mapped: false });
   const orphan = await match(db, { comp: s.liga, home: X, away: Y, at: Date.now() + DAY, status: 'SCHEDULED', score: null });
   assert.equal((await read(db, orphan)).window.canExtend, false);
-  assert.equal((await db.query('select public.futbeat_request_match_h2h_history($1) v', [orphan])).rows[0].v.home.demandRecorded, false);
+  assert.equal((await db.query('select public.futbeat_request_match_h2h_history($1) v', [orphan])).rows[0].v.requested, false);
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.team_match_demands')).rows[0].n, 0);
+}));
+
+test('window: extending is per team (a stale profile demand of one side never hides or fakes the other)', () => withDb(async (db) => {
+  const s = await history(db, 1);
+  await coverFrom(db, s.A, 180); await coverFrom(db, s.B, 180);
+  // A profile demand without an older target on A: nothing is extending.
+  await db.query("insert into futbeat_private.team_match_demands(team_id,reason) values($1,'profile')", [s.A]);
+  assert.equal((await read(db, s.target)).window.extending, false);
+  // B asks for an older range: extending, although A's row has no target.
+  await db.query("insert into futbeat_private.team_match_demands(team_id,reason,past_target) values($1,'history',current_date-360)", [s.B]);
+  assert.equal((await read(db, s.target)).window.extending, true);
+  // While a step is in flight, another extend adds nothing.
+  const r = (await db.query('select public.futbeat_request_match_h2h_history($1) v', [s.target])).rows[0].v;
+  assert.equal(r.requested, false);
+  const rows = (await db.query('select team_id,past_target from futbeat_private.team_match_demands order by team_id')).rows;
+  assert.equal(rows.find((x) => x.team_id === s.A).past_target, null);
 }));
 
 // ---------------------------------------------------------------------------

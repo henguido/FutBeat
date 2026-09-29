@@ -83,10 +83,12 @@ declare
   a_from date:=nullif(aw->>'coveredFrom','')::date;
   requested boolean;
 begin
-  select coalesce(bool_and(d.past_target is not null
-      and d.past_target<coalesce(case d.team_id when p_home then h_from else a_from end,'infinity'::date)),false)
-  into requested
-  from futbeat_private.team_match_demands d where d.team_id in (p_home,p_away);
+  -- Extending = at least one of the two teams has an open demand for a range
+  -- older than its own verified start (per team, never a mix of both).
+  requested:=exists(select 1 from futbeat_private.team_match_demands d
+      where d.team_id=p_home and d.past_target is not null and d.past_target<h_from)
+    or exists(select 1 from futbeat_private.team_match_demands d
+      where d.team_id=p_away and d.past_target is not null and d.past_target<a_from);
   return jsonb_strip_nulls(jsonb_build_object(
     'verifiedFrom',case when h_from is not null and a_from is not null then greatest(h_from,a_from) end,
     'historyFloor',floor_date,
@@ -115,7 +117,8 @@ begin
   if p_cursor is not null then
     begin
       cursor_time:=split_part(p_cursor,'|',1)::timestamptz;
-      cursor_id:=nullif(split_part(p_cursor,'|',2),'');
+      cursor_id:=nullif(substr(p_cursor,position('|' in p_cursor)+1),'');
+      if position('|' in p_cursor)=0 then cursor_id:=null; end if;
     exception when others then raise exception 'Invalid h2h cursor';
     end;
     if cursor_id is null then raise exception 'Invalid h2h cursor'; end if;
@@ -177,7 +180,7 @@ end $$;
 -- "Cargar historial anterior": one step back of BOTH teams' central coverage.
 create function public.futbeat_request_match_h2h_history(p_match_id text)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
-declare t jsonb; c_home text; c_away text; hs jsonb; aw jsonb; out_home jsonb; out_away jsonb;
+declare t jsonb; c_home text; c_away text; hs jsonb; aw jsonb; out_home jsonb; out_away jsonb; w jsonb;
 begin
   select e.payload into t from futbeat_private.entities e where e.id=p_match_id and e.kind='match';
   if t is null then return jsonb_build_object('matchId',p_match_id,'found',false); end if;
@@ -185,6 +188,12 @@ begin
   c_away:=futbeat_private.futbeat_resolve_entity_id('team',nullif(t->>'awayTeamId',''));
   if c_home is null or c_away is null or c_home=c_away then
     return jsonb_build_object('matchId',p_match_id,'found',true,'requested',false);
+  end if;
+  -- A step already in flight, or nothing left to ask: no new demand (a
+  -- repeated or scripted extend never stacks steps).
+  w:=futbeat_private.h2h_window(c_home,c_away);
+  if (w->>'extending')::boolean or not (w->>'canExtend')::boolean then
+    return jsonb_build_object('matchId',p_match_id,'found',true,'requested',false,'window',w);
   end if;
   hs:=futbeat_private.team_match_coverage_state(c_home);
   aw:=futbeat_private.team_match_coverage_state(c_away);

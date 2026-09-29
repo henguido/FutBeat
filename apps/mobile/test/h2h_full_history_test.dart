@@ -84,10 +84,15 @@ Map<String, dynamic> _preview(
 }
 
 class _FakeH2hApi extends ApiRepository {
-  _FakeH2hApi(this.all, {this.fail = false}) : super(Dio());
+  _FakeH2hApi(this.all, {this.fail = false, this.extendingReads = 0})
+    : super(Dio());
 
   final List<Map<String, dynamic>> all;
   final bool fail;
+
+  /// Reads after an extend that still report `extending` (-1 = forever).
+  int extendingReads;
+  bool _extendAsked = false;
   final calls = <String>[];
 
   @override
@@ -98,8 +103,16 @@ class _FakeH2hApi extends ApiRepository {
     int limit = 20,
     bool extend = false,
   }) async {
-    calls.add('$scope|${cursor ?? '-'}|${extend ? 'extend' : ''}');
+    calls.add('$scope|${cursor ?? '-'}|$limit|${extend ? 'extend' : ''}');
     if (fail) throw DioException(requestOptions: RequestOptions());
+    var extending = false;
+    if (extend) {
+      _extendAsked = true;
+      extending = true;
+    } else if (_extendAsked && extendingReads != 0) {
+      extending = true;
+      if (extendingReads > 0) extendingReads--;
+    }
     final scoped = [
       for (final m in all)
         if (scope == 'all' || m['competitionId'] == _liga) m,
@@ -121,8 +134,8 @@ class _FakeH2hApi extends ApiRepository {
           : null,
       'window': {
         'verifiedFrom': '2026-04-02',
-        'canExtend': !extend,
-        'extending': extend,
+        'canExtend': !extending,
+        'extending': extending,
       },
       'teams': [
         {'id': _home, 'name': 'Equipo Casa'},
@@ -227,7 +240,8 @@ void main() {
     expect(_rows(tester), 20);
     final wins = _value(tester, 'h2h-home-wins');
     await _tap(tester, find.byKey(const ValueKey('h2h-more')));
-    expect(api.calls, ['all|${all[19]['startTime']}|${all[19]['matchId']}|']);
+    // First page from the top (no cursor), what was shown + one page.
+    expect(api.calls, ['all|-|40|']);
     expect(_rows(tester), 27);
     expect(find.byKey(const ValueKey('h2h-more')), findsNothing);
     expect(_value(tester, 'h2h-home-wins'), wins);
@@ -268,13 +282,54 @@ void main() {
     final all = _history(3);
     final api = _FakeH2hApi(all);
     await _pump(tester, _preview(all, verifiedFrom: '2026-04-02'), api);
-    expect(find.text('Registros desde abr 2026'), findsOneWidget);
+    expect(find.text('Historial verificado desde abr 2026'), findsOneWidget);
     await _tap(tester, find.byKey(const ValueKey('h2h-extend')));
     expect(api.calls.single, endsWith('|extend'));
     expect(find.byKey(const ValueKey('h2h-extending')), findsOneWidget);
     expect(find.text('Cargando historial'), findsOneWidget);
     expect(find.byKey(const ValueKey('h2h-extend')), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
+    // The next re-read finds it done: fresh list, no waiting text left.
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pumpAndSettle();
+    expect(api.calls, hasLength(2));
+    expect(api.calls.last, 'all|-|20|');
+    expect(find.byKey(const ValueKey('h2h-extending')), findsNothing);
+    expect(_rows(tester), 3);
+  });
+
+  testWidgets('an extension that never lands stops re-reading and says so', (
+    tester,
+  ) async {
+    final all = _history(3);
+    final api = _FakeH2hApi(all, extendingReads: -1);
+    await _pump(tester, _preview(all, verifiedFrom: '2026-04-02'), api);
+    await _tap(tester, find.byKey(const ValueKey('h2h-extend')));
+    for (final delay in const [15, 30, 60, 120]) {
+      await tester.pump(Duration(seconds: delay));
+    }
+    await tester.pumpAndSettle();
+    expect(api.calls, hasLength(4), reason: 'one extend + 3 bounded re-reads');
+    expect(find.text('Historial pendiente'), findsOneWidget);
+    expect(find.byKey(const ValueKey('h2h-extending')), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('Este torneo reaches its older meetings even when the preview '
+      'listed none of them', (tester) async {
+    // 22 recent cup meetings, then 3 older league ones (the target's).
+    final all = [
+      for (var i = 1; i <= 22; i++) _meeting(i, comp: _copa),
+      for (var i = 23; i <= 25; i++) _meeting(i),
+    ];
+    final api = _FakeH2hApi(all);
+    await _pump(tester, _preview(all), api);
+    await _tap(tester, find.text('Este torneo'));
+    expect(find.byKey(const ValueKey('h2h-empty-competition')), findsNothing);
+    await _tap(tester, find.byKey(const ValueKey('h2h-more')));
+    expect(api.calls.single, 'competition|-|20|');
+    expect(_rows(tester), 3);
+    expect(find.byKey(const ValueKey('h2h-more')), findsNothing);
   });
 
   testWidgets('no window, no extension offer; nothing claims a total history', (
