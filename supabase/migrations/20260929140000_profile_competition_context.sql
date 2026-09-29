@@ -18,8 +18,10 @@
 --     option, else a deterministic default) and that exact table (provisional
 --     overlay only for the competition's current season, as Match Center).
 --     Default order: active (upcoming, or a match in the last 180 days) >
---     has a table with the team > the team's main competition > soonest next
---     kickoff > latest kickoff > competition id > season key.
+--     the competition's current season > has a table with the team > the
+--     team's main competition > soonest next kickoff > latest kickoff >
+--     competition id > season key. Season '-' selects the seasonless option
+--     explicitly.
 --   * public.futbeat_read_team_matches gains optional p_competition_id /
 --     p_season_key filters and exposes the team's match coverage state
 --     (coverage.teamMatches: AVAILABLE / STALE / PENDING / NO_DATA /
@@ -32,6 +34,31 @@
 -- Read-only functions; no table changes, no data rewritten.
 -- Rollback (conceptual): drop the two new functions and restore the
 -- 4-argument futbeat_read_team_matches from 20260929100000.
+
+-- Canonical competition plus every alias redirected to it (bounded).
+create function futbeat_private.competition_identity_ids(p_competition_id text)
+returns text[] language sql stable set search_path='' as $$
+  with recursive ids(id,depth,path) as (
+    select p_competition_id,0,array[p_competition_id]
+    union all
+    select r.alias_id,i.depth+1,i.path||r.alias_id
+    from ids i join futbeat_private.entity_redirects r
+      on r.kind='competition' and r.canonical_id=i.id
+    where i.depth<8 and not r.alias_id=any(i.path)
+  ) select array_agg(distinct id) from ids
+$$;
+
+-- A stored table in canonical ids (competition + row teams): aliases left
+-- by merges never hide a row's team or the table itself.
+create function futbeat_private.canonical_table(p_table jsonb,p_competition_id text)
+returns jsonb language sql stable set search_path='' as $$
+  select p_table||jsonb_build_object(
+    'competitionId',p_competition_id,
+    'rows',coalesce((select jsonb_agg(case when nullif(r->>'teamId','') is null then r
+        else r||jsonb_build_object('teamId',futbeat_private.futbeat_resolve_entity_id('team',r->>'teamId')) end
+        order by ord)
+      from jsonb_array_elements(coalesce(p_table->'rows','[]'::jsonb)) with ordinality x(r,ord)),'[]'::jsonb))
+$$;
 
 create function futbeat_private.team_context_options(p_team_id text)
 returns jsonb language sql stable set search_path='' as $$
@@ -66,6 +93,8 @@ returns jsonb language sql stable set search_path='' as $$
       'firstStart',g.first_start,
       'lastStart',g.last_start,
       'nextStart',g.next_start,
+      'currentSeason',g.season_key is not null
+        and g.season_key=futbeat_private.competition_season_key(g.comp),
       'hasStandings',coalesce(t.has_team,false)))
     order by g.season_key desc nulls last,g.last_start desc,g.comp),'[]'::jsonb)
   from g
@@ -92,11 +121,13 @@ declare
 begin
   if nullif(p_team_id,'') is null or length(p_team_id)>120
      or (p_competition_id is not null and (p_competition_id='' or length(p_competition_id)>120))
-     or (p_season_key is not null and (p_season_key='' or length(p_season_key)>20)) then
+     or (p_season_key is not null and (p_season_key='' or length(p_season_key)>40)) then
     raise exception 'Invalid team context request';
   end if;
-  -- A raw label ('2026/27' from a match) or an already normalized key.
-  req_season:=nullif(futbeat_private.normalize_season(p_season_key),'');
+  -- A raw label ('2026/27' from a match), a normalized key, or '-' for the
+  -- seasonless option.
+  req_season:=case when p_season_key='-' then '-'
+    else nullif(futbeat_private.normalize_season(p_season_key),'') end;
   tid:=futbeat_private.futbeat_resolve_entity_id('team',p_team_id);
   select e.payload into team from futbeat_private.entities e where e.id=tid and e.kind='team';
   if team is null then return null; end if;
@@ -109,7 +140,8 @@ begin
     req_comp:=futbeat_private.futbeat_resolve_entity_id('competition',p_competition_id);
     select o into selected from jsonb_array_elements(options) o
     where o->>'competitionId'=req_comp
-      and (req_season is null or o->>'seasonKey'=req_season)
+      and (req_season is null or o->>'seasonKey'=req_season
+        or (req_season='-' and o->>'seasonKey' is null))
     order by o->>'seasonKey' desc nulls last,(o->>'lastStart')::timestamptz desc
     limit 1;
     requested_matched:=selected is not null;
@@ -118,6 +150,7 @@ begin
     select o into selected from jsonb_array_elements(options) o
     order by
       ((o->>'nextStart') is not null or (o->>'lastStart')::timestamptz>=now()-interval '180 days') desc,
+      coalesce((o->>'currentSeason')::boolean,false) desc,
       coalesce((o->>'hasStandings')::boolean,false) desc,
       (o->>'competitionId'=main_comp) desc nulls last,
       (o->>'nextStart')::timestamptz asc nulls last,
@@ -132,9 +165,11 @@ begin
     select * into snap from futbeat_private.standings_snapshots s
     where s.competition_id=selected->>'competitionId' and s.season_key=selected->>'seasonKey';
     if snap.competition_id is not null then
-      table_json:=case when snap.season_key=coalesce(futbeat_private.competition_season_key(snap.competition_id),'')
-        then futbeat_private.futbeat_apply_provisional_standings(snap.table_payload,snap.fetched_at)
-        else snap.table_payload end;
+      table_json:=futbeat_private.canonical_table(
+        case when snap.season_key=coalesce(futbeat_private.competition_season_key(snap.competition_id),'')
+          then futbeat_private.futbeat_apply_provisional_standings(snap.table_payload,snap.fetched_at)
+          else snap.table_payload end,
+        snap.competition_id);
     end if;
   end if;
 
@@ -143,7 +178,7 @@ begin
   where e.kind='team' and e.id in (
     select tid
     union
-    select futbeat_private.futbeat_resolve_entity_id('team',r->>'teamId')
+    select r->>'teamId'
     from jsonb_array_elements(coalesce(table_json->'rows','[]'::jsonb)) r
     where nullif(r->>'teamId','') is not null);
 
@@ -186,7 +221,10 @@ declare
   tid text;
   ids text[];
   comp_filter text;
-  season_filter text:=nullif(futbeat_private.normalize_season(p_season_key),'');
+  comp_ids text[];
+  -- '-' = only matches without a season.
+  season_filter text:=case when p_season_key='-' then '-'
+    else nullif(futbeat_private.normalize_season(p_season_key),'') end;
   cursor_time timestamptz;
   cursor_id text;
   rec record;
@@ -201,7 +239,7 @@ begin
   if p_bucket not in ('live','upcoming','results') or p_limit is null or p_limit<1 or p_limit>50
      or nullif(p_team_id,'') is null
      or (p_competition_id is not null and (p_competition_id='' or length(p_competition_id)>120))
-     or (p_season_key is not null and (p_season_key='' or length(p_season_key)>20)) then
+     or (p_season_key is not null and (p_season_key='' or length(p_season_key)>40)) then
     raise exception 'Invalid team matches request';
   end if;
   if p_cursor is not null then
@@ -221,6 +259,8 @@ begin
   ids:=futbeat_private.team_identity_ids(tid);
   comp_filter:=case when p_competition_id is not null
     then futbeat_private.futbeat_resolve_entity_id('competition',p_competition_id) end;
+  comp_ids:=case when comp_filter is not null
+    then futbeat_private.competition_identity_ids(comp_filter) end;
 
   for rec in
     select c.id,c.payload,c.start_time from (
@@ -228,11 +268,13 @@ begin
       from futbeat_private.entities e
       where e.kind='match' and e.payload->>'homeTeamId'=any(ids)
         and nullif(e.payload->>'startTime','') is not null
+        and (comp_ids is null or e.payload->>'competitionId'=any(comp_ids))
       union
       select e.id,e.payload,(e.payload->>'startTime')::timestamptz
       from futbeat_private.entities e
       where e.kind='match' and e.payload->>'awayTeamId'=any(ids)
         and nullif(e.payload->>'startTime','') is not null
+        and (comp_ids is null or e.payload->>'competitionId'=any(comp_ids))
     ) c
     where (
       (p_bucket='live' and c.start_time between now()-interval '6 hours' and now())
@@ -251,11 +293,11 @@ begin
       case when p_bucket='results' then c.start_time end desc,
       case when p_bucket='results' then c.id end desc
   loop
-    -- Context filters on canonical identity (aliases resolved) and the
-    -- normalized season; checked before the (costlier) read model.
-    continue when comp_filter is not null and futbeat_private.futbeat_resolve_entity_id(
-      'competition',nullif(rec.payload->>'competitionId','')) is distinct from comp_filter;
-    continue when season_filter is not null and nullif(futbeat_private.normalize_season(
+    -- Season filter (the competition, aliases included, is already in the
+    -- scan); checked before the (costlier) read model.
+    continue when season_filter='-' and nullif(futbeat_private.normalize_season(
+      rec.payload->>'season'),'') is not null;
+    continue when season_filter is not null and season_filter<>'-' and nullif(futbeat_private.normalize_season(
       rec.payload->>'season'),'') is distinct from season_filter;
     modeled:=futbeat_private.match_read_model(rec.payload);
     continue when futbeat_private.team_match_bucket(modeled)<>p_bucket;
@@ -306,8 +348,11 @@ begin
   );
 end $$;
 
-revoke all on function futbeat_private.team_context_options(text)
-  from public,anon,authenticated,service_role;
+revoke all on function
+  futbeat_private.team_context_options(text),
+  futbeat_private.competition_identity_ids(text),
+  futbeat_private.canonical_table(jsonb,text)
+from public,anon,authenticated,service_role;
 revoke all on function
   public.futbeat_read_team_context(text,text,text),
   public.futbeat_read_team_matches(text,text,text,integer,text,text)

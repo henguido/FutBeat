@@ -104,7 +104,7 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
         bucket.wire,
         cursor: pages.lastOrNull?.nextCursor,
         competitionId: filter?.competitionId,
-        season: filter?.seasonKey,
+        season: filter?.seasonParam,
       );
       if (mounted && generation == _generation) {
         setState(() => pages.add(page));
@@ -124,8 +124,7 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
     final filter = _filter;
     return filter == null ||
         (match.competitionId == filter.competitionId &&
-            (filter.seasonKey == null ||
-                normalizeSeasonKey(match.season) == filter.seasonKey));
+            normalizeSeasonKey(match.season) == filter.seasonKey);
   }
 
   List<ProfileMatch> _items(TeamMatchesBucket bucket) {
@@ -188,7 +187,6 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
   /// Empty copy from the team's central coverage: still arriving and "no
   /// source" are never shown as a confirmed empty list.
   String _emptyCopy(TeamMatchesBucket bucket, String fallback) {
-    if (_filtered) return fallback;
     return switch (_pages[bucket]!.lastOrNull?.coverageState) {
       'PENDING' => 'Cargando partidos',
       'UNAVAILABLE' => 'Partidos no disponibles',

@@ -36,10 +36,11 @@ const validEntityType = (value: string | null) =>
 const validEntityId = (value: string | null) =>
   value !== null && /^fb_[A-Za-z0-9_-]{3,120}$/.test(value);
 
-// Normalized season key (normalize_season): '2026', '2025-2026', or a short
-// lowercased label.
+// Season: a raw label ('2026/27', 'Apertura 2026') or a normalized key
+// (the server normalizes both), or '-' for the seasonless option.
 const validSeasonKey = (value: string | null) =>
-  value === null || /^[a-z0-9][a-z0-9 ._/-]{0,19}$/.test(value);
+  value === null || value === '-' ||
+  /^[\p{L}\p{N}][\p{L}\p{N} ._/-]{0,39}$/u.test(value);
 
 export default {
   fetch: withSupabase({ auth: 'none' }, async (request, ctx) => {

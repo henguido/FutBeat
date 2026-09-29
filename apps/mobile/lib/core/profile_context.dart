@@ -22,6 +22,9 @@ String? normalizeSeasonKey(String? value) {
   return raw.replaceAll(RegExp(r'\s+'), ' ');
 }
 
+/// Server value for "the option without season" (never a real key).
+const noSeason = '-';
+
 /// Display label of a season key: '2025-2026' -> '2025/26'.
 String seasonLabel(String? key) {
   if (key == null) return '';
@@ -37,7 +40,8 @@ class ProfileContextOption {
       competitionName = json['competitionName'] as String? ?? '',
       seasonKey = json['seasonKey'] as String?,
       matchCount = (json['matchCount'] as num?)?.toInt() ?? 0,
-      hasStandings = json['hasStandings'] == true;
+      hasStandings = json['hasStandings'] == true,
+      currentSeason = json['currentSeason'] == true;
 
   final String competitionId;
   final String competitionName;
@@ -46,6 +50,12 @@ class ProfileContextOption {
   final String? seasonKey;
   final int matchCount;
   final bool hasStandings;
+
+  /// The competition's current season (its table may still be only cached).
+  final bool currentSeason;
+
+  /// Season as sent to the server: '-' asks for the seasonless option.
+  String get seasonParam => seasonKey ?? noSeason;
 
   String get key => '$competitionId|${seasonKey ?? ''}';
   String get label => [
@@ -124,6 +134,8 @@ typedef ProfileContextRequest = ({
   String? season,
 });
 
+/// Invalidated whenever a team profile opens (EntityScreen): a failed read
+/// is retried on the next open and options never freeze for the session.
 final teamContextProvider =
     FutureProvider.family<TeamContext?, ProfileContextRequest>((
       ref,
@@ -147,9 +159,24 @@ class ProfileContextSelection
 
   void select(String teamId, ProfileContextOption option) => state = {
     ...state,
-    teamId: (competitionId: option.competitionId, season: option.seasonKey),
+    teamId: (competitionId: option.competitionId, season: option.seasonParam),
   };
 }
+
+/// Last context shown per team: kept while the next one loads, so a switch
+/// never drops the selector, the Tabla tab or the Partidos filter.
+class LastTeamContexts extends Notifier<Map<String, TeamContext>> {
+  @override
+  Map<String, TeamContext> build() => const {};
+
+  void remember(TeamContext context) =>
+      state = {...state, context.teamId: context};
+}
+
+final lastTeamContextProvider =
+    NotifierProvider<LastTeamContexts, Map<String, TeamContext>>(
+      LastTeamContexts.new,
+    );
 
 final profileContextSelectionProvider =
     NotifierProvider<

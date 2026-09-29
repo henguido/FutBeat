@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/interests.dart';
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
@@ -113,6 +114,12 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     Future.microtask(
       () => recordTemporaryInterest(ref, widget.type, widget.id),
     );
+    // Fresh profile context on every open (#161).
+    if (widget.type == 'team') {
+      Future.microtask(() {
+        if (mounted) ref.invalidate(teamContextProvider);
+      });
+    }
   }
 
   @override

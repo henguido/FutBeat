@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/interests.dart';
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
@@ -1039,7 +1040,7 @@ class _HeaderTeam extends StatelessWidget {
           path: '/team/${team.id}',
           queryParameters: {
             'competitionId': match.competitionId,
-            if (match.season != null) 'season': match.season!,
+            'season': normalizeSeasonKey(match.season) ?? noSeason,
           },
         ).toString(),
       ),

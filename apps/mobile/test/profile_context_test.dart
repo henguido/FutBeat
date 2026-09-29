@@ -140,7 +140,9 @@ class _FakeContextApi extends ApiRepository {
     final requested = _options.where(
       (o) =>
           o['competitionId'] == competitionId &&
-          (season == null || o['seasonKey'] == season),
+          (season == null ||
+              o['seasonKey'] == season ||
+              (season == noSeason && o['seasonKey'] == null)),
     );
     final selected = requested.firstOrNull ?? _options.first;
     final key = selected['seasonKey'];
@@ -197,7 +199,9 @@ class _FakeContextApi extends ApiRepository {
             for (final m in all)
               if (competitionId == null ||
                   (m['competitionId'] == competitionId &&
-                      normalizeSeasonKey(m['season'] as String?) == season))
+                      (normalizeSeasonKey(m['season'] as String?) ??
+                              noSeason) ==
+                          season))
                 m,
           ];
     return TeamMatchesPage(
@@ -337,6 +341,23 @@ void main() {
     await _openTab(tester, 'Tabla');
     expect(find.text('Líder Antiguo'), findsOneWidget);
     expect(find.text('Rival'), findsNothing);
+    // Switching season while on Tabla stays on Tabla (no tab reset).
+    await tester.tap(find.byKey(const ValueKey('profile-context-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('profile-context-option-$_nations|2026-2027')),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('profile-context-selector')), findsOne);
+    await tester.pumpAndSettle();
+    expect(
+      DefaultTabController.of(
+        tester.element(find.byKey(const ValueKey('profile-context-label'))),
+      ).index,
+      2,
+    );
+    expect(find.text('Rival'), findsWidgets);
+    expect(find.text('Líder Antiguo'), findsNothing);
   });
 
   testWidgets('a context without its table says so; never another season', (
@@ -383,7 +404,7 @@ void main() {
       reuse: container,
     );
     expect(_label(tester), 'Amistosos Sintéticos');
-    expect(api.contextCalls.last, '$_friendly|-');
+    expect(api.contextCalls.last, '$_friendly|$noSeason');
   });
 
   testWidgets('Partidos: Todos by default; the context chip narrows every '
@@ -404,6 +425,22 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('team-matches-filter-all')));
     await tester.pumpAndSettle();
     expect(api.matchCalls.toSet(), {'live|-|-', 'upcoming|-|-', 'results|-|-'});
+  });
+
+  testWidgets('the filtered list keeps its filter while the context changes '
+      'and its empty copy follows coverage', (tester) async {
+    final api = _FakeContextApi(coverageState: 'PENDING');
+    await _pump(tester, _snapshot(), api);
+    await _openTab(tester, 'Partidos');
+    await tester.tap(find.byKey(const ValueKey('team-matches-filter-context')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('team-matches-empty-results')),
+        matching: find.text('Cargando partidos'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('no context (failed read): the profile keeps its own table and '

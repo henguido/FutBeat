@@ -146,10 +146,25 @@ class TeamProfileView extends ConsumerWidget {
       competitionId: choice?.competitionId ?? initialCompetitionId,
       season: choice != null ? choice.season : initialSeason,
     );
-    // Loading or failed: the profile keeps its own snapshot (never blocked).
-    final teamContext = ref.watch(teamContextProvider(request)).asData?.value;
+    // Loading or failed: the last context shown (or the profile's own
+    // snapshot) stays; the profile is never blocked.
+    ref.listen(teamContextProvider(request), (_, next) {
+      final value = next.asData?.value;
+      if (value != null) {
+        ref.read(lastTeamContextProvider.notifier).remember(value);
+      }
+    });
+    final teamContext =
+        ref.watch(teamContextProvider(request)).asData?.value ??
+        ref.watch(lastTeamContextProvider)[team.id];
     final selected = teamContext?.selected;
     final tableId = teamTableCompetitionId(data, team);
+    // The selected season's exact table; for the competition's current
+    // season the profile's own cached table is the same table.
+    final cachedCurrent =
+        selected != null &&
+        selected.currentSeason &&
+        tableId == selected.competitionId;
     final contextTable = selected != null;
     final tabs = [
       'Resumen',
@@ -175,7 +190,9 @@ class TeamProfileView extends ConsumerWidget {
       'Tabla' => ProfileTabList('tabla', [
         if (data.demo) const DemoNotice(),
         if (contextTable)
-          if (teamContext!.standings.isEmpty)
+          if (teamContext!.standings.isEmpty && cachedCurrent)
+            Standings(data, tableId!, focusTeamIds: {team.id})
+          else if (teamContext.standings.isEmpty)
             const InlineEmpty(
               Icons.table_rows_outlined,
               'Tabla no disponible',
@@ -214,7 +231,6 @@ class TeamProfileView extends ConsumerWidget {
     };
 
     return DefaultTabController(
-      key: ValueKey('team-tabs-${tabs.length}'),
       length: tabs.length,
       child: Scaffold(
         appBar: AppBar(

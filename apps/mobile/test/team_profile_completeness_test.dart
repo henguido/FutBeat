@@ -159,6 +159,8 @@ Future<void> _pump(
         (ref, request) async => Snapshot(profile),
       ),
       followsProvider.overrideWith((ref) => Stream.value({})),
+      // No profile context server in these tests (#161 has its own).
+      teamContextProvider.overrideWith((ref, request) async => null),
       if (repository != null) repositoryProvider.overrideWithValue(repository),
     ],
   );

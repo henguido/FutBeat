@@ -146,11 +146,50 @@ test('a requested context is honoured only when real; its table is exactly that 
   c = await context(db, w.T, w.friendly);
   assert.deepEqual(c.selected, { competitionId: w.friendly, requested: true });
   assert.deepEqual(c.standings, []);
+  // '-' selects the seasonless option even when the competition also has
+  // seasons (never silently replaced by its latest season).
+  await match(db, { comp: w.friendly, home: w.T, away: w.R[0], at: w.now - 40 * DAY, season: '2026' });
+  assert.equal((await context(db, w.T, w.friendly)).selected.seasonKey, '2026');
+  c = await context(db, w.T, w.friendly, '-');
+  assert.deepEqual(c.selected, { competitionId: w.friendly, requested: true });
+  const seasonless = await teamMatches(db, w.T, 'results', { comp: w.friendly, season: '-' });
+  assert.deepEqual(seasonless.matches.map((m) => m.id), w.ids.friendly);
+  // An uppercase raw label is normalized like the stored seasons.
+  assert.equal((await context(db, w.T, w.cup, ' 2026 ')).selected.seasonKey, '2026');
+}));
+
+test('default prefers the competition\'s current season over last season\'s table (close season)', () => withDb(async (db) => {
+  const now = Date.now();
+  const league = await competition(db, 'Liga PC Cierre', '2026/27');
+  const T = await team(db, 'Club PC Cierre', { competitionId: league });
+  const R = await team(db, 'Rival PC Cierre');
+  await match(db, { comp: league, home: T, away: R, at: now - 60 * DAY, season: '2025/26' });
+  await match(db, { comp: league, home: R, away: T, at: now + 20 * DAY, season: '2026/27', status: 'SCHEDULED', score: null });
+  await snapshot(db, league, '2025-2026', '2025/26', [T, R]);
+  const c = await context(db, T);
+  assert.deepEqual(c.selected, { competitionId: league, seasonKey: '2026-2027', requested: false });
+  assert.equal(c.options.find((o) => o.seasonKey === '2026-2027').currentSeason, true);
+  assert.equal(c.options.find((o) => o.seasonKey === '2025-2026').currentSeason, false);
+}));
+
+test('the context table is in canonical ids (competition and row teams)', () => withDb(async (db) => {
+  const w = await world(db);
+  const oldTeam = await team(db, 'Rival PC viejo');
+  await db.query("insert into futbeat_private.entity_redirects(alias_id,canonical_id,kind,reason) values($1,$2,'team','test')", [oldTeam, w.R[0]]);
+  const aliasComp = await competition(db, 'Liga de Naciones PC (id viejo)');
+  await snapshot(db, w.nations, '2026-2027', '2026/27', [w.T, oldTeam]);
+  await db.query(`update futbeat_private.standings_snapshots set table_payload=jsonb_set(table_payload,'{competitionId}',to_jsonb($1::text))
+    where competition_id=$2`, [aliasComp, w.nations]);
+  await db.query("insert into futbeat_private.entity_redirects(alias_id,canonical_id,kind,reason) values($1,$2,'competition','test')", [aliasComp, w.nations]);
+  const c = await context(db, w.T);
+  assert.equal(c.standings[0].competitionId, w.nations);
+  assert.deepEqual(c.standings[0].rows.map((r) => r.teamId), [w.T, w.R[0]]);
+  assert.ok(c.teams.some((t) => t.id === w.R[0]));
 }));
 
 test('context: invalid input rejected, unknown team is null, no team without matches breaks', () => withDb(async (db) => {
   await assert.rejects(context(db, ''), /Invalid team context request/);
-  await assert.rejects(context(db, 'fb_team_x', 'fb_comp_x', 'x'.repeat(21)), /Invalid team context request/);
+  await assert.rejects(context(db, 'fb_team_x', 'fb_comp_x', 'x'.repeat(41)), /Invalid team context request/);
   assert.equal(await context(db, 'fb_team_missing'), null);
   const lonely = await team(db, 'Sin partidos PC');
   const c = await context(db, lonely);
@@ -255,7 +294,10 @@ test('API: /v1/team-context validates and reads; /v1/team-matches forwards the f
   assert.equal((await call('team-context', `?id=${w.T}`)).body.selected.competitionId, w.nations);
   assert.equal((await call('team-context', '?id=nope')).status, 400);
   assert.equal((await call('team-context', `?id=${w.T}&season=2026`)).status, 400, 'a season needs its competition');
-  assert.equal((await call('team-context', `?id=${w.T}&competitionId=${w.nations}&season=${'9'.repeat(21)}`)).status, 400);
+  assert.equal((await call('team-context', `?id=${w.T}&competitionId=${w.nations}&season=${'9'.repeat(41)}`)).status, 400);
+  assert.equal((await call('team-context', `?id=${w.T}&competitionId=${w.nations}&season=${encodeURIComponent('Apertura 2026')}`)).status, 200,
+    'raw labels are accepted and normalized by the server');
+  assert.equal((await call('team-context', `?id=${w.T}&competitionId=${w.friendly}&season=-`)).body.selected.competitionId, w.friendly);
   assert.equal((await call('team-context', '?id=fb_team_missing_pc')).status, 404);
   const filtered = await call('team-matches', `?id=${w.T}&bucket=results&competitionId=${w.nations}&season=2026-2027`);
   assert.equal(filtered.status, 200);
