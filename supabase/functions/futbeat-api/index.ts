@@ -313,8 +313,10 @@ export default {
       if (preview.schemaVersion !== 1) {
         return replyNoStore(503, { error: 'Previa temporalmente no disponible' });
       }
-      // Coverage still arriving: never cache, the next open reads fresh.
-      if (asRecord(preview.h2h).availability === 'PENDING') {
+      // Coverage still arriving (nothing yet, or a stale history being
+      // refreshed): never cache, the next open reads fresh.
+      const availability = asRecord(preview.h2h).availability;
+      if (availability === 'PENDING' || availability === 'STALE') {
         return replyNoStore(200, preview);
       }
       return reply(200, preview);

@@ -288,3 +288,132 @@ test('20. the pair lookup uses the home/away team indexes (no global scan)', () 
   assert.match(migration, /e\.payload->>'homeTeamId'=any\(home_alias\|\|away_alias\)/);
   assert.match(migration, /e\.payload->>'awayTeamId'=any\(home_alias\|\|away_alias\)/);
 }));
+
+// ---------------------------------------------------------------------------
+// #99 v2 follow-up: cache policy, on-demand wake, verified window
+// ---------------------------------------------------------------------------
+
+// Local stand-ins for pg_net / Vault so the real wake path runs (no network:
+// the stub only records the POST it would send).
+async function stubWake(db) {
+  await db.exec(`
+    create schema if not exists net;
+    create table if not exists net.http_calls(id serial primary key,url text,headers jsonb,body jsonb);
+    create or replace function net.http_post(url text,headers jsonb default '{}',body jsonb default '{}',
+      timeout_milliseconds integer default 1000) returns bigint language sql as
+      'insert into net.http_calls(url,headers,body) values(url,headers,body) returning id';
+    create schema if not exists vault;
+    create table if not exists vault.decrypted_secrets(name text,decrypted_secret text,updated_at timestamptz,created_at timestamptz);
+    insert into vault.decrypted_secrets values('futbeat_goal_live_cron_token','test-only-token',now(),now());`);
+}
+const wakes = (db) => db.query("select count(*)::int n from net.http_calls where body->>'trigger'='team-fixtures-only'").then((r) => r.rows[0].n);
+const wakeRow = (db) => db.query("select * from futbeat_private.worker_wakeups where trigger='team-fixtures-only'").then((r) => r.rows[0]);
+const finishRun = (db, release = false) => db.query('select public.futbeat_finish_team_fixtures_run($1) v', [release]).then((r) => r.rows[0].v);
+const requestTeam = (db, id) => db.query('select public.futbeat_request_team_matches($1) v', [id]).then((r) => r.rows[0].v);
+
+test('cache: PENDING and STALE are no-store; AVAILABLE and CONFIRMED_EMPTY use the normal policy', () => withDb(async (db) => {
+  const { comp, A, B, now } = await pair(db);
+  const target = await match(db, { comp, home: A, away: B, at: now + DAY, status: 'SCHEDULED', score: null });
+  const { call } = await api(db);
+  let r = await call(`?id=${target}`);
+  assert.deepEqual([r.body.h2h.availability, r.cache], ['PENDING', 'no-store']);
+  await match(db, { comp, home: B, away: A, at: now - 20 * DAY });
+  await coverAvailable(db, A);
+  r = await call(`?id=${target}`);
+  assert.deepEqual([r.body.h2h.availability, r.cache], ['STALE', 'no-store']);
+  await coverAvailable(db, B);
+  r = await call(`?id=${target}`);
+  assert.equal(r.body.h2h.availability, 'AVAILABLE');
+  assert.match(r.cache, /max-age/);
+  const C = await team(db, 'Equipo Gamma'); const D = await team(db, 'Equipo Delta');
+  await coverAvailable(db, C); await coverAvailable(db, D);
+  const empty = await match(db, { comp, home: C, away: D, at: now + DAY, status: 'SCHEDULED', score: null });
+  r = await call(`?id=${empty}`);
+  assert.equal(r.body.h2h.availability, 'CONFIRMED_EMPTY');
+  assert.match(r.cache, /max-age/);
+}));
+
+test('wake: a new demand wakes once; 100 opens are one wake; covered, unmapped or NO_DATA teams never wake', () => withDb(async (db) => {
+  await stubWake(db);
+  const { A, B } = await pair(db);
+  assert.equal((await requestTeam(db, A)).wake, 'queued');
+  for (let i = 0; i < 99; i++) await requestTeam(db, A);
+  assert.equal(await wakes(db), 1, 'one POST, not one per open');
+  const payload = (await db.query('select headers,body from net.http_calls')).rows[0];
+  assert.deepEqual(payload.body, { trigger: 'team-fixtures-only' });
+  assert.equal(payload.headers['x-futbeat-cron-token'], 'test-only-token');
+  // While the run lease is held, another team's demand only marks pending.
+  assert.equal((await requestTeam(db, B)).wake, 'pending');
+  assert.equal(await wakes(db), 1);
+  assert.equal((await wakeRow(db)).pending, true);
+  await finishRun(db, true);
+  // No wake without a demand write: covered, no source, provider NO_DATA.
+  const covered = await team(db, 'Cubierto'); await coverAvailable(db, covered);
+  const unmapped = await team(db, 'Sin fuente', { mapped: false });
+  const empty = await team(db, 'Sin partidos');
+  await db.query(`insert into futbeat_private.team_match_coverage(team_id,status,next_retry_at)
+    values($1,'NO_DATA',now()+interval '5 days')`, [empty]);
+  for (const id of [covered, unmapped, empty]) {
+    const r = await requestTeam(db, id);
+    assert.equal(r.demandRecorded, false, id);
+    assert.equal(r.wake, undefined, id);
+  }
+  assert.equal(await wakes(db), 1);
+}));
+
+test('wake: home + away of one Cara a cara are two demands and neither is dropped by the debounce', () => withDb(async (db) => {
+  await stubWake(db);
+  const { comp, A, B, now } = await pair(db);
+  const target = await match(db, { comp, home: A, away: B, at: now + DAY, status: 'SCHEDULED', score: null });
+  const r = await requestH2h(db, target);
+  assert.deepEqual([r.home.wake, r.away.wake], ['queued', 'pending']);
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.team_match_demands')).rows[0].n, 2);
+  assert.equal(await wakes(db), 1);
+  // Both are due for the (single) run.
+  const due = (await db.query('select public.futbeat_team_fixtures_plan(10) v')).rows[0].v.map((x) => x.teamId).sort();
+  assert.deepEqual(due, [A, B].sort());
+  // The run sees `pending` -> one more round; then it releases the lease.
+  assert.deepEqual(await finishRun(db), { again: true });
+  assert.ok(new Date((await wakeRow(db)).running_until) > new Date());
+  assert.deepEqual(await finishRun(db), { again: false });
+  assert.equal((await wakeRow(db)).running_until, null);
+  // After the release the next demand wakes a new run at once.
+  const C = await team(db, 'Equipo Tardío');
+  assert.equal((await requestTeam(db, C)).wake, 'queued');
+  assert.equal(await wakes(db), 2);
+}));
+
+test('wake: a crashed run never blocks forever (lease expiry); no worker URL keeps no lease', () => withDb(async (db) => {
+  await stubWake(db);
+  const { A, B } = await pair(db);
+  await requestTeam(db, A);
+  await db.query("update futbeat_private.worker_wakeups set running_until=now()-interval '1 second' where trigger='team-fixtures-only'");
+  assert.equal((await requestTeam(db, B)).wake, 'queued');
+  await db.query("delete from futbeat_private.runtime_settings where key='goal_worker_url'");
+  await db.query("update futbeat_private.worker_wakeups set running_until=null where trigger='team-fixtures-only'");
+  const C = await team(db, 'Equipo Sin Worker');
+  assert.equal((await requestTeam(db, C)).wake, 'unavailable');
+  assert.equal((await wakeRow(db)).running_until, null);
+}));
+
+test('verifiedFrom is null unless both teams have an explicit covered window', () => withDb(async (db) => {
+  const { comp, A, B, now } = await pair(db);
+  await coverAvailable(db, A);
+  await db.query(`insert into futbeat_private.team_match_coverage(team_id,status,next_retry_at)
+    values($1,'NO_DATA',now()+interval '5 days')`, [B]);
+  const target = await match(db, { comp, home: A, away: B, at: now + DAY, status: 'SCHEDULED', score: null });
+  const v = await h2h(db, target);
+  assert.equal(v.availability, 'CONFIRMED_EMPTY');
+  assert.equal(v.coverage.verifiedFrom, undefined, 'no date claimed for an unbounded NO_DATA side');
+}));
+
+test('no new cron; quota policy untouched by the wake path', async () => {
+  const migration = await readFile(new URL('../../supabase/migrations/20260929120000_match_h2h_v2.sql', import.meta.url), 'utf8');
+  const code = migration.replace(/--[^\n]*/g, '');
+  assert.doesNotMatch(code, /cron\.|schedule\s*\(/i);
+  assert.doesNotMatch(code, /provider_quota_policy|class_floors|kind_daily_caps/);
+  const worker = await readFile(new URL('../../supabase/functions/futbeat-goal-live-sync/index.ts', import.meta.url), 'utf8');
+  // The drain runs only for the explicit trigger (manual or on-demand wake).
+  assert.equal(worker.match(/syncTeamFixturesOnly\(\)/g).length, 2);
+  assert.match(worker, /trigger === "team-fixtures-only"/);
+});
