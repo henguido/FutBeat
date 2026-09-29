@@ -300,7 +300,7 @@ function edge(source, fetch, logs, globals = {}) {
 const SQL_RPCS = new Set(['futbeat_team_fixtures_plan', 'futbeat_reserve_goal_team_fixtures_call',
   'futbeat_complete_provider_call', 'futbeat_resolve_global_entities', 'futbeat_read_entity_detail',
   'futbeat_known_goal_fixtures', 'futbeat_store_calendar_range', 'futbeat_complete_team_fixtures',
-  'futbeat_fail_team_fixtures']);
+  'futbeat_fail_team_fixtures', 'futbeat_finish_team_fixtures_run']);
 
 function harness(db, provider) {
   const calls = [], logs = [], unexpected = [];
@@ -341,6 +341,7 @@ function harness(db, provider) {
   }).handler;
   return {
     calls, logs,
+    context: worker.context,
     providers: () => calls.filter((c) => new URL(c.url).origin === 'https://api.goal-api.com'),
     async run(body = { trigger: 'team-fixtures-only' }) {
       const response = await worker.handler(new Request('https://worker.test/', {
@@ -616,15 +617,17 @@ test('worker: page cap with more pages left stores the fixtures but not a comple
   assert.equal(value.result.newMatches, 300);
 }));
 
-test('worker lane accepts no overrides and is not part of any cron run', () => withDb(async (db) => {
+test('worker lane accepts no overrides; the normal run only calls one bounded step', () => withDb(async (db) => {
   const h = harness(db, () => { throw new Error('no provider'); });
   const bad = await h.run({ trigger: 'team-fixtures-only', teamId: 'fb_team_evil' });
   assert.equal(bad.status, 400);
   const none = await h.run();
   assert.equal(none.value.result.reason, 'no_team_fixtures_due');
   assert.equal(h.providers().length, 0);
-  // Only the manual trigger calls the lane.
-  assert.deepEqual(workerSource.match(/syncOneTeamFixtures\(/g).length, 2); // definition + manual wrapper
+  // Definition + the wake/manual drain + ONE bounded call in the normal run
+  // (safety net); the multi-team drain only runs for its explicit trigger.
+  assert.deepEqual(workerSource.match(/syncOneTeamFixtures\(/g).length, 3);
+  assert.deepEqual(workerSource.match(/syncTeamFixturesOnly\(\)/g).length, 2);
   assert.match(workerSource, /trigger === "team-fixtures-only"/);
 }));
 
@@ -676,4 +679,199 @@ test('demand and planner queries are indexed', () => withDb(async (db) => {
     and tablename in ('team_match_demands','team_match_coverage','entities')`)).rows.map((r) => r.indexname);
   for (const name of ['team_match_demands_pkey', 'team_match_demands_requested_idx', 'team_match_coverage_pkey',
     'entities_match_home_team_idx', 'entities_match_away_team_idx']) assert.ok(idx.includes(name), name);
+}));
+
+// ---------------------------------------------------------------------------
+// On-demand wake drain (#99 v2 follow-up): one wake drains every demanded
+// team (bounded), a demand arriving mid-run gets another round, and a run
+// always releases its lease.
+// ---------------------------------------------------------------------------
+
+const wakeRow = (db) => db.query("select * from futbeat_private.worker_wakeups where trigger='team-fixtures-only'")
+  .then((r) => r.rows[0]);
+const holdRunLease = (db) => db.query(`insert into futbeat_private.worker_wakeups(trigger,last_wake_at,wake_count,running_until)
+  values('team-fixtures-only',now(),1,now()+interval '5 minutes')
+  on conflict(trigger) do update set running_until=excluded.running_until,pending=false`);
+
+test('drain: one wake processes both teams of a Cara a cara (home + away)', () => withDb(async (db) => {
+  const home = await seedTeam(db, ['dr-home']);
+  const away = await seedTeam(db, ['dr-away']);
+  await request(db, home); await request(db, away);
+  await holdRunLease(db); // what the wake does before POSTing the worker
+  const h = harness(db, byIdentity({ 'dr-home': many(2, 'dr-home', 'drh'), 'dr-away': many(3, 'dr-away', 'dra') }));
+  const { value } = await h.run();
+  assert.equal(value.drained, 2, JSON.stringify(value));
+  assert.deepEqual(value.runs.map((r) => r.status), ['ok', 'ok']);
+  assert.equal(h.providers().length, 2);
+  for (const t of [home, away]) assert.equal((await state(db, t)).state, 'AVAILABLE');
+  assert.equal((await wakeRow(db)).running_until, null, 'lease released');
+}));
+
+test('drain: a demand recorded during the run gets another round (never stranded)', () => withDb(async (db) => {
+  const teams = [];
+  for (const ext of ['rd-1', 'rd-2', 'rd-3']) {
+    const t = await seedTeam(db, [ext]);
+    await request(db, t);
+    teams.push(t);
+  }
+  const late = await seedTeam(db, ['rd-late']);
+  await holdRunLease(db);
+  let recordedLate = false;
+  const h = harness(db, async (url) => {
+    const ext = url.pathname.split('/')[3];
+    if (ext === 'rd-3' && !recordedLate) {
+      recordedLate = true;
+      // A user opens the late team while the run is busy with the round.
+      const r = await request(db, late);
+      assert.equal(r.wake, 'pending');
+    }
+    return goalPage(many(1, ext, `f-${ext}`));
+  });
+  const { value } = await h.run();
+  assert.equal(value.drained, 4, JSON.stringify(value));
+  assert.ok(value.rounds >= 2);
+  assert.ok(value.runs.some((r) => r.teamId === late));
+  assert.equal((await state(db, late)).state, 'AVAILABLE');
+  const row = await wakeRow(db);
+  assert.equal(row.running_until, null);
+  assert.equal(row.pending, false);
+}));
+
+test('drain: quota denial makes no provider call and still releases the lease', () => withDb(async (db) => {
+  const t = await seedTeam(db, ['dq-a']);
+  await request(db, t);
+  await remaining(db, 100); // below the coverage floor, LIVE still allowed
+  await holdRunLease(db);
+  const h = harness(db, () => { throw new Error('provider must not be called'); });
+  const { value } = await h.run();
+  assert.equal(h.providers().length, 0);
+  assert.equal(value.stoppedBy, 'provider_remaining_reserve');
+  assert.equal((await wakeRow(db)).running_until, null);
+  const live = (await db.query("select futbeat_private.quota_decision('goal_api','live-goal','live') v")).rows[0].v;
+  assert.equal(live.allowed, true, 'LIVE keeps its floor');
+  assert.equal((await demands(db)).length, 1, 'the demand stays queued');
+}));
+
+test('drain: a worker failure keeps the demand, backs off and releases the lease', () => withDb(async (db) => {
+  const t = await seedTeam(db, ['df-a']);
+  await request(db, t);
+  await holdRunLease(db);
+  const h = harness(db, byIdentity({ 'df-a': 500 }));
+  const { value } = await h.run();
+  assert.equal(value.runs[0].status, 'failed');
+  const c = await coverage(db, t);
+  assert.equal(c.status, 'FETCH_FAILED');
+  assert.ok(new Date(c.next_retry_at) > new Date(), 'retry scheduled');
+  assert.equal((await demands(db)).length, 1);
+  assert.equal((await wakeRow(db)).running_until, null);
+}));
+
+// ---------------------------------------------------------------------------
+// Backlog and safety net (#99 v2 follow-up 2): a wake keeps draining while
+// due work remains (bounded 3 x 4), and the EXISTING normal worker run
+// processes at most one demanded team so nothing waits for another user.
+// ---------------------------------------------------------------------------
+
+async function demandedTeams(db, n, prefix) {
+  const ids = [];
+  for (let i = 0; i < n; i++) {
+    const t = await seedTeam(db, [`${prefix}-${i}`]);
+    await request(db, t);
+    ids.push(t);
+  }
+  return ids;
+}
+const oneFixture = (url) => {
+  const ext = url.pathname.split('/')[3];
+  return goalPage(many(1, ext, `f-${ext}`));
+};
+const dueCount = (db) => db.query('select jsonb_array_length(public.futbeat_team_fixtures_plan(10)) n')
+  .then((r) => r.rows[0].n);
+
+// The normal cron run with every other lane replaced by an order recorder.
+async function normalRun(h) {
+  const order = [];
+  h.context.__order = order;
+  vm.runInContext(`
+    syncLive=async()=>{__order.push('live');return {status:'ok'};};
+    syncOneMatchDetail=async()=>{__order.push('detail');return {status:'ok'};};
+    syncOneSquad=async()=>{__order.push('squad');return {status:'ok'};};
+    syncOneNews=async()=>{__order.push('news');return {status:'ok'};};
+    syncOnePostMatchVideo=async()=>{__order.push('video');return {status:'ok'};};
+    globalThis.__realTeamFixtures ??= syncOneTeamFixtures;
+    syncOneTeamFixtures=async(a)=>{__order.push('teamFixtures');return globalThis.__realTeamFixtures(a);};`, h.context);
+  const { status, value } = await h.run({ trigger: 'cron' });
+  assert.equal(status, 200, JSON.stringify(value));
+  return { value, order };
+}
+
+test('backlog: 5 demands recorded before the wake are all drained by one activation', () => withDb(async (db) => {
+  const teams = await demandedTeams(db, 5, 'bk5');
+  await holdRunLease(db);
+  assert.equal((await wakeRow(db)).pending, false, 'nothing arrives during the run');
+  const h = harness(db, oneFixture);
+  const { value } = await h.run();
+  assert.equal(value.drained, 5, JSON.stringify(value));
+  assert.ok(value.rounds >= 2, 'more than the first round');
+  for (const t of teams) assert.equal((await state(db, t)).state, 'AVAILABLE');
+  assert.equal(await dueCount(db), 0);
+  assert.equal((await wakeRow(db)).running_until, null);
+}));
+
+test('backlog: 12 demands are drained up to the wake bound; a 13th waits for the normal run', () => withDb(async (db) => {
+  await demandedTeams(db, 13, 'bk13');
+  await holdRunLease(db);
+  const h = harness(db, oneFixture);
+  const { value } = await h.run();
+  assert.equal(value.drained, 12, 'bounded: 3 teams x 4 rounds');
+  assert.equal(await dueCount(db), 1, 'one demand left, not lost');
+  assert.equal((await wakeRow(db)).running_until, null, 'the lease is released at the cap');
+  // No new user request: the existing normal run gives it progress.
+  const { value: normal, order } = await normalRun(h);
+  assert.equal(normal.teamFixtures.status, 'ok');
+  assert.deepEqual(order, ['live', 'detail', 'squad', 'teamFixtures', 'news', 'video']);
+  assert.equal(await dueCount(db), 0);
+}));
+
+test('safety net: quota denied during a wake -> recovered quota is used by a normal run', () => withDb(async (db) => {
+  const [t] = await demandedTeams(db, 1, 'sq');
+  await remaining(db, 100); // below the coverage floor
+  await holdRunLease(db);
+  const h = harness(db, oneFixture);
+  const woken = await h.run();
+  assert.equal(woken.value.stoppedBy, 'provider_remaining_reserve');
+  assert.equal(h.providers().length, 0);
+  assert.equal((await wakeRow(db)).running_until, null);
+  assert.equal(await dueCount(db), 1, 'the demand is still pending');
+  // A denied normal run: no provider call, every other lane still runs.
+  let run = await normalRun(h);
+  assert.equal(h.providers().length, 0);
+  assert.deepEqual(run.order, ['live', 'detail', 'squad', 'teamFixtures', 'news', 'video']);
+  assert.equal(run.value.teamFixtures.status, 'skipped');
+  // Quota comes back: the next normal run processes it, no new user open.
+  await remaining(db, 900);
+  run = await normalRun(h);
+  assert.equal(run.value.teamFixtures.status, 'ok');
+  assert.equal(run.value.teamFixtures.providerCalls, 1);
+  assert.equal((await state(db, t)).state, 'AVAILABLE');
+}));
+
+test('safety net: without demand a normal run makes no team-fixtures reservation or call', () => withDb(async (db) => {
+  await seedTeam(db, ['nd-a']);
+  const h = harness(db, () => { throw new Error('provider must not be called'); });
+  const { value, order } = await normalRun(h);
+  assert.equal(value.teamFixtures.reason, 'no_team_fixtures_due');
+  assert.equal(value.teamFixtures.providerCalls, 0);
+  assert.equal(h.providers().length, 0);
+  assert.equal((await ledger(db)).length, 0);
+  assert.equal(order.indexOf('live'), 0, 'LIVE runs first');
+  assert.ok(order.indexOf('teamFixtures') > order.indexOf('squad'));
+}));
+
+test('safety net: a normal run processes at most one demanded team', () => withDb(async (db) => {
+  await demandedTeams(db, 3, 'one');
+  const h = harness(db, oneFixture);
+  await normalRun(h);
+  assert.equal(h.providers().length, 1);
+  assert.equal(await dueCount(db), 2);
 }));

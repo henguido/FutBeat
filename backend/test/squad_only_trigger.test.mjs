@@ -229,7 +229,7 @@ test('squad-only ingest failure does not retry provider or choose another team',
 });
 
 for (const trigger of ['results-only', 'detail-only', 'cron']) {
-  test(`${trigger} routing regression: isolated modes exclude squad, default retains all five flows`, async () => {
+  test(`${trigger} routing regression: isolated modes exclude squad, default retains all flows`, async () => {
     const h = harness();
     const ran = [];
     h.context.ran = ran;
@@ -240,11 +240,13 @@ for (const trigger of ['results-only', 'detail-only', 'cron']) {
       syncOnePostMatchVideo=async()=>{ran.push('video');return {status:'ok'};};
       syncPlayerDemand=async()=>{ran.push('player');return [];};
       syncStandingsDemand=async()=>{ran.push('standings');return {status:'ok'};};
-      syncCalendarWarm=async()=>{ran.push('calendar');return {built:[]};};`, h.context);
+      syncCalendarWarm=async()=>{ran.push('calendar');return {built:[]};};
+      syncOneTeamFixtures=async()=>{ran.push('teamFixtures');return {status:'skipped',reason:'no_team_fixtures_due'};};`, h.context);
     const { value } = await h.invoke({ trigger });
     if (trigger === 'cron') {
-      assert.deepEqual(ran, ['live', 'detail', 'news', 'video']);
-      assert.deepEqual(Object.keys(value), ['status', 'live', 'detail', 'squad', 'news', 'video']);
+      // #99 v2: one bounded team-fixtures step (safety net) after the squad.
+      assert.deepEqual(ran, ['live', 'detail', 'teamFixtures', 'news', 'video']);
+      assert.deepEqual(Object.keys(value), ['status', 'live', 'detail', 'squad', 'teamFixtures', 'news', 'video']);
       assert.equal(value.squad.status, 'ok');
       assert.equal(h.providers().length, 1);
       assert.equal(h.providers()[0].init.redirect, 'follow');

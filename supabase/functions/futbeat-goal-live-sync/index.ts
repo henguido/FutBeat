@@ -1416,24 +1416,72 @@ async function syncOneTeamFixtures(attempt: TeamFixturesAttempt) {
   };
 }
 
+// A wake (or a manual trigger) drains demanded teams in bounded rounds.
+// After each round the run lease is renewed only if a demand arrived during
+// it (`pending`), so no recorded demand is dropped by the wake debounce;
+// otherwise it is released and the next demand wakes a new run.
+const teamFixturesTeamsPerRound = 3;
+const teamFixturesMaxRounds = 4;
+
 async function syncTeamFixturesOnly() {
-  const attempt: TeamFixturesAttempt = {
-    candidate: null,
-    reservations: 0,
-    providerCalls: 0,
-    stoppedBy: null,
-  };
+  const runs: Array<Record<string, unknown>> = [];
+  let first: TeamFixturesAttempt | null = null;
+  let firstResult: Record<string, unknown> | null = null;
+  let rounds = 0;
+  let released = false;
   try {
-    const result = await syncOneTeamFixtures(attempt);
-    return { trigger: "team-fixtures-only", ...attempt, result };
-  } catch {
-    // Never expose provider/RPC text, credentials or request headers.
-    return {
-      trigger: "team-fixtures-only",
-      ...attempt,
-      result: { status: "failed", error: "GOAL_TEAM_FIXTURES_SYNC_FAILED" },
-    };
+    drain: for (; rounds < teamFixturesMaxRounds; rounds++) {
+      for (let n = 0; n < teamFixturesTeamsPerRound; n++) {
+        const attempt: TeamFixturesAttempt = {
+          candidate: null,
+          reservations: 0,
+          providerCalls: 0,
+          stoppedBy: null,
+        };
+        let result: Record<string, unknown>;
+        try {
+          result = await syncOneTeamFixtures(attempt);
+        } catch {
+          // Never expose provider/RPC text, credentials or request headers.
+          result = { status: "failed", error: "GOAL_TEAM_FIXTURES_SYNC_FAILED" };
+        }
+        if (!first) {
+          first = attempt;
+          firstResult = result;
+        }
+        if (result.reason === "no_team_fixtures_due") break;
+        runs.push({
+          teamId: attempt.candidate?.teamId ?? null,
+          status: result.status ?? null,
+          providerCalls: attempt.providerCalls,
+        });
+        // Quota floor/cap (or a lease): stop draining; demands stay queued.
+        if (attempt.stoppedBy) break drain;
+      }
+      const finished = await rpc("futbeat_finish_team_fixtures_run", {
+        p_release: false,
+      });
+      released = finished?.again !== true;
+      if (released) break;
+    }
+  } finally {
+    if (!released) {
+      // Stopped by quota, the round cap or an error: never keep the lease.
+      try {
+        await rpc("futbeat_finish_team_fixtures_run", { p_release: true });
+      } catch {
+        // The 5-minute lease expires by itself.
+      }
+    }
   }
+  return {
+    trigger: "team-fixtures-only",
+    ...(first ?? { candidate: null, reservations: 0, providerCalls: 0, stoppedBy: null }),
+    result: firstResult ?? { status: "skipped", reason: "no_team_fixtures_due" },
+    drained: runs.length,
+    rounds: rounds + 1,
+    runs,
+  };
 }
 
 async function syncSquadOnly() {
@@ -1823,6 +1871,7 @@ Deno.serve(async (request) => {
     let live: unknown;
     let detail: unknown;
     let squad: unknown;
+    let teamFixtures: unknown;
     let news: unknown;
     let video: unknown;
 
@@ -1856,6 +1905,30 @@ Deno.serve(async (request) => {
       squad = { status: "failed" };
     }
 
+    // Safety net for team-match coverage (#150/#99): at most ONE demanded
+    // team per normal run, after LIVE/detail/squad. No demand -> no
+    // reservation; a quota denial -> no provider call; other lanes go on.
+    try {
+      const attempt: TeamFixturesAttempt = {
+        candidate: null,
+        reservations: 0,
+        providerCalls: 0,
+        stoppedBy: null,
+      };
+      const result = await syncOneTeamFixtures(attempt);
+      teamFixtures = {
+        status: result.status,
+        reason: "reason" in result ? result.reason : null,
+        providerCalls: attempt.providerCalls,
+      };
+    } catch (error) {
+      console.error(
+        "GOAL team fixtures sync failed",
+        error instanceof Error ? error.message.slice(0, 200) : "unknown",
+      );
+      teamFixtures = { status: "failed" };
+    }
+
     try {
       news = await syncOneNews();
     } catch (error) {
@@ -1876,7 +1949,7 @@ Deno.serve(async (request) => {
       video = { status: "failed" };
     }
 
-    return Response.json({ status: "ok", live, detail, squad, news, video });
+    return Response.json({ status: "ok", live, detail, squad, teamFixtures, news, video });
   } catch (error) {
     console.error(
       "supabase GOAL live sync rejected",

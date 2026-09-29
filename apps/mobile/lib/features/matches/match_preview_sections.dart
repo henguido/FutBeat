@@ -335,7 +335,7 @@ class _PositionRow extends StatelessWidget {
 // Cara a cara
 // ---------------------------------------------------------------------------
 
-class HeadToHeadTab extends StatelessWidget {
+class HeadToHeadTab extends StatefulWidget {
   const HeadToHeadTab({
     required this.preview,
     required this.data,
@@ -352,7 +352,15 @@ class HeadToHeadTab extends StatelessWidget {
   final VoidCallback? onRetry;
 
   @override
-  Widget build(BuildContext context) => preview.when(
+  State<HeadToHeadTab> createState() => _HeadToHeadTabState();
+}
+
+class _HeadToHeadTabState extends State<HeadToHeadTab> {
+  /// "Este torneo": only meetings of the selected match's competition.
+  bool _thisCompetition = false;
+
+  @override
+  Widget build(BuildContext context) => widget.preview.when(
     loading: () => const _Skeleton(key: ValueKey('h2h-loading'), lines: 3),
     error: (_, _) => Column(
       key: const ValueKey('h2h-unavailable'),
@@ -362,96 +370,268 @@ class HeadToHeadTab extends StatelessWidget {
           'No pudimos cargar esta sección.',
           icon: Icons.compare_arrows_rounded,
         ),
-        if (onRetry != null)
+        if (widget.onRetry != null)
           OutlinedButton.icon(
-            onPressed: onRetry,
+            onPressed: widget.onRetry,
             icon: const Icon(Icons.refresh_rounded, size: 18),
             label: const Text('Reintentar'),
           ),
       ],
     ),
-    data: (value) {
-      final meetings = value.h2hMatches.take(5).toList();
-      if (meetings.isEmpty) {
-        return const EmptyState(
-          'Sin enfrentamientos previos registrados',
-          'FutBeat irá mostrando el historial disponible entre ambos equipos.',
-          icon: Icons.compare_arrows_rounded,
-        );
-      }
-      var homeWins = 0, draws = 0, awayWins = 0;
-      for (final item in meetings) {
-        switch (teamMatchResult(item, match.homeId)) {
-          case TeamResult.win:
-            homeWins++;
-          case TeamResult.draw:
-            draws++;
-          case TeamResult.loss:
-            awayWins++;
-          case null:
-            break;
-        }
-      }
-      Entity? team(String id) => data.team(id) ?? value.team(id);
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(2, 4, 2, 8),
-            child: Text(
-              'Últimos enfrentamientos registrados',
-              style: TextStyle(color: muted, fontSize: 12),
+    data: _content,
+  );
+
+  Widget _content(MatchPreview value) {
+    final match = widget.match;
+    Entity? team(String id) => widget.data.team(id) ?? value.team(id);
+    final competitionId = value.h2hCompetitionId ?? match.competitionId;
+    final all = value.h2hMeetings;
+    final current = value.h2hCurrent;
+    final availability = value.h2hAvailability;
+    if (all.isEmpty && current == null) {
+      return switch (availability) {
+        'CONFIRMED_EMPTY' => const _H2hMessage(
+          'Sin enfrentamientos anteriores',
+          key: ValueKey('h2h-empty'),
+        ),
+        'UNAVAILABLE' => const _H2hMessage(
+          'Historial no disponible',
+          key: ValueKey('h2h-no-source'),
+        ),
+        // PENDING / STALE without rows: coverage still arriving.
+        _ => const Column(
+          key: ValueKey('h2h-pending'),
+          children: [
+            _Skeleton(lines: 2),
+            SizedBox(height: 10),
+            Text('Cargando historial', style: TextStyle(color: muted)),
+          ],
+        ),
+      };
+    }
+    final meetings = _thisCompetition
+        ? [
+            for (final item in all)
+              if (item['competitionId'] == competitionId) item,
+          ]
+        : all;
+    final totals =
+        value.h2hTotals(competition: _thisCompetition) ??
+        _countTotals(meetings, match.homeId);
+    final showCurrent =
+        current != null &&
+        (!_thisCompetition || current['competitionId'] == competitionId);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _H2hSummary(
+          home: team(match.homeId),
+          away: team(match.awayId),
+          totals: totals,
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            _FilterChip(
+              key: const ValueKey('h2h-filter-all'),
+              label: 'Todos',
+              selected: !_thisCompetition,
+              onTap: () => setState(() => _thisCompetition = false),
             ),
-          ),
-          _Card(
-            key: const ValueKey('h2h-summary'),
-            child: Row(
-              children: [
-                _SummaryColumn(
-                  key: const ValueKey('h2h-home-wins'),
-                  title: team(match.homeId)?.name ?? 'Local',
-                  value: homeWins,
-                  caption: homeWins == 1 ? 'victoria' : 'victorias',
-                  color: lime,
-                ),
-                _SummaryColumn(
-                  key: const ValueKey('h2h-draws'),
-                  title: 'Empates',
-                  value: draws,
-                  caption: draws == 1 ? 'empate' : 'empates',
-                  color: _neutral,
-                ),
-                _SummaryColumn(
-                  key: const ValueKey('h2h-away-wins'),
-                  title: team(match.awayId)?.name ?? 'Visitante',
-                  value: awayWins,
-                  caption: awayWins == 1 ? 'victoria' : 'victorias',
-                  color: awaySideColor,
-                ),
-              ],
+            const SizedBox(width: 8),
+            _FilterChip(
+              key: const ValueKey('h2h-filter-competition'),
+              label: 'Este torneo',
+              selected: _thisCompetition,
+              onTap: () => setState(() => _thisCompetition = true),
             ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (showCurrent) ...[
+          _MeetingRow(
+            key: const ValueKey('h2h-current'),
+            item: current,
+            team: team,
+            preview: value,
+            label: _currentLabel(current),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+        ],
+        if (meetings.isEmpty)
+          const _H2hMessage(
+            'Sin enfrentamientos en este torneo',
+            key: ValueKey('h2h-empty-competition'),
+          )
+        else
           for (final item in meetings) ...[
             _MeetingRow(item: item, team: team, preview: value),
             const SizedBox(height: 8),
           ],
+      ],
+    );
+  }
+
+  static String _currentLabel(Json item) =>
+      ['LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'].contains(item['status'])
+      ? 'En vivo'
+      : 'Próximo';
+
+  /// Legacy answers (no server totals): count the meetings by team id.
+  static H2hTotals _countTotals(List<Json> meetings, String homeId) {
+    var homeWins = 0, draws = 0, awayWins = 0;
+    for (final item in meetings) {
+      switch (teamMatchResult(item, homeId)) {
+        case TeamResult.win:
+          homeWins++;
+        case TeamResult.draw:
+          draws++;
+        case TeamResult.loss:
+          awayWins++;
+        case null:
+          break;
+      }
+    }
+    return H2hTotals(homeWins: homeWins, draws: draws, awayWins: awayWins);
+  }
+}
+
+class _H2hMessage extends StatelessWidget {
+  const _H2hMessage(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 28),
+    child: Center(
+      child: Column(
+        children: [
+          const Icon(Icons.compare_arrows_rounded, color: muted, size: 32),
+          const SizedBox(height: 10),
+          Text(text, style: const TextStyle(color: muted)),
         ],
-      );
-    },
+      ),
+    ),
   );
+}
+
+class _FilterChip extends StatelessWidget {
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    super.key,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => ChoiceChip(
+    label: Text(label),
+    selected: selected,
+    onSelected: (_) => onTap(),
+    showCheckmark: false,
+  );
+}
+
+/// Two sides, W · D · W and a bar proportional to the three counts.
+class _H2hSummary extends StatelessWidget {
+  const _H2hSummary({
+    required this.home,
+    required this.away,
+    required this.totals,
+  });
+
+  final Entity? home;
+  final Entity? away;
+  final H2hTotals totals;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget side(Entity? entity) => Expanded(
+      child: Column(
+        children: [
+          if (entity != null) EntityAvatar(entity, size: 36),
+          const SizedBox(height: 6),
+          Text(
+            entity?.name ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+    return _Card(
+      key: const ValueKey('h2h-summary'),
+      child: Column(
+        children: [
+          Row(children: [side(home), side(away)]),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _SummaryColumn(
+                key: const ValueKey('h2h-home-wins'),
+                value: totals.homeWins,
+                caption: totals.homeWins == 1 ? 'victoria' : 'victorias',
+                color: lime,
+              ),
+              _SummaryColumn(
+                key: const ValueKey('h2h-draws'),
+                value: totals.draws,
+                caption: totals.draws == 1 ? 'empate' : 'empates',
+                color: _neutral,
+              ),
+              _SummaryColumn(
+                key: const ValueKey('h2h-away-wins'),
+                value: totals.awayWins,
+                caption: totals.awayWins == 1 ? 'victoria' : 'victorias',
+                color: awaySideColor,
+              ),
+            ],
+          ),
+          if (totals.total > 0) ...[
+            const SizedBox(height: 12),
+            ClipRRect(
+              key: const ValueKey('h2h-bar'),
+              borderRadius: BorderRadius.circular(4),
+              child: SizedBox(
+                height: 6,
+                child: Row(
+                  children: [
+                    for (final (count, color) in [
+                      (totals.homeWins, lime),
+                      (totals.draws, _neutral),
+                      (totals.awayWins, awaySideColor),
+                    ])
+                      if (count > 0)
+                        Expanded(
+                          flex: count,
+                          child: ColoredBox(color: color),
+                        ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _SummaryColumn extends StatelessWidget {
   const _SummaryColumn({
-    required this.title,
     required this.value,
     required this.caption,
     required this.color,
     super.key,
   });
 
-  final String title;
   final int value;
   final String caption;
   final Color color;
@@ -460,14 +640,6 @@ class _SummaryColumn extends StatelessWidget {
   Widget build(BuildContext context) => Expanded(
     child: Column(
       children: [
-        Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: muted, fontSize: 12),
-        ),
-        const SizedBox(height: 4),
         Text(
           '$value',
           style: TextStyle(
@@ -487,11 +659,16 @@ class _MeetingRow extends StatelessWidget {
     required this.item,
     required this.team,
     required this.preview,
+    this.label,
+    super.key,
   });
 
   final Json item;
   final Entity? Function(String id) team;
   final MatchPreview preview;
+
+  /// Status of the selected match when it is not final (never counted).
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -532,15 +709,19 @@ class _MeetingRow extends StatelessWidget {
       ),
     );
     return InkWell(
-      key: ValueKey('h2h-match-$id'),
+      key: label == null ? ValueKey('h2h-match-$id') : null,
       borderRadius: BorderRadius.circular(14),
-      onTap: id == null ? null : () => context.push('/match/$id'),
+      // The selected match itself is already open.
+      onTap: id == null || label != null
+          ? null
+          : () => context.push('/match/$id'),
       child: _Card(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               [
+                ?label,
                 if (date != null) matchDateLabel(costaRicaTime(date)),
                 ?competition,
               ].join(' · '),
