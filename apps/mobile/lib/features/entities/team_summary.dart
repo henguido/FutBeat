@@ -45,7 +45,7 @@ class TeamSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final next = matches.where((m) => m.isLive || m.isUpcoming).firstOrNull;
+    final next = nextTeamMatch(matches, data);
     final form = lastResults(matches, team.id);
     final main = competitions.firstOrNull;
     final tableRows = _tableRows();
@@ -106,10 +106,12 @@ class TeamSummary extends StatelessWidget {
       source,
       focusTeamIds: {team.id},
     );
-    final group = groups
+    final holding = groups
         ?.where((g) => g.rows.any((row) => row['teamId'] == team.id))
-        .firstOrNull;
-    if (group == null) return null;
+        .toList();
+    // Exactly one group: never pick one of several phases silently.
+    if (holding == null || holding.length != 1) return null;
+    final group = holding.single;
     final rows = group.rows;
     final at = rows.indexWhere((row) => row['teamId'] == team.id);
     final start = (at - 2).clamp(0, (rows.length - 5).clamp(0, rows.length));
@@ -122,6 +124,44 @@ class TeamSummary extends StatelessWidget {
   }
 }
 
+/// The match for "Partido siguiente": live now (a LIVE kickoff older than
+/// 4 h is stale, never "now") or else the soonest upcoming one; only matches
+/// whose two teams can be shown.
+FootballMatch? nextTeamMatch(List<FootballMatch> matches, Snapshot data) {
+  final now = costaRicaNow();
+  bool shown(FootballMatch m) =>
+      data.team(m.homeId) != null && data.team(m.awayId) != null;
+  final live = matches.where(
+    (m) =>
+        m.isLive &&
+        shown(m) &&
+        now.difference(m.startTime) < const Duration(hours: 4),
+  );
+  if (live.isNotEmpty) return live.first;
+  return matches.where((m) => m.isUpcoming && shown(m)).firstOrNull;
+}
+
+/// The team's result in a final with a score: 'G', 'E' or 'P' (a shootout
+/// counts as 'E': no shootout data); null otherwise or when the team is on
+/// neither side.
+String? teamResult(FootballMatch match, String teamId) {
+  if (!match.isFinished) return null;
+  if (match.homeId != teamId && match.awayId != teamId) return null;
+  final score = match.json['score'];
+  if (score is! Map) return null;
+  final home = score['home'], away = score['away'];
+  if (home is! num || away is! num) return null;
+  final mine = match.homeId == teamId ? home : away;
+  final theirs = match.homeId == teamId ? away : home;
+  return mine > theirs
+      ? 'G'
+      : mine == theirs
+      ? 'E'
+      : 'P';
+}
+
+const _resultWords = {'G': 'Ganó', 'E': 'Empató', 'P': 'Perdió'};
+
 /// Last (up to 5) finished matches with a score, newest first, as the
 /// team's result.
 List<({FootballMatch match, String result})> lastResults(
@@ -133,20 +173,9 @@ List<({FootballMatch match, String result})> lastResults(
     ..sort((a, b) => b.startTime.compareTo(a.startTime));
   final out = <({FootballMatch match, String result})>[];
   for (final match in finished) {
-    final score = match.json['score'];
-    if (score is! Map) continue;
-    final home = score['home'], away = score['away'];
-    if (home is! num || away is! num) continue;
-    final mine = match.homeId == teamId ? home : away;
-    final theirs = match.homeId == teamId ? away : home;
-    out.add((
-      match: match,
-      result: mine > theirs
-          ? 'G'
-          : mine == theirs
-          ? 'E'
-          : 'P',
-    ));
+    final result = teamResult(match, teamId);
+    if (result == null) continue;
+    out.add((match: match, result: result));
     if (out.length == limit) break;
   }
   return out;
@@ -199,59 +228,74 @@ class NextMatchCard extends StatelessWidget {
     final competition = data.competition(match.competitionId);
     if (home == null || away == null) return const SizedBox.shrink();
     final day = _dayLabel(match.startTime);
-    return Material(
-      key: const ValueKey('team-next-match'),
-      color: Colors.white.withValues(alpha: .04),
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () =>
-            context.push('/match/${match.id}', extra: data.forMatch(match.id)),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-          child: Column(
-            children: [
-              Text(
-                [
-                  if (competition != null) competition.name,
-                  if (!match.isLive) day,
-                ].join(' · '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: muted, fontSize: 12),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: _Side(home, highlighted: home.id == teamId)),
-                  SizedBox(
-                    width: 92,
-                    child: Column(
-                      children: [
-                        Text(
-                          match.isLive
-                              ? match.score
-                              : localTime(context, match.startTime),
-                          style: TextStyle(
-                            fontSize: match.isLive ? 26 : 22,
-                            fontWeight: FontWeight.w900,
-                            color: match.isLive ? lime : null,
-                          ),
-                        ),
-                        if (match.isLive) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            match.statusLabel,
-                            style: const TextStyle(color: lime, fontSize: 11),
-                          ),
-                        ],
-                      ],
+    return Semantics(
+      container: true,
+      label: [
+        if (competition != null) competition.name,
+        if (match.isLive) 'En vivo ${match.score}' else day,
+        '${home.name} contra ${away.name}',
+        if (!match.isLive) localTime(context, match.startTime),
+      ].join(', '),
+      child: Material(
+        key: const ValueKey('team-next-match'),
+        color: Colors.white.withValues(alpha: .04),
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => context.push(
+            '/match/${match.id}',
+            extra: data.forMatch(match.id),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            child: Column(
+              children: [
+                Text(
+                  [
+                    if (competition != null) competition.name,
+                    if (!match.isLive) day,
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: muted, fontSize: 12),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _Side(home, highlighted: home.id == teamId),
                     ),
-                  ),
-                  Expanded(child: _Side(away, highlighted: away.id == teamId)),
-                ],
-              ),
-            ],
+                    SizedBox(
+                      width: 92,
+                      child: Column(
+                        children: [
+                          Text(
+                            match.isLive
+                                ? match.score
+                                : localTime(context, match.startTime),
+                            style: TextStyle(
+                              fontSize: match.isLive ? 26 : 22,
+                              fontWeight: FontWeight.w900,
+                              color: match.isLive ? lime : null,
+                            ),
+                          ),
+                          if (match.isLive) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              match.statusLabel,
+                              style: const TextStyle(color: lime, fontSize: 11),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _Side(away, highlighted: away.id == teamId),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -260,8 +304,10 @@ class NextMatchCard extends StatelessWidget {
 
   static String _dayLabel(DateTime start) {
     final today = costaRicaNow();
-    final date = DateTime(start.year, start.month, start.day);
-    final days = date.difference(DateTime(today.year, today.month, today.day));
+    final date = DateTime.utc(start.year, start.month, start.day);
+    final days = date.difference(
+      DateTime.utc(today.year, today.month, today.day),
+    );
     return switch (days.inDays) {
       0 => 'Hoy',
       1 => 'Mañana',
@@ -295,7 +341,7 @@ class _Side extends StatelessWidget {
   );
 }
 
-/// Last results as G / E / P chips with the opponent's crest, newest
+/// Last results as G / E / P chips with the score (home - away), newest
 /// first. Tapping a chip opens that match.
 class TeamFormStrip extends StatelessWidget {
   const TeamFormStrip({required this.results, required this.data, super.key});
@@ -315,39 +361,47 @@ class TeamFormStrip extends StatelessWidget {
     children: [
       for (final item in results)
         Expanded(
-          child: InkWell(
-            key: ValueKey('team-form-${item.match.id}'),
-            borderRadius: BorderRadius.circular(10),
-            onTap: () => context.push(
-              '/match/${item.match.id}',
-              extra: data.forMatch(item.match.id),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Column(
-                children: [
-                  Container(
-                    width: 30,
-                    height: 30,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: colorOf(item.result),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      item.result,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
+          child: Semantics(
+            label:
+                '${_resultWords[item.result]} ${item.match.score}, '
+                '${data.team(item.match.homeId)?.name ?? ''} contra '
+                '${data.team(item.match.awayId)?.name ?? ''}',
+            button: true,
+            excludeSemantics: true,
+            child: InkWell(
+              key: ValueKey('team-form-${item.match.id}'),
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => context.push(
+                '/match/${item.match.id}',
+                extra: data.forMatch(item.match.id),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 30,
+                      height: 30,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: colorOf(item.result),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        item.result,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    item.match.score,
-                    style: const TextStyle(fontSize: 11, color: muted),
-                  ),
-                ],
+                    const SizedBox(height: 6),
+                    Text(
+                      item.match.score,
+                      style: const TextStyle(fontSize: 11, color: muted),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

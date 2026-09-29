@@ -246,6 +246,19 @@ void main() {
         expect(_matchRow('m_res1'), findsOneWidget);
         expect(_matchRow('m_up1'), findsOneWidget);
         expect(_matchRow('m_up2'), findsOneWidget);
+        // Each in its own bucket, in order.
+        expect(
+          _above(tester, find.text('Próximos'), _matchRow('m_up1')),
+          isTrue,
+        );
+        expect(
+          _above(tester, _matchRow('m_up2'), find.text('Resultados')),
+          isTrue,
+        );
+        expect(
+          _above(tester, find.text('Resultados'), _matchRow('m_res1')),
+          isTrue,
+        );
         expect(find.byType(CircularProgressIndicator), findsNothing);
       },
     );

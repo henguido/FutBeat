@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
+import 'package:futbeat/core/models.dart' as core;
+import 'package:futbeat/features/entities/team_profile.dart' show matchDayLabel;
 import 'package:futbeat/features/entities/team_summary.dart';
+
+/// Day label of a UTC instant as the app shows it (Costa Rica time).
+String matchDayLabelFor(DateTime instant) =>
+    matchDayLabel(core.costaRicaTime(instant.toUtc()));
 
 // #156: team / national-team "Resumen" v2. Synthetic ids and names only.
 
@@ -130,6 +136,16 @@ void main() {
     );
     expect(find.text('Partido siguiente'), findsOneWidget);
     expect(find.byKey(const ValueKey('team-next-match')), findsOneWidget);
+    // The soonest one (in 2 days), not the one in 9 days.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('team-next-match')),
+        matching: find.textContaining(
+          matchDayLabelFor(DateTime.now().add(const Duration(days: 2))),
+        ),
+      ),
+      findsOneWidget,
+    );
     expect(
       _y(tester, 'Partido siguiente'),
       lessThan(_y(tester, 'Últimos partidos')),
@@ -139,6 +155,51 @@ void main() {
       lessThan(_y(tester, 'Competiciones')),
     );
     expect(find.text('Partidos destacados'), findsNothing);
+  });
+
+  testWidgets('a past kickoff still SCHEDULED is never Partido siguiente; '
+      'a stale LIVE neither', (tester) async {
+    await _pump(
+      tester,
+      _snapshot(
+        matches: [
+          _match('fb_m_wait', const Duration(hours: -3), status: 'SCHEDULED'),
+          _match(
+            'fb_m_stale',
+            const Duration(days: -2),
+            status: 'LIVE',
+            score: [0, 0],
+          ),
+        ],
+      ),
+    );
+    expect(find.text('Partido siguiente'), findsNothing);
+    expect(find.text('En vivo'), findsNothing);
+    expect(find.byKey(const ValueKey('team-next-match')), findsNothing);
+  });
+
+  testWidgets('a team in two groups (phases) gets no summary table', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _snapshot(
+        standings: [
+          {
+            'competitionId': 'fb_comp_sum',
+            'grouped': true,
+            'rows': [
+              _row('fb_team', 1, group: 'Grupo A'),
+              _row('fb_t1', 2, group: 'Grupo A'),
+              _row('fb_t2', 1, group: 'Terceros'),
+              _row('fb_team', 2, group: 'Terceros'),
+            ],
+          },
+        ],
+      ),
+      tableCompetitionId: 'fb_comp_sum',
+    );
+    expect(find.byKey(const ValueKey('team-summary-table')), findsNothing);
   });
 
   testWidgets('a live match is shown as En vivo with its score', (

@@ -9,6 +9,7 @@ import '../../core/team_matches.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import 'profile_widgets.dart';
+import 'team_summary.dart' show TeamFormStrip, teamResult;
 import 'team_profile.dart' show matchDayLabel;
 
 /// Team profile "Partidos": En vivo (only when something is in play),
@@ -265,9 +266,12 @@ class ProfileMatchRow extends StatelessWidget {
     final away = data.team(match.awayId);
     if (home == null || away == null) return const SizedBox.shrink();
     final competition = data.competition(match.competitionId);
-    final result = _result();
+    final result = teamResult(match, teamId);
+    // A past kickoff still awaiting its final never shows a bare time.
     final center = match.isLive
         ? match.score
+        : match.isAwaitingUpdate && match.json['score'] == null
+        ? '—'
         : match.showKickoff
         ? localTime(context, match.startTime)
         : match.score;
@@ -296,98 +300,93 @@ class ProfileMatchRow extends StatelessWidget {
         ],
       ),
     );
-    return InkWell(
-      key: ValueKey('profile-match-${match.id}'),
-      borderRadius: BorderRadius.circular(12),
-      onTap: () =>
-          context.push('/match/${match.id}', extra: data.forMatch(match.id)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              [
-                '${matchDayLabel(match.startTime)} ${match.startTime.year}',
-                if (competition != null) competition.name,
-                // Kickoff passed, no final yet: never presented as upcoming.
-                if (match.isAwaitingUpdate) 'Por confirmar',
-                if (match.isLive) match.statusLabel,
-              ].join(' · '),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: match.isLive ? lime : muted,
-                fontSize: 11,
+    return Semantics(
+      container: true,
+      label: [
+        '${matchDayLabel(match.startTime)} ${match.startTime.year}',
+        if (match.isAwaitingUpdate) 'Por confirmar',
+        if (match.isLive) match.statusLabel,
+        '${home.name} $center ${away.name}',
+        if (competition != null) competition.name,
+        if (result != null) {'G': 'Ganó', 'E': 'Empató', 'P': 'Perdió'}[result],
+      ].whereType<String>().join(', '),
+      excludeSemantics: true,
+      child: InkWell(
+        key: ValueKey('profile-match-${match.id}'),
+        borderRadius: BorderRadius.circular(12),
+        onTap: () =>
+            context.push('/match/${match.id}', extra: data.forMatch(match.id)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                [
+                  '${matchDayLabel(match.startTime)} ${match.startTime.year}',
+                  // Kickoff passed, no final yet: never presented as upcoming
+                  // (before the competition, so it is never cut off).
+                  if (match.isAwaitingUpdate) 'Por confirmar',
+                  if (match.isLive) match.statusLabel,
+                  if (competition != null) competition.name,
+                ].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: match.isLive ? lime : muted,
+                  fontSize: 11,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                side(home, end: false),
-                Container(
-                  width: 64,
-                  alignment: Alignment.center,
-                  child: Text(
-                    center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      color: match.isLive ? lime : null,
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  side(home, end: false),
+                  Container(
+                    width: 72,
+                    alignment: Alignment.center,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        center,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: match.isLive ? lime : null,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-                side(away, end: true),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 22,
-                  child: result == null
-                      ? null
-                      : Container(
-                          key: ValueKey('profile-match-result-${match.id}'),
-                          height: 20,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: _color(result),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            result,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
+                  side(away, end: true),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 22,
+                    child: result == null
+                        ? null
+                        : Container(
+                            key: ValueKey('profile-match-result-${match.id}'),
+                            height: 20,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: TeamFormStrip.colorOf(result),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              result,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                              ),
                             ),
                           ),
-                        ),
-                ),
-              ],
-            ),
-          ],
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-
-  String? _result() {
-    if (!match.isFinished) return null;
-    final score = match.json['score'];
-    if (score is! Map) return null;
-    final home = score['home'], away = score['away'];
-    if (home is! num || away is! num) return null;
-    if (match.homeId != teamId && match.awayId != teamId) return null;
-    final mine = match.homeId == teamId ? home : away;
-    final theirs = match.homeId == teamId ? away : home;
-    return mine > theirs
-        ? 'G'
-        : mine == theirs
-        ? 'E'
-        : 'P';
-  }
-
-  static Color _color(String result) => switch (result) {
-    'G' => const Color(0xFF2FBF71),
-    'E' => const Color(0xFF8A94A6),
-    _ => const Color(0xFFE5484D),
-  };
 }
