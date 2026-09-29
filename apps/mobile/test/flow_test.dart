@@ -305,7 +305,7 @@ void main() {
     expect(find.text('Match Center'), findsOneWidget);
     await tester.tap(find.text('Saprissa').first);
     await tester.pumpAndSettle();
-    expect(find.text('Partidos destacados'), findsOneWidget);
+    expect(find.text('Información'), findsOneWidget);
     await tester.tap(find.text('Liga Promerica').first);
     await tester.pumpAndSettle();
     expect(find.text('Apertura 2026 · Demo'), findsOneWidget);
@@ -350,7 +350,7 @@ void main() {
       repository: RedirectRepository(),
     );
     expect(find.text('Saprissa'), findsWidgets);
-    expect(find.text('Partidos destacados'), findsOneWidget);
+    expect(find.text('Información'), findsOneWidget);
     expect(find.text('Perfil no encontrado'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -398,7 +398,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Alajuelense'));
     await tester.pumpAndSettle();
-    expect(find.text('Partidos destacados'), findsOneWidget);
+    expect(find.text('Información'), findsOneWidget);
   });
   testWidgets('load failure can retry; unknown entity is recoverable', (
     tester,

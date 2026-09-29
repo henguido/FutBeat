@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
 import '../../core/profile_context.dart';
@@ -7,8 +8,8 @@ import '../../core/providers.dart';
 import '../../core/team_matches.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
-import '../matches/matches_screen.dart';
 import 'profile_widgets.dart';
+import 'team_summary.dart' show TeamFormStrip, teamResult;
 import 'team_profile.dart' show matchDayLabel;
 
 /// Team profile "Partidos": En vivo (only when something is in play),
@@ -214,7 +215,7 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
           key: ValueKey('team-matches-empty-${bucket.wire}'),
         )
       else
-        for (final item in items) _DatedMatch(item),
+        for (final item in items) _DatedMatch(item, teamId: widget.team.id),
       if (loading && (items.isEmpty || more))
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 10),
@@ -238,31 +239,159 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
 }
 
 class _DatedMatch extends StatelessWidget {
-  const _DatedMatch(this.item);
+  const _DatedMatch(this.item, {required this.teamId});
 
   final ProfileMatch item;
+  final String teamId;
+
+  @override
+  Widget build(BuildContext context) =>
+      ProfileMatchRow(match: item.match, data: item.data, teamId: teamId);
+}
+
+/// One compact row of the profile "Partidos" (#157): date (+ competition),
+/// both sides, score or kickoff, and the team's result when final.
+class ProfileMatchRow extends StatelessWidget {
+  const ProfileMatchRow({
+    required this.match,
+    required this.data,
+    required this.teamId,
+    super.key,
+  });
+
+  final FootballMatch match;
+  final Snapshot data;
+  final String teamId;
 
   @override
   Widget build(BuildContext context) {
-    final match = item.match;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final home = data.team(match.homeId);
+    final away = data.team(match.awayId);
+    if (home == null || away == null) return const SizedBox.shrink();
+    final competition = data.competition(match.competitionId);
+    final result = teamResult(match, teamId);
+    // A past kickoff still awaiting its final never shows a bare time.
+    final center = match.isLive
+        ? match.score
+        : match.isAwaitingUpdate && match.json['score'] == null
+        ? '—'
+        : match.showKickoff
+        ? localTime(context, match.startTime)
+        : match.score;
+    Widget side(Entity team, {required bool end}) => Expanded(
+      child: Row(
+        mainAxisAlignment: end
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 4, top: 4),
+          if (!end) ...[EntityAvatar(team, size: 20), const SizedBox(width: 6)],
+          Flexible(
             child: Text(
-              [
-                '${matchDayLabel(match.startTime)} · ${match.startTime.year}',
-                // Kickoff passed, no final yet: never presented as upcoming.
-                if (match.isAwaitingUpdate) 'Por confirmar',
-              ].join(' · '),
-              style: const TextStyle(color: muted, fontSize: 12),
+              team.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: end ? TextAlign.end : TextAlign.start,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: team.id == teamId
+                    ? FontWeight.w800
+                    : FontWeight.w500,
+              ),
             ),
           ),
-          MatchCard(match, item.data),
+          if (end) ...[const SizedBox(width: 6), EntityAvatar(team, size: 20)],
         ],
+      ),
+    );
+    return Semantics(
+      container: true,
+      label: [
+        '${matchDayLabel(match.startTime)} ${match.startTime.year}',
+        if (match.isAwaitingUpdate) 'Por confirmar',
+        if (match.isLive) match.statusLabel,
+        '${home.name} $center ${away.name}',
+        if (competition != null) competition.name,
+        if (result != null) {'G': 'Ganó', 'E': 'Empató', 'P': 'Perdió'}[result],
+      ].whereType<String>().join(', '),
+      button: true,
+      excludeSemantics: true,
+      onTap: () =>
+          context.push('/match/${match.id}', extra: data.forMatch(match.id)),
+      child: InkWell(
+        key: ValueKey('profile-match-${match.id}'),
+        borderRadius: BorderRadius.circular(12),
+        onTap: () =>
+            context.push('/match/${match.id}', extra: data.forMatch(match.id)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                [
+                  '${matchDayLabel(match.startTime)} ${match.startTime.year}',
+                  // Kickoff passed, no final yet: never presented as upcoming
+                  // (before the competition, so it is never cut off).
+                  if (match.isAwaitingUpdate) 'Por confirmar',
+                  if (match.isLive) match.statusLabel,
+                  if (competition != null) competition.name,
+                ].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: match.isLive ? lime : muted,
+                  fontSize: 11,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  side(home, end: false),
+                  Container(
+                    width: 72,
+                    alignment: Alignment.center,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        center,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: match.isLive ? lime : null,
+                        ),
+                      ),
+                    ),
+                  ),
+                  side(away, end: true),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 22,
+                    child: result == null
+                        ? null
+                        : Container(
+                            key: ValueKey('profile-match-result-${match.id}'),
+                            height: 20,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: TeamFormStrip.colorOf(result),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              result,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
