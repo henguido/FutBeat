@@ -111,7 +111,9 @@ test('J2. rich first, synthetic later (score lagged): the synthetic never pushes
   await record(db, fixture(s, { minute: 21, events: [goalRow(s, { id: '9003', time: '20', side: 'away', player: 'P2' })] }));
   const pushes = await goalPushes(db, s.match);
   await record(db, fixture(s, { away: 1, minute: 22, events: [goalRow(s, { id: '9003', time: '20', side: 'away', player: 'P2' })] }));
-  assert.equal((await stored(db, s.match)).length, 2);
+  // P0-A: the score is authoritative per team ordinal; the active rich goal
+  // already explains the lagged increase, so no redundant synthetic is stored.
+  assert.equal((await stored(db, s.match)).length, 1);
   assert.equal(await goalPushes(db, s.match), pushes);
   assert.equal((await goals(db, s.match)).length, 1);
 }));
