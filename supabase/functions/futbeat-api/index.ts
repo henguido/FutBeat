@@ -201,22 +201,38 @@ export default {
       }
       // End of Resultados: ask centrally for the older window before the
       // oldest stored result (deduplicated; the server decides if needed).
-      // A filtered list ending is not the end of the team's history.
+      // No stored result and a confirmed-empty recent window (NO_DATA): the
+      // window before that range. A filtered list ending is not the end of
+      // the team's history. Only a demand is recorded (floor, dedup,
+      // backoff, lease, quota and wake are the central lane's).
+      let historyRequested = false;
       if (bucket === 'results' && page.hasMore !== true && !filtered) {
         const matches = Array.isArray(page.matches) ? page.matches : [];
+        const coverage = asRecord(asRecord(page.coverage).teamMatches);
         const oldest = matches.length
           ? String(asRecord(matches[matches.length - 1]).startTime ?? '')
+          : coverage.state === 'NO_DATA'
+          ? String(coverage.emptyFrom ?? '')
           : '';
         const before = /^\d{4}-\d{2}-\d{2}/.test(oldest)
           ? oldest.slice(0, 10)
           : null;
         if (before) {
-          const { error: historyError } = await ctx.supabaseAdmin.rpc(
+          const { data: history, error: historyError } = await ctx.supabaseAdmin.rpc(
             'futbeat_request_team_matches',
             { p_team_id: id, p_before: before },
           );
           if (historyError) console.warn('team history demand unavailable');
+          historyRequested = !historyError && asRecord(history).backfill === true;
         }
+      }
+      if (historyRequested) {
+        // Older history is being asked: never a cached "no results".
+        page.coverage = {
+          ...asRecord(page.coverage),
+          teamMatches: { ...asRecord(asRecord(page.coverage).teamMatches), history: 'requested' },
+        };
+        return replyNoStore(200, page);
       }
       return reply(200, page);
     }

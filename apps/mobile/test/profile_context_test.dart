@@ -120,11 +120,15 @@ final _options = [
 ];
 
 class _FakeContextApi extends ApiRepository {
-  _FakeContextApi({this.failContext = false, this.coverageState})
-    : super(Dio());
+  _FakeContextApi({
+    this.failContext = false,
+    this.coverageState,
+    this.historyRequested = false,
+  }) : super(Dio());
 
   final bool failContext;
   final String? coverageState;
+  final bool historyRequested;
   final contextCalls = <String>[];
   final matchCalls = <String>[];
 
@@ -212,7 +216,11 @@ class _FakeContextApi extends ApiRepository {
           'nextCursor': null,
           if (coverageState != null)
             'coverage': {
-              'teamMatches': {'state': coverageState},
+              'teamMatches': {
+                'state': coverageState,
+                if (historyRequested && bucket == 'results')
+                  'history': 'requested',
+              },
             },
         },
       ),
@@ -482,6 +490,30 @@ void main() {
     );
     await _openTab(tester, 'Tabla');
     expect(find.text('Rival'), findsWidgets);
+  });
+
+  testWidgets('a confirmed-empty recent window whose older history is being '
+      'asked never reads as a final "Sin resultados"', (tester) async {
+    final api = _FakeContextApi(
+      coverageState: 'NO_DATA',
+      historyRequested: true,
+    );
+    await _pump(tester, _snapshot(), api);
+    await _openTab(tester, 'Partidos');
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('team-matches-empty-results')),
+        matching: find.text('Cargando historial'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('team-matches-empty-results')),
+        matching: find.text('Sin resultados'),
+      ),
+      findsNothing,
+    );
   });
 
   for (final (state, copy) in [
