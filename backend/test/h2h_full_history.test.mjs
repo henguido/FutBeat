@@ -234,6 +234,29 @@ test('window: extending is per team (a stale profile demand of one side never hi
   assert.equal(rows.find((x) => x.team_id === s.A).past_target, null);
 }));
 
+test('a used attempt (partial / failed backfill) stops extending and can be asked again', () => withDb(async (db) => {
+  const s = await history(db, 1);
+  await coverFrom(db, s.A, 180); await coverFrom(db, s.B, 180);
+  await db.query('select public.futbeat_request_match_h2h_history($1)', [s.target]);
+  assert.equal((await read(db, s.target)).window.extending, true);
+  // In flight (leased): still extending.
+  await db.query("update futbeat_private.team_match_coverage set last_attempt_at=now()+interval '1 second',lease_until=now()+interval '5 minutes'");
+  assert.equal((await read(db, s.target)).window.extending, true);
+  // The attempt ended without moving covered_from (partial answer).
+  await db.query("update futbeat_private.team_match_coverage set lease_until=null,next_retry_at=now()+interval '30 minutes'");
+  assert.equal((await read(db, s.target)).window.extending, false);
+  const before = (await db.query('select max(requested_at) t from futbeat_private.team_match_demands')).rows[0].t;
+  await db.query("update futbeat_private.team_match_demands set requested_at=requested_at-interval '2 minutes'");
+  const r = (await db.query('select public.futbeat_request_match_h2h_history($1) v', [s.target])).rows[0].v;
+  assert.notEqual(r.requested, false, 'a new request is recorded');
+  const after = (await db.query('select max(requested_at) t from futbeat_private.team_match_demands')).rows[0].t;
+  assert.ok(new Date(after) >= new Date(before));
+  // An expired demand (older than 7 days) is not extending either.
+  await db.query("update futbeat_private.team_match_coverage set last_attempt_at=null,lease_until=null");
+  await db.query("update futbeat_private.team_match_demands set requested_at=now()-interval '8 days'");
+  assert.equal((await read(db, s.target)).window.extending, false);
+}));
+
 // ---------------------------------------------------------------------------
 // API, mobile, query plan
 // ---------------------------------------------------------------------------

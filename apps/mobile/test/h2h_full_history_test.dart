@@ -298,6 +298,23 @@ void main() {
     expect(_rows(tester), 3);
   });
 
+  testWidgets('after an extension lands, Este torneo is read again from the '
+      'server and Todos keeps what was shown', (tester) async {
+    final all = _history(40);
+    final api = _FakeH2hApi(all);
+    await _pump(tester, _preview(all, verifiedFrom: '2026-04-02'), api);
+    await _tap(tester, find.byKey(const ValueKey('h2h-more')));
+    expect(_rows(tester), 40);
+    await _tap(tester, find.byKey(const ValueKey('h2h-extend')));
+    expect(api.calls.last, 'all|-|40|extend');
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pumpAndSettle();
+    expect(api.calls.last, 'all|-|40|');
+    expect(_rows(tester), 40);
+    await _tap(tester, find.text('Este torneo'));
+    expect(api.calls.last, 'competition|-|20|');
+  });
+
   testWidgets('an extension that never lands stops re-reading and says so', (
     tester,
   ) async {

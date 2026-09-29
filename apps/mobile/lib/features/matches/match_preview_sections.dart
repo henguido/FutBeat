@@ -377,6 +377,17 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   String? _verifiedFrom;
   Timer? _poll;
 
+  /// Bumped when an extension lands: page answers of the older list are
+  /// dropped.
+  int _generation = 0;
+
+  /// After an extension the preview's first meetings/totals are outdated:
+  /// every scope is read from the server.
+  bool _previewStale = false;
+
+  /// Todos rows shown when the extension was asked (re-read that many).
+  int _shownAll = 0;
+
   /// Re-reads while the extension is in flight; then it is left pending.
   static const extendPollDelays = [
     Duration(seconds: 15),
@@ -402,6 +413,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
     final api = _api;
     if (api == null || _loading.contains(competition)) return;
     final pages = _pages[competition]!;
+    final generation = _generation;
     setState(() {
       _loading.add(competition);
       _failed.remove(competition);
@@ -413,25 +425,36 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
         cursor: pages.isEmpty ? null : pages.last.nextCursor,
         limit: pages.isEmpty ? math.min(50, shown + 20) : 20,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _pages[competition]!.add(page);
         _verifiedFrom = page.verifiedFrom ?? _verifiedFrom;
         _canExtend = page.canExtend;
       });
     } catch (_) {
-      if (mounted) setState(() => _failed.add(competition));
+      if (mounted && generation == _generation) {
+        setState(() => _failed.add(competition));
+      }
     } finally {
       if (mounted) setState(() => _loading.remove(competition));
     }
   }
+
+  int get _rereadLimit => math.min(50, math.max(20, _shownAll));
 
   Future<void> _extend() async {
     final api = _api;
     if (api == null || _extending) return;
     setState(() => _extending = true);
     try {
-      _settle(await api.loadMatchH2h(widget.match.id, extend: true), 0);
+      _settle(
+        await api.loadMatchH2h(
+          widget.match.id,
+          extend: true,
+          limit: _rereadLimit,
+        ),
+        0,
+      );
     } catch (_) {
       if (mounted) setState(() => _extending = false);
     }
@@ -444,13 +467,17 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
     if (!mounted) return;
     if (!page.extending) {
       setState(() {
+        _generation++;
         _extending = false;
+        _previewStale = true;
         _pages[false] = [page];
         _pages[true] = [];
+        _loading.clear();
         _failed.clear();
         _verifiedFrom = page.verifiedFrom ?? _verifiedFrom;
         _canExtend = page.canExtend;
       });
+      if (_thisCompetition) _loadMore(true, 0);
       return;
     }
     if (attempt >= extendPollDelays.length) {
@@ -464,7 +491,10 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
       final api = _api;
       if (api == null || !mounted) return;
       try {
-        _settle(await api.loadMatchH2h(widget.match.id), attempt + 1);
+        _settle(
+          await api.loadMatchH2h(widget.match.id, limit: _rereadLimit),
+          attempt + 1,
+        );
       } catch (_) {
         if (mounted) {
           setState(() {
@@ -584,7 +614,10 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
               key: const ValueKey('h2h-filter-competition'),
               label: 'Este torneo',
               selected: _thisCompetition,
-              onTap: () => setState(() => _thisCompetition = true),
+              onTap: () {
+                setState(() => _thisCompetition = true);
+                if (_previewStale && _pages[true]!.isEmpty) _loadMore(true, 0);
+              },
             ),
           ],
         ),
@@ -665,7 +698,10 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
           Center(
             child: TextButton(
               key: const ValueKey('h2h-extend'),
-              onPressed: _extend,
+              onPressed: () {
+                if (!_thisCompetition) _shownAll = meetings.length;
+                _extend();
+              },
               child: const Text('Cargar historial anterior'),
             ),
           ),

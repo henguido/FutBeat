@@ -264,10 +264,7 @@ void main() {
           ],
           'coach': {'name': 'Entrenador Local'},
         },
-        'away': {
-          'starters': <dynamic>[],
-          'substitutes': <dynamic>[],
-        },
+        'away': {'starters': <dynamic>[], 'substitutes': <dynamic>[]},
         'statistics': <dynamic>[],
         'incidents': <dynamic>[],
       });

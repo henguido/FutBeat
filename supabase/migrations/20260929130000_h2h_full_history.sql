@@ -83,12 +83,20 @@ declare
   a_from date:=nullif(aw->>'coveredFrom','')::date;
   requested boolean;
 begin
-  -- Extending = at least one of the two teams has an open demand for a range
-  -- older than its own verified start (per team, never a mix of both).
-  requested:=exists(select 1 from futbeat_private.team_match_demands d
-      where d.team_id=p_home and d.past_target is not null and d.past_target<h_from)
-    or exists(select 1 from futbeat_private.team_match_demands d
-      where d.team_id=p_away and d.past_target is not null and d.past_target<a_from);
+  -- Extending = at least one of the two teams has a LIVE demand for a range
+  -- older than its own verified start: the planner can still pick it (same
+  -- conditions: recent, not yet attempted) or it is being fetched. A used
+  -- or expired attempt (partial answer, failure) is no longer "extending",
+  -- so a new request can be recorded.
+  select coalesce(bool_or(d.past_target is not null
+      and d.past_target<case d.team_id when p_home then h_from else a_from end
+      and d.requested_at>now()-interval '7 days'
+      and (d.requested_at>coalesce(c.last_attempt_at,'-infinity')
+        or coalesce(c.lease_until,'-infinity')>now())),false)
+  into requested
+  from futbeat_private.team_match_demands d
+  left join futbeat_private.team_match_coverage c on c.team_id=d.team_id
+  where d.team_id in (p_home,p_away);
   return jsonb_strip_nulls(jsonb_build_object(
     'verifiedFrom',case when h_from is not null and a_from is not null then greatest(h_from,a_from) end,
     'historyFloor',floor_date,
