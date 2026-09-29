@@ -310,7 +310,10 @@ class ProfileMatchRow extends StatelessWidget {
         if (competition != null) competition.name,
         if (result != null) {'G': 'Ganó', 'E': 'Empató', 'P': 'Perdió'}[result],
       ].whereType<String>().join(', '),
+      button: true,
       excludeSemantics: true,
+      onTap: () =>
+          context.push('/match/${match.id}', extra: data.forMatch(match.id)),
       child: InkWell(
         key: ValueKey('profile-match-${match.id}'),
         borderRadius: BorderRadius.circular(12),

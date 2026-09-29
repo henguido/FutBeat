@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/models.dart' as core;
@@ -354,6 +355,36 @@ void main() {
       tableCompetitionId: 'fb_comp_sum',
     );
     expect(find.byKey(const ValueKey('team-summary-table')), findsNothing);
+  });
+
+  testWidgets('next match and form chips keep their tap for screen '
+      'readers', (tester) async {
+    final handle = tester.ensureSemantics();
+    await _pump(
+      tester,
+      _snapshot(
+        matches: [
+          _match('fb_m_next', const Duration(days: 2), status: 'SCHEDULED'),
+          _match('fb_m_old', const Duration(days: -3), score: [2, 0]),
+        ],
+      ),
+    );
+    for (final key in ['team-next-match', 'team-form-fb_m_old']) {
+      final node = tester.getSemantics(
+        find
+            .ancestor(
+              of: find.byKey(ValueKey(key)),
+              matching: find.byType(Semantics),
+            )
+            .first,
+      );
+      expect(
+        node.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+        reason: key,
+      );
+    }
+    handle.dispose();
   });
 
   testWidgets('modules without data are left out (no empty cards)', (

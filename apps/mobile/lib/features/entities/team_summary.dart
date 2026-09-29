@@ -236,6 +236,10 @@ class NextMatchCard extends StatelessWidget {
         '${home.name} contra ${away.name}',
         if (!match.isLive) localTime(context, match.startTime),
       ].join(', '),
+      button: true,
+      excludeSemantics: true,
+      onTap: () =>
+          context.push('/match/${match.id}', extra: data.forMatch(match.id)),
       child: Material(
         key: const ValueKey('team-next-match'),
         color: Colors.white.withValues(alpha: .04),
@@ -368,6 +372,10 @@ class TeamFormStrip extends StatelessWidget {
                 '${data.team(item.match.awayId)?.name ?? ''}',
             button: true,
             excludeSemantics: true,
+            onTap: () => context.push(
+              '/match/${item.match.id}',
+              extra: data.forMatch(item.match.id),
+            ),
             child: InkWell(
               key: ValueKey('team-form-${item.match.id}'),
               borderRadius: BorderRadius.circular(10),

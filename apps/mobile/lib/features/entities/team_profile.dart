@@ -73,7 +73,8 @@ int? playerAge(Entity player, {DateTime? now}) {
         (today.month == born.month && today.day < born.day)) {
       years--;
     }
-    return years >= 0 && years < 80 ? years : null;
+    // An implausible birth date falls back to the provider's age.
+    if (years > 0 && years < 80) return years;
   }
   if (value is num && value > 0 && value < 80) return value.toInt();
   return null;
@@ -277,7 +278,7 @@ class TeamProfileView extends ConsumerWidget {
           state: data.squadState,
           updatedAt: DateTime.tryParse(
             ((data.coverage?['squad'] as Map?)?['updatedAt'])?.toString() ?? '',
-          )?.toLocal(),
+          ),
         ),
       ]),
       'Noticias' => ProfileTabList('noticias', [
@@ -494,7 +495,12 @@ class TeamSquad extends StatelessWidget {
     final groups = squadGroups(players);
     final count = groups.fold<int>(0, (sum, g) => sum + g.$2.length);
     final stale = state == 'STALE';
-    final since = updatedAt;
+    // Costa Rica day, like the rest of the profile; a future date (clock
+    // skew) is never shown.
+    final now = costaRicaNow();
+    final raw = updatedAt;
+    final since = raw == null ? null : costaRicaTime(raw.toUtc());
+    final sinceShown = since != null && !since.isAfter(now) ? since : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -508,8 +514,9 @@ class TeamSquad extends StatelessWidget {
                   ? '1 jugador'
                   : '$count jugadores',
               // Stored squad older than its freshness window: say since when.
-              if (stale && since != null)
-                'Actualizada el ${since.day} ${_months[since.month - 1]}'
+              if (stale && sinceShown != null)
+                'Actualizada el ${sinceShown.day} ${_months[sinceShown.month - 1]}'
+                    '${sinceShown.year == now.year ? '' : ' ${sinceShown.year}'}'
               else if (stale)
                 'Pendiente de actualizar',
             ].join(' · '),

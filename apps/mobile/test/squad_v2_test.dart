@@ -40,6 +40,8 @@ void main() {
     expect(playerAge(_player('d', age: 0), now: now), isNull);
     expect(playerAge(_player('e', born: 'not a date'), now: now), isNull);
     expect(playerAge(_player('f'), now: now), isNull);
+    // Implausible birth date: the provider's age instead.
+    expect(playerAge(_player('g', born: '2030-01-01', age: 22), now: now), 22);
   });
 
   test('a player listed twice appears once', () {
@@ -72,10 +74,29 @@ void main() {
       TeamSquad(
         [_player('p1')],
         state: 'STALE',
-        updatedAt: DateTime(2026, 9, 12),
+        updatedAt: DateTime.utc(2026, 9, 12, 18),
       ),
     );
     expect(find.text('1 jugador · Actualizada el 12 sep'), findsOneWidget);
+    // Another year says so; a future date is never shown.
+    await _pump(
+      tester,
+      TeamSquad(
+        [_player('p1')],
+        state: 'STALE',
+        updatedAt: DateTime.utc(2025, 3, 3, 18),
+      ),
+    );
+    expect(find.text('1 jugador · Actualizada el 3 mar 2025'), findsOneWidget);
+    await _pump(
+      tester,
+      TeamSquad(
+        [_player('p1')],
+        state: 'STALE',
+        updatedAt: DateTime.now().toUtc().add(const Duration(days: 30)),
+      ),
+    );
+    expect(find.text('1 jugador · Pendiente de actualizar'), findsOneWidget);
     await _pump(tester, TeamSquad([_player('p1')], state: 'STALE'));
     expect(find.text('1 jugador · Pendiente de actualizar'), findsOneWidget);
     await _pump(tester, TeamSquad([_player('p1')], state: 'AVAILABLE'));
