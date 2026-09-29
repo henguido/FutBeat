@@ -322,6 +322,33 @@ export default {
       return reply(200, preview);
     }
 
+    // Tabla v2 "Forma" (#158): last results per team of one competition +
+    // season, from stored canonical finals only. DB-only, loaded lazily by
+    // the app; never a demand nor a provider call.
+    if (path.endsWith('/futbeat-api/v1/standings-form')) {
+      const competitionId = requestUrl.searchParams.get('competitionId');
+      const season = (requestUrl.searchParams.get('season') ?? '').trim();
+      if (
+        !validEntityId(competitionId) ||
+        !competitionId?.startsWith('fb_comp_') ||
+        season.length < 1 || season.length > 20
+      ) {
+        return reply(400, { error: 'Solicitud inválida' });
+      }
+      const { data: form, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_read_standings_form',
+        { p_competition_id: competitionId, p_season_key: season, p_limit: 5 },
+      );
+      if (error) {
+        return replyNoStore(503, { error: 'Datos temporalmente no disponibles' });
+      }
+      if (!form) return reply(404, { error: 'Competición no encontrada' });
+      if (form.schemaVersion !== 1) {
+        return replyNoStore(503, { error: 'Datos temporalmente no disponibles' });
+      }
+      return reply(200, form);
+    }
+
     if (path.endsWith('/futbeat-api/v1/match-detail')) {
       const id = requestUrl.searchParams.get('id');
       if (!validEntityId(id) || !id?.startsWith('fb_match_')) {
