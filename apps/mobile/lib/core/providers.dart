@@ -564,6 +564,29 @@ class ApiRepository implements FootballRepository {
     ),
   );
 
+  /// One page of the pair's stored head-to-head (#155). `extend` asks the
+  /// server to extend both teams' central coverage one step back (never a
+  /// provider call from the app). One attempt: optional content.
+  Future<H2hPage> loadMatchH2h(
+    String id, {
+    String scope = 'all',
+    String? cursor,
+    int limit = 20,
+    bool extend = false,
+  }) async => H2hPage(
+    await _getJson(
+      '/v1/match-h2h',
+      queryParameters: {
+        'id': id,
+        'scope': scope,
+        'cursor': ?cursor,
+        'limit': limit,
+        if (extend) 'extend': '1',
+      },
+      maxAttempts: 1,
+    ),
+  );
+
   Future<Snapshot> loadExplore({CancelToken? cancelToken}) =>
       _loadCatalog('explore', '/v1/explore', cancelToken: cancelToken);
 

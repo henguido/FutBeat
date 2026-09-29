@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../entities/standings.dart';
@@ -335,7 +336,7 @@ class _PositionRow extends StatelessWidget {
 // Cara a cara
 // ---------------------------------------------------------------------------
 
-class HeadToHeadTab extends StatefulWidget {
+class HeadToHeadTab extends ConsumerStatefulWidget {
   const HeadToHeadTab({
     required this.preview,
     required this.data,
@@ -352,12 +353,70 @@ class HeadToHeadTab extends StatefulWidget {
   final VoidCallback? onRetry;
 
   @override
-  State<HeadToHeadTab> createState() => _HeadToHeadTabState();
+  ConsumerState<HeadToHeadTab> createState() => _HeadToHeadTabState();
 }
 
-class _HeadToHeadTabState extends State<HeadToHeadTab> {
+class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   /// "Este torneo": only meetings of the selected match's competition.
   bool _thisCompetition = false;
+
+  /// Pages loaded after the preview's first meetings, per scope
+  /// (false = Todos, true = Este torneo).
+  final Map<bool, List<H2hPage>> _pages = {false: [], true: []};
+  final Set<bool> _loading = {};
+  final Set<bool> _failed = {};
+
+  /// Older-history extension (central coverage, both teams).
+  bool _extending = false;
+  bool? _canExtend;
+  String? _verifiedFrom;
+
+  ApiRepository? get _api {
+    final repository = ref.read(repositoryProvider);
+    return repository is ApiRepository ? repository : null;
+  }
+
+  Future<void> _loadMore(bool competition, String cursor) async {
+    final api = _api;
+    if (api == null || _loading.contains(competition)) return;
+    setState(() {
+      _loading.add(competition);
+      _failed.remove(competition);
+    });
+    try {
+      final page = await api.loadMatchH2h(
+        widget.match.id,
+        scope: competition ? 'competition' : 'all',
+        cursor: cursor,
+      );
+      if (!mounted) return;
+      setState(() {
+        _pages[competition]!.add(page);
+        _verifiedFrom = page.verifiedFrom ?? _verifiedFrom;
+        _canExtend = page.canExtend;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _failed.add(competition));
+    } finally {
+      if (mounted) setState(() => _loading.remove(competition));
+    }
+  }
+
+  Future<void> _extend() async {
+    final api = _api;
+    if (api == null || _extending) return;
+    setState(() => _extending = true);
+    try {
+      final page = await api.loadMatchH2h(widget.match.id, extend: true);
+      if (!mounted) return;
+      setState(() {
+        _extending = page.extending;
+        _canExtend = page.canExtend && !page.extending;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _extending = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => widget.preview.when(
@@ -383,7 +442,16 @@ class _HeadToHeadTabState extends State<HeadToHeadTab> {
 
   Widget _content(MatchPreview value) {
     final match = widget.match;
-    Entity? team(String id) => widget.data.team(id) ?? value.team(id);
+    final loaded = [..._pages[false]!, ..._pages[true]!];
+    Entity? team(String id) =>
+        widget.data.team(id) ??
+        value.team(id) ??
+        loaded.map((p) => p.teams[id]).nonNulls.firstOrNull;
+    String? competitionName(String? id) =>
+        value.competitionName(id) ??
+        (id == null
+            ? null
+            : loaded.map((p) => p.competitions[id]).nonNulls.firstOrNull);
     final competitionId = value.h2hCompetitionId ?? match.competitionId;
     final all = value.h2hMeetings;
     final current = value.h2hCurrent;
@@ -409,15 +477,31 @@ class _HeadToHeadTabState extends State<HeadToHeadTab> {
         ),
       };
     }
-    final meetings = _thisCompetition
+    final base = _thisCompetition
         ? [
             for (final item in all)
               if (item['competitionId'] == competitionId) item,
           ]
         : all;
+    final pages = _pages[_thisCompetition]!;
+    // The preview's newest meetings, then every loaded page, each id once.
+    final seen = <String>{};
+    final meetings = [
+      for (final item in [...base, ...pages.expand((p) => p.meetings)])
+        if (seen.add(item['matchId']?.toString() ?? '')) item,
+    ];
     final totals =
         value.h2hTotals(competition: _thisCompetition) ??
         _countTotals(meetings, match.homeId);
+    // More stored meetings than shown: the server said so, or (before any
+    // page) the scope's totals count more than the preview listed.
+    final more = pages.isNotEmpty
+        ? pages.last.hasMore
+        : meetings.length < totals.total;
+    final verifiedFrom = _verifiedFrom ?? value.h2hVerifiedFrom;
+    final lastCursor = meetings.isEmpty
+        ? null
+        : '${meetings.last['startTime']}|${meetings.last['matchId']}';
     final showCurrent =
         current != null &&
         (!_thisCompetition || current['competitionId'] == competitionId);
@@ -447,13 +531,22 @@ class _HeadToHeadTabState extends State<HeadToHeadTab> {
             ),
           ],
         ),
+        if (verifiedFrom != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Registros desde ${_monthYear(verifiedFrom)}',
+              key: const ValueKey('h2h-window'),
+              style: const TextStyle(color: muted, fontSize: 12),
+            ),
+          ),
         const SizedBox(height: 12),
         if (showCurrent) ...[
           _MeetingRow(
             key: const ValueKey('h2h-current'),
             item: current,
             team: team,
-            preview: value,
+            competitionName: competitionName,
             label: _currentLabel(current),
           ),
           const SizedBox(height: 8),
@@ -465,11 +558,75 @@ class _HeadToHeadTabState extends State<HeadToHeadTab> {
           )
         else
           for (final item in meetings) ...[
-            _MeetingRow(item: item, team: team, preview: value),
+            _MeetingRow(
+              item: item,
+              team: team,
+              competitionName: competitionName,
+            ),
             const SizedBox(height: 8),
           ],
+        if (_loading.contains(_thisCompetition))
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Center(
+              child: SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          )
+        else if ((more || _failed.contains(_thisCompetition)) &&
+            lastCursor != null &&
+            _api != null)
+          Center(
+            child: TextButton(
+              key: const ValueKey('h2h-more'),
+              onPressed: () => _loadMore(_thisCompetition, lastCursor),
+              child: Text(
+                _failed.contains(_thisCompetition) ? 'Reintentar' : 'Ver más',
+              ),
+            ),
+          )
+        else if (_extending)
+          const Padding(
+            key: ValueKey('h2h-extending'),
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Center(
+              child: Text('Cargando historial', style: TextStyle(color: muted)),
+            ),
+          )
+        else if (verifiedFrom != null && _canExtend != false && _api != null)
+          Center(
+            child: TextButton(
+              key: const ValueKey('h2h-extend'),
+              onPressed: _extend,
+              child: const Text('Cargar historial anterior'),
+            ),
+          ),
       ],
     );
+  }
+
+  static const _months = [
+    'ene',
+    'feb',
+    'mar',
+    'abr',
+    'may',
+    'jun',
+    'jul',
+    'ago',
+    'sep',
+    'oct',
+    'nov',
+    'dic',
+  ];
+
+  static String _monthYear(String date) {
+    final parsed = DateTime.tryParse(date);
+    return parsed == null
+        ? date
+        : '${_months[parsed.month - 1]} ${parsed.year}';
   }
 
   static String _currentLabel(Json item) =>
@@ -658,14 +815,14 @@ class _MeetingRow extends StatelessWidget {
   const _MeetingRow({
     required this.item,
     required this.team,
-    required this.preview,
+    required this.competitionName,
     this.label,
     super.key,
   });
 
   final Json item;
   final Entity? Function(String id) team;
-  final MatchPreview preview;
+  final String? Function(String? id) competitionName;
 
   /// Status of the selected match when it is not final (never counted).
   final String? label;
@@ -679,9 +836,7 @@ class _MeetingRow extends StatelessWidget {
     final score = item['score'] is Map
         ? '${item['score']['home']} - ${item['score']['away']}'
         : '–';
-    final competition = preview.competitionName(
-      item['competitionId'] as String?,
-    );
+    final competition = competitionName(item['competitionId'] as String?);
     Widget side(Entity? entity, {required bool end}) => Expanded(
       child: Row(
         mainAxisAlignment: end
