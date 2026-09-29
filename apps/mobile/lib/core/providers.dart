@@ -673,6 +673,19 @@ class ApiRepository implements FootballRepository {
       cancelToken: cancelToken,
     ),
   );
+
+  /// Tabla v2 "Forma" (#158), loaded only when the user opens it. DB-only on
+  /// the server. One attempt: the table itself is already on screen.
+  Future<StandingsForm> loadStandingsForm(
+    String competitionId,
+    String season,
+  ) async => StandingsForm(
+    await _getJson(
+      '/v1/standings-form',
+      queryParameters: {'competitionId': competitionId, 'season': season},
+      maxAttempts: 1,
+    ),
+  );
 }
 
 final repositoryProvider = Provider<FootballRepository>((ref) {

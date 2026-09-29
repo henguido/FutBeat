@@ -243,17 +243,26 @@ class StandingsSnapshotCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The match's own group only; a table that cannot be resolved is hidden.
+    // The match's own group (or, across groups, each side's own group); a
+    // table that cannot be resolved is hidden.
     final groups = standingsGroups(
       standingsTableFor(data, match.competitionId),
       data,
       focusTeamIds: {match.homeId, match.awayId},
     );
-    final rows = groups?.length == 1 ? groups!.single.rows : const <Json>[];
-    (int, Json)? find(String teamId) {
-      for (var i = 0; i < rows.length; i++) {
-        if (rows[i]['teamId'] == teamId) {
-          return ((rows[i]['position'] as num?)?.toInt() ?? i + 1, rows[i]);
+    // Across groups each position is labelled with its own group.
+    final crossGroup = (groups?.length ?? 0) > 1;
+    (int, Json, String?)? find(String teamId) {
+      for (final group in groups ?? const <StandingsGroup>[]) {
+        final rows = group.rows;
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i]['teamId'] == teamId) {
+            return (
+              (rows[i]['position'] as num?)?.toInt() ?? i + 1,
+              rows[i],
+              crossGroup ? group.label : null,
+            );
+          }
         }
       }
       return null;
@@ -294,7 +303,7 @@ class _PositionRow extends StatelessWidget {
   const _PositionRow(this.team, this.entry, this.accent);
 
   final Entity? team;
-  final (int, Json) entry;
+  final (int, Json, String?) entry;
   final Color accent;
 
   @override
@@ -314,6 +323,10 @@ class _PositionRow extends StatelessWidget {
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
+      if (entry.$3 != null) ...[
+        Text(entry.$3!, style: const TextStyle(color: muted, fontSize: 12)),
+        const SizedBox(width: 8),
+      ],
       Text(
         '#${entry.$1}',
         style: TextStyle(color: accent, fontWeight: FontWeight.w900),

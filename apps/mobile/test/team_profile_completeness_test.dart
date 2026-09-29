@@ -638,10 +638,15 @@ void main() {
         )!.single.label,
         'Grupo B',
       );
-      // Teams from different groups: no single correct table.
+      // Teams from different groups (#147): each team's own labelled
+      // group, never one mixed table.
       expect(
-        standingsGroups(table, data, focusTeamIds: {'fb_team', 'fb_b1'}),
-        isNull,
+        standingsGroups(
+          table,
+          data,
+          focusTeamIds: {'fb_team', 'fb_b1'},
+        )!.map((group) => group.label),
+        ['Grupo A', 'Grupo B'],
       );
       expect(standingsGroups(table, data)!.length, 2);
       // Unlabelled groups sent together: repeated positions -> unavailable.
