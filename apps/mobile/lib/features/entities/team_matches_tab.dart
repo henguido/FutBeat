@@ -188,7 +188,10 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
   /// Empty copy from the team's central coverage: still arriving and "no
   /// source" are never shown as a confirmed empty list.
   String _emptyCopy(TeamMatchesBucket bucket, String fallback) {
-    return switch (_pages[bucket]!.lastOrNull?.coverageState) {
+    final last = _pages[bucket]!.lastOrNull;
+    // Recent window confirmed empty, older history being asked: not final.
+    if (last != null && last.historyRequested) return 'Cargando historial';
+    return switch (last?.coverageState) {
       'PENDING' => 'Cargando partidos',
       'UNAVAILABLE' => 'Partidos no disponibles',
       _ => fallback,

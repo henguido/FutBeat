@@ -1023,6 +1023,43 @@ class H2hTotals {
   int get total => homeWins + draws + awayWins;
 }
 
+/// One page of `/v1/match-h2h` (#155): the pair's stored meetings for a
+/// scope ('all' | 'competition'), totals over EVERY meeting of that scope,
+/// and the verified coverage window.
+class H2hPage {
+  H2hPage(this.json) {
+    for (final item in json['teams'] as List? ?? const []) {
+      if (item is Map && item['id'] is String && item['name'] is String) {
+        teams[item['id'] as String] = Entity(Map<String, dynamic>.from(item));
+      }
+    }
+    for (final item in json['competitions'] as List? ?? const []) {
+      if (item is Map && item['id'] is String && item['name'] is String) {
+        competitions[item['id'] as String] = item['name'] as String;
+      }
+    }
+  }
+
+  final Json json;
+  final Map<String, Entity> teams = {};
+  final Map<String, String> competitions = {};
+
+  List<Json> get meetings => [
+    for (final item in json['meetings'] as List? ?? const [])
+      if (item is Map) Map<String, dynamic>.from(item),
+  ];
+  bool get hasMore => json['hasMore'] == true;
+  String? get nextCursor => json['nextCursor'] as String?;
+  H2hTotals? get totals =>
+      json['totals'] is Map ? H2hTotals.fromJson(json['totals'] as Map) : null;
+  Json get _window => json['window'] is Map
+      ? Map<String, dynamic>.from(json['window'] as Map)
+      : const {};
+  String? get verifiedFrom => _window['verifiedFrom'] as String?;
+  bool get canExtend => _window['canExtend'] == true;
+  bool get extending => _window['extending'] == true;
+}
+
 class MatchPreview {
   MatchPreview(this.json) {
     for (final item in _list('matches')) {
@@ -1110,6 +1147,11 @@ class MatchPreview {
 
   /// Canonical competition of the selected match ("Este torneo").
   String? get h2hCompetitionId => _section('h2h')['competitionId'] as String?;
+
+  /// Start of the range where BOTH teams' coverage is verified (null when
+  /// unknown: never a claim of the whole history).
+  String? get h2hVerifiedFrom =>
+      _section('h2h.coverage')['verifiedFrom'] as String?;
 
   /// The selected match while not final (scheduled/live): shown above the
   /// history, never counted.

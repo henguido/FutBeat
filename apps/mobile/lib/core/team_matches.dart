@@ -36,7 +36,10 @@ class TeamMatchesPage {
       nextCursor = json['nextCursor'] as String?,
       coverageState =
           ((json['coverage'] as Map?)?['teamMatches'] as Map?)?['state']
-              as String?;
+              as String?,
+      historyRequested =
+          ((json['coverage'] as Map?)?['teamMatches'] as Map?)?['history'] ==
+          'requested';
 
   final Snapshot data;
   final bool hasMore;
@@ -45,6 +48,10 @@ class TeamMatchesPage {
   /// The team's central match coverage: AVAILABLE, STALE, PENDING, NO_DATA
   /// or UNAVAILABLE (null from older servers).
   final String? coverageState;
+
+  /// The server just asked the central lane for the window before the known
+  /// range (end of Resultados): the list may still grow.
+  final bool historyRequested;
 }
 
 /// A match with the snapshot that can render it (its teams/competition).

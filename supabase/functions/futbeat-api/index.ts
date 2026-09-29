@@ -201,22 +201,38 @@ export default {
       }
       // End of Resultados: ask centrally for the older window before the
       // oldest stored result (deduplicated; the server decides if needed).
-      // A filtered list ending is not the end of the team's history.
+      // No stored result and a confirmed-empty recent window (NO_DATA): the
+      // window before that range. A filtered list ending is not the end of
+      // the team's history. Only a demand is recorded (floor, dedup,
+      // backoff, lease, quota and wake are the central lane's).
+      let historyRequested = false;
       if (bucket === 'results' && page.hasMore !== true && !filtered) {
         const matches = Array.isArray(page.matches) ? page.matches : [];
+        const coverage = asRecord(asRecord(page.coverage).teamMatches);
         const oldest = matches.length
           ? String(asRecord(matches[matches.length - 1]).startTime ?? '')
+          : coverage.state === 'NO_DATA'
+          ? String(coverage.emptyFrom ?? '')
           : '';
         const before = /^\d{4}-\d{2}-\d{2}/.test(oldest)
           ? oldest.slice(0, 10)
           : null;
         if (before) {
-          const { error: historyError } = await ctx.supabaseAdmin.rpc(
+          const { data: history, error: historyError } = await ctx.supabaseAdmin.rpc(
             'futbeat_request_team_matches',
             { p_team_id: id, p_before: before },
           );
           if (historyError) console.warn('team history demand unavailable');
+          historyRequested = !historyError && asRecord(history).backfill === true;
         }
+      }
+      if (historyRequested) {
+        // Older history is being asked: never a cached "no results".
+        page.coverage = {
+          ...asRecord(page.coverage),
+          teamMatches: { ...asRecord(asRecord(page.coverage).teamMatches), history: 'requested' },
+        };
+        return replyNoStore(200, page);
       }
       return reply(200, page);
     }
@@ -365,6 +381,51 @@ export default {
         return replyNoStore(200, preview);
       }
       return reply(200, preview);
+    }
+
+    // Full stored head-to-head of the pair (#155): keyset pages for 'all' or
+    // 'competition', totals independent of the page, and the verified
+    // window. `extend=1` asks the central per-team coverage for one older
+    // step of both teams (deduplicated; never a provider call here).
+    if (path.endsWith('/futbeat-api/v1/match-h2h')) {
+      const id = requestUrl.searchParams.get('id');
+      const scope = requestUrl.searchParams.get('scope') ?? 'all';
+      const cursor = requestUrl.searchParams.get('cursor');
+      const limit = Number(requestUrl.searchParams.get('limit') ?? '20');
+      const extend = requestUrl.searchParams.get('extend') === '1';
+      if (
+        !validEntityId(id) || !id?.startsWith('fb_match_') ||
+        (scope !== 'all' && scope !== 'competition') ||
+        (cursor !== null && (cursor.length < 3 || cursor.length > 200)) ||
+        !Number.isInteger(limit) || limit < 1 || limit > 50
+      ) {
+        return replyNoStore(400, { error: 'Solicitud inválida' });
+      }
+      if (extend) {
+        const { error: historyError } = await ctx.supabaseAdmin.rpc(
+          'futbeat_request_match_h2h_history',
+          { p_match_id: id },
+        );
+        if (historyError) console.warn('h2h history demand unavailable');
+      }
+      const { data: page, error } = await ctx.supabaseAdmin.rpc(
+        'futbeat_read_match_h2h',
+        { p_match_id: id, p_scope: scope, p_cursor: cursor, p_limit: limit },
+      );
+      if (error) {
+        return replyNoStore(error.message?.includes('cursor') ? 400 : 503, {
+          error: 'Cara a cara temporalmente no disponible',
+        });
+      }
+      if (!page) return replyNoStore(404, { error: 'Partido no encontrado' });
+      if (page.schemaVersion !== 1) {
+        return replyNoStore(503, { error: 'Cara a cara temporalmente no disponible' });
+      }
+      // An extension in progress changes the answer soon: never cache it.
+      if (extend || asRecord(page.window).extending === true) {
+        return replyNoStore(200, page);
+      }
+      return reply(200, page);
     }
 
     if (path.endsWith('/futbeat-api/v1/match-detail')) {
