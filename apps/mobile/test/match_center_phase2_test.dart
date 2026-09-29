@@ -493,7 +493,15 @@ void main() {
   ) async {
     final container = await _open(tester, _Server((_) => _context()));
     await _tab(tester, 'Cara a cara');
-    expect(find.text('Últimos enfrentamientos registrados'), findsOneWidget);
+    // Real names, both sides, and the proportional bar (#99 v2).
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('h2h-summary')),
+        matching: find.text('Local Dos'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('h2h-bar')), findsOneWidget);
     expect(_textIn(tester, 'h2h-home-wins'), contains('2'));
     expect(_textIn(tester, 'h2h-draws'), contains('1'));
     expect(_textIn(tester, 'h2h-away-wins'), contains('1'));
@@ -508,17 +516,20 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('14/15. no H2H: a calm registered-history message, never '
-      '"nunca"', (tester) async {
+  testWidgets('14/15. no local H2H (legacy answer) is pending, never an '
+      'empty history, never "nunca"', (tester) async {
     final container = await _open(
       tester,
       _Server((_) => _context(), preview: () => _preview(h2h: false)),
     );
     await _tab(tester, 'Cara a cara');
+    // #99 v2: a cache miss is not "no previous meetings".
+    expect(find.text('Cargando historial'), findsOneWidget);
     expect(
       find.text('Sin enfrentamientos previos registrados'),
-      findsOneWidget,
+      findsNothing,
     );
+    expect(find.text('Sin enfrentamientos anteriores'), findsNothing);
     expect(find.textContaining('nunca', findRichText: true), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     await _close(tester, container);

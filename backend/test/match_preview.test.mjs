@@ -296,6 +296,8 @@ test('P. GET /v1/match-preview: 200 read-only, 400 invalid id, 404 unknown, 405 
   assert.equal((await call('?id=not-a-match')).status, 400);
   assert.equal((await call('?id=fb_match_does_not_exist')).status, 404);
   assert.equal((await call(`?id=${s.target}`, 'POST')).status, 405);
-  assert.deepEqual([...new Set(rpcs)], ['futbeat_read_match_preview'], 'no demand/detail/provider RPC');
+  // #99 v2: the only extra RPC is the central, deduplicated coverage demand.
+  assert.deepEqual([...new Set(rpcs)], ['futbeat_request_match_h2h', 'futbeat_read_match_preview'],
+    'no detail/provider RPC');
   assert.equal((await db.query('select count(*)::int n from futbeat_private.provider_call_ledger')).rows[0].n, 0);
 }));

@@ -992,6 +992,30 @@ TeamResult? teamMatchResult(Json match, String teamId) {
 /// Recent form + head-to-head of one match (`/v1/match-preview`), separate
 /// from the match context and from [MatchDetail]. States are `available`,
 /// `partial` (form only) or `none`: nothing here is ever "pending".
+/// Head-to-head totals from the selected match's home/away perspective.
+class H2hTotals {
+  const H2hTotals({
+    required this.homeWins,
+    required this.draws,
+    required this.awayWins,
+  });
+
+  factory H2hTotals.fromJson(Map<dynamic, dynamic> json) {
+    int n(String key) => (json[key] as num?)?.toInt() ?? 0;
+    return H2hTotals(
+      homeWins: n('homeWins'),
+      draws: n('draws'),
+      awayWins: n('awayWins'),
+    );
+  }
+
+  final int homeWins;
+  final int draws;
+  final int awayWins;
+
+  int get total => homeWins + draws + awayWins;
+}
+
 class MatchPreview {
   MatchPreview(this.json) {
     for (final item in _list('matches')) {
@@ -1045,6 +1069,47 @@ class MatchPreview {
 
   /// Newest first, at most 5.
   List<Json> get h2hMatches => _matchesOf(_section('h2h'));
+
+  /// Cara a cara v2 availability: AVAILABLE | STALE | PENDING |
+  /// CONFIRMED_EMPTY | UNAVAILABLE. A legacy answer without it is only
+  /// AVAILABLE when it has meetings; otherwise PENDING, never "empty" (a
+  /// cache miss is not a confirmed absence).
+  String get h2hAvailability {
+    final value = _section('h2h')['availability'];
+    if (value is String && value.isNotEmpty) return value;
+    return h2hState == 'available' ? 'AVAILABLE' : 'PENDING';
+  }
+
+  /// Every stored meeting (finals only), newest first. Legacy answers fall
+  /// back to their 5 meetings.
+  List<Json> get h2hMeetings {
+    final v2 = _section('h2h')['meetings'];
+    if (v2 is List) {
+      return [
+        for (final item in v2)
+          if (item is Map) Map<String, dynamic>.from(item),
+      ];
+    }
+    return h2hMatches;
+  }
+
+  /// Totals over every meeting (`competition` for "Este torneo"), from the
+  /// selected match's home/away sides. Null when the server did not send
+  /// them (legacy): the caller counts the meetings it has.
+  H2hTotals? h2hTotals({bool competition = false}) {
+    final node = _section('h2h')[competition ? 'competitionTotals' : 'totals'];
+    return node is Map ? H2hTotals.fromJson(node) : null;
+  }
+
+  /// Canonical competition of the selected match ("Este torneo").
+  String? get h2hCompetitionId => _section('h2h')['competitionId'] as String?;
+
+  /// The selected match while not final (scheduled/live): shown above the
+  /// history, never counted.
+  Json? get h2hCurrent {
+    final node = _section('h2h')['current'];
+    return node is Map ? Map<String, dynamic>.from(node) : null;
+  }
 
   Entity? team(String? id) => id == null ? null : _teams[id];
   String? competitionName(String? id) =>

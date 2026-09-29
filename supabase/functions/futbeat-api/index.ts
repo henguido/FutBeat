@@ -287,13 +287,19 @@ export default {
     }
 
     // Recent form + head-to-head (#99): a separate DB-only read model, so the
-    // match context stays light. Never registers demand, never wakes the
-    // worker, never calls a provider.
+    // match context stays light. Never wakes the worker, never calls a
+    // provider. Opening it asks for the central per-team match coverage of
+    // both teams (deduplicated; nothing when coverage is already fine).
     if (path.endsWith('/futbeat-api/v1/match-preview')) {
       const id = requestUrl.searchParams.get('id');
       if (!validEntityId(id) || !id?.startsWith('fb_match_')) {
         return reply(400, { error: 'Partido inválido' });
       }
+      const { error: h2hDemandError } = await ctx.supabaseAdmin.rpc(
+        'futbeat_request_match_h2h',
+        { p_match_id: id },
+      );
+      if (h2hDemandError) console.warn('h2h coverage demand unavailable');
       const { data: preview, error } = await ctx.supabaseAdmin.rpc(
         'futbeat_read_match_preview',
         { p_match_id: id },
@@ -306,6 +312,10 @@ export default {
       }
       if (preview.schemaVersion !== 1) {
         return replyNoStore(503, { error: 'Previa temporalmente no disponible' });
+      }
+      // Coverage still arriving: never cache, the next open reads fresh.
+      if (asRecord(preview.h2h).availability === 'PENDING') {
+        return replyNoStore(200, preview);
       }
       return reply(200, preview);
     }
