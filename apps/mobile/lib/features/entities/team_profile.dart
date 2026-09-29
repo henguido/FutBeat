@@ -62,10 +62,30 @@ int? _shirtNumber(Entity player) {
   return int.tryParse(value?.toString() ?? '');
 }
 
-/// Players grouped by position, each group sorted by shirt number then name.
+/// Age in whole years from `age` or `dateOfBirth` (null when unknown).
+int? playerAge(Entity player, {DateTime? now}) {
+  final value = player.json['age'];
+  final born = DateTime.tryParse(player.json['dateOfBirth']?.toString() ?? '');
+  if (born != null) {
+    final today = now ?? DateTime.now();
+    var years = today.year - born.year;
+    if (today.month < born.month ||
+        (today.month == born.month && today.day < born.day)) {
+      years--;
+    }
+    return years >= 0 && years < 80 ? years : null;
+  }
+  if (value is num && value > 0 && value < 80) return value.toInt();
+  return null;
+}
+
+/// Players grouped by position, each group sorted by shirt number then name;
+/// each canonical player once.
 List<(String, List<Entity>)> squadGroups(Iterable<Entity> players) {
   final groups = <String, List<Entity>>{};
+  final seen = <String>{};
   for (final player in players) {
+    if (!seen.add(player.id)) continue;
     groups
         .putIfAbsent(squadGroupOf(player.json['position']), () => [])
         .add(player);
@@ -251,7 +271,14 @@ class TeamProfileView extends ConsumerWidget {
       ]),
       'Plantilla' => ProfileTabList('plantilla', [
         if (data.demo) const DemoNotice(),
-        TeamSquad(players, demo: data.demo, state: data.squadState),
+        TeamSquad(
+          players,
+          demo: data.demo,
+          state: data.squadState,
+          updatedAt: DateTime.tryParse(
+            ((data.coverage?['squad'] as Map?)?['updatedAt'])?.toString() ?? '',
+          )?.toLocal(),
+        ),
       ]),
       'Noticias' => ProfileTabList('noticias', [
         if (data.demo) const DemoNotice(),
@@ -433,13 +460,22 @@ class TeamHeader extends StatelessWidget {
 }
 
 class TeamSquad extends StatelessWidget {
-  const TeamSquad(this.players, {this.demo = false, this.state, super.key});
+  const TeamSquad(
+    this.players, {
+    this.demo = false,
+    this.state,
+    this.updatedAt,
+    super.key,
+  });
 
   final List<Entity> players;
   final bool demo;
 
   /// Server squad state (see [Snapshot.squadState]).
   final String? state;
+
+  /// When the stored squad was last confirmed (shown only while STALE).
+  final DateTime? updatedAt;
 
   @override
   Widget build(BuildContext context) {
@@ -455,19 +491,33 @@ class TeamSquad extends StatelessWidget {
               key: ValueKey('squad-pending'),
             );
     }
+    final groups = squadGroups(players);
+    final count = groups.fold<int>(0, (sum, g) => sum + g.$2.length);
+    final stale = state == 'STALE';
+    final since = updatedAt;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(2, 8, 2, 0),
           child: Text(
-            demo
-                ? 'Selección de jugadores de demostración'
-                : '${players.length} jugadores',
+            [
+              demo
+                  ? 'Selección de jugadores de demostración'
+                  : count == 1
+                  ? '1 jugador'
+                  : '$count jugadores',
+              // Stored squad older than its freshness window: say since when.
+              if (stale && since != null)
+                'Actualizada el ${since.day} ${_months[since.month - 1]}'
+              else if (stale)
+                'Pendiente de actualizar',
+            ].join(' · '),
+            key: const ValueKey('squad-summary'),
             style: const TextStyle(color: muted, fontSize: 12),
           ),
         ),
-        for (final (label, group) in squadGroups(players)) ...[
+        for (final (label, group) in groups) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(2, 14, 2, 8),
             child: Row(
@@ -526,8 +576,10 @@ class SquadPlayerRow extends StatelessWidget {
     final position =
         _groupSingular[group] ??
         playerPositionLabel(player.json['position']?.toString() ?? '');
+    final age = playerAge(player);
     final subtitle = [
       if (position.isNotEmpty) position,
+      if (age != null) '$age años',
       if (nationality.isNotEmpty) nationality,
     ].join(' · ');
     return InkWell(
