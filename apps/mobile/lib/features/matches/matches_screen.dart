@@ -703,85 +703,102 @@ class FeedMatchRow extends StatelessWidget {
         '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
       );
     }
-    return Semantics(
-      button: true,
-      excludeSemantics: true,
-      label: label.toString(),
-      onTap: open,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: open,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    EntityAvatar(home, size: 22),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        home.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: nameStyle,
-                      ),
-                    ),
-                    SizedBox(
-                      width: 84,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
+    // The row opens the match; the star (a sibling, never nested) follows it.
+    return Row(
+      children: [
+        Expanded(
+          child: Semantics(
+            button: true,
+            excludeSemantics: true,
+            label: label.toString(),
+            onTap: open,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: open,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
                         children: [
-                          FittedBox(
-                            fit: BoxFit.scaleDown,
+                          EntityAvatar(home, size: 22),
+                          const SizedBox(width: 6),
+                          Expanded(
                             child: Text(
-                              centre,
+                              home.name,
                               maxLines: 1,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w800,
-                              ),
+                              overflow: TextOverflow.ellipsis,
+                              style: nameStyle,
                             ),
                           ),
-                          if (status.isNotEmpty)
-                            FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                status,
-                                maxLines: 1,
-                                style: TextStyle(
-                                  color: match.isLive ? lime : muted,
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.w700,
+                          SizedBox(
+                            width: 84,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    centre,
+                                    maxLines: 1,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                if (status.isNotEmpty)
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      status,
+                                      maxLines: 1,
+                                      style: TextStyle(
+                                        color: match.isLive ? lime : muted,
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              away.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.right,
+                              style: nameStyle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          EntityAvatar(away, size: 22),
                         ],
                       ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        away.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.right,
-                        style: nameStyle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    EntityAvatar(away, size: 22),
-                  ],
+                      for (final line in second)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: line,
+                        ),
+                    ],
+                  ),
                 ),
-                for (final line in second)
-                  Padding(padding: const EdgeInsets.only(top: 2), child: line),
-              ],
+              ),
             ),
           ),
         ),
-      ),
+        FollowButton(
+          'match',
+          match.id,
+          key: ValueKey('feed-follow-${match.id}'),
+          label: '${home.name} contra ${away.name}',
+          compact: true,
+        ),
+      ],
     );
   }
 }

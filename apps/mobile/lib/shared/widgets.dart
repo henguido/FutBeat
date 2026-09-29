@@ -52,8 +52,20 @@ class EntityAvatar extends StatelessWidget {
 }
 
 class FollowButton extends ConsumerStatefulWidget {
-  const FollowButton(this.type, this.id, {super.key});
+  const FollowButton(
+    this.type,
+    this.id, {
+    this.label,
+    this.compact = false,
+    super.key,
+  });
   final String type, id;
+
+  /// What is followed, for the tooltip / screen readers ("Seguir [label]").
+  final String? label;
+
+  /// Narrow tap target (44x48) for dense rows.
+  final bool compact;
   @override
   ConsumerState<FollowButton> createState() => _FollowButtonState();
 }
@@ -65,12 +77,18 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
     final state = ref.watch(followsProvider);
     final followed =
         state.asData?.value.contains('${widget.type}:${widget.id}') ?? false;
+    final what = widget.label == null ? '' : ' ${widget.label}';
     return IconButton(
       tooltip: state.hasError
           ? 'Reintentar seguimiento'
           : followed
-          ? 'Dejar de seguir'
-          : 'Seguir',
+          ? 'Dejar de seguir$what'
+          : 'Seguir$what',
+      iconSize: widget.compact ? 20 : null,
+      padding: widget.compact ? EdgeInsets.zero : null,
+      constraints: widget.compact
+          ? const BoxConstraints(minWidth: 44, minHeight: 48)
+          : null,
       icon: Icon(
         followed ? Icons.star_rounded : Icons.star_border_rounded,
         color: followed ? lime : muted,

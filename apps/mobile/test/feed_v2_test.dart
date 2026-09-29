@@ -1,4 +1,8 @@
+import 'dart:async';
+
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
@@ -7,6 +11,29 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/matches/matches_screen.dart';
 import 'package:go_router/go_router.dart';
+
+/// The app database with follows kept in memory: FollowButton ->
+/// database.toggle -> followsProvider, the app's own path, without file I/O.
+class _FollowsDb extends AppDatabase {
+  _FollowsDb() : super(NativeDatabase.memory());
+  final _set = <String>{};
+  final changes = StreamController<Set<String>>.broadcast();
+  final toggles = <String>[];
+
+  @override
+  Future<void> toggle(String type, String id) async {
+    final key = '$type:$id';
+    toggles.add(key);
+    if (!_set.remove(key)) _set.add(key);
+    changes.add({..._set});
+  }
+
+  @override
+  Stream<Set<String>> watchFollows() async* {
+    yield {..._set};
+    yield* changes.stream;
+  }
+}
 
 class _Repository implements FootballRepository {
   _Repository(this.snapshot);
@@ -141,6 +168,7 @@ Future<List<String>> _pump(
   Set<String> follows = const {},
   Size size = const Size(390, 3000),
   Snapshot? data,
+  AppDatabase? db,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -182,7 +210,13 @@ Future<List<String>> _pump(
             ),
           ),
         ),
-        followsProvider.overrideWith((ref) => Stream.value(follows)),
+        // A real (in-memory) database: follows go through the app's own
+        // mechanism; otherwise a fixed set.
+        if (db != null) ...[
+          databaseProvider.overrideWithValue(db),
+          followsProvider.overrideWith((ref) => db.watchFollows()),
+        ] else
+          followsProvider.overrideWith((ref) => Stream.value(follows)),
         temporaryInterestsProvider.overrideWith(
           (ref) => Stream.value(<String>{}),
         ),
@@ -215,6 +249,65 @@ void main() {
     }
     expect(find.text('Siguiendo'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the row star follows / unfollows the match: it rises into '
+      'Siguiendo once, and the row tap still opens the match', (tester) async {
+    final db = _FollowsDb();
+    addTearDown(db.changes.close);
+    final opened = await _pump(tester, db: db);
+    final star = find.byKey(const ValueKey('feed-follow-m_es_long'));
+    String tooltip() => tester
+        .widget<IconButton>(
+          find.descendant(of: star, matching: find.byType(IconButton)),
+        )
+        .tooltip!;
+    expect(tooltip(), startsWith('Seguir '));
+    expect(find.text('Siguiendo'), findsNothing);
+    await tester.tap(star);
+    await tester.pumpAndSettle();
+    expect(opened, isEmpty, reason: 'the star never opens the match');
+    expect(db.toggles, ['match:m_es_long']);
+    expect(find.text('Siguiendo'), findsOneWidget);
+    expect(
+      find.byType(FeedMatchRow),
+      findsNWidgets(6),
+      reason: 'reorders only',
+    );
+    expect(_row('m_es_long'), findsOneWidget, reason: 'never duplicated');
+    expect(
+      tester.getTopLeft(_row('m_es_long')).dy,
+      lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
+    );
+    expect(tooltip(), startsWith('Dejar de seguir '));
+    await tester.tap(star);
+    await tester.pumpAndSettle();
+    expect(find.text('Siguiendo'), findsNothing);
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
+    await tester.tap(find.text(_longHome).first);
+    await tester.pumpAndSettle();
+    expect(opened, ['m_es_long']);
+  });
+
+  testWidgets('row and star are separate accessible actions', (tester) async {
+    final handle = tester.ensureSemantics();
+    await _pump(tester);
+    final row = tester.getSemantics(
+      find
+          .descendant(of: _row('m_es_1'), matching: find.byType(Semantics))
+          .first,
+    );
+    expect(row.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    expect(row.label, isNot(contains('Seguir')));
+    final star = tester.getSemantics(
+      find.descendant(
+        of: find.byKey(const ValueKey('feed-follow-m_es_1')),
+        matching: find.byType(IconButton),
+      ),
+    );
+    expect(star.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    expect(star.tooltip, contains('contra'));
+    handle.dispose();
   });
 
   testWidgets('follows reorder without removing or duplicating', (
