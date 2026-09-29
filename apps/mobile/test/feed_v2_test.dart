@@ -381,6 +381,18 @@ void main() {
       await tester.pumpAndSettle();
       expect(_row('m_cr_live'), findsOneWidget);
       expect(find.byKey(const ValueKey('competition-live-c_cr')), findsNothing);
+      // No toggle under the live filter, and collapse survives leaving it.
+      expect(
+        find.byKey(const ValueKey('competition-toggle-c_cr')),
+        findsNothing,
+      );
+      await tester.tap(find.text('Todos'));
+      await tester.pumpAndSettle();
+      expect(_row('m_cr_live'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('competition-live-c_cr')),
+        findsOneWidget,
+      );
     },
   );
 
@@ -446,5 +458,44 @@ void main() {
     await tester.tap(_row('m_es_1'));
     await tester.pumpAndSettle();
     expect(opened, ['m_es_1']);
+  });
+
+  testWidgets('toggle exposes expanded state and rows have full labels', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    await _pump(tester, follows: {'team:t_sap'});
+    final toggle = find.byKey(const ValueKey('competition-toggle-c_es'));
+    expect(
+      tester.getSemantics(toggle),
+      matchesSemantics(
+        isButton: true,
+        isEnabled: true,
+        hasEnabledState: true,
+        hasTapAction: true,
+        hasExpandedState: true,
+        isExpanded: true,
+        label: 'Ocultar partidos de LaLiga',
+      ),
+    );
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(toggle),
+      matchesSemantics(
+        isButton: true,
+        isEnabled: true,
+        hasEnabledState: true,
+        hasTapAction: true,
+        hasExpandedState: true,
+        isExpanded: false,
+        label: 'Mostrar partidos de LaLiga',
+      ),
+    );
+    final live = tester.getSemantics(_row('m_cr_live'));
+    expect(live.label, contains('Saprissa contra Alajuelense'));
+    expect(live.label, contains('Liga Promerica'));
+    expect(live.label, contains('Último: 64′ · Gol'));
+    handle.dispose();
   });
 }

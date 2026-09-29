@@ -249,6 +249,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                 collapsed: collapsed,
                 onOpen: () => context.push('/competition/${competition.id}'),
                 onToggle: () => _toggleCollapsed(competition.id),
+                canToggle: filter != 'En vivo',
               ),
             );
             if (!collapsed) {
@@ -545,6 +546,7 @@ class _CompetitionHeader extends StatelessWidget {
     required this.collapsed,
     required this.onOpen,
     required this.onToggle,
+    required this.canToggle,
   });
 
   final Entity competition;
@@ -553,6 +555,7 @@ class _CompetitionHeader extends StatelessWidget {
   final bool collapsed;
   final VoidCallback onOpen;
   final VoidCallback onToggle;
+  final bool canToggle;
 
   @override
   Widget build(BuildContext context) => ConstrainedBox(
@@ -616,21 +619,29 @@ class _CompetitionHeader extends StatelessWidget {
           key: ValueKey('competition-count-${competition.id}'),
           style: const TextStyle(color: muted, fontWeight: FontWeight.w700),
         ),
-        Semantics(
-          expanded: !collapsed,
-          child: IconButton(
-            key: ValueKey('competition-toggle-${competition.id}'),
-            tooltip: collapsed
+        if (canToggle)
+          Semantics(
+            expanded: !collapsed,
+            button: true,
+            enabled: true,
+            excludeSemantics: true,
+            onTap: onToggle,
+            label: collapsed
                 ? 'Mostrar partidos de ${competition.name}'
                 : 'Ocultar partidos de ${competition.name}',
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            onPressed: onToggle,
-            icon: Icon(
-              collapsed ? Icons.expand_more : Icons.expand_less,
-              color: muted,
+            child: IconButton(
+              key: ValueKey('competition-toggle-${competition.id}'),
+              tooltip: collapsed
+                  ? 'Mostrar partidos de ${competition.name}'
+                  : 'Ocultar partidos de ${competition.name}',
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              onPressed: onToggle,
+              icon: Icon(
+                collapsed ? Icons.expand_more : Icons.expand_less,
+                color: muted,
+              ),
             ),
           ),
-        ),
       ],
     ),
   );
@@ -685,6 +696,13 @@ class FeedMatchRow extends StatelessWidget {
     ];
     final label = StringBuffer('${home.name} contra ${away.name}, $centre');
     if (status.isNotEmpty) label.write(', $status');
+    if (caption != null) label.write(', $caption');
+    if (match.isLive && latestEvent != null) {
+      label.write(
+        ', Último: ${eventMinuteLabel(latestEvent)} · '
+        '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
+      );
+    }
     return Semantics(
       button: true,
       excludeSemantics: true,
