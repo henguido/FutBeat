@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
+import 'profile_context_bar.dart';
 import 'profile_widgets.dart';
 import 'standings.dart';
 import 'team_matches_tab.dart';
@@ -110,12 +113,14 @@ String? teamTableCompetitionId(Snapshot data, Entity team) {
   return candidates.length == 1 ? candidates.single : null;
 }
 
-class TeamProfileView extends StatelessWidget {
+class TeamProfileView extends ConsumerWidget {
   const TeamProfileView({
     required this.data,
     required this.team,
     required this.competitions,
     required this.matches,
+    this.initialCompetitionId,
+    this.initialSeason,
     super.key,
   });
 
@@ -124,16 +129,32 @@ class TeamProfileView extends StatelessWidget {
   final List<Entity> competitions;
   final List<FootballMatch> matches;
 
+  /// Context of the match the profile was opened from (#161), if any.
+  final String? initialCompetitionId;
+  final String? initialSeason;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final players = data.players
         .where((player) => player.json['teamId'] == team.id)
         .toList();
+    // Competition + season context: the user's choice this session, else the
+    // match it was opened from, else the server's default.
+    final choice = ref.watch(profileContextSelectionProvider)[team.id];
+    final request = (
+      teamId: team.id,
+      competitionId: choice?.competitionId ?? initialCompetitionId,
+      season: choice != null ? choice.season : initialSeason,
+    );
+    // Loading or failed: the profile keeps its own snapshot (never blocked).
+    final teamContext = ref.watch(teamContextProvider(request)).asData?.value;
+    final selected = teamContext?.selected;
     final tableId = teamTableCompetitionId(data, team);
+    final contextTable = selected != null;
     final tabs = [
       'Resumen',
       'Partidos',
-      if (tableId != null) 'Tabla',
+      if (contextTable || tableId != null) 'Tabla',
       'Plantilla',
       'Noticias',
       'Transferencias',
@@ -145,10 +166,29 @@ class TeamProfileView extends StatelessWidget {
         if (data.demo) const DemoNotice(),
         ..._summary(context, players),
       ]),
-      'Partidos' => TeamMatchesTab(team: team, data: data, matches: matches),
+      'Partidos' => TeamMatchesTab(
+        team: team,
+        data: data,
+        matches: matches,
+        contextOption: selected,
+      ),
       'Tabla' => ProfileTabList('tabla', [
         if (data.demo) const DemoNotice(),
-        Standings(data, tableId!, focusTeamIds: {team.id}),
+        if (contextTable)
+          if (teamContext!.standings.isEmpty)
+            const InlineEmpty(
+              Icons.table_rows_outlined,
+              'Tabla no disponible',
+              key: ValueKey('profile-context-no-table'),
+            )
+          else
+            Standings(
+              teamContext.tableSnapshot(data),
+              selected.competitionId,
+              focusTeamIds: {team.id},
+            )
+        else
+          Standings(data, tableId!, focusTeamIds: {team.id}),
       ]),
       'Plantilla' => ProfileTabList('plantilla', [
         if (data.demo) const DemoNotice(),
@@ -174,6 +214,7 @@ class TeamProfileView extends StatelessWidget {
     };
 
     return DefaultTabController(
+      key: ValueKey('team-tabs-${tabs.length}'),
       length: tabs.length,
       child: Scaffold(
         appBar: AppBar(
@@ -192,6 +233,16 @@ class TeamProfileView extends StatelessWidget {
                 players: players.length,
               ),
             ),
+            if (teamContext != null && selected != null)
+              SliverToBoxAdapter(
+                child: ProfileContextBar(
+                  options: teamContext.options,
+                  selected: selected,
+                  onSelect: (option) => ref
+                      .read(profileContextSelectionProvider.notifier)
+                      .select(team.id, option),
+                ),
+              ),
             SliverOverlapAbsorber(
               handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
               sliver: SliverPersistentHeader(

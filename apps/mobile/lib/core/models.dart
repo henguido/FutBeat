@@ -584,6 +584,13 @@ class FootballMatch {
   final Json json;
   String get id => json['id'] as String;
   String get competitionId => json['competitionId'] as String;
+
+  /// Provider season label ('2026/27', '2026'), when known.
+  String? get season {
+    final value = json['season']?.toString().trim() ?? '';
+    return value.isEmpty ? null : value;
+  }
+
   String get homeId => json['homeTeamId'] as String;
   String get awayId => json['awayTeamId'] as String;
   DateTime get startTime =>

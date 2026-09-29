@@ -33,11 +33,18 @@ class TeamMatchesPage {
   TeamMatchesPage(Json json)
     : data = Snapshot(json),
       hasMore = json['hasMore'] == true,
-      nextCursor = json['nextCursor'] as String?;
+      nextCursor = json['nextCursor'] as String?,
+      coverageState =
+          ((json['coverage'] as Map?)?['teamMatches'] as Map?)?['state']
+              as String?;
 
   final Snapshot data;
   final bool hasMore;
   final String? nextCursor;
+
+  /// The team's central match coverage: AVAILABLE, STALE, PENDING, NO_DATA
+  /// or UNAVAILABLE (null from older servers).
+  final String? coverageState;
 }
 
 /// A match with the snapshot that can render it (its teams/competition).

@@ -154,8 +154,9 @@ class AppDatabase extends _$AppDatabase {
   Future<void> markBootstrapDismissed() async {
     final updateGate = update(preferences)..where((p) => p.id.equals(1));
     if (await updateGate.write(
-      const PreferencesCompanion(bootstrapDismissed: Value(true)),
-    ) == 0) {
+          const PreferencesCompanion(bootstrapDismissed: Value(true)),
+        ) ==
+        0) {
       await into(preferences).insert(
         PreferencesCompanion.insert(
           id: const Value(1),

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/models.dart';
+import 'package:futbeat/core/profile_context.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/team_matches.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
@@ -106,11 +107,21 @@ class _FakeTeamApi extends ApiRepository {
     String bucket, {
     String? cursor,
     int limit = teamMatchesPageSize,
+    String? competitionId,
+    String? season,
   }) async {
     calls.add('$teamId:$bucket:$cursor');
     if (fail) throw DioException(requestOptions: RequestOptions());
     return TeamMatchesPage(pages[bucket]?[cursor] ?? _page(const []));
   }
+
+  // No profile context server here: the profile keeps its own snapshot.
+  @override
+  Future<TeamContext> loadTeamContext(
+    String teamId, {
+    String? competitionId,
+    String? season,
+  }) async => throw DioException(requestOptions: RequestOptions());
 }
 
 Map<String, dynamic> _page(

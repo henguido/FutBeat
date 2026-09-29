@@ -1002,9 +1002,9 @@ class MatchHero extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: _HeaderTeam(home, accent: lime)),
+              Expanded(child: _HeaderTeam(home, match, accent: lime)),
               SizedBox(width: 120, child: _HeaderCenter(match)),
-              Expanded(child: _HeaderTeam(away, accent: awaySideColor)),
+              Expanded(child: _HeaderTeam(away, match, accent: awaySideColor)),
             ],
           ),
           if (scorers != null) ...[
@@ -1018,9 +1018,12 @@ class MatchHero extends StatelessWidget {
 }
 
 class _HeaderTeam extends StatelessWidget {
-  const _HeaderTeam(this.team, {required this.accent});
+  const _HeaderTeam(this.team, this.match, {required this.accent});
 
   final Entity team;
+
+  /// Opens the profile in this match's competition + season (#161).
+  final FootballMatch match;
 
   /// Side color (home lime / away blue), shared with the standings highlight.
   final Color accent;
@@ -1031,7 +1034,15 @@ class _HeaderTeam extends StatelessWidget {
     label: team.name,
     child: InkWell(
       borderRadius: BorderRadius.circular(14),
-      onTap: () => context.push('/team/${team.id}'),
+      onTap: () => context.push(
+        Uri(
+          path: '/team/${team.id}',
+          queryParameters: {
+            'competitionId': match.competitionId,
+            if (match.season != null) 'season': match.season!,
+          },
+        ).toString(),
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         child: Column(

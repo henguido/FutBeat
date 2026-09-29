@@ -82,8 +82,17 @@ List<Entity> competitionTeams(Snapshot data, String competitionId) {
 }
 
 class EntityScreen extends ConsumerStatefulWidget {
-  const EntityScreen({super.key, required this.type, required this.id});
+  const EntityScreen({
+    super.key,
+    required this.type,
+    required this.id,
+    this.competitionId,
+    this.season,
+  });
   final String type, id;
+
+  /// Initial profile context (opened from a match), when given.
+  final String? competitionId, season;
   @override
   ConsumerState<EntityScreen> createState() => _EntityScreenState();
 }
@@ -210,6 +219,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             team: entity,
             competitions: teamCompetitions,
             matches: matches,
+            initialCompetitionId: widget.competitionId,
+            initialSeason: widget.season,
           );
         }
         if (type == 'player') {
