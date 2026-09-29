@@ -1172,7 +1172,12 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
     'home': home,
     'away': away,
     'statistics': statistics,
-    'incidents': _longerList(current.json['incidents'], next.json['incidents']),
+    // P0-A: the incidents list is the provider's current answer (a
+    // corrected or annulled goal, a deleted card): a present list replaces,
+    // even when shorter or empty; only a missing section keeps the old one.
+    'incidents': next.available && next.json['incidents'] is List
+        ? next.json['incidents']
+        : current.json['incidents'],
     'videos': videos,
     'pending': next.pending,
     'hydrationNeeded': next.hydrationNeeded,

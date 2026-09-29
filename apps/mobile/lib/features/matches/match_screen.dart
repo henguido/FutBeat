@@ -1941,36 +1941,118 @@ class ScorerLine {
 /// GOAL events with a known side. Name = the provider's structured
 /// playerName, else the canonical player entity of its playerId (the same
 /// identity the timeline shows); never parsed from free text or invented.
-/// The same named player is grouped per side, anonymous goals never are.
+/// P0-A: goals are grouped per side by player identity (canonical player id,
+/// else the provider player id, else the normalized name) and one group shows
+/// one name (the canonical entity name when known, else the first provided
+/// name), so "L. Messi" and "Lionel Messi" of one player are one line.
+/// Anonymous goals are never grouped. The score is authoritative: a side
+/// never lists more goals than its score (the latest extra goals, anonymous
+/// ones first, are left out).
 ({List<ScorerLine> home, List<ScorerLine> away}) matchScorerSummary(
   FootballMatch match,
   MatchDetail detail,
   Snapshot data,
 ) {
-  final home = <ScorerLine>[], away = <ScorerLine>[];
-  for (final event in mergedMatchTimeline(match, detail)) {
+  final goals = <String, List<Json>>{'home': [], 'away': []};
+  final timeline = mergedMatchTimeline(match, detail);
+  // A detail row paired with its canonical twin reveals the canonical id of
+  // that provider player id for every other row of the same player.
+  final canonicalOf = <String, String>{
+    for (final event in timeline)
+      if (event['detailSource'] == true &&
+          event['playerId'] != null &&
+          event['canonicalPlayerId'] != null)
+        event['playerId'].toString(): event['canonicalPlayerId'].toString(),
+  };
+  for (final event in timeline) {
     if (event['type'] != 'GOAL') continue;
     final side = timelineSide(event, match, data);
     if (side == null) continue;
-    final lines = side == 'home' ? home : away;
-    final provided = event['playerName']?.toString().trim() ?? '';
-    final name = provided.isNotEmpty
-        ? provided
-        : data.player(event['playerId']?.toString() ?? '')?.name.trim();
-    final minute = eventMinuteLabel(event);
-    if (name != null && name.isNotEmpty) {
-      final existing = lines.where((line) => line.name == name).firstOrNull;
+    goals[side]!.add(event);
+  }
+  final score = match.json['score'];
+  for (final side in ['home', 'away']) {
+    final cap = score is Map ? score[side] : null;
+    final list = goals[side]!;
+    if (cap is! int || cap < 0) continue;
+    while (list.length > cap) {
+      final anonymous = list.lastIndexWhere(
+        (event) => _scorerName(event, data, canonicalOf) == null,
+      );
+      list.removeAt(anonymous >= 0 ? anonymous : list.length - 1);
+    }
+  }
+  List<ScorerLine> lines(List<Json> events) {
+    final result = <ScorerLine>[];
+    final byIdentity = <String, ScorerLine>{};
+    for (final event in events) {
+      final name = _scorerName(event, data, canonicalOf);
+      final minute = eventMinuteLabel(event);
+      if (name == null) {
+        result.add(ScorerLine(null, [minute]));
+        continue;
+      }
+      final identity = _scorerIdentity(event, name, canonicalOf);
+      final existing = byIdentity[identity];
       if (existing != null) {
         existing.minutes.add(minute);
         continue;
       }
-      lines.add(ScorerLine(name, [minute]));
-    } else {
-      lines.add(ScorerLine(null, [minute]));
+      final line = ScorerLine(name, [minute]);
+      byIdentity[identity] = line;
+      result.add(line);
     }
+    return result;
   }
-  return (home: home, away: away);
+
+  return (home: lines(goals['home']!), away: lines(goals['away']!));
 }
+
+String? _canonicalScorerId(Json event, Map<String, String> canonicalOf) {
+  final detailRow = event['detailSource'] == true;
+  for (final value in [
+    event['canonicalPlayerId'],
+    if (!detailRow) event['playerId'],
+    if (detailRow) canonicalOf[event['playerId']?.toString()],
+  ]) {
+    final id = value?.toString().trim() ?? '';
+    if (id.isNotEmpty) return id;
+  }
+  return null;
+}
+
+/// One consistent name per scorer: the canonical entity name when known,
+/// else the provider's structured name. Null when neither exists.
+String? _scorerName(
+  Json event,
+  Snapshot data,
+  Map<String, String> canonicalOf,
+) {
+  final canonicalId = _canonicalScorerId(event, canonicalOf);
+  final entity = canonicalId == null
+      ? null
+      : data.player(canonicalId)?.name.trim();
+  if (entity != null && entity.isNotEmpty) return entity;
+  final provided = event['playerName']?.toString().trim() ?? '';
+  return provided.isEmpty ? null : provided;
+}
+
+String _scorerIdentity(
+  Json event,
+  String name,
+  Map<String, String> canonicalOf,
+) {
+  final canonicalId = _canonicalScorerId(event, canonicalOf);
+  if (canonicalId != null) return 'id:$canonicalId';
+  final providerId = event['detailSource'] == true
+      ? event['playerId']?.toString().trim() ?? ''
+      : '';
+  if (providerId.isNotEmpty) return 'provider:$providerId';
+  return 'name:${_normalizedName(name)}';
+}
+
+String _normalizedName(String value) =>
+    value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9À-ɏ]+'), ' ').trim();
 
 class _HeaderScorers extends StatelessWidget {
   const _HeaderScorers({required this.home, required this.away});
