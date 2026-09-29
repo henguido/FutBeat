@@ -331,4 +331,9 @@ test('terminal shortcut is equivalent: match_read_model_core keeps a terminal pa
   // A non-integer stored score is never taken as final (same as the model).
   await match(db, { comp, home: A, away: B, at: at + 3600e3, status: 'VERIFIED', score: [1.5, 0] });
   assert.equal((await form(db, comp)).matchesConsidered, 2);
+  // String scores never count (nor inflate matchesConsidered).
+  await match(db, { comp, home: A, away: B, at: at + 2 * 3600e3, status: 'VERIFIED', score: ['3', '0'] });
+  const f2 = await form(db, comp);
+  assert.equal(f2.matchesConsidered, 2);
+  assert.deepEqual(f2.teams[A].results, ['WIN', 'WIN']);
 }));

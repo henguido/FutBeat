@@ -219,14 +219,16 @@ class _StandingsState extends State<Standings> {
     final table = standingsTableFor(widget.data, widget.competitionId);
     final season = table == null ? null : _season(table);
     if (table == null || season == null) return null;
-    final updatedAt = table['updatedAt']?.toString() ?? '';
+    // Only a parseable timestamp is sent (normalized to UTC ISO 8601): a
+    // legacy or bare value is dropped rather than failing every read.
+    final updatedAt = DateTime.tryParse(table['updatedAt']?.toString() ?? '');
     return (
       competitionId: widget.competitionId,
       season: season,
       // A provisional table already includes recent results: no bound.
-      until: table['provisional'] == true || updatedAt.isEmpty
+      until: table['provisional'] == true || updatedAt == null
           ? null
-          : updatedAt,
+          : updatedAt.toUtc().toIso8601String(),
     );
   }
 

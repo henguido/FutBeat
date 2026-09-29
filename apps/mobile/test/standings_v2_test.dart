@@ -637,7 +637,7 @@ void main() {
     await _pump(
       tester,
       _matchTab(
-        _snapshot(updatedAt: '2026-09-20T10:00:00Z', provisional: false),
+        _snapshot(updatedAt: '2026-09-20T04:00:00-06:00', provisional: false),
         home: 'fb_team_tv2_a1',
         away: 'fb_team_tv2_a2',
       ),
@@ -648,7 +648,7 @@ void main() {
     expect(published.lastQuery, {
       'competitionId': _comp,
       'season': '2026',
-      'until': '2026-09-20T10:00:00Z',
+      'until': '2026-09-20T10:00:00.000Z',
     });
     final provisional = _FormServer();
     await _pump(
@@ -671,6 +671,21 @@ void main() {
       'competitionId': _comp,
       'season': '2025-2026',
     });
+    // A legacy, unparseable updatedAt is never sent (no permanent 400).
+    final legacy = _FormServer();
+    await _pump(
+      tester,
+      _matchTab(
+        _snapshot(updatedAt: 'ayer', provisional: false),
+        home: 'fb_team_tv2_a1',
+        away: 'fb_team_tv2_a2',
+      ),
+      repository: ApiRepository(legacy.dio()),
+    );
+    await tester.tap(find.byKey(const ValueKey('standings-view-form')));
+    await _settle(tester);
+    expect(legacy.lastQuery, {'competitionId': _comp, 'season': '2026'});
+    expect(_chipLetters(tester, 'fb_team_tv2_a1'), ['G', 'E', 'P']);
   });
 
   testWidgets('Forma of a row stored under an alias id: resolved canonically', (

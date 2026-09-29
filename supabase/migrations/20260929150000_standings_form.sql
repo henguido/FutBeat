@@ -24,8 +24,11 @@
 --   * Same rule as the provisional overlay: a match counts only when both
 --     teams are rows of the SAME group of that competition+season table
 --     (standings_snapshots). A knockout or cross-group match never enters a
---     group's form. Without a stored table there is no group filter
---     (`groupFilter` false).
+--     group's form; in a conference-style league (grouped table) the
+--     cross-conference games are dropped too, exactly as the provisional
+--     overlay ignores them. A single-table league counts every game between
+--     two of its members, playoff/knockout games of that season included.
+--     Without a stored table there is no group filter (`groupFilter` false).
 --   * p_until (the published table's updatedAt): only matches kicked off at
 --     least 3 hours before it count, so the chips never show a result that
 --     the table's J/Pts do not include yet (conservative: a match finished
@@ -35,6 +38,8 @@
 --   * Per team: up to p_limit (1..10, default 5) results, newest first,
 --     WIN | DRAW | LOSS, with the match ids in the same order. A team with
 --     no counted match is simply absent (the app shows a dash).
+
+drop function if exists public.futbeat_read_standings_form(text,text,integer);
 
 create or replace function public.futbeat_read_standings_form(
   p_competition_id text,
@@ -105,6 +110,7 @@ begin
           'awayTeamId',futbeat_private.futbeat_resolve_entity_id('team',m->>'awayTeamId')) m
       from modeled
       where m->>'status' in ('FINISHED_PENDING_VERIFICATION','VERIFIED')
+        and jsonb_typeof(m->'score'->'home')='number' and jsonb_typeof(m->'score'->'away')='number'
         and futbeat_private.safe_result_integer(m#>>'{score,home}') is not null
         and futbeat_private.safe_result_integer(m#>>'{score,away}') is not null
         and nullif(m->>'homeTeamId','') is not null and nullif(m->>'awayTeamId','') is not null
