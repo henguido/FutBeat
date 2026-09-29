@@ -727,7 +727,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(data.matches, hasLength(250));
-      final builtCards = find.byType(MatchCard).evaluate().length;
+      final builtCards = find.byType(FeedMatchRow).evaluate().length;
       expect(builtCards, greaterThan(0));
       expect(builtCards, lessThan(50));
       expect(tester.takeException(), isNull);
@@ -770,7 +770,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('TUS EQUIPOS'), findsOneWidget);
+      expect(find.text('Siguiendo'), findsOneWidget);
       expect(find.text('TUS COMPETICIONES'), findsNothing);
       expect(find.text('TODOS LOS PARTIDOS'), findsOneWidget);
       expect(find.text('Marathón'), findsOneWidget);
