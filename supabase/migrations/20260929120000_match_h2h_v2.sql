@@ -263,10 +263,15 @@ end $$;
 --   * a run in progress -> only set `pending` ('pending'): no second POST;
 --   * the worker drains up to a bounded number of demanded teams, then calls
 --     futbeat_finish_team_fixtures_run(), which atomically either renews the
---     lease and clears `pending` (another round: a demand arrived meanwhile)
---     or releases the lease. Every demand recorded before the release is
---     seen by some round; every one after it wakes a new run.
+--     lease and clears `pending` (another round: a demand arrived meanwhile
+--     or due work is still queued) or releases the lease. Every demand
+--     recorded before the release is seen by some round; every one after it
+--     wakes a new run.
 --   * a crashed run releases itself when the lease (5 min) expires.
+--   * safety net without a new cron: the EXISTING 5-minute run of
+--     futbeat-goal-live-sync processes at most ONE demanded team (after LIVE,
+--     detail and squad), so a backlog left by a quota stop, the round cap or
+--     a crash still progresses without another user opening the screen.
 -- Quota, floor, cap, window, pages and planner order are unchanged: each
 -- page is still reserved through quota_decision('goal_api','team-fixtures',
 -- 'coverage'); LIVE keeps its floor.
@@ -344,14 +349,15 @@ begin
   return result;
 end $$;
 
--- Called by the worker after each bounded drain round. Atomically: a demand
--- that arrived during the run (`pending`) renews the lease for one more round;
--- otherwise the lease is released so the next demand wakes a new run.
+-- Called by the worker after each bounded drain round. Atomically: another
+-- round (lease renewed, `pending` cleared) when a demand arrived during the
+-- run OR due work is still queued (a backlog older than this run); otherwise
+-- the lease is released so the next demand wakes a new run.
 -- p_release (quota stop, round cap, error): release now, keeping `pending`
 -- so the next wake is never refused.
 create function public.futbeat_finish_team_fixtures_run(p_release boolean default false)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
-declare was_pending boolean;
+declare was_pending boolean; due boolean:=false;
 begin
   perform pg_catalog.pg_advisory_xact_lock(hashtext('futbeat-worker-wake'),hashtext('team-fixtures-only'));
   select w.pending into was_pending from futbeat_private.worker_wakeups w
@@ -360,13 +366,14 @@ begin
     update futbeat_private.worker_wakeups set running_until=null where trigger='team-fixtures-only';
     return jsonb_build_object('again',false,'pending',coalesce(was_pending,false));
   end if;
-  if coalesce(was_pending,false) then
+  due:=jsonb_array_length(public.futbeat_team_fixtures_plan(1))>0;
+  if coalesce(was_pending,false) or due then
     update futbeat_private.worker_wakeups set pending=false,running_until=now()+interval '5 minutes'
     where trigger='team-fixtures-only';
-  else
-    update futbeat_private.worker_wakeups set running_until=null where trigger='team-fixtures-only';
+    return jsonb_build_object('again',true,'pending',coalesce(was_pending,false),'due',due);
   end if;
-  return jsonb_build_object('again',coalesce(was_pending,false));
+  update futbeat_private.worker_wakeups set running_until=null where trigger='team-fixtures-only';
+  return jsonb_build_object('again',false,'pending',false,'due',false);
 end $$;
 
 -- Same as 20260929110000, plus: a NEW demand write wakes the worker.

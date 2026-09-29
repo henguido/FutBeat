@@ -372,10 +372,17 @@ test('wake: home + away of one Cara a cara are two demands and neither is droppe
   // Both are due for the (single) run.
   const due = (await db.query('select public.futbeat_team_fixtures_plan(10) v')).rows[0].v.map((x) => x.teamId).sort();
   assert.deepEqual(due, [A, B].sort());
-  // The run sees `pending` -> one more round; then it releases the lease.
-  assert.deepEqual(await finishRun(db), { again: true });
+  // The run sees `pending` (and the queued demands) -> one more round.
+  const next = await finishRun(db);
+  assert.equal(next.again, true);
+  assert.equal(next.pending, true);
   assert.ok(new Date((await wakeRow(db)).running_until) > new Date());
-  assert.deepEqual(await finishRun(db), { again: false });
+  // While both are still due, another round is kept even without pending.
+  const still = await finishRun(db);
+  assert.deepEqual([still.again, still.pending, still.due], [true, false, true]);
+  // Once processed (attempted), the run releases the lease.
+  await db.query('insert into futbeat_private.team_match_coverage(team_id,last_attempt_at) values($1,now()),($2,now())', [A, B]);
+  assert.deepEqual(await finishRun(db), { again: false, pending: false, due: false });
   assert.equal((await wakeRow(db)).running_until, null);
   // After the release the next demand wakes a new run at once.
   const C = await team(db, 'Equipo Tardío');

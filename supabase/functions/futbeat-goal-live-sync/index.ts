@@ -1871,6 +1871,7 @@ Deno.serve(async (request) => {
     let live: unknown;
     let detail: unknown;
     let squad: unknown;
+    let teamFixtures: unknown;
     let news: unknown;
     let video: unknown;
 
@@ -1904,6 +1905,30 @@ Deno.serve(async (request) => {
       squad = { status: "failed" };
     }
 
+    // Safety net for team-match coverage (#150/#99): at most ONE demanded
+    // team per normal run, after LIVE/detail/squad. No demand -> no
+    // reservation; a quota denial -> no provider call; other lanes go on.
+    try {
+      const attempt: TeamFixturesAttempt = {
+        candidate: null,
+        reservations: 0,
+        providerCalls: 0,
+        stoppedBy: null,
+      };
+      const result = await syncOneTeamFixtures(attempt);
+      teamFixtures = {
+        status: result.status,
+        reason: "reason" in result ? result.reason : null,
+        providerCalls: attempt.providerCalls,
+      };
+    } catch (error) {
+      console.error(
+        "GOAL team fixtures sync failed",
+        error instanceof Error ? error.message.slice(0, 200) : "unknown",
+      );
+      teamFixtures = { status: "failed" };
+    }
+
     try {
       news = await syncOneNews();
     } catch (error) {
@@ -1924,7 +1949,7 @@ Deno.serve(async (request) => {
       video = { status: "failed" };
     }
 
-    return Response.json({ status: "ok", live, detail, squad, news, video });
+    return Response.json({ status: "ok", live, detail, squad, teamFixtures, news, video });
   } catch (error) {
     console.error(
       "supabase GOAL live sync rejected",

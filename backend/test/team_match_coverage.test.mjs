@@ -341,6 +341,7 @@ function harness(db, provider) {
   }).handler;
   return {
     calls, logs,
+    context: worker.context,
     providers: () => calls.filter((c) => new URL(c.url).origin === 'https://api.goal-api.com'),
     async run(body = { trigger: 'team-fixtures-only' }) {
       const response = await worker.handler(new Request('https://worker.test/', {
@@ -616,15 +617,17 @@ test('worker: page cap with more pages left stores the fixtures but not a comple
   assert.equal(value.result.newMatches, 300);
 }));
 
-test('worker lane accepts no overrides and is not part of any cron run', () => withDb(async (db) => {
+test('worker lane accepts no overrides; the normal run only calls one bounded step', () => withDb(async (db) => {
   const h = harness(db, () => { throw new Error('no provider'); });
   const bad = await h.run({ trigger: 'team-fixtures-only', teamId: 'fb_team_evil' });
   assert.equal(bad.status, 400);
   const none = await h.run();
   assert.equal(none.value.result.reason, 'no_team_fixtures_due');
   assert.equal(h.providers().length, 0);
-  // Only the manual trigger calls the lane.
-  assert.deepEqual(workerSource.match(/syncOneTeamFixtures\(/g).length, 2); // definition + manual wrapper
+  // Definition + the wake/manual drain + ONE bounded call in the normal run
+  // (safety net); the multi-team drain only runs for its explicit trigger.
+  assert.deepEqual(workerSource.match(/syncOneTeamFixtures\(/g).length, 3);
+  assert.deepEqual(workerSource.match(/syncTeamFixturesOnly\(\)/g).length, 2);
   assert.match(workerSource, /trigger === "team-fixtures-only"/);
 }));
 
@@ -761,4 +764,114 @@ test('drain: a worker failure keeps the demand, backs off and releases the lease
   assert.ok(new Date(c.next_retry_at) > new Date(), 'retry scheduled');
   assert.equal((await demands(db)).length, 1);
   assert.equal((await wakeRow(db)).running_until, null);
+}));
+
+// ---------------------------------------------------------------------------
+// Backlog and safety net (#99 v2 follow-up 2): a wake keeps draining while
+// due work remains (bounded 3 x 4), and the EXISTING normal worker run
+// processes at most one demanded team so nothing waits for another user.
+// ---------------------------------------------------------------------------
+
+async function demandedTeams(db, n, prefix) {
+  const ids = [];
+  for (let i = 0; i < n; i++) {
+    const t = await seedTeam(db, [`${prefix}-${i}`]);
+    await request(db, t);
+    ids.push(t);
+  }
+  return ids;
+}
+const oneFixture = (url) => {
+  const ext = url.pathname.split('/')[3];
+  return goalPage(many(1, ext, `f-${ext}`));
+};
+const dueCount = (db) => db.query('select jsonb_array_length(public.futbeat_team_fixtures_plan(10)) n')
+  .then((r) => r.rows[0].n);
+
+// The normal cron run with every other lane replaced by an order recorder.
+async function normalRun(h) {
+  const order = [];
+  h.context.__order = order;
+  vm.runInContext(`
+    syncLive=async()=>{__order.push('live');return {status:'ok'};};
+    syncOneMatchDetail=async()=>{__order.push('detail');return {status:'ok'};};
+    syncOneSquad=async()=>{__order.push('squad');return {status:'ok'};};
+    syncOneNews=async()=>{__order.push('news');return {status:'ok'};};
+    syncOnePostMatchVideo=async()=>{__order.push('video');return {status:'ok'};};
+    globalThis.__realTeamFixtures ??= syncOneTeamFixtures;
+    syncOneTeamFixtures=async(a)=>{__order.push('teamFixtures');return globalThis.__realTeamFixtures(a);};`, h.context);
+  const { status, value } = await h.run({ trigger: 'cron' });
+  assert.equal(status, 200, JSON.stringify(value));
+  return { value, order };
+}
+
+test('backlog: 5 demands recorded before the wake are all drained by one activation', () => withDb(async (db) => {
+  const teams = await demandedTeams(db, 5, 'bk5');
+  await holdRunLease(db);
+  assert.equal((await wakeRow(db)).pending, false, 'nothing arrives during the run');
+  const h = harness(db, oneFixture);
+  const { value } = await h.run();
+  assert.equal(value.drained, 5, JSON.stringify(value));
+  assert.ok(value.rounds >= 2, 'more than the first round');
+  for (const t of teams) assert.equal((await state(db, t)).state, 'AVAILABLE');
+  assert.equal(await dueCount(db), 0);
+  assert.equal((await wakeRow(db)).running_until, null);
+}));
+
+test('backlog: 12 demands are drained up to the wake bound; a 13th waits for the normal run', () => withDb(async (db) => {
+  await demandedTeams(db, 13, 'bk13');
+  await holdRunLease(db);
+  const h = harness(db, oneFixture);
+  const { value } = await h.run();
+  assert.equal(value.drained, 12, 'bounded: 3 teams x 4 rounds');
+  assert.equal(await dueCount(db), 1, 'one demand left, not lost');
+  assert.equal((await wakeRow(db)).running_until, null, 'the lease is released at the cap');
+  // No new user request: the existing normal run gives it progress.
+  const { value: normal, order } = await normalRun(h);
+  assert.equal(normal.teamFixtures.status, 'ok');
+  assert.deepEqual(order, ['live', 'detail', 'squad', 'teamFixtures', 'news', 'video']);
+  assert.equal(await dueCount(db), 0);
+}));
+
+test('safety net: quota denied during a wake -> recovered quota is used by a normal run', () => withDb(async (db) => {
+  const [t] = await demandedTeams(db, 1, 'sq');
+  await remaining(db, 100); // below the coverage floor
+  await holdRunLease(db);
+  const h = harness(db, oneFixture);
+  const woken = await h.run();
+  assert.equal(woken.value.stoppedBy, 'provider_remaining_reserve');
+  assert.equal(h.providers().length, 0);
+  assert.equal((await wakeRow(db)).running_until, null);
+  assert.equal(await dueCount(db), 1, 'the demand is still pending');
+  // A denied normal run: no provider call, every other lane still runs.
+  let run = await normalRun(h);
+  assert.equal(h.providers().length, 0);
+  assert.deepEqual(run.order, ['live', 'detail', 'squad', 'teamFixtures', 'news', 'video']);
+  assert.equal(run.value.teamFixtures.status, 'skipped');
+  // Quota comes back: the next normal run processes it, no new user open.
+  await remaining(db, 900);
+  run = await normalRun(h);
+  assert.equal(run.value.teamFixtures.status, 'ok');
+  assert.equal(run.value.teamFixtures.providerCalls, 1);
+  assert.equal((await state(db, t)).state, 'AVAILABLE');
+}));
+
+test('safety net: without demand a normal run makes no team-fixtures reservation or call', () => withDb(async (db) => {
+  await seedTeam(db, ['nd-a']);
+  const h = harness(db, () => { throw new Error('provider must not be called'); });
+  const { value, order } = await normalRun(h);
+  assert.equal(value.teamFixtures.reason, 'no_team_fixtures_due');
+  assert.equal(value.teamFixtures.providerCalls, 0);
+  assert.equal(h.providers().length, 0);
+  assert.equal((await ledger(db)).length, 0);
+  assert.equal(order.indexOf('live'), 0, 'LIVE runs first');
+  assert.ok(order.indexOf('teamFixtures') > order.indexOf('squad'));
+}));
+
+test('safety net: a normal run processes at most one demanded team', () => withDb(async (db) => {
+  await demandedTeams(db, 3, 'one');
+  const h = harness(db, oneFixture);
+  await normalRun(h);
+  assert.equal(h.providers().length, 1);
+  assert.equal(await dueCount(db), 2);
 }));
