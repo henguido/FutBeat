@@ -384,6 +384,26 @@ void main() {
     expect(find.text('Tabla no disponible'), findsOneWidget);
   });
 
+  testWidgets('a cached table of another season never stands in for the '
+      'selected current season', (tester) async {
+    final api = _FakeContextApi();
+    // Current Nations League season selected, no archived table for it
+    // (the Cup has none either); the profile only has LAST season's table.
+    await _pump(
+      tester,
+      _snapshot(
+        standings: [
+          _table(_cup, '2025', ['fb_old_leader', 'fb_team']),
+        ],
+      ),
+      api,
+      location: '/team/fb_team?competitionId=$_cup&season=2026',
+    );
+    await _openTab(tester, 'Tabla');
+    expect(find.text('Tabla no disponible'), findsOneWidget);
+    expect(find.text('Líder Antiguo'), findsNothing);
+  });
+
   testWidgets('the choice is kept for the session', (tester) async {
     final api = _FakeContextApi();
     final container = await _pump(tester, _snapshot(), api);

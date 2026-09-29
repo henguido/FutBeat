@@ -140,11 +140,11 @@ class TeamProfileView extends ConsumerWidget {
         .toList();
     // Competition + season context: the user's choice this session, else the
     // match it was opened from, else the server's default.
-    final choice = ref.watch(profileContextSelectionProvider)[team.id];
-    final request = (
-      teamId: team.id,
-      competitionId: choice?.competitionId ?? initialCompetitionId,
-      season: choice != null ? choice.season : initialSeason,
+    final request = profileContextRequest(
+      ref,
+      team.id,
+      initialCompetitionId: initialCompetitionId,
+      initialSeason: initialSeason,
     );
     // Loading or failed: the last context shown (or the profile's own
     // snapshot) stays; the profile is never blocked.
@@ -154,9 +154,11 @@ class TeamProfileView extends ConsumerWidget {
         ref.read(lastTeamContextProvider.notifier).remember(value);
       }
     });
+    final current = ref.watch(teamContextProvider(request));
     final teamContext =
-        ref.watch(teamContextProvider(request)).asData?.value ??
-        ref.watch(lastTeamContextProvider)[team.id];
+        current.asData?.value ?? ref.watch(lastTeamContextProvider)[team.id];
+    // The requested context failed: the last one stays, and says so.
+    final switchFailed = current.hasError && teamContext != null;
     final selected = teamContext?.selected;
     final tableId = teamTableCompetitionId(data, team);
     // The selected season's exact table; for the competition's current
@@ -164,7 +166,11 @@ class TeamProfileView extends ConsumerWidget {
     final cachedCurrent =
         selected != null &&
         selected.currentSeason &&
-        tableId == selected.competitionId;
+        tableId == selected.competitionId &&
+        normalizeSeasonKey(
+              standingsTableFor(data, tableId!)?['season']?.toString(),
+            ) ==
+            selected.seasonKey;
     final contextTable = selected != null;
     final tabs = [
       'Resumen',
@@ -191,7 +197,7 @@ class TeamProfileView extends ConsumerWidget {
         if (data.demo) const DemoNotice(),
         if (contextTable)
           if (teamContext!.standings.isEmpty && cachedCurrent)
-            Standings(data, tableId!, focusTeamIds: {team.id})
+            Standings(data, tableId, focusTeamIds: {team.id})
           else if (teamContext.standings.isEmpty)
             const InlineEmpty(
               Icons.table_rows_outlined,
@@ -254,6 +260,8 @@ class TeamProfileView extends ConsumerWidget {
                 child: ProfileContextBar(
                   options: teamContext.options,
                   selected: selected,
+                  failed: switchFailed,
+                  onRetry: () => ref.invalidate(teamContextProvider(request)),
                   onSelect: (option) => ref
                       .read(profileContextSelectionProvider.notifier)
                       .select(team.id, option),

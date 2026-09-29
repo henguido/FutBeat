@@ -75,7 +75,8 @@ returns jsonb language sql stable set search_path='' as $$
   ), g as (
     select
       futbeat_private.futbeat_resolve_entity_id('competition',nullif(m.payload->>'competitionId','')) comp,
-      nullif(futbeat_private.normalize_season(m.payload->>'season'),'') season_key,
+      -- '-' is reserved for "no season" (never a real key).
+      nullif(nullif(futbeat_private.normalize_season(m.payload->>'season'),''),'-') season_key,
       min(nullif(btrim(m.payload->>'season'),'')) season_label,
       count(*)::integer matches,
       min((m.payload->>'startTime')::timestamptz) first_start,
@@ -295,8 +296,8 @@ begin
   loop
     -- Season filter (the competition, aliases included, is already in the
     -- scan); checked before the (costlier) read model.
-    continue when season_filter='-' and nullif(futbeat_private.normalize_season(
-      rec.payload->>'season'),'') is not null;
+    continue when season_filter='-' and nullif(nullif(futbeat_private.normalize_season(
+      rec.payload->>'season'),''),'-') is not null;
     continue when season_filter is not null and season_filter<>'-' and nullif(futbeat_private.normalize_season(
       rec.payload->>'season'),'') is distinct from season_filter;
     modeled:=futbeat_private.match_read_model(rec.payload);

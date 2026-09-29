@@ -11,12 +11,18 @@ class ProfileContextBar extends StatelessWidget {
     required this.options,
     required this.selected,
     required this.onSelect,
+    this.failed = false,
+    this.onRetry,
     super.key,
   });
 
   final List<ProfileContextOption> options;
   final ProfileContextOption selected;
   final ValueChanged<ProfileContextOption> onSelect;
+
+  /// The requested context could not be read: [selected] is the last one.
+  final bool failed;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -46,7 +52,20 @@ class ProfileContextBar extends StatelessWidget {
                   ),
                 ),
               ),
-              if (options.length > 1)
+              if (failed && onRetry != null)
+                TextButton(
+                  key: const ValueKey('profile-context-retry'),
+                  onPressed: onRetry,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: const Text(
+                    'No se pudo cambiar · Reintentar',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                )
+              else if (options.length > 1)
                 const Icon(Icons.expand_more_rounded, size: 20, color: muted),
             ],
           ),

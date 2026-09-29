@@ -134,8 +134,25 @@ typedef ProfileContextRequest = ({
   String? season,
 });
 
-/// Invalidated whenever a team profile opens (EntityScreen): a failed read
-/// is retried on the next open and options never freeze for the session.
+/// The request a team profile makes: the user's choice this session, else
+/// the match it was opened from, else the server's default.
+ProfileContextRequest profileContextRequest(
+  WidgetRef ref,
+  String teamId, {
+  String? initialCompetitionId,
+  String? initialSeason,
+}) {
+  final choice = ref.watch(profileContextSelectionProvider)[teamId];
+  return (
+    teamId: teamId,
+    competitionId: choice?.competitionId ?? initialCompetitionId,
+    season: choice != null ? choice.season : initialSeason,
+  );
+}
+
+/// Re-read when a team profile opens with an already cached answer for the
+/// same request (EntityScreen): a failed read never sticks for the session
+/// and options never freeze.
 final teamContextProvider =
     FutureProvider.family<TeamContext?, ProfileContextRequest>((
       ref,

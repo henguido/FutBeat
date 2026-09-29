@@ -114,11 +114,18 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     Future.microtask(
       () => recordTemporaryInterest(ref, widget.type, widget.id),
     );
-    // Fresh profile context on every open (#161).
+    // Fresh profile context on every open (#161): only this request, only
+    // when an answer (or a failure) is already cached; one read per open.
     if (widget.type == 'team') {
-      Future.microtask(() {
-        if (mounted) ref.invalidate(teamContextProvider);
-      });
+      final choice = ref.read(profileContextSelectionProvider)[widget.id];
+      final request = (
+        teamId: widget.id,
+        competitionId: choice?.competitionId ?? widget.competitionId,
+        season: choice != null ? choice.season : widget.season,
+      );
+      if (ref.exists(teamContextProvider(request))) {
+        ref.invalidate(teamContextProvider(request));
+      }
     }
   }
 
