@@ -1344,8 +1344,11 @@ class MatchStandingsTab extends StatelessWidget {
           Standings(
             data,
             competitionId,
+            // Keeps the chosen view (and a loaded Forma) across refreshes.
+            key: ValueKey('match-standings-$competitionId'),
             selectableView: true,
-            // The match's own group, never several groups as one table.
+            // The match's own group; teams from different groups each get
+            // their own labelled group, never one mixed table.
             focusTeamIds: {?homeTeamId, ?awayTeamId},
             highlightedTeams: {?homeTeamId: lime, ?awayTeamId: awaySideColor},
             // In-play evidence from the snapshot itself (never the clock).

@@ -1,18 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
 /// How a standings table is laid out.
 enum StandingsView {
-  /// Mobile-first: Pos · Equipo · PJ · DG · Pts, no horizontal scroll.
+  /// Mobile-first: Pos · Equipo · J · DG · Pts, no horizontal scroll.
   compact,
 
-  /// Every column (Pos · Equipo · PJ · G · E · P · GF · GC · DG · Pts),
+  /// Every column (Pos · Equipo · J · G · E · P · GF · GC · DG · Pts),
   /// horizontally scrollable when the screen is narrow.
   full,
+
+  /// Pos · Equipo · last results (G/E/P, newest first) · Pts. Loaded lazily
+  /// from the server the first time it is opened; real results only.
+  form,
 }
 
 /// Teams of [competitionId] that the snapshot itself shows in play. Evidence
@@ -35,9 +41,15 @@ typedef StandingsGroup = ({String? label, List<Json> rows});
 ///  * no rows, or the server could not tell its groups apart;
 ///  * a row whose team entity is unknown (never a placeholder name);
 ///  * a repeated position inside one group (unlabelled groups mixed).
-/// With [focusTeamIds] and several groups, only the group holding every
-/// focus team is returned (null when there is none): a Match Center shows
-/// the match's group and a team profile the team's group, never a mix.
+/// With [focusTeamIds] and several groups:
+///  * one group holds every focus team: only that group (a team profile
+///    shows the team's group, a Match Center the match's group);
+///  * several groups hold them all (e.g. "Grupo A" plus a ranking of
+///    third-placed teams): null, the right one cannot be told;
+///  * no group holds them all (a knockout between teams of different
+///    groups): each focus team's own group, as separate labelled tables,
+///    never merged. Null when a focus team is in no group or in more than
+///    one, or when one of those groups has no label.
 List<StandingsGroup>? standingsGroups(
   Json? table,
   Snapshot data, {
@@ -65,14 +77,36 @@ List<StandingsGroup>? standingsGroups(
       (label: entry.key.isEmpty ? null : entry.key, rows: entry.value),
   ];
   if (focusTeamIds.isEmpty || all.length == 1) return all;
-  final holding = [
+  bool holds(StandingsGroup group, String id) =>
+      group.rows.any((row) => row['teamId'] == id);
+  final whole = [
     for (final group in all)
-      if (focusTeamIds.every(
-        (id) => group.rows.any((row) => row['teamId'] == id),
-      ))
-        group,
+      if (focusTeamIds.every((id) => holds(group, id))) group,
   ];
-  return holding.length == 1 ? holding : null;
+  if (whole.isNotEmpty) return whole.length == 1 ? whole : null;
+  final picked = <int>{};
+  for (final id in focusTeamIds) {
+    final candidates = [
+      for (var i = 0; i < all.length; i++)
+        if (holds(all[i], id)) i,
+    ];
+    if (candidates.length != 1) return null;
+    picked.add(candidates.single);
+  }
+  final own = [for (final i in picked.toList()..sort()) all[i]];
+  return own.any((group) => group.label == null) ? null : own;
+}
+
+/// Season of [table] for the Forma read: its exact key (`seasonKey`, set
+/// when the table was filed) or its own label. Null when the table carries
+/// neither: Forma is then hidden, never guessed from the competition's
+/// current season (an old table at a rollover would get the new season).
+String? standingsSeason(Json table) {
+  for (final value in [table['seasonKey'], table['season']]) {
+    final text = value?.toString().trim() ?? '';
+    if (text.isNotEmpty && text.length <= 20) return text;
+  }
+  return null;
 }
 
 /// The table of [competitionId] in [data] (first one), if any.
@@ -87,15 +121,17 @@ class Standings extends StatefulWidget {
     super.key,
     this.highlightedTeams = const {},
     this.liveTeamIds = const {},
-    this.selectableView = false,
+    this.selectableView = true,
     this.focusTeamIds = const {},
+    this.season,
   });
 
   final Snapshot data;
   final String competitionId;
 
   /// Teams whose group is shown when the table has several groups (see
-  /// [standingsGroups]).
+  /// [standingsGroups]). A single focus team without [highlightedTeams] is
+  /// highlighted (team profile).
   final Set<String> focusTeamIds;
 
   /// Team id -> accent color (e.g. the selected match's home/away sides).
@@ -104,16 +140,127 @@ class Standings extends StatefulWidget {
   /// Teams currently in play (see [liveTeamIds]).
   final Set<String> liveTeamIds;
 
-  /// Show the local "Resumida | Completa" switch (default Resumida). Without
-  /// it the full table is shown, as on competition/team screens.
+  /// Show the local "Resumida | Completa | Forma" switch (default Resumida).
+  /// Without it only the full table is shown.
   final bool selectableView;
+
+  /// Season of the table for the Forma read (default: [standingsSeason]).
+  final String? season;
 
   @override
   State<Standings> createState() => _StandingsState();
 }
 
+/// What one Forma read is for: a competition, the table's season and, for a
+/// published (non-provisional) table, its updatedAt as the upper bound.
+typedef _FormIdentity = ({String competitionId, String season, String? until});
+
 class _StandingsState extends State<Standings> {
   StandingsView _view = StandingsView.compact;
+  bool _restored = false;
+
+  // Forma: loaded once per identity, only when opened.
+  _FormIdentity? _formKey;
+  StandingsForm? _form;
+  bool _formLoading = false;
+  bool _formFailed = false;
+
+  String get _storageId {
+    final table = standingsTableFor(widget.data, widget.competitionId);
+    final season = table == null ? null : _season(table);
+    return 'standings-view-${widget.competitionId}-${season ?? ''}';
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_restored) return;
+    _restored = true;
+    // The chosen view survives leaving and coming back to the tab.
+    final saved = PageStorage.maybeOf(context)
+        ?.readState(context, identifier: _storageId);
+    if (saved is StandingsView) _view = saved;
+  }
+
+  @override
+  void didUpdateWidget(Standings oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_formKey != null && _formKey != _formIdentity()) {
+      // Another table (competition/season/publication): read Forma again.
+      _formKey = null;
+      _form = null;
+      _formFailed = false;
+      _formLoading = false;
+    }
+  }
+
+  /// The API repository when the app reads the cloud (demo/tests: null).
+  ApiRepository? _api() {
+    try {
+      final repository = ProviderScope.containerOf(
+        context,
+        listen: false,
+      ).read(repositoryProvider);
+      return repository is ApiRepository ? repository : null;
+    } on StateError {
+      return null;
+    }
+  }
+
+  String? _season(Json table) => widget.season?.trim().isNotEmpty == true
+      ? widget.season!.trim()
+      : standingsSeason(table);
+
+  /// The Forma read of the current table, or null when Forma is hidden.
+  _FormIdentity? _formIdentity() {
+    if (!widget.selectableView || widget.data.demo || _api() == null) {
+      return null;
+    }
+    final table = standingsTableFor(widget.data, widget.competitionId);
+    final season = table == null ? null : _season(table);
+    if (table == null || season == null) return null;
+    // Only a parseable timestamp is sent (normalized to UTC ISO 8601): a
+    // legacy or bare value is dropped rather than failing every read.
+    final updatedAt = DateTime.tryParse(table['updatedAt']?.toString() ?? '');
+    return (
+      competitionId: widget.competitionId,
+      season: season,
+      // A provisional table already includes recent results: no bound.
+      until: table['provisional'] == true || updatedAt == null
+          ? null
+          : updatedAt.toUtc().toIso8601String(),
+    );
+  }
+
+  void _select(StandingsView view) {
+    setState(() => _view = view);
+    PageStorage.maybeOf(context)
+        ?.writeState(context, view, identifier: _storageId);
+  }
+
+  Future<void> _loadForm(_FormIdentity identity) async {
+    final api = _api();
+    if (api == null || _formLoading) return;
+    setState(() {
+      _formKey = identity;
+      _formLoading = true;
+      _formFailed = false;
+    });
+    try {
+      final form = await api.loadStandingsForm(
+        identity.competitionId,
+        identity.season,
+        until: identity.until,
+      );
+      if (mounted && _formKey == identity) setState(() => _form = form);
+    } catch (_) {
+      if (mounted && _formKey == identity) setState(() => _formFailed = true);
+    } finally {
+      if (mounted && _formKey == identity) {
+        setState(() => _formLoading = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -137,35 +284,70 @@ class _StandingsState extends State<Standings> {
         ),
       );
     }
-    final view = widget.selectableView ? _view : StandingsView.full;
-    Widget table0(List<_Entry> entries) => view == StandingsView.compact
-        ? _Table(
-            key: const ValueKey('standings-compact'),
-            entries: entries,
-            columns: _compactColumns,
-            highlightedTeams: widget.highlightedTeams,
-            liveTeamIds: widget.liveTeamIds,
-          )
-        : LayoutBuilder(
-            builder: (context, constraints) => SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minWidth: constraints.maxWidth,
-                  maxWidth: constraints.maxWidth > _fullMinWidth
-                      ? constraints.maxWidth
-                      : _fullMinWidth,
-                ),
-                child: _Table(
-                  key: const ValueKey('standings-full'),
-                  entries: entries,
-                  columns: _fullColumns,
-                  highlightedTeams: widget.highlightedTeams,
-                  liveTeamIds: widget.liveTeamIds,
-                ),
-              ),
+    final formIdentity = _formIdentity();
+    final views = [
+      StandingsView.compact,
+      StandingsView.full,
+      if (formIdentity != null) StandingsView.form,
+    ];
+    final view = !widget.selectableView
+        ? StandingsView.full
+        : views.contains(_view)
+        ? _view
+        : StandingsView.compact;
+    if (view == StandingsView.form &&
+        _form == null &&
+        !_formLoading &&
+        !_formFailed) {
+      // Lazy: the first time Forma is shown (tap or restored view).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _form == null && !_formLoading && !_formFailed) {
+          _loadForm(formIdentity!);
+        }
+      });
+    }
+    final highlighted =
+        widget.highlightedTeams.isEmpty && widget.focusTeamIds.length == 1
+        ? {widget.focusTeamIds.single: lime}
+        : widget.highlightedTeams;
+    Widget tableOf(List<_Entry> entries) => switch (view) {
+      StandingsView.compact => _Table(
+        key: const ValueKey('standings-compact'),
+        entries: entries,
+        columns: _compactColumns,
+        highlightedTeams: highlighted,
+        liveTeamIds: widget.liveTeamIds,
+      ),
+      StandingsView.form => _Table(
+        key: const ValueKey('standings-form'),
+        entries: entries,
+        columns: _formColumns,
+        highlightedTeams: highlighted,
+        liveTeamIds: widget.liveTeamIds,
+        form: _form,
+      ),
+      StandingsView.full => LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minWidth: constraints.maxWidth,
+              maxWidth: constraints.maxWidth > _fullMinWidth
+                  ? constraints.maxWidth
+                  : _fullMinWidth,
             ),
-          );
+            child: _Table(
+              key: const ValueKey('standings-full'),
+              entries: entries,
+              columns: _fullColumns,
+              highlightedTeams: highlighted,
+              liveTeamIds: widget.liveTeamIds,
+            ),
+          ),
+        ),
+      ),
+    };
+    final formPending = view == StandingsView.form && _form == null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -182,30 +364,74 @@ class _StandingsState extends State<Standings> {
         // Its own row above the table: never squeezes the title on a
         // narrow phone.
         if (widget.selectableView) ...[
-          _ViewSwitch(
-            view: _view,
-            onChanged: (view) => setState(() => _view = view),
-          ),
+          _ViewSwitch(views: views, view: view, onChanged: _select),
           const SizedBox(height: 10),
         ],
-        for (var g = 0; g < groups.length; g++) ...[
-          if (groups[g].label != null)
-            Padding(
-              padding: EdgeInsets.only(top: g == 0 ? 0 : 14, bottom: 6),
-              child: Text(
-                groups[g].label!,
-                key: ValueKey('standings-group-${groups[g].label}'),
-                style: const TextStyle(fontWeight: FontWeight.w800),
+        if (formPending)
+          _FormStatus(
+            failed: _formFailed,
+            onRetry: () => _loadForm(formIdentity!),
+          )
+        else
+          for (var g = 0; g < groups.length; g++) ...[
+            if (groups[g].label != null)
+              Padding(
+                padding: EdgeInsets.only(top: g == 0 ? 0 : 14, bottom: 6),
+                child: Text(
+                  groups[g].label!,
+                  key: ValueKey('standings-group-${groups[g].label}'),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
               ),
+            KeyedSubtree(
+              key: ValueKey('standings-table-$g'),
+              child: tableOf([
+                for (var i = 0; i < groups[g].rows.length; i++)
+                  _Entry.from(groups[g].rows[i], i, data),
+              ]),
             ),
-          table0([
-            for (var i = 0; i < groups[g].rows.length; i++)
-              _Entry.from(groups[g].rows[i], i, data),
-          ]),
-        ],
+          ],
       ],
     );
   }
+}
+
+/// Forma not loaded yet: a bounded single read, then "Reintentar".
+class _FormStatus extends StatelessWidget {
+  const _FormStatus({required this.failed, required this.onRetry});
+
+  final bool failed;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 24),
+    child: Center(
+      child: failed
+          ? Column(
+              key: const ValueKey('standings-form-failed'),
+              children: [
+                const Text(
+                  'Forma no disponible',
+                  style: TextStyle(color: muted),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  key: const ValueKey('standings-form-retry'),
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('Reintentar'),
+                ),
+              ],
+            )
+          : const SizedBox(
+              key: ValueKey('standings-form-loading'),
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
+            ),
+    ),
+  );
 }
 
 /// Minimum width of the full table before it scrolls horizontally.
@@ -214,6 +440,7 @@ const double _fullMinWidth = 560;
 class _Entry {
   _Entry({
     required this.teamId,
+    required this.formTeamId,
     required this.team,
     required this.position,
     required this.values,
@@ -226,6 +453,7 @@ class _Entry {
     final ga = value('ga');
     return _Entry(
       teamId: teamId,
+      formTeamId: data.resolveEntityId(teamId),
       // standingsGroups only lets through rows whose team is known.
       team: data.team(teamId)!,
       position: (row['position'] as num?)?.toInt() ?? index + 1,
@@ -243,6 +471,9 @@ class _Entry {
   }
 
   final String teamId;
+
+  /// [teamId] through the snapshot's entity redirects (canonical id).
+  final String formTeamId;
   final Entity team;
   final int position;
   final Map<String, int> values;
@@ -260,13 +491,13 @@ class _Column {
 }
 
 const _compactColumns = [
-  _Column('PJ', 'played', semantic: 'jugados'),
+  _Column('J', 'played', semantic: 'jugados'),
   _Column('DG', 'diff', width: 38, semantic: 'diferencia de gol'),
   _Column('Pts', 'points', width: 38, semantic: 'puntos'),
 ];
 
 const _fullColumns = [
-  _Column('PJ', 'played', semantic: 'jugados'),
+  _Column('J', 'played', semantic: 'jugados'),
   _Column('G', 'won', semantic: 'ganados'),
   _Column('E', 'drawn', semantic: 'empatados'),
   _Column('P', 'lost', semantic: 'perdidos'),
@@ -276,12 +507,21 @@ const _fullColumns = [
   _Column('Pts', 'points', width: 38, semantic: 'puntos'),
 ];
 
+/// Up to 5 chips of 16 px with 3 px gaps, plus a little air.
+const double _formWidth = 5 * 16 + 4 * 3 + 6;
+
+const _formColumns = [
+  _Column('Forma', 'form', width: _formWidth, semantic: 'forma'),
+  _Column('Pts', 'points', width: 38, semantic: 'puntos'),
+];
+
 class _Table extends StatelessWidget {
   const _Table({
     required this.entries,
     required this.columns,
     required this.highlightedTeams,
     required this.liveTeamIds,
+    this.form,
     super.key,
   });
 
@@ -289,6 +529,7 @@ class _Table extends StatelessWidget {
   final List<_Column> columns;
   final Map<String, Color> highlightedTeams;
   final Set<String> liveTeamIds;
+  final StandingsForm? form;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -309,6 +550,8 @@ class _Table extends StatelessWidget {
               accent: highlightedTeams[entries[i].teamId],
               live: liveTeamIds.contains(entries[i].teamId),
               divider: i > 0,
+              // Stored rows may carry an alias; Forma is keyed canonically.
+              form: form?.results(entries[i].formTeamId) ?? const [],
             ),
         ],
       ),
@@ -367,6 +610,10 @@ class _HeaderLabel extends StatelessWidget {
   );
 }
 
+/// G / E / P (Spanish) for WIN / DRAW / LOSS.
+const _formLetters = {'WIN': 'G', 'DRAW': 'E', 'LOSS': 'P'};
+const _formWords = {'WIN': 'ganado', 'DRAW': 'empatado', 'LOSS': 'perdido'};
+
 class _TeamRow extends StatelessWidget {
   const _TeamRow({
     required this.entry,
@@ -374,6 +621,7 @@ class _TeamRow extends StatelessWidget {
     required this.accent,
     required this.live,
     required this.divider,
+    required this.form,
   });
 
   final _Entry entry;
@@ -381,6 +629,9 @@ class _TeamRow extends StatelessWidget {
   final Color? accent;
   final bool live;
   final bool divider;
+
+  /// Newest first; empty = no data (a dash, never an invented result).
+  final List<String> form;
 
   @override
   Widget build(BuildContext context) {
@@ -391,6 +642,12 @@ class _TeamRow extends StatelessWidget {
       return column.key == 'diff' && value > 0 ? '+$value' : '$value';
     }
 
+    String semantic(_Column column) => column.key != 'form'
+        ? '${number(column)} ${column.semantic ?? column.label}'
+        : form.isEmpty
+        ? 'forma sin datos'
+        : 'forma ${form.map((r) => _formWords[r]).join(' ')}';
+
     return Semantics(
       container: true,
       button: entry.teamId.isNotEmpty,
@@ -398,8 +655,7 @@ class _TeamRow extends StatelessWidget {
         'Posición ${entry.position}',
         entry.name,
         if (live) 'en vivo',
-        for (final column in columns)
-          '${number(column)} ${column.semantic ?? column.label}',
+        for (final column in columns) semantic(column),
       ].join(', '),
       excludeSemantics: true,
       child: InkWell(
@@ -451,20 +707,77 @@ class _TeamRow extends StatelessWidget {
               for (final column in columns)
                 SizedBox(
                   width: column.width,
-                  child: Text(
-                    number(column),
-                    textAlign: TextAlign.center,
-                    style: column.key == 'points'
-                        ? _numberStyle.copyWith(
-                            fontWeight: FontWeight.w900,
-                            color: lime,
-                          )
-                        : _numberStyle,
-                  ),
+                  child: column.key == 'form'
+                      ? _FormChips(entry.teamId, form)
+                      : Text(
+                          number(column),
+                          textAlign: TextAlign.center,
+                          style: column.key == 'points'
+                              ? _numberStyle.copyWith(
+                                  fontWeight: FontWeight.w900,
+                                  color: lime,
+                                )
+                              : _numberStyle,
+                        ),
                 ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Up to 5 result chips, newest first; a dash without data.
+class _FormChips extends StatelessWidget {
+  const _FormChips(this.teamId, this.results);
+
+  final String teamId;
+  final List<String> results;
+
+  static const _colors = {
+    'WIN': Color(0xFF3FB950),
+    'DRAW': Color(0xFF8B949E),
+    'LOSS': Color(0xFFE5534B),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    if (results.isEmpty) {
+      return Text(
+        '—',
+        key: ValueKey('standings-form-none-$teamId'),
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: muted),
+      );
+    }
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        key: ValueKey('standings-form-$teamId'),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < results.length && i < 5; i++) ...[
+            if (i > 0) const SizedBox(width: 3),
+            Container(
+              width: 16,
+              height: 16,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _colors[results[i]],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                _formLetters[results[i]]!,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -501,47 +814,60 @@ class _LiveBadge extends StatelessWidget {
 }
 
 class _ViewSwitch extends StatelessWidget {
-  const _ViewSwitch({required this.view, required this.onChanged});
+  const _ViewSwitch({
+    required this.views,
+    required this.view,
+    required this.onChanged,
+  });
 
+  final List<StandingsView> views;
   final StandingsView view;
   final ValueChanged<StandingsView> onChanged;
 
+  static const _labels = {
+    StandingsView.compact: 'Resumida',
+    StandingsView.full: 'Completa',
+    StandingsView.form: 'Forma',
+  };
+
   @override
   Widget build(BuildContext context) => Container(
+    // Equal segments up to a phone width: three labels always fit at 360 px.
+    constraints: BoxConstraints(maxWidth: views.length * 116.0),
     padding: const EdgeInsets.all(3),
     decoration: BoxDecoration(
       color: Colors.white.withValues(alpha: .06),
       borderRadius: BorderRadius.circular(999),
     ),
     child: Row(
-      mainAxisSize: MainAxisSize.min,
       children: [
-        for (final (option, label) in [
-          (StandingsView.compact, 'Resumida'),
-          (StandingsView.full, 'Completa'),
-        ])
-          Semantics(
-            button: true,
-            selected: option == view,
-            child: InkWell(
-              key: ValueKey('standings-view-${option.name}'),
-              borderRadius: BorderRadius.circular(999),
-              onTap: () => onChanged(option),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                constraints: const BoxConstraints(minHeight: 32),
-                alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: option == view ? lime : Colors.transparent,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: option == view ? Colors.black : muted,
+        for (final option in views)
+          Expanded(
+            child: Semantics(
+              button: true,
+              selected: option == view,
+              child: InkWell(
+                key: ValueKey('standings-view-${option.name}'),
+                borderRadius: BorderRadius.circular(999),
+                onTap: () => onChanged(option),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  constraints: const BoxConstraints(minHeight: 32),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  decoration: BoxDecoration(
+                    color: option == view ? lime : Colors.transparent,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    _labels[option]!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: option == view ? Colors.black : muted,
+                    ),
                   ),
                 ),
               ),

@@ -9,6 +9,7 @@ import 'package:futbeat/core/profile_context.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/team_matches.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
+import 'package:futbeat/features/entities/standings.dart';
 import 'package:go_router/go_router.dart';
 
 // #161: competition + season context of a team profile. Synthetic ids and
@@ -306,6 +307,30 @@ void main() {
     expect(normalizeSeasonKey(null), isNull);
     expect(seasonLabel('2025-2026'), '2025/26');
     expect(seasonLabel('2026'), '2026');
+  });
+
+  test('the context table carries the selected season key for Forma, never '
+      'overriding one the table already has', () {
+    TeamContext ctx(Map<String, dynamic> table) => TeamContext({
+      'schemaVersion': 1,
+      'teamId': 'fb_team',
+      'options': _options,
+      'selected': {'competitionId': _nations, 'seasonKey': '2024-2025'},
+      'standings': [table],
+      'teams': const <dynamic>[],
+    });
+    final data = Snapshot(_snapshot());
+    final unlabelled = ctx({
+      ..._table(_nations, '', ['fb_team']),
+      'season': '',
+    }).tableSnapshot(data).standings.single;
+    expect(unlabelled['seasonKey'], '2024-2025');
+    expect(standingsSeason(unlabelled), '2024-2025');
+    final labelled = ctx({
+      ..._table(_nations, '2024/25', ['fb_team']),
+      'seasonKey': '2024-2025',
+    }).tableSnapshot(data).standings.single;
+    expect(labelled['seasonKey'], '2024-2025');
   });
 
   testWidgets('the selector shows only real options, grouped by season, and '

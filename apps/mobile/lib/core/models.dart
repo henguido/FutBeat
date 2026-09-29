@@ -1164,3 +1164,29 @@ class MatchPreview {
   String? competitionName(String? id) =>
       id == null ? null : _competitions[id]?['name'] as String?;
 }
+
+/// Tabla v2 "Forma" (#158): last results per canonical team of one
+/// competition + season, newest first (`WIN` | `DRAW` | `LOSS`). A team
+/// without a counted match is absent: never an invented result.
+class StandingsForm {
+  StandingsForm(this.json) {
+    final teams = json['teams'];
+    if (teams is Map) {
+      for (final MapEntry(:key, :value) in teams.entries) {
+        if (key is! String || value is! Map) continue;
+        final results = [
+          for (final item in value['results'] as List? ?? const [])
+            if (item == 'WIN' || item == 'DRAW' || item == 'LOSS')
+              item as String,
+        ];
+        if (results.isNotEmpty) _results[key] = results;
+      }
+    }
+  }
+
+  final Json json;
+  final Map<String, List<String>> _results = {};
+
+  /// Newest first; empty when the team has no counted match.
+  List<String> results(String teamId) => _results[teamId] ?? const [];
+}

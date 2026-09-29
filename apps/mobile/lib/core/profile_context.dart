@@ -122,7 +122,18 @@ class TeamContext {
     'players': const <dynamic>[],
     'competitions': [for (final c in data.competitions) c.json],
     'matches': const <dynamic>[],
-    'standings': standings,
+    // The exact archived table of the selected (competition, season): its
+    // season key is known here even when the stored payload has no label
+    // (Tabla v2 "Forma" reads the same season).
+    'standings': [
+      for (final table in standings)
+        {
+          ...table,
+          if (selected?.seasonKey case final key?
+              when (table['seasonKey']?.toString() ?? '').isEmpty)
+            'seasonKey': key,
+        },
+    ],
   });
 }
 

@@ -356,14 +356,14 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('3-7. Resumida by default (Pos/Equipo/PJ/DG/Pts); Completa adds '
+  testWidgets('3-7. Resumida by default (Pos/Equipo/J/DG/Pts); Completa adds '
       'G/E/P/GF/GC; switching is local (no request)', (tester) async {
     final server = _Server((_) => _context());
     final container = await _open(tester, server);
     await _tab(tester, 'Tabla');
     expect(find.byKey(const ValueKey('standings-compact')), findsOneWidget);
     expect(find.byKey(const ValueKey('standings-full')), findsNothing);
-    for (final label in ['Pos', 'Equipo', 'PJ', 'DG', 'Pts']) {
+    for (final label in ['Pos', 'Equipo', 'J', 'DG', 'Pts']) {
       expect(_inTable('standings-compact', find.text(label)), findsOneWidget);
     }
     for (final label in ['G', 'E', 'P', 'GF', 'GC']) {
@@ -379,7 +379,7 @@ void main() {
     for (final label in [
       'Pos',
       'Equipo',
-      'PJ',
+      'J',
       'G',
       'E',
       'P',
