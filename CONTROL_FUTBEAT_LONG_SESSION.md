@@ -4,120 +4,106 @@ Documento operativo para que otra sesión continúe exactamente donde esta termi
 
 ## Estado
 
-- Inicio: 2026-09-30 07:38 (hora local CR).
+- Inicio: 2026-09-30 07:38 (hora local CR). Cierre de la sesión: mismo día.
 - HEAD inicial: `7702e4e` (main = origin/main, PR #170).
-- Rama de trabajo: `fix/matches-screen-regression` (local, SIN push, SIN PR).
-- Al iniciar, el checkout estaba en `main` con los cambios sin commit del bloque; se volvió a la rama sin perder nada.
-- Reglas: no deploy, no migraciones remotas, no push, no PR, no merge. Producción solo lectura (diagnóstico).
+- Rama de trabajo: `fix/matches-screen-regression` (local, SIN push, SIN PR). 5 commits de código sobre `7702e4e`, más el de este archivo.
+- Árbol limpio al cerrar (solo `CONTROL_FUTBEAT_4H.md`, de otra sesión, sin versionar).
+- Reglas cumplidas: no deploy, no migraciones remotas, no push, no PR, no merge. Producción solo lectura.
 
 ## Cola de bloques
 
 | Bloque | Estado |
 |---|---|
-| 1 cierre de `fix/matches-screen-regression` (dedup, marcador, orden) | HECHO — commit `5960d50` |
-| 2 fiabilidad LIVE | HECHO (backend) — ver commit del bloque 2 |
-| 3 rendimiento de partidos históricos | HECHO — ver commit del bloque 3 |
-| 4 QA pantalla de partidos | EN CURSO |
-| 5 UX: swipe de fecha (ya existe #128, verificar) y tabla de posiciones | pendiente |
-| 6 Match Center deuda pequeña | pendiente |
-| 7 validación final | pendiente |
-
-## Tarea activa
-
-Bloque 4: QA deliberado de la pantalla de Partidos (favoritos, agrupación, estados, colapsar, cambio de país, días, duplicados, cuenta, navegación).
-
-Nota de entorno: el chequeo de permisos del shell falla a ratos de forma transitoria; reintentar el mismo comando.
-
-## Bloque 3 — medición y cambios
-
-Medido en producción (solo lectura, funciones `stable`): las lecturas del Match Center NO son el cuello de botella.
-- `futbeat_read_match_context`: 6-55 ms en partidos viejos, 115-204 ms en recientes (49-93 KB).
-- `futbeat_read_match_detail`: 6-24 ms. `futbeat_read_match_preview`: 16-57 ms. Vídeos: ~0 ms.
-Lo que bloqueaba el primer render:
-- P0 (equipos, marcador, estado, competición, fecha): ya era inmediato al entrar desde el feed (`initialData`). NO lo era desde el perfil de jugador ni desde las filas de Cara a cara: spinner a pantalla completa hasta que respondía la red.
-- API `match-context`: 3 llamadas a base de datos en serie.
-Cambios:
-- Perfil de jugador pasa `data.forMatch(id)`; las filas de Cara a cara pasan `meetingContext(...)` (contexto mínimo con lo que la fila ya muestra). El Match Center pinta la cabecera al instante y sigue leyendo el contexto completo.
-- `futbeat-api` `match-context`: las dos demandas (resultado terminal, tabla) van en paralelo; la lectura sigue después de ambas.
-P1/P2 (eventos, alineaciones, estadísticas, H2H, fotos) ya cargaban después y por separado; no se tocaron.
-No medido: latencia real extremo a extremo de la API (llamarla dispara demandas = escrituras en producción).
-
-## Bloque 2 — hallazgos (diagnóstico de SOLO LECTURA en producción, 2026-09-30 14:00 UTC)
-
-1. Resultados por fecha: los días con >= 500 resultados fallaban enteros con `GOAL results pagination cannot make progress` (la página 2 repetía la 1) y se descartaban los 500 resultados ya leídos; 3 intentos y fecha agotada (26 y 27 de septiembre en `FAILED`). Arreglo en el worker: si una página no aporta nada nuevo, o se llega a 5 páginas, se PARA y se procesa lo leído (`truncatedBy`); solo falla si no se leyó nada.
-2. Recuperación terminal: 278 de 282 filas agotadas en 72 h tenían `attempts=0` (`expired`). Necesita cuota por encima del piso protegido (150) y la fila vence a las 6 h, antes del reinicio diario de cuota (00:00 UTC). Arreglo: una recuperación pendiente > 10 min pide la fecha a la vía de resultados (`results_date_user_demand`, como cuando un usuario abre el partido), máximo una vez por hora y fecha.
-3. Partidos en juego invisibles: 67 estados LIVE de GOAL en 24 h sin partido canónico; en 37 la competición y ambos equipos YA estaban mapeados pero el fixture no existía en el calendario (no hay ingesta periódica de calendario; las entidades vienen de la ingesta del 18-sep). Arreglo: descubrimiento con identidad fuerte (`discover_goal_live_match`): re-enlaza el fantasma programado de la misma competición y equipos a <= 24 h (corrige el saque, retira el id viejo y lo guarda en `provenance.previousExternalIds`) o crea el partido canónico (estado SCHEDULED; LIVE/final llega por observaciones). Nunca por nombres; ambiguo = sigue sin mapear.
-4. Sin arreglo posible desde FutBeat: competiciones que GOAL no incluye en `/fixtures/live` (15 de 19 partidos en juego sin observaciones eran de una sola competición menor). Se muestran "Por confirmar" hasta que llegue el resultado por fecha.
-5. Cuota GOAL ~1000/día: `match-detail` gasta 400-550/día, `live-goal` 160-245. No se cambió ninguna política de cuota.
-
-## Decisiones técnicas (bloque 1)
-
-### Dedup de fixtures (`20260930110000_calendar_fixture_dedup.sql`, `dedupeFixtures` en Flutter)
-
-Evidencia real (diagnóstico de SOLO LECTURA en producción, 12 965 partidos de calendario en 28 días): 5 pares duplicados, TODOS en la misma competición canónica.
-- 2 copias entre proveedores (GOAL + TheSportsDB), mismo marcador, saque igual o a 1 h.
-- 2 fixtures re-emitidos por GOAL con id nuevo, saque a 2 h.
-- 1 fixture re-emitido a 18 h (gemelo jugado + fantasma programado).
-- El fantasma siempre tenía procedencia `PROVISIONAL` y cero `provider_observations`.
-- Cero duplicados entre competiciones distintas.
-
-Regla (solo ids canónicos):
-- Base obligatoria: misma competición, mismo local, mismo visitante, local ≠ visitante.
-- `exact_kickoff`: saque a ≤ 5 min.
-- `single_evidence_3h`: saque a ≤ 3 h y como mucho uno de los dos tiene observaciones propias.
-- `ghost_24h`: saque a ≤ 24 h, uno programado sin evidencia y el otro finalizado o en vivo (busca al gemelo en cualquier día por el índice de equipo local).
-- Nunca: dos finalizados con marcador distinto; competición distinta (solo se reporta como `cross_competition_review`).
-- Sobrevive: finalizado > en vivo > con evidencia > programado > suspendido; luego procedencia `VERIFIED`; luego evidencia más reciente; luego id.
-- No borra nada. `duplicate_calendar_fixtures(desde, hasta)` es el diagnóstico de solo lectura.
-
-Limitación conocida: dos entidades programadas sin evidencia a ≤ 3 h en la misma competición se fusionan (es exactamente uno de los duplicados reales; un doble amistoso programado se vería como uno hasta que ambos tengan observaciones).
-
-### Corrección de finales (`20260930120000_terminal_score_correction.sql`)
-
-Trigger `futbeat_terminal_score_correction` sobre `provider_observations` (insert / update de `canonical_match_id`). Escribe solo si:
-- el payload canónico ya es FPV o VERIFIED;
-- la observación es terminal, del proveedor PRIMARY del Provider Hub (`primary_result_provider()`, hoy `goal_api`) y con marcador completo;
-- no es anterior al saque, ni a la evidencia canónica, ni a otra observación terminal ya guardada;
-- el marcador o el estado realmente cambian (una confirmación no escribe).
-No toma bloqueo de fila salvo que aplique (UPDATE condicionado). Guarda `provenance.scoreCorrectedFrom`.
-
-### Orden del feed (`orderMatchCompetitions`)
-
-1 FAVORITOS (solo equipos) → 2 fijadas (modo personalizado) → 3 seguidas → 4 principal del país → 5 globales → 6 secundarias del país → 7 resto. Usa `competitionFeedCategory`. El país reordena, nunca filtra ni duplica. La preferencia "global primero" NO se aplica: no tiene UI (solo existe la columna), se trató como legacy accidental.
-
-## Tests / resultados
-
-- `backend/test/matches_feed_integrity.test.mjs`: 14/14.
-- Flutter `feed_v2_test` + `matches_feed_test`: 51/51 antes del último ajuste (España en el test de cambio de país; re-ejecutar).
-- Último global antes de los ajustes de esta sesión: Flutter 652/652, backend 964/965.
-- Fallo preexistente: `#131 planner profiles…` en `backend/test/match_detail_planner_scale.test.mjs` (busca `'loop\n'`; el checkout Windows tiene CRLF). Falla igual en `7702e4e` limpio. No se tocó.
+| 1 cierre de la corrección de Partidos (dedup, marcador, orden) | HECHO — `5960d50` |
+| 2 fiabilidad LIVE | HECHO (backend + worker) — `8e83134` |
+| 3 rendimiento de partidos históricos | HECHO — `463fe81` |
+| 4 QA pantalla de Partidos | HECHO — incluido en `2f53f5a` |
+| 5 UX: swipe de fecha y tabla de posiciones | HECHO — `2f53f5a` (transición); la tabla ya cumplía |
+| 6 deuda pequeña | HECHO — `2039de4` (#168) |
+| 7 validación final | HECHO |
 
 ## Commits locales de la sesión
 
-- `5960d50` fix: harden match feed reconciliation (bloque 1)
-- `8e83134` fix: stabilize live match lifecycle (bloque 2)
-- bloque 3: perf: paint historical match center from known data (ver `git log`)
+- `5960d50` fix: harden match feed reconciliation
+- `8e83134` fix: stabilize live match lifecycle
+- `463fe81` perf: paint historical match center from known data
+- `2f53f5a` feat: slide between days and cap long team names in the match feed
+- `2039de4` fix: clear the live filter when leaving today (#168)
+- el commit de este archivo de control (`docs: close the long session control file`)
 
-## Archivos del bloque 1
+## Validación final
 
-Nuevos: las dos migraciones `20260930110000`, `20260930120000`; `backend/test/matches_feed_integrity.test.mjs`; `apps/mobile/test/score_correction_test.dart`; este archivo.
-Modificados: `apps/mobile/lib/features/matches/matches_screen.dart`, `apps/mobile/test/feed_v2_test.dart`, `apps/mobile/test/matches_feed_test.dart`, `apps/mobile/test/goldens/matches.png`, `backend/test/competition_editorial_contract.test.mjs`, `backend/test/live_detail_pipeline.test.mjs`.
+- `flutter analyze`: sin issues. `flutter test`: 660/660.
+- `npm test`: 977/978. `npm run check`: OK. `git diff --check`: limpio.
+- Deno check de `futbeat-goal-live-sync` y `futbeat-api`: exit 0.
+- Único fallo: `#131 planner profiles…` en `backend/test/match_detail_planner_scale.test.mjs`. PREEXISTENTE (comprobado dos veces en `7702e4e` limpio con `git stash -u`): el test busca `'loop\n'` y el checkout de Windows tiene CRLF. No se tocó.
 
-## Riesgos
+## Migraciones locales nuevas (NINGUNA aplicada en remoto)
 
-- El dedup cubre el calendario de Partidos; perfil de equipo, cara a cara y tablas leen entidades directamente (un duplicado real contaría dos veces). Solución de fondo: fusión a nivel de partido.
-- El trigger de finales solo se probó en PGlite, sin carga concurrente real.
-- Las dos migraciones redefinen `build_compact_calendar` y añaden un trigger: aplicar fuera de ventana de partidos en vivo.
+Orden de aplicación:
+1. `20260930110000_calendar_fixture_dedup.sql` — redefine `build_compact_calendar` (solo la selección de partidos) y añade helpers + `duplicate_calendar_fixtures()`.
+2. `20260930120000_terminal_score_correction.sql` — trigger sobre `provider_observations` + `primary_result_provider()`.
+3. `20260930130000_live_lifecycle_reliability.sql` — `discover_goal_live_match`, `link_and_discover_goal_live_matches`, `public.futbeat_link_goal_live_matches` (ahora envuelve al enlazador), `settle_terminal_recovery` (demanda de resultados).
+
+También cambiaron y NO están desplegados: `futbeat-goal-live-sync` (paginación de resultados) y `futbeat-api` (demandas en paralelo). La migración 3 depende de helpers de la 1. Aplicar fuera de ventana de partidos en vivo (la 1 redefine el constructor del calendario; la 2 añade un trigger).
+
+## Decisiones técnicas
+
+### Dedup de fixtures
+
+Evidencia (producción, solo lectura, 12 965 partidos de calendario en 28 días): 5 pares duplicados, TODOS en la misma competición: 2 copias entre proveedores (GOAL + TheSportsDB), 2 fixtures re-emitidos por GOAL a 2 h, 1 re-emitido a 18 h. El fantasma siempre tenía procedencia `PROVISIONAL` y cero observaciones. Cero duplicados entre competiciones distintas.
+
+Regla (solo ids canónicos): base obligatoria = misma competición + mismo local + mismo visitante. Niveles: `exact_kickoff` (≤ 5 min); `single_evidence_3h` (≤ 3 h y como mucho uno con observaciones propias); `ghost_24h` (≤ 24 h, uno programado sin evidencia y el otro finalizado o en vivo). Nunca: dos finalizados con marcador distinto, ni competiciones distintas (solo se listan como `cross_competition_review`). Sobrevive: finalizado > en vivo > con evidencia > programado > suspendido; luego `VERIFIED`; luego evidencia más reciente; luego id. Flutter (`dedupeFixtures`) aplica lo mismo con la evidencia que tiene el cliente.
+
+Limitación aceptada: dos entidades programadas sin observaciones a ≤ 3 h en la misma competición se fusionan (es uno de los duplicados reales observados; un doble amistoso programado se vería como uno hasta que ambos tengan observaciones).
+
+### Corrección de finales
+
+Trigger `futbeat_terminal_score_correction`. Escribe solo si: payload ya FPV/VERIFIED; observación terminal del proveedor PRIMARY del hub con marcador completo; no anterior al saque, ni a la evidencia canónica, ni a otra terminal más nueva; y algo cambia. UPDATE condicionado (sin bloqueo de fila salvo que aplique). Auditoría en `provenance.scoreCorrectedFrom`. Generalizable a otro proveedor cambiando el rol PRIMARY en `provider_hub_config`; `reconcile_goal_results_local` sigue siendo específico de GOAL.
+
+### Orden del feed
+
+FAVORITOS (solo equipos) → fijadas (modo personalizado) → seguidas → principal del país → globales → secundarias del país → resto, con `competitionFeedCategory`. La preferencia "global primero" no tiene UI y ya no se aplica.
+
+### LIVE
+
+- Resultados por fecha: si una página no aporta nada nuevo o se llega a 5 páginas, el worker para y procesa lo leído (`truncatedBy`). Antes descartaba los 500 resultados leídos y la fecha fallaba 3 veces (26 y 27-sep en `FAILED`).
+- Recuperación terminal pendiente > 10 min pide su fecha a la vía de resultados (`results_date_user_demand`), máximo una vez por hora y fecha. Antes: 278 de 282 filas agotadas con `attempts=0`.
+- Descubrimiento: fixture LIVE sin partido canónico pero con competición y ambos equipos ya mapeados → re-enlaza el único fantasma programado de la misma competición/equipos a ≤ 24 h (corrige saque, retira el id viejo a `provenance.previousExternalIds`) o crea el partido canónico (estado SCHEDULED). Nunca por nombres; ambiguo = sin mapear. Antes: 37 de 67 estados LIVE sin partido en 24 h cumplían esas condiciones.
+
+### Rendimiento de históricos
+
+Medido (producción, solo lectura): `read_match_context` 6-204 ms, `read_match_detail` 6-24 ms, `read_match_preview` 16-57 ms. La base de datos no era el cuello de botella. Cambios: perfil de jugador y filas de Cara a cara abren el Match Center con los datos que ya tienen (cabecera inmediata); `match-context` hace sus dos demandas en paralelo.
+
+## Riesgos reales
+
+- El dedup cubre el calendario de Partidos. Perfil de equipo, cara a cara y tablas leen entidades directamente: un duplicado real contaría dos veces. Solución de fondo: fusión a nivel de partido.
+- Descubrimiento: crea partidos canónicos en producción desde el feed LIVE (solo con competición y equipos ya mapeados). Medir tras el despliegue cuántos crea por día.
+- Re-enlace: borra el mapeo del id viejo de GOAL (queda en la procedencia). Si GOAL volviera a usar ese id, el enlazador lo re-asociaría por equipos y saque.
+- La demanda de resultados por recuperación añade unas pocas llamadas `results-date` por fecha y día (dentro de su tope y backoff). Vigilar el consumo de cuota los primeros días.
+- Competiciones que GOAL no incluye en `/fixtures/live` (15 de 19 partidos en juego sin observaciones eran de una sola competición menor): siguen como "Por confirmar" hasta el resultado por fecha. No hay arreglo desde FutBeat.
+- Cuota GOAL ~1000/día: `match-detail` consume 400-550/día. No se tocó ninguna política; es la causa de fondo de que la recuperación por detalle casi nunca corra.
+- Triggers y funciones nuevas probados solo en PGlite, sin carga concurrente real.
 
 ## NO realizado
 
-- Deploy, migraciones remotas, push, PR, merge: 0.
-- Llamadas a proveedores: 0.
-- Producción: solo consultas `SELECT` de diagnóstico (duplicados, ciclo LIVE, recuperaciones, cuota, estados sin mapear). Ninguna escritura.
+- Deploy, migraciones remotas, push, PR, merge: 0. Llamadas a proveedores: 0.
+- Producción: solo consultas `SELECT` de diagnóstico. Ninguna escritura.
+- No se ejecutó la app en emulador (no hay en este entorno); el QA visual fue con renders de tests.
+- No se midió la latencia extremo a extremo de la API (llamarla dispara demandas = escrituras).
+- No se cambió la tabla de posiciones (ya cumplía lo pedido con tests de #166 y fase 1).
 - `CONTROL_FUTBEAT_4H.md` (de otra sesión) no se tocó ni se versiona.
+
+## Próximos pasos (por prioridad)
+
+1. Revisar y decidir push/PR único de `fix/matches-screen-regression`.
+2. Despliegue controlado: migraciones 1→2→3 + `futbeat-goal-live-sync` + `futbeat-api`, fuera de ventana de partidos. Una vez aplicada la migración 1, correr (solo lectura) `select * from futbeat_private.duplicate_calendar_fixtures(current_date-14,current_date+7)`.
+3. Tras el despliegue, medir 48 h: partidos creados/re-enlazados por descubrimiento, fechas de resultados con `truncatedBy`, recuperaciones `EXHAUSTED` con `attempts=0`, consumo de cuota.
+4. Revisar el reparto de cuota GOAL (`match-detail` 400-550/día frente a finales que no llegan).
+5. Fusión a nivel de partido para los duplicados reales (perfil, H2H y tablas) y arreglar el test CRLF del planner #131.
 
 ## Cómo reanudar
 
-1. `git checkout fix/matches-screen-regression` y `git status` (si hay cambios sin commit, son del bloque en curso).
-2. Migraciones locales nuevas, en orden: `20260930110000_calendar_fixture_dedup.sql`, `20260930120000_terminal_score_correction.sql`, `20260930130000_live_lifecycle_reliability.sql`. Ninguna aplicada en remoto. El worker `futbeat-goal-live-sync` cambió (paginación de resultados) y tampoco está desplegado.
-3. Seguir con el bloque 3 (rendimiento de históricos): medir el camino de apertura del Match Center (`matchContextSnapshotProvider`, `matchDetailProvider`, `matchPreviewProvider`) antes de tocar nada.
+1. `git checkout fix/matches-screen-regression` y `git status` (debe estar limpio salvo `CONTROL_FUTBEAT_4H.md`).
+2. `git log --oneline -7` debe mostrar los commits de arriba sobre `7702e4e`.
+3. Validar: `cd apps/mobile && flutter analyze && flutter test`; en la raíz `npm test` (esperado 977/978 por el test CRLF) y `npm run check`.
