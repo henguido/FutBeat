@@ -478,31 +478,21 @@ class _DateOption extends StatelessWidget {
 }
 
 class _FeedHeading extends StatelessWidget {
-  const _FeedHeading({required this.title, this.subtitle});
+  const _FeedHeading({required this.title});
 
   final String title;
-  final String? subtitle;
 
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(top: 6, bottom: 14),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: lime,
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.8,
-          ),
-        ),
-        if (subtitle != null) ...[
-          const SizedBox(height: 4),
-          Text(subtitle!, style: const TextStyle(color: muted, fontSize: 11)),
-        ],
-      ],
+    child: Text(
+      title,
+      style: const TextStyle(
+        color: lime,
+        fontSize: 11,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 1.8,
+      ),
     ),
   );
 }
