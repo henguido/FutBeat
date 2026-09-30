@@ -794,6 +794,7 @@ class MatchCard extends StatelessWidget {
         ? localTime(context, match.startTime)
         : match.score;
     return Card(
+      key: ValueKey('match-card-${match.id}'),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
         onTap: () =>
