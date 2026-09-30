@@ -9,6 +9,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'auth_errors.dart';
 import 'database.dart';
 import 'live_realtime.dart';
 import 'providers.dart';
@@ -188,12 +189,29 @@ class PushService {
   Future<void> countryPending = Future.value();
   Future<void>? _restoreFuture;
 
+  /// User id whose server follows were merged into Drift in this session.
+  /// Follows are never pushed (a full replace) before this matches [userId],
+  /// so an unmerged local set can never wipe the server copy.
+  String? _linkedUser;
+
+  static String linkedFlagKey(String userId) =>
+      'futbeat.account.linked.$userId';
+
   static const configured =
       bool.fromEnvironment('FUTBEAT_PUSH_ENABLED') &&
       String.fromEnvironment('FUTBEAT_FIREBASE_APP_ID') != '';
 
   bool get accountConfigured => config.isConfigured;
   bool get authenticated => session?['access_token'] != null;
+
+  String? get userId {
+    final user = session?['user'];
+    if (user is! Map) return null;
+    final value = user['id']?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  bool get _followsLinked => authenticated && _linkedUser == (userId ?? '');
 
   String? get email {
     final user = session?['user'];
@@ -232,11 +250,22 @@ class PushService {
       data: {'email': email.trim(), 'password': password},
       options: Options(headers: {'apikey': config.publicKey}),
     );
-    session = result.data;
+    await _startSession(result.data);
+  }
+
+  /// Stores a fresh GoTrue session and starts account sync. A failed first
+  /// reconcile (offline) is retried by the renewal tick; the session stays.
+  Future<void> _startSession(Map<String, dynamic>? value) async {
+    session = value;
+    _linkedUser = null;
     pendingConfirmationEmail = null;
     await storage.delete(key: 'futbeat.auth.pendingConfirmationEmail');
     await _persistSession();
-    await _reconcileAccount();
+    try {
+      await _reconcileAccount();
+    } catch (_) {
+      // Follows stay unpushed until a later reconcile merges the server set.
+    }
     await _startAccountSync();
   }
 
@@ -245,11 +274,17 @@ class PushService {
       throw StateError('Account service is not configured');
     }
     final normalized = email.trim();
-    await dio.post(
+    final response = await dio.post<dynamic>(
       '${config.supabaseUrl}/auth/v1/signup',
       data: {'email': normalized, 'password': password},
       options: Options(headers: {'apikey': config.publicKey}),
     );
+    final data = response.data;
+    // With "Confirm email" disabled GoTrue returns a full session.
+    if (data is Map && data['access_token'] != null) {
+      await _startSession(Map<String, dynamic>.from(data));
+      return;
+    }
     pendingConfirmationEmail = normalized;
     await storage.write(
       key: 'futbeat.auth.pendingConfirmationEmail',
@@ -276,24 +311,78 @@ class PushService {
 
   Future<void> _restore() async {
     if (!accountConfigured || disposed) return;
+    String? saved;
     try {
       pendingConfirmationEmail = await storage.read(
         key: 'futbeat.auth.pendingConfirmationEmail',
       );
-      final saved = await storage.read(key: 'futbeat.push.session');
-      if (saved == null || disposed) return;
-      session = jsonDecode(saved) as Map<String, dynamic>;
+      saved = await storage.read(key: 'futbeat.push.session');
+    } catch (_) {
+      return;
+    }
+    if (saved == null || disposed) return;
+    try {
+      final decoded = jsonDecode(saved);
+      session = decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+    } catch (_) {
+      session = null;
+    }
+    if (!authenticated) {
+      await _clearLocalSession();
+      return;
+    }
+    try {
       await refreshSession();
+    } catch (error) {
+      if (isAuthRejection(error)) {
+        await _clearLocalSession();
+        return;
+      }
+      // Offline/timeout/5xx: keep the stored session; the renewal tick or
+      // the next app resume retries the refresh.
+    }
+    if (disposed || !authenticated) return;
+    try {
       await _reconcileAccount();
-      await _startAccountSync();
+    } catch (_) {
+      // Retried by the renewal tick before any follows are pushed.
+    }
+    await _startAccountSync();
+    try {
       if (configured &&
           await storage.read(key: 'futbeat.push.enabled') == 'true') {
         await enable();
       }
     } catch (_) {
-      session = null;
       enabled = false;
     }
+  }
+
+  /// Drops the local session and account timers. Never touches Drift, so
+  /// guest follows and preferences survive sign-out.
+  Future<void> _clearLocalSession() async {
+    await follows?.cancel();
+    await rotation?.cancel();
+    renewal?.cancel();
+    follows = null;
+    rotation = null;
+    renewal = null;
+    session = null;
+    token = null;
+    enabled = false;
+    _linkedUser = null;
+    await storage.delete(key: 'futbeat.push.session');
+  }
+
+  /// Retries refresh/reconcile after the app returns to the foreground.
+  Future<void> resume() {
+    if (disposed || !authenticated) return Future.value();
+    final operation = pending
+        .catchError((_) {})
+        .then((_) => _accountTick())
+        .catchError((_) {});
+    pending = operation;
+    return operation;
   }
 
   Future<void> _persistSession() =>
@@ -341,8 +430,10 @@ class PushService {
     );
   }
 
+  /// Pushes [values] as a full replace of the server follows. Skipped until
+  /// the server set has been merged into Drift for the current user.
   Future<void> syncFollows(Set<String> values) async {
-    if (!authenticated || disposed) return;
+    if (!authenticated || disposed || !_followsLinked) return;
     await dio.post(
       '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_push_follows',
       options: authHeaders,
@@ -572,6 +663,10 @@ class PushService {
       }
     }
 
+    final uid = userId;
+    final flagKey = uid == null ? null : linkedFlagKey(uid);
+    final alreadyLinked =
+        flagKey != null && await storage.read(key: flagKey) == 'true';
     final local = await database.watchFollows().first;
     final cloudFollows = <String>{};
     final followsJson = cloud['follows'];
@@ -587,15 +682,21 @@ class PushService {
       }
     }
 
-    for (final value in cloudFollows.difference(local)) {
-      final separator = value.indexOf(':');
-      if (separator <= 0 || separator == value.length - 1) continue;
-      await database.toggle(
-        value.substring(0, separator),
-        value.substring(separator + 1),
-      );
+    // First link of this user on this device: union server + local, so an
+    // empty (or different) guest set never deletes server follows. After
+    // that, local Drift is the source of truth and pushes replace the
+    // server set. An empty local set with server follows (fresh install
+    // with a restored keychain session) is always treated as a first link.
+    final firstLink =
+        !alreadyLinked || (local.isEmpty && cloudFollows.isNotEmpty);
+    if (firstLink) {
+      await database.addFollows(cloudFollows.difference(local));
     }
+    _linkedUser = uid ?? '';
     await syncFollows(await database.watchFollows().first);
+    if (flagKey != null && firstLink) {
+      await storage.write(key: flagKey, value: 'true');
+    }
   }
 
   Future<void> _startAccountSync() async {
@@ -613,38 +714,50 @@ class PushService {
     renewal = Timer.periodic(const Duration(minutes: 10), (_) {
       pending = pending
           .catchError((_) {})
-          .then((_) async {
-            if (disposed || !authenticated) return;
-            await refreshSession();
-            await syncFollows(await database.watchFollows().first);
-            if (await storage.read(key: 'futbeat.profile.dirty') == 'true') {
-              await _syncProfileSettings(await loadProfileSettings());
-            }
-            final detectedDirty =
-                await storage.read(key: 'futbeat.country.detected.dirty') ==
-                'true';
-            final selectedDirty =
-                await storage.read(key: 'futbeat.country.selected.dirty') ==
-                'true';
-            final legacyDirty =
-                await storage.read(key: 'futbeat.country.dirty') == 'true';
-            if (detectedDirty || selectedDirty || legacyDirty) {
-              final preference = await database.watchPreference().first;
-              await syncCountries(
-                preference.detectedCountry,
-                preference.selectedCountry,
-                updateDetected:
-                    detectedDirty ||
-                    (legacyDirty && !detectedDirty && !selectedDirty),
-                updateSelected:
-                    selectedDirty ||
-                    (legacyDirty && !detectedDirty && !selectedDirty),
-              );
-            }
-            if (enabled) await register(true);
-          })
+          .then((_) => _accountTick())
           .catchError((_) {});
     });
+  }
+
+  Future<void> _accountTick() async {
+    if (disposed || !authenticated) return;
+    try {
+      await refreshSession();
+    } catch (error) {
+      if (isAuthRejection(error)) {
+        await _clearLocalSession();
+        return;
+      }
+      rethrow;
+    }
+    if (!_followsLinked) {
+      // The first reconcile failed (offline); merge before any push.
+      await _reconcileAccount();
+      if (enabled) await register(true);
+      return;
+    }
+    await syncFollows(await database.watchFollows().first);
+    if (await storage.read(key: 'futbeat.profile.dirty') == 'true') {
+      await _syncProfileSettings(await loadProfileSettings());
+    }
+    final detectedDirty =
+        await storage.read(key: 'futbeat.country.detected.dirty') == 'true';
+    final selectedDirty =
+        await storage.read(key: 'futbeat.country.selected.dirty') == 'true';
+    final legacyDirty =
+        await storage.read(key: 'futbeat.country.dirty') == 'true';
+    if (detectedDirty || selectedDirty || legacyDirty) {
+      final preference = await database.watchPreference().first;
+      await syncCountries(
+        preference.detectedCountry,
+        preference.selectedCountry,
+        updateDetected:
+            detectedDirty || (legacyDirty && !detectedDirty && !selectedDirty),
+        updateSelected:
+            selectedDirty || (legacyDirty && !detectedDirty && !selectedDirty),
+      );
+    }
+    if (enabled) await register(true);
   }
 
   Future<void> enable() async {
@@ -683,22 +796,24 @@ class PushService {
     await storage.write(key: 'futbeat.push.enabled', value: 'false');
   }
 
+  /// Always ends the local session, even offline. The server logout is best
+  /// effort; Drift follows/preferences stay so the guest keeps them.
   Future<void> signOut() async {
-    await disable();
-    await follows?.cancel();
-    renewal?.cancel();
-    if (authenticated) {
-      await dio.post(
-        '${config.supabaseUrl}/auth/v1/logout',
-        options: authHeaders,
-      );
+    final headers = authenticated ? authHeaders : null;
+    try {
+      await disable();
+    } catch (_) {
+      // Offline: the device row may stay enabled server-side; local
+      // sign-out must never depend on the network.
     }
-    session = null;
-    token = null;
-    rotation = null;
-    follows = null;
-    renewal = null;
-    await storage.delete(key: 'futbeat.push.session');
+    await _clearLocalSession();
+    await storage.write(key: 'futbeat.push.enabled', value: 'false');
+    if (headers == null) return;
+    try {
+      await dio.post('${config.supabaseUrl}/auth/v1/logout', options: headers);
+    } catch (_) {
+      // The refresh token expires server-side; the local session is gone.
+    }
   }
 
   Future<void> deleteAccount() async {
@@ -741,12 +856,17 @@ class PushService {
       rethrow;
     }
 
+    final deletedUser = userId;
     enabled = false;
     token = null;
     session = null;
+    _linkedUser = null;
     pending = Future.value();
     countryPending = Future.value();
     await storage.delete(key: 'futbeat.push.session');
+    if (deletedUser != null) {
+      await storage.delete(key: linkedFlagKey(deletedUser));
+    }
     await storage.write(key: 'futbeat.push.enabled', value: 'false');
     await _writeLocalProfile(const UserProfileSettings(), dirty: false);
   }
