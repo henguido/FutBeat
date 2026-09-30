@@ -723,15 +723,29 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
           const SizedBox(height: 8),
         ],
         if (meetings.isEmpty && !more)
-          _thisCompetition
-              ? const _H2hMessage(
-                  'Sin enfrentamientos en este torneo',
-                  key: ValueKey('h2h-empty-competition'),
-                )
-              : const _H2hMessage(
-                  'Sin enfrentamientos anteriores',
-                  key: ValueKey('h2h-empty'),
-                )
+          // "No meetings" only when the server confirmed it; a pair whose
+          // history is still being fetched (or has no source) never reads
+          // as confirmed empty just because a current match exists.
+          switch (availability) {
+            'PENDING' || 'STALE' => const _H2hMessage(
+              'Cargando historial',
+              key: ValueKey('h2h-pending'),
+            ),
+            'UNAVAILABLE' => const _H2hMessage(
+              'Historial no disponible',
+              key: ValueKey('h2h-no-source'),
+            ),
+            _ =>
+              _thisCompetition
+                  ? const _H2hMessage(
+                      'Sin enfrentamientos en este torneo',
+                      key: ValueKey('h2h-empty-competition'),
+                    )
+                  : const _H2hMessage(
+                      'Sin enfrentamientos anteriores',
+                      key: ValueKey('h2h-empty'),
+                    ),
+          }
         else
           for (final item in meetings) ...[
             _MeetingRow(
