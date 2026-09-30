@@ -14,12 +14,9 @@ Documento operativo para que otra sesión continúe exactamente donde esta termi
 
 | Bloque | Estado |
 |---|---|
-| 1A dedup de fixtures por niveles de evidencia | hecho (pendiente commit del bloque 1) |
-| 1B correcciones de marcador | hecho |
-| 1C orden definitivo del feed | hecho |
-| 1D cierre (suite completa + commit local) | EN CURSO |
-| 2 fiabilidad LIVE | pendiente |
-| 3 rendimiento de partidos históricos | pendiente |
+| 1 cierre de `fix/matches-screen-regression` (dedup, marcador, orden) | HECHO — commit `5960d50` |
+| 2 fiabilidad LIVE | HECHO (backend) — ver commit del bloque 2 |
+| 3 rendimiento de partidos históricos | EN CURSO |
 | 4 QA pantalla de partidos | pendiente |
 | 5 UX: swipe de fecha (ya existe #128, verificar) y tabla de posiciones | pendiente |
 | 6 Match Center deuda pequeña | pendiente |
@@ -27,9 +24,17 @@ Documento operativo para que otra sesión continúe exactamente donde esta termi
 
 ## Tarea activa
 
-1D: correr `flutter analyze`, `flutter test`, `npm test`, `npm run check`, `git diff --check` y crear el commit local del bloque 1.
+Bloque 3: medir primero (qué bloquea el primer render del Match Center de un partido pasado), luego optimizar.
 
-Nota de entorno: el chequeo de permisos del shell falló de forma transitoria a media sesión (no es un fallo del código); reintentar el comando.
+Nota de entorno: el chequeo de permisos del shell falla a ratos de forma transitoria; reintentar el mismo comando.
+
+## Bloque 2 — hallazgos (diagnóstico de SOLO LECTURA en producción, 2026-09-30 14:00 UTC)
+
+1. Resultados por fecha: los días con >= 500 resultados fallaban enteros con `GOAL results pagination cannot make progress` (la página 2 repetía la 1) y se descartaban los 500 resultados ya leídos; 3 intentos y fecha agotada (26 y 27 de septiembre en `FAILED`). Arreglo en el worker: si una página no aporta nada nuevo, o se llega a 5 páginas, se PARA y se procesa lo leído (`truncatedBy`); solo falla si no se leyó nada.
+2. Recuperación terminal: 278 de 282 filas agotadas en 72 h tenían `attempts=0` (`expired`). Necesita cuota por encima del piso protegido (150) y la fila vence a las 6 h, antes del reinicio diario de cuota (00:00 UTC). Arreglo: una recuperación pendiente > 10 min pide la fecha a la vía de resultados (`results_date_user_demand`, como cuando un usuario abre el partido), máximo una vez por hora y fecha.
+3. Partidos en juego invisibles: 67 estados LIVE de GOAL en 24 h sin partido canónico; en 37 la competición y ambos equipos YA estaban mapeados pero el fixture no existía en el calendario (no hay ingesta periódica de calendario; las entidades vienen de la ingesta del 18-sep). Arreglo: descubrimiento con identidad fuerte (`discover_goal_live_match`): re-enlaza el fantasma programado de la misma competición y equipos a <= 24 h (corrige el saque, retira el id viejo y lo guarda en `provenance.previousExternalIds`) o crea el partido canónico (estado SCHEDULED; LIVE/final llega por observaciones). Nunca por nombres; ambiguo = sigue sin mapear.
+4. Sin arreglo posible desde FutBeat: competiciones que GOAL no incluye en `/fixtures/live` (15 de 19 partidos en juego sin observaciones eran de una sola competición menor). Se muestran "Por confirmar" hasta que llegue el resultado por fecha.
+5. Cuota GOAL ~1000/día: `match-detail` gasta 400-550/día, `live-goal` 160-245. No se cambió ninguna política de cuota.
 
 ## Decisiones técnicas (bloque 1)
 
@@ -75,7 +80,8 @@ No toma bloqueo de fila salvo que aplique (UPDATE condicionado). Guarda `provena
 
 ## Commits locales de la sesión
 
-(ninguno todavía; el primero será el del bloque 1)
+- `5960d50` fix: harden match feed reconciliation (bloque 1)
+- bloque 2: fix: stabilize live match lifecycle (ver `git log`)
 
 ## Archivos del bloque 1
 
@@ -92,11 +98,11 @@ Modificados: `apps/mobile/lib/features/matches/matches_screen.dart`, `apps/mobil
 
 - Deploy, migraciones remotas, push, PR, merge: 0.
 - Llamadas a proveedores: 0.
-- Producción: solo 3 consultas `SELECT` de diagnóstico (duplicados, detalle de los pares, clases de competición).
+- Producción: solo consultas `SELECT` de diagnóstico (duplicados, ciclo LIVE, recuperaciones, cuota, estados sin mapear). Ninguna escritura.
 - `CONTROL_FUTBEAT_4H.md` (de otra sesión) no se tocó ni se versiona.
 
 ## Cómo reanudar
 
 1. `git checkout fix/matches-screen-regression` y `git status` (si hay cambios sin commit, son del bloque en curso).
-2. Correr la validación del bloque 1D. Si todo lo propio está verde, commit local `fix: harden match feed reconciliation`.
-3. Seguir con el bloque 2 (fiabilidad LIVE): trazar proveedor → ingest → lifecycle → snapshots → API → realtime → Flutter.
+2. Migraciones locales nuevas, en orden: `20260930110000_calendar_fixture_dedup.sql`, `20260930120000_terminal_score_correction.sql`, `20260930130000_live_lifecycle_reliability.sql`. Ninguna aplicada en remoto. El worker `futbeat-goal-live-sync` cambió (paginación de resultados) y tampoco está desplegado.
+3. Seguir con el bloque 3 (rendimiento de históricos): medir el camino de apertura del Match Center (`matchContextSnapshotProvider`, `matchDetailProvider`, `matchPreviewProvider`) antes de tocar nada.
