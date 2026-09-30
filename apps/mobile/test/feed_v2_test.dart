@@ -584,7 +584,9 @@ void main() {
         label: 'Mostrar partidos de LaLiga',
       ),
     );
-    final live = tester.getSemantics(_row('m_cr_live'));
+    final live = tester.getSemantics(
+      find.byKey(const ValueKey('match-card-action-m_cr_live')),
+    );
     expect(live.label, contains('Saprissa contra Alajuelense'));
     expect(live.label, contains('1 - 0'));
     handle.dispose();
