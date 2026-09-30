@@ -251,8 +251,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the row star follows / unfollows the match: it rises into '
-      'Siguiendo once, and the row tap still opens the match', (tester) async {
+  testWidgets('the row star follows / unfollows the match without moving it '
+      '(only favourite teams make "Siguiendo"); the row tap still opens the '
+      'match', (tester) async {
     final db = _FollowsDb();
     addTearDown(db.changes.close);
     final opened = await _pump(tester, db: db);
@@ -268,16 +269,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened, isEmpty, reason: 'the star never opens the match');
     expect(db.toggles, ['match:m_es_long']);
-    expect(find.text('Siguiendo'), findsOneWidget);
+    expect(find.text('Siguiendo'), findsNothing);
     expect(
       find.byType(FeedMatchRow),
       findsNWidgets(6),
       reason: 'reorders only',
     );
     expect(_row('m_es_long'), findsOneWidget, reason: 'never duplicated');
+    // Still under its own competition.
     expect(
       tester.getTopLeft(_row('m_es_long')).dy,
-      lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
+      greaterThan(tester.getTopLeft(find.text('LaLiga')).dy),
     );
     expect(tooltip(), startsWith('Dejar de seguir '));
     await tester.tap(star);
@@ -436,23 +438,22 @@ void main() {
     skip: nearMidnight,
   );
 
-  testWidgets('a directly followed match (match:<id>) is lifted once', (
-    tester,
-  ) async {
-    await _pump(tester, follows: {'match:m_es_1'});
-    expect(find.text('Siguiendo'), findsOneWidget);
+  testWidgets('a directly followed match (match:<id>) or league never makes '
+      '"Siguiendo": it stays in its competition, once', (tester) async {
+    await _pump(tester, follows: {'match:m_es_1', 'competition:c_es'});
+    expect(find.text('Siguiendo'), findsNothing);
     expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(_row('m_es_1'), findsOneWidget);
     expect(
       tester.getTopLeft(_row('m_es_1')).dy,
-      lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
+      greaterThan(tester.getTopLeft(find.text('LaLiga')).dy),
     );
-    // LaLiga keeps its other three matches under its header.
+    // LaLiga keeps all its four matches under its header.
     expect(
       tester
           .widget<Text>(find.byKey(const ValueKey('competition-count-c_es')))
           .data,
-      '3',
+      '4',
     );
   });
 
