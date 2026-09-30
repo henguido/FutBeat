@@ -16,6 +16,19 @@ bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
     follows.contains('team:${match.homeId}') ||
     follows.contains('team:${match.awayId}');
 
+/// Defensive UI-level dedupe: the daily feed renders a canonical fixture once,
+/// even if an upstream overlay accidentally supplies the same canonical id
+/// more than once. Identity is the canonical match id, never display names.
+List<FootballMatch> _dedupeMatchesByCanonicalId(
+  Iterable<FootballMatch> matches,
+) {
+  final seen = <String>{};
+  return [
+    for (final match in matches)
+      if (seen.add(match.id)) match,
+  ];
+}
+
 String _feedEventLabel(String type) => switch (type) {
   'GOAL' => 'Gol',
   'YELLOW_CARD' => 'Tarjeta amarilla',
@@ -184,7 +197,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
-          final games = data.onDate(selected, filter);
+          final games = _dedupeMatchesByCanonicalId(
+            data.onDate(selected, filter),
+          );
 
           final followedGames =
               games
@@ -237,7 +252,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             );
             if (!collapsed) {
               for (final match in competitionMatches) {
-                feedItems.add(() => FeedMatchRow(match, data));
+                feedItems.add(() => MatchCard(match, data));
               }
             }
             feedItems.add(() => const SizedBox(height: 8));
@@ -332,24 +347,18 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
 
           if (followedGames.isNotEmpty) {
             feedItems.add(
-              () => _FeedHeading(
-                title: 'Siguiendo',
-                subtitle: data.demo
-                    ? 'Solo esos partidos suben; la competición completa no se mueve.'
-                    : null,
-              ),
+              () => const _FeedHeading(title: 'Favoritos'),
             );
             for (final match in followedGames) {
               final competition = data.competition(match.competitionId);
-              feedItems.add(
-                () => FeedMatchRow(match, data, caption: competition?.name),
-              );
+              feedItems.add(() => MatchCard(match, data));
             }
             feedItems.add(() => const SizedBox(height: 12));
           }
 
-          // Then every competition with its remaining matches, in the usual
-          // order (pinned / followed competitions first): no extra blocks.
+          // Then every competition with its remaining matches. Favourite-team
+          // fixtures were removed above, so every canonical match is rendered
+          // exactly once.
           for (final competition in orderedCompetitions) {
             addCompetition(competition);
           }
@@ -775,6 +784,15 @@ class MatchCard extends StatelessWidget {
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
     final latestEvent = match.latestEvent;
+    // A scheduled row whose kickoff already passed without any evidence of
+    // play is not allowed to masquerade as an upcoming match.
+    final unconfirmed = match.isAwaitingUpdate && !match.hasPlayedEvidence;
+    final status = unconfirmed ? 'Por confirmar' : match.statusLabel;
+    final centre = unconfirmed
+        ? '—'
+        : match.showKickoff
+        ? localTime(context, match.startTime)
+        : match.score;
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
@@ -787,10 +805,10 @@ class MatchCard extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: match.statusLabel.isEmpty
+                    child: status.isEmpty
                         ? const SizedBox.shrink()
                         : Text(
-                            match.statusLabel.toUpperCase(),
+                            status.toUpperCase(),
                             style: TextStyle(
                               color: match.isLive ? lime : muted,
                               fontSize: 10,
@@ -798,7 +816,12 @@ class MatchCard extends StatelessWidget {
                             ),
                           ),
                   ),
-                  FollowButton('match', match.id),
+                  FollowButton(
+                    'match',
+                    match.id,
+                    key: ValueKey('feed-follow-${match.id}'),
+                    label: '${home.name} contra ${away.name}',
+                  ),
                 ],
               ),
               Row(
@@ -823,17 +846,23 @@ class MatchCard extends StatelessWidget {
                     child: Column(
                       children: [
                         Text(
-                          match.showKickoff
-                              ? localTime(context, match.startTime)
-                              : match.score,
+                          centre,
                           style: TextStyle(
-                            fontSize: match.showKickoff ? 21 : 30,
+                            fontSize: unconfirmed
+                                ? 30
+                                : match.showKickoff
+                                ? 21
+                                : 30,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          match.showKickoff ? 'Hora Costa Rica' : 'Ver partido',
+                          unconfirmed
+                              ? 'Ver partido'
+                              : match.showKickoff
+                              ? 'Hora Costa Rica'
+                              : 'Ver partido',
                           style: const TextStyle(fontSize: 10, color: muted),
                         ),
                       ],
