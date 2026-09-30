@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -32,31 +33,34 @@ class _Fail {
   final Map<String, dynamic> body;
 }
 
-const _user = {
-  'id': 'user-a',
-  'email': 'user@example.com',
-  'email_confirmed_at': '2026-09-27T00:00:00Z',
+/// A signed-in session that needs no server round trip (widget tests).
+Map<String, dynamic> _session() => {
+  'access_token': 'access-user-a-0',
+  'refresh_token': 'refresh-user-a-0',
+  'user': {
+    'id': 'user-a',
+    'email': 'user@example.com',
+    'email_confirmed_at': '2026-09-27T00:00:00Z',
+  },
 };
 
-Map<String, dynamic> _session([String access = 'access-test']) => {
-  'access_token': access,
-  'refresh_token': 'refresh-test',
-  'user': _user,
-};
+typedef _Route = FutureOr<Object?> Function(RequestOptions options);
 
-/// Fake GoTrue/PostgREST: each route suffix maps to response data or a
-/// [_Fail]. Unlisted routes answer 200 with an empty object.
+/// Stateful fake of GoTrue + PostgREST: per-user server follows, rotating
+/// refresh tokens (a reused one fails like GoTrue), and overridable routes.
 class _Http {
   _Http() {
     dio.interceptors.add(
       InterceptorsWrapper(
-        onRequest: (options, handler) {
+        onRequest: (options, handler) async {
           calls.add(options);
           final route = routes.entries
               .where((entry) => options.path.contains(entry.key))
               .map((entry) => entry.value)
               .firstOrNull;
-          final result = route == null ? <String, dynamic>{} : route();
+          final result = route == null
+              ? <String, dynamic>{}
+              : await route(options);
           if (result is _Fail) {
             handler.reject(
               DioException(
@@ -81,48 +85,122 @@ class _Http {
         },
       ),
     );
+    routes.addAll({
+      'grant_type=password': signInRoute,
+      'grant_type=refresh_token': refreshRoute,
+      'futbeat_read_user_profile': readRoute,
+      'futbeat_sync_push_follows': syncRoute,
+    });
   }
 
   final dio = Dio();
   final calls = <RequestOptions>[];
-  final routes = <String, Object? Function()>{
-    'grant_type=password': _session,
-    'grant_type=refresh_token': () => _session('access-refreshed'),
-  };
-  Set<String> serverFollows = {};
+  final routes = <String, _Route>{};
+  final users = {'user@example.com': 'user-a', 'b@example.com': 'user-b'};
+  final server = <String, Set<String>>{};
+  final validRefresh = <String, String>{};
+  DateTime now = DateTime.utc(2026, 9, 29, 12);
+  var _issued = 0;
 
-  void serveProfile() {
-    routes['futbeat_read_user_profile'] = () => {
-      'preferences': <String, dynamic>{},
-      'follows': [
-        for (final key in serverFollows)
-          {'type': key.split(':').first, 'id': key.split(':').last},
-      ],
+  Map<String, dynamic> issue(String uid) {
+    _issued++;
+    final refresh = 'refresh-$uid-$_issued';
+    validRefresh[refresh] = uid;
+    return {
+      'access_token': 'access-$uid-$_issued',
+      'refresh_token': refresh,
+      'expires_at':
+          now.add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000,
+      'user': {
+        'id': uid,
+        'email': users.entries.firstWhere((e) => e.value == uid).key,
+        'email_confirmed_at': '2026-09-27T00:00:00Z',
+      },
     };
   }
 
+  Object? signInRoute(RequestOptions options) {
+    final uid = users[(options.data as Map)['email']];
+    return uid == null
+        ? const _Fail(400, {'error_code': 'invalid_credentials'})
+        : issue(uid);
+  }
+
+  Object? refreshRoute(RequestOptions options) {
+    final uid = validRefresh.remove((options.data as Map)['refresh_token']);
+    return uid == null
+        ? const _Fail(400, {'error_code': 'refresh_token_already_used'})
+        : issue(uid);
+  }
+
+  String _caller(RequestOptions options) {
+    final bearer = '${options.headers['Authorization']}'.replaceFirst(
+      'Bearer access-',
+      '',
+    );
+    return bearer.substring(0, bearer.lastIndexOf('-'));
+  }
+
+  Object? readRoute(RequestOptions options) => {
+    'preferences': <String, dynamic>{},
+    'follows': [
+      for (final key in server[_caller(options)] ?? const <String>{})
+        {
+          'type': key.substring(0, key.indexOf(':')),
+          'id': key.substring(key.indexOf(':') + 1),
+        },
+    ],
+  };
+
+  Object? syncRoute(RequestOptions options) {
+    server[_caller(options)] = _followsOf(options);
+    return null;
+  }
+
+  /// Wraps the current handler of [route] so it waits for the completer.
+  Completer<void> hold(String route) {
+    final gate = Completer<void>();
+    final inner = routes[route]!;
+    routes[route] = (options) async {
+      await gate.future;
+      return inner(options);
+    };
+    return gate;
+  }
+
+  static Set<String> _followsOf(RequestOptions call) => {
+    for (final item in (call.data as Map)['p_follows'] as List)
+      '${item['type']}:${item['id']}',
+  };
+
   List<Set<String>> get pushes => [
     for (final call in calls)
-      if (call.path.endsWith('futbeat_sync_push_follows'))
-        {
-          for (final item in (call.data as Map)['p_follows'] as List)
-            '${item['type']}:${item['id']}',
-        },
+      if (call.path.endsWith('futbeat_sync_push_follows')) _followsOf(call),
   ];
 
-  bool called(String suffix) => calls.any((c) => c.path.contains(suffix));
+  int count(String suffix) =>
+      calls.where((c) => c.path.contains(suffix)).length;
+  bool called(String suffix) => count(suffix) > 0;
+
+  Future<void> waitFor(String suffix) async {
+    for (var i = 0; i < 200 && !called(suffix); i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(called(suffix), isTrue, reason: 'waiting for $suffix');
+  }
 }
 
 Future<({PushService service, AppDatabase db, _Http http})> _service({
   Map<String, String> storage = const {},
   Set<String> local = const {},
   Set<String> server = const {},
+  _Http? http,
 }) async {
   FlutterSecureStorage.setMockInitialValues(Map.of(storage));
   final db = AppDatabase(NativeDatabase.memory());
   await db.addFollows(local);
-  final http = _Http()..serverFollows = server;
-  http.serveProfile();
+  final fake = http ?? _Http();
+  if (server.isNotEmpty) fake.server['user-a'] = {...server};
   final service = PushService(
     const LiveRealtimeConfig(
       supabaseUrl: 'https://supabase.test',
@@ -130,17 +208,43 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
     ),
     db,
     _Tokens(),
-    dio: http.dio,
+    dio: fake.dio,
+    clock: () => fake.now,
   );
   addTearDown(() async {
     service.dispose();
     await db.close();
   });
-  return (service: service, db: db, http: http);
+  return (service: service, db: db, http: fake);
 }
 
-Future<String?> _stored(String key) =>
+/// A service whose storage already holds a valid session for user-a.
+Future<({PushService service, AppDatabase db, _Http http})> _stored({
+  Set<String> local = const {},
+  Set<String> server = const {},
+  Duration expiresIn = const Duration(hours: 1),
+}) async {
+  final http = _Http();
+  final session = http.issue('user-a');
+  session['expires_at'] =
+      http.now.add(expiresIn).millisecondsSinceEpoch ~/ 1000;
+  return _service(
+    storage: {'futbeat.push.session': jsonEncode(session)},
+    local: local,
+    server: server,
+    http: http,
+  );
+}
+
+Future<String?> _read(String key) =>
     const FlutterSecureStorage().read(key: key);
+
+Future<void> _settle(PushService service) async {
+  for (var i = 0; i < 5; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    await service.pending;
+  }
+}
 
 DioException _dio({int? status, Object? body, DioExceptionType? type}) {
   final options = RequestOptions(path: '/auth/v1/token');
@@ -286,6 +390,31 @@ void main() {
     }
   });
 
+  test('auth rejection: 400/401 always, 403 only with a GoTrue code', () {
+    expect(isAuthRejection(_dio(status: 400, body: {})), isTrue);
+    expect(isAuthRejection(_dio(status: 401, body: {})), isTrue);
+    expect(isAuthRejection(_dio(status: 403, body: {})), isFalse);
+    expect(isAuthRejection(_dio(status: 403, body: '<html>')), isFalse);
+    for (final code in [
+      'refresh_token_not_found',
+      'refresh_token_already_used',
+      'session_not_found',
+      'invalid_grant',
+      'bad_jwt',
+    ]) {
+      expect(
+        isAuthRejection(_dio(status: 403, body: {'error_code': code})),
+        isTrue,
+        reason: code,
+      );
+    }
+    expect(isAuthRejection(_dio(status: 503, body: {})), isFalse);
+    expect(
+      isAuthRejection(_dio(type: DioExceptionType.connectionError)),
+      isFalse,
+    );
+  });
+
   test('client validation messages', () {
     expect(validateEmail('user@example.com'), isNull);
     expect(validateEmail('  user@example.com '), isNull);
@@ -297,79 +426,199 @@ void main() {
     expect(validatePassword('12345678', signUp: true), isNull);
   });
 
-  test(
-    'sign out with a failing logout still clears the session and keeps follows',
-    () async {
-      final value = await _service(local: {'team:guest'});
-      await value.service.signIn('user@example.com', 'password-test');
-      value.http.routes['/auth/v1/logout'] = () => const _Fail.offline();
-
-      await value.service.signOut();
-
-      expect(value.http.called('/auth/v1/logout'), isTrue);
-      expect(value.service.authenticated, isFalse);
-      expect(value.service.renewal, isNull);
-      expect(value.service.follows, isNull);
-      expect(await _stored('futbeat.push.session'), isNull);
-      expect(await value.db.watchFollows().first, {'team:guest'});
-    },
-  );
-
-  test('restore keeps the stored session on a network error', () async {
-    final stored = jsonEncode(_session('access-old'));
-    final value = await _service(storage: {'futbeat.push.session': stored});
-    value.http.routes['grant_type=refresh_token'] = () => const _Fail.offline();
-    value.http.routes['futbeat_read_user_profile'] = () => const _Fail(503);
-
-    await value.service.restore();
-
-    expect(value.service.authenticated, isTrue);
-    expect(value.service.session?['access_token'], 'access-old');
-    expect(await _stored('futbeat.push.session'), stored);
-    expect(value.service.renewal, isNotNull, reason: 'retry is scheduled');
-    expect(value.http.pushes, isEmpty, reason: 'no push before a merge');
-
-    // Back online: the resume retry refreshes and merges.
-    value.http.routes['grant_type=refresh_token'] = () =>
-        _session('access-refreshed');
-    value.http.serveProfile();
-    await value.service.resume();
-    expect(value.service.session?['access_token'], 'access-refreshed');
-    expect(value.http.pushes, isNotEmpty);
-  });
-
-  for (final status in [400, 401, 403]) {
+  group('sign out', () {
     test(
-      'restore drops the session when the refresh token is rejected ($status)',
+      'a failing logout still clears the session and keeps follows',
       () async {
-        final value = await _service(
-          storage: {'futbeat.push.session': jsonEncode(_session())},
-          local: {'team:guest'},
-        );
-        value.http.routes['grant_type=refresh_token'] = () =>
-            _Fail(status, {'error_code': 'refresh_token_not_found'});
+        final value = await _service(local: {'team:guest'});
+        await value.service.signIn('user@example.com', 'password-test');
+        value.http.routes['/auth/v1/logout'] = (_) => const _Fail.offline();
 
-        await value.service.restore();
+        await value.service.signOut();
+        await value.service.signOutCleanup;
 
+        expect(value.http.called('/auth/v1/logout'), isTrue);
         expect(value.service.authenticated, isFalse);
         expect(value.service.renewal, isNull);
-        expect(await _stored('futbeat.push.session'), isNull);
+        expect(value.service.follows, isNull);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(await _read(PushService.pushedKey('user-a')), isNull);
         expect(await value.db.watchFollows().first, {'team:guest'});
       },
     );
-  }
+
+    test('offline sign out returns immediately', () async {
+      final value = await _service();
+      await value.service.signIn('user@example.com', 'password-test');
+      final never = Completer<void>();
+      value.http.routes['/auth/v1/logout'] = (_) async {
+        await never.future;
+        return null;
+      };
+      await value.service.signOut().timeout(const Duration(seconds: 1));
+      expect(value.service.authenticated, isFalse);
+      expect(value.service.renewal, isNull);
+    });
+
+    test(
+      'sign out during an in-flight restore refresh stays signed out',
+      () async {
+        final value = await _stored(server: {'team:a'});
+        final gate = value.http.hold('grant_type=refresh_token');
+        final restoring = value.service.restore();
+        await value.http.waitFor('grant_type=refresh_token');
+        expect(value.service.authenticated, isTrue);
+
+        await value.service.signOut();
+        gate.complete();
+        await restoring;
+        await _settle(value.service);
+
+        expect(value.service.authenticated, isFalse);
+        expect(value.service.renewal, isNull);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(value.http.called('futbeat_read_user_profile'), isFalse);
+        expect(value.http.pushes, isEmpty);
+      },
+    );
+
+    test(
+      'sign out during an in-flight resume refresh stays signed out',
+      () async {
+        final value = await _service(server: {'team:a'});
+        await value.service.signIn('user@example.com', 'password-test');
+        value.http.now = value.http.now.add(const Duration(minutes: 58));
+        final gate = value.http.hold('grant_type=refresh_token');
+        final resuming = value.service.resume();
+        await value.http.waitFor('grant_type=refresh_token');
+
+        await value.service.signOut();
+        gate.complete();
+        await resuming;
+        await _settle(value.service);
+
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+      },
+    );
+  });
+
+  group('restore', () {
+    test(
+      'keeps the stored session on a network error, then recovers',
+      () async {
+        final value = await _stored(server: {'team:a'});
+        final stored = await _read('futbeat.push.session');
+        final refresh = value.http.routes['grant_type=refresh_token']!;
+        final read = value.http.routes['futbeat_read_user_profile']!;
+        value.http.routes['grant_type=refresh_token'] = (_) =>
+            const _Fail.offline();
+        value.http.routes['futbeat_read_user_profile'] = (_) =>
+            const _Fail(503);
+
+        await value.service.restore();
+
+        expect(value.service.authenticated, isTrue);
+        expect(await _read('futbeat.push.session'), stored);
+        expect(value.service.renewal, isNotNull, reason: 'retry is scheduled');
+        expect(value.http.pushes, isEmpty, reason: 'no push before a merge');
+
+        // Back online: resume merges; it refreshes once the token is close
+        // to expiry.
+        value.http.routes['grant_type=refresh_token'] = refresh;
+        value.http.routes['futbeat_read_user_profile'] = read;
+        await value.service.resume();
+        expect(await value.db.watchFollows().first, {'team:a'});
+        expect(value.http.count('grant_type=refresh_token'), 1);
+        value.http.now = value.http.now.add(const Duration(minutes: 57));
+        await value.service.resume();
+        expect(value.http.count('grant_type=refresh_token'), 2);
+        expect(await _read('futbeat.push.session'), isNot(stored));
+      },
+    );
+
+    for (final (status, code) in [
+      (400, 'refresh_token_not_found'),
+      (401, null),
+      (403, 'refresh_token_already_used'),
+    ]) {
+      test(
+        'drops the session when GoTrue rejects the refresh ($status)',
+        () async {
+          final value = await _stored(local: {'team:guest'});
+          value.http.routes['grant_type=refresh_token'] = (_) =>
+              _Fail(status, {'error_code': ?code});
+
+          await value.service.restore();
+
+          expect(value.service.authenticated, isFalse);
+          expect(value.service.renewal, isNull);
+          expect(await _read('futbeat.push.session'), isNull);
+          expect(await value.db.watchFollows().first, {'team:guest'});
+        },
+      );
+    }
+
+    test(
+      'a 403 from a proxy without a GoTrue code keeps the session',
+      () async {
+        final value = await _stored();
+        value.http.routes['grant_type=refresh_token'] = (_) => const _Fail(403);
+        await value.service.restore();
+        expect(value.service.authenticated, isTrue);
+        expect(await _read('futbeat.push.session'), isNotNull);
+      },
+    );
+
+    test('an invalid 200 refresh body keeps the session', () async {
+      final value = await _stored();
+      final stored = await _read('futbeat.push.session');
+      value.http.routes['grant_type=refresh_token'] = (_) => {
+        'access_token': 'only-access',
+      };
+      await value.service.restore();
+      expect(value.service.authenticated, isTrue);
+      expect(await _read('futbeat.push.session'), stored);
+      expect(value.service.session?['refresh_token'], isNot(isEmpty));
+    });
+
+    test('concurrent restore and resume share one refresh', () async {
+      final value = await _stored(expiresIn: const Duration(minutes: 1));
+      final gate = value.http.hold('grant_type=refresh_token');
+      final restoring = value.service.restore();
+      await value.http.waitFor('grant_type=refresh_token');
+      final resuming = value.service.resume();
+      gate.complete();
+      await Future.wait([restoring, resuming]);
+      await _settle(value.service);
+
+      expect(value.http.count('grant_type=refresh_token'), 1);
+      expect(value.service.authenticated, isTrue);
+    });
+  });
+
+  test('sign in with an invalid 200 body creates no session', () async {
+    final value = await _service();
+    value.http.routes['grant_type=password'] = (_) => {'user': {}};
+    await expectLater(
+      value.service.signIn('user@example.com', 'password-test'),
+      throwsA(isA<DioException>()),
+    );
+    expect(value.service.authenticated, isFalse);
+    expect(await _read('futbeat.push.session'), isNull);
+  });
 
   test('sign up with an autoconfirm session signs in directly', () async {
     final value = await _service();
-    value.http.routes['/auth/v1/signup'] = () => _session('access-signup');
+    value.http.routes['/auth/v1/signup'] = (_) => value.http.issue('user-a');
 
     await value.service.signUp(' user@example.com ', 'password-test');
 
     expect(value.service.authenticated, isTrue);
     expect(value.service.pendingConfirmationEmail, isNull);
     expect(value.service.renewal, isNotNull);
-    final stored = jsonDecode((await _stored('futbeat.push.session'))!);
-    expect(stored['access_token'], 'access-signup');
+    final stored = jsonDecode((await _read('futbeat.push.session'))!);
+    expect(stored['access_token'], startsWith('access-user-a-'));
     expect(value.http.called('futbeat_read_user_profile'), isTrue);
   });
 
@@ -377,91 +626,154 @@ void main() {
     'sign up without a session keeps the pending confirmation flow',
     () async {
       final value = await _service();
-      value.http.routes['/auth/v1/signup'] = () => {'id': 'user-a'};
+      value.http.routes['/auth/v1/signup'] = (_) => {'id': 'user-a'};
       await value.service.signUp('new@example.com', 'password-test');
       expect(value.service.authenticated, isFalse);
       expect(value.service.pendingConfirmationEmail, 'new@example.com');
-      expect(await _stored('futbeat.push.session'), isNull);
+      expect(await _read('futbeat.push.session'), isNull);
     },
   );
 
-  test(
-    'first login merges server and local follows and pushes the union',
-    () async {
+  group('follow merge', () {
+    test('first login unions server and local follows', () async {
       final value = await _service(
         server: {'team:a', 'team:b'},
         local: {'team:b', 'team:c'},
       );
 
       await value.service.signIn('user@example.com', 'password-test');
-      await value.service.pending;
+      await _settle(value.service);
 
       final union = {'team:a', 'team:b', 'team:c'};
       expect(await value.db.watchFollows().first, union);
-      expect(value.http.pushes, isNotEmpty);
+      expect(value.http.server['user-a'], union);
+      expect(value.http.pushes.every((p) => p.containsAll(union)), isTrue);
       expect(
-        value.http.pushes.every((push) => push.containsAll(union)),
-        isTrue,
+        (jsonDecode((await _read(PushService.pushedKey('user-a')))!) as List)
+            .toSet(),
+        union,
       );
-      expect(await _stored(PushService.linkedFlagKey('user-a')), 'true');
-    },
-  );
+      expect(await _read(PushService.lastUserKey), 'user-a');
+    });
 
-  test('an empty local set never wipes server follows on first link', () async {
-    final value = await _service(server: {'team:a', 'team:b'});
+    test('an empty local set never wipes server follows', () async {
+      final value = await _service(server: {'team:a', 'team:b'});
+      await value.service.signIn('user@example.com', 'password-test');
+      await _settle(value.service);
+      expect(await value.db.watchFollows().first, {'team:a', 'team:b'});
+      expect(value.http.pushes, isNotEmpty);
+      expect(value.http.pushes.any((push) => push.isEmpty), isFalse);
+    });
 
-    await value.service.signIn('user@example.com', 'password-test');
-    await value.service.pending;
-
-    expect(await value.db.watchFollows().first, {'team:a', 'team:b'});
-    expect(value.http.pushes, isNotEmpty);
-    expect(value.http.pushes.any((push) => push.isEmpty), isFalse);
-  });
-
-  test(
-    'an offline first reconcile never pushes until the merge succeeds',
-    () async {
+    test('an offline first reconcile never pushes until the merge', () async {
       final value = await _service(server: {'team:a'}, local: {'team:b'});
-      value.http.routes['futbeat_read_user_profile'] = () =>
+      final read = value.http.routes['futbeat_read_user_profile']!;
+      value.http.routes['futbeat_read_user_profile'] = (_) =>
           const _Fail.offline();
 
       await value.service.signIn('user@example.com', 'password-test');
       await value.db.addFollows({'team:c'});
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      await value.service.pending;
+      await _settle(value.service);
 
       expect(value.service.authenticated, isTrue);
       expect(value.http.pushes, isEmpty);
 
-      value.http.serveProfile();
+      value.http.routes['futbeat_read_user_profile'] = read;
       await value.service.resume();
+      await _settle(value.service);
+      final all = {'team:a', 'team:b', 'team:c'};
+      expect(await value.db.watchFollows().first, all);
+      expect(value.http.server['user-a'], all);
+    });
+
+    test('same user after sign-out unions again (no stale replace)', () async {
+      final value = await _service(server: {'team:a', 'team:b'});
+      await value.service.signIn('user@example.com', 'password-test');
+      await _settle(value.service);
+      await value.service.signOut();
+
+      // As a guest the user unfollows team:a and follows team:g.
+      await value.db.toggle('team', 'a');
+      await value.db.addFollows({'team:g'});
+      await value.service.signIn('user@example.com', 'password-test');
+      await _settle(value.service);
+
+      final all = {'team:a', 'team:b', 'team:g'};
+      expect(await value.db.watchFollows().first, all);
+      expect(value.http.server['user-a'], all);
+    });
+
+    test(
+      'a second account on the same device never inherits follows',
+      () async {
+        final value = await _service(local: {'team:guest'});
+        value.http.server['user-a'] = {'team:a'};
+        value.http.server['user-b'] = {'team:b'};
+
+        await value.service.signIn('user@example.com', 'password-test');
+        await _settle(value.service);
+        expect(value.http.server['user-a'], {'team:a', 'team:guest'});
+        await value.service.signOut();
+
+        await value.service.signIn('b@example.com', 'password-test');
+        await _settle(value.service);
+        expect(await value.db.watchFollows().first, {'team:b'});
+        expect(value.http.server['user-b'], {'team:b'});
+        await value.service.signOut();
+
+        await value.service.signIn('user@example.com', 'password-test');
+        await _settle(value.service);
+        expect(await value.db.watchFollows().first, {'team:a', 'team:guest'});
+        expect(value.http.server['user-a'], {'team:a', 'team:guest'});
+        expect(value.http.server['user-b'], {'team:b'});
+      },
+    );
+
+    test('follows added on another device survive and are pulled in', () async {
+      final value = await _service(server: {'team:a'});
+      await value.service.signIn('user@example.com', 'password-test');
+      await _settle(value.service);
+
+      // Device B adds team:x; this device then follows team:c.
+      value.http.server['user-a']!.add('team:x');
+      await value.db.addFollows({'team:c'});
+      await _settle(value.service);
+      expect(value.http.server['user-a'], {'team:a', 'team:c', 'team:x'});
       expect(await value.db.watchFollows().first, {
         'team:a',
-        'team:b',
         'team:c',
+        'team:x',
       });
-      expect(value.http.pushes.last, {'team:a', 'team:b', 'team:c'});
-    },
-  );
 
-  test('the linked flag makes the union merge run once per user', () async {
-    final value = await _service(
-      server: {'team:a', 'team:b'},
-      local: {'team:c'},
-    );
-    await value.service.signIn('user@example.com', 'password-test');
-    expect(await value.db.watchFollows().first, {'team:a', 'team:b', 'team:c'});
+      // Device B adds team:y; this device resumes later.
+      value.http.server['user-a']!.add('team:y');
+      value.http.now = value.http.now.add(const Duration(minutes: 6));
+      await value.service.resume();
+      await _settle(value.service);
+      expect(await value.db.watchFollows().first, contains('team:y'));
+      expect(value.http.server['user-a'], contains('team:y'));
+    });
 
-    // The user unfollows team:a on this device, then signs in again while
-    // the server still has the old set: local stays the source of truth.
-    await value.service.signOut();
-    await value.db.toggle('team', 'a');
-    value.http.calls.clear();
-    await value.service.signIn('user@example.com', 'password-test');
-    await value.service.pending;
+    test('unfollowing everything offline is not resurrected', () async {
+      final value = await _service(server: {'team:a', 'team:b'});
+      await value.service.signIn('user@example.com', 'password-test');
+      await _settle(value.service);
 
-    expect(await value.db.watchFollows().first, {'team:b', 'team:c'});
-    expect(value.http.pushes.last, {'team:b', 'team:c'});
+      final sync = value.http.routes['futbeat_sync_push_follows']!;
+      value.http.routes['futbeat_sync_push_follows'] = (_) =>
+          const _Fail.offline();
+      await value.db.toggle('team', 'a');
+      await value.db.toggle('team', 'b');
+      await _settle(value.service);
+      expect(value.http.server['user-a'], {'team:a', 'team:b'});
+
+      value.http.routes['futbeat_sync_push_follows'] = sync;
+      value.http.now = value.http.now.add(const Duration(minutes: 6));
+      await value.service.resume();
+      await _settle(value.service);
+      expect(await value.db.watchFollows().first, isEmpty);
+      expect(value.http.server['user-a'], isEmpty);
+    });
   });
 
   testWidgets('guest profile shows the guest card', (tester) async {
@@ -517,7 +829,7 @@ void main() {
 
   testWidgets('a rejected sign in shows a clear message', (tester) async {
     final value = await _service();
-    value.http.routes['grant_type=password'] = () => const _Fail(400, {
+    value.http.routes['grant_type=password'] = (_) => const _Fail(400, {
       'error_code': 'invalid_credentials',
       'msg': 'Invalid login credentials',
     });

@@ -70,12 +70,29 @@ String authErrorMessage(Object error) {
   return authFallbackMessage;
 }
 
-/// True when GoTrue rejected the credentials themselves (e.g. an invalid or
-/// revoked refresh token), as opposed to a transient network/server failure.
+const _rejectedSessionCodes = {
+  'refresh_token_not_found',
+  'refresh_token_already_used',
+  'session_not_found',
+  'invalid_grant',
+  'bad_jwt',
+};
+
+/// True when GoTrue rejected the session itself (invalid or revoked refresh
+/// token), as opposed to a transient network/server/proxy failure. A 403
+/// counts only with a GoTrue session error code, since proxies and
+/// captive portals also answer 403.
 bool isAuthRejection(Object error) {
   if (error is! DioException) return false;
   final status = error.response?.statusCode;
-  return status == 400 || status == 401 || status == 403;
+  if (status == 400 || status == 401) return true;
+  if (status != 403) return false;
+  final body = _body(error.response?.data);
+  return [
+    body['error_code'],
+    body['code'],
+    body['error'],
+  ].any((code) => code is String && _rejectedSessionCodes.contains(code));
 }
 
 final _emailPattern = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');

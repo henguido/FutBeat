@@ -110,6 +110,13 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  /// Replaces every follow with [keys] (used when another account's
+  /// leftovers must not leak into the signed-in account).
+  Future<void> replaceFollows(Iterable<String> keys) => transaction(() async {
+    await delete(follows).go();
+    await addFollows(keys);
+  });
+
   Stream<CountryPreference> watchPreference() =>
       (select(
         preferences,
