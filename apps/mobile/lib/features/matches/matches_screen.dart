@@ -539,86 +539,89 @@ class _CompetitionHeader extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: 56),
       child: Row(
         children: [
-        Expanded(
-          child: InkWell(
-            key: ValueKey('competition-open-${competition.id}'),
-            onTap: onOpen,
-            borderRadius: BorderRadius.circular(10),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48),
-              child: Row(
-                children: [
-                  EntityAvatar(competition, size: 32),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          competition.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                          ),
-                        ),
-                        if (competition.country.isNotEmpty)
+          Expanded(
+            child: InkWell(
+              key: ValueKey('competition-open-${competition.id}'),
+              onTap: onOpen,
+              borderRadius: BorderRadius.circular(10),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Row(
+                  children: [
+                    EntityAvatar(competition, size: 32),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Text(
-                            competition.country,
+                            competition.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: muted, fontSize: 11),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                            ),
                           ),
-                      ],
+                          if (competition.country.isNotEmpty)
+                            Text(
+                              competition.country,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: muted,
+                                fontSize: 11,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-        if (collapsed && liveCount > 0) ...[
-          Text(
-            key: ValueKey('competition-live-${competition.id}'),
-            '$liveCount en vivo',
-            style: const TextStyle(
-              color: lime,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
+          if (collapsed && liveCount > 0) ...[
+            Text(
+              key: ValueKey('competition-live-${competition.id}'),
+              '$liveCount en vivo',
+              style: const TextStyle(
+                color: lime,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
             ),
+            const SizedBox(width: 8),
+          ],
+          Text(
+            '$count',
+            key: ValueKey('competition-count-${competition.id}'),
+            style: const TextStyle(color: muted, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(width: 8),
-        ],
-        Text(
-          '$count',
-          key: ValueKey('competition-count-${competition.id}'),
-          style: const TextStyle(color: muted, fontWeight: FontWeight.w700),
-        ),
-        if (canToggle)
-          Semantics(
-            expanded: !collapsed,
-            button: true,
-            enabled: true,
-            excludeSemantics: true,
-            onTap: onToggle,
-            label: collapsed
-                ? 'Mostrar partidos de ${competition.name}'
-                : 'Ocultar partidos de ${competition.name}',
-            child: IconButton(
-              key: ValueKey('competition-toggle-${competition.id}'),
-              tooltip: collapsed
+          if (canToggle)
+            Semantics(
+              expanded: !collapsed,
+              button: true,
+              enabled: true,
+              excludeSemantics: true,
+              onTap: onToggle,
+              label: collapsed
                   ? 'Mostrar partidos de ${competition.name}'
                   : 'Ocultar partidos de ${competition.name}',
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              onPressed: onToggle,
-              icon: Icon(
-                collapsed ? Icons.expand_more : Icons.expand_less,
-                color: muted,
+              child: IconButton(
+                key: ValueKey('competition-toggle-${competition.id}'),
+                tooltip: collapsed
+                    ? 'Mostrar partidos de ${competition.name}'
+                    : 'Ocultar partidos de ${competition.name}',
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                onPressed: onToggle,
+                icon: Icon(
+                  collapsed ? Icons.expand_more : Icons.expand_less,
+                  color: muted,
+                ),
               ),
             ),
-          ),
         ],
       ),
     ),
@@ -808,6 +811,7 @@ class MatchCard extends StatelessWidget {
       centre,
       if (status.isNotEmpty) status,
     ].join(', ');
+
     return Card(
       key: ValueKey('match-card-${match.id}'),
       child: Semantics(
@@ -821,115 +825,115 @@ class MatchCard extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
             child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: status.isEmpty
-                        ? const SizedBox.shrink()
-                        : Text(
-                            status.toUpperCase(),
-                            style: TextStyle(
-                              color: match.isLive ? lime : muted,
-                              fontSize: 10,
-                              letterSpacing: 1,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: status.isEmpty
+                          ? const SizedBox.shrink()
+                          : Text(
+                              status.toUpperCase(),
+                              style: TextStyle(
+                                color: match.isLive ? lime : muted,
+                                fontSize: 10,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                    ),
+                    FollowButton(
+                      'match',
+                      match.id,
+                      key: ValueKey('feed-follow-${match.id}'),
+                      label: '${home.name} contra ${away.name}',
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        children: [
+                          EntityAvatar(home),
+                          const SizedBox(height: 9),
+                          Text(
+                            home.name,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                  ),
-                  FollowButton(
-                    'match',
-                    match.id,
-                    key: ValueKey('feed-follow-${match.id}'),
-                    label: '${home.name} contra ${away.name}',
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      children: [
-                        EntityAvatar(home),
-                        const SizedBox(height: 9),
-                        Text(
-                          home.name,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        Text(
-                          centre,
-                          style: TextStyle(
-                            fontSize: unconfirmed
-                                ? 30
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Text(
+                            centre,
+                            style: TextStyle(
+                              fontSize: unconfirmed
+                                  ? 30
+                                  : match.showKickoff
+                                  ? 21
+                                  : 30,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            unconfirmed
+                                ? 'Ver partido'
                                 : match.showKickoff
-                                ? 21
-                                : 30,
-                            fontWeight: FontWeight.w800,
+                                ? 'Hora Costa Rica'
+                                : 'Ver partido',
+                            style: const TextStyle(fontSize: 10, color: muted),
                           ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          unconfirmed
-                              ? 'Ver partido'
-                              : match.showKickoff
-                              ? 'Hora Costa Rica'
-                              : 'Ver partido',
-                          style: const TextStyle(fontSize: 10, color: muted),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        EntityAvatar(away),
-                        const SizedBox(height: 9),
-                        Text(
-                          away.name,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                    Expanded(
+                      child: Column(
+                        children: [
+                          EntityAvatar(away),
+                          const SizedBox(height: 9),
+                          Text(
+                            away.name,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (match.isLive && latestEvent != null) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
+                    decoration: BoxDecoration(
+                      color: lime.withValues(alpha: .07),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      'Último: ${eventMinuteLabel(latestEvent)} · '
+                      '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: lime,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ],
-              ),
-              if (match.isLive && latestEvent != null) ...[
-                const SizedBox(height: 14),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    color: lime.withValues(alpha: .07),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    'Último: ${eventMinuteLabel(latestEvent)} · '
-                    '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: lime,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
               ],
             ),
           ),
