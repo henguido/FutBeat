@@ -61,7 +61,7 @@
 --     list never retracts. GOALs follow the score: path retraction never
 --     leaves a team with fewer active goals than its current score, and when
 --     a team's active goals exceed its score any answer retracts that team's
---     unlisted goals (oldest first) down to the score. The detail cache
+--     unlisted goals (newest first) down to the score. The detail cache
 --     applies a (coarser) score guard.
 --   * Score decrease (review P1-1): active synthetic goals above the new team
 --     score are retracted (reason score_decrease), so a stale provisional goal
@@ -324,7 +324,7 @@ begin
     -- Path rule: a detail answer covers every path; any other answer only
     -- rows last seen on the list or with no recorded path (legacy).
     -- GOALs: never below the team score; above it, any path trims the
-    -- team's unlisted goals (oldest first) down to the score.
+    -- team's unlisted goals (newest first) down to the score.
     if jsonb_typeof(obs -> 'completeSections') = 'array' then
       select coalesce(array_agg(value), '{}') into v_sections
         from jsonb_array_elements_text(obs -> 'completeSections');
@@ -341,10 +341,12 @@ begin
             v_guard_all := true;
             continue;
           end if;
+          -- Newest first (latest minute, then latest sighting): an annulment
+          -- almost always removes the most recent goal.
           select count(*),
-                 coalesce(array_agg(event_key order by first_seen_at, event_key)
+                 coalesce(array_agg(event_key order by minute desc nulls last, first_seen_at desc, event_key desc)
                    filter (where not (event_key = any(v_keys))), '{}'),
-                 coalesce(array_agg(event_key order by first_seen_at, event_key)
+                 coalesce(array_agg(event_key order by minute desc nulls last, first_seen_at desc, event_key desc)
                    filter (where not (event_key = any(v_keys))
                      and (v_detail or source is null or source = 'live-list')), '{}')
             into v_goal_active, v_unlisted, v_unlisted_path

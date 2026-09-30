@@ -656,3 +656,30 @@ test('P2-3b: a correction that may not notify still keeps the original push', ()
   const states = (await db.query('select o.state from futbeat_private.notification_outbox o where o.event_id=$1', [original.id])).rows.map((r) => r.state);
   assert.deepEqual(states, ['sending'], 'the original push is still sent');
 }));
+
+test('score trim retracts the NEWEST unlisted goal: 2-0 -> 1-0 with events [] keeps the 10 min goal', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s, { source: 'live-list' }));
+  const g1 = goalRow(s, { id: '9001', time: '10' }), g2 = goalRow(s, { id: '9002', time: '70', player: 'P2' });
+  await record(db, fixture(s, { home: 2, minute: 71, events: [g1, g2], source: 'live-list' }));
+  await record(db, fixture(s, { home: 1, minute: 73, events: [], source: 'live-list' }));
+  assert.deepEqual(summary(await goals(db, s.match)), [`10' ${s.home} ${s.p1}`]);
+  assert.deepEqual(summary(await realtimeGoals(db, s.match)), [`10' ${s.home} ${s.p1}`]);
+  // Detail path: same rule.
+  const t = await seed(db);
+  await record(db, fixture(t, { source: 'detail' }));
+  const h1 = goalRow(t, { id: '9101', time: '10' }), h2 = goalRow(t, { id: '9102', time: '70', player: 'P2' });
+  await record(db, fixture(t, { home: 2, minute: 71, events: [h1, h2], source: 'detail' }));
+  await record(db, fixture(t, { home: 1, minute: 73, events: [], source: 'detail' }));
+  assert.deepEqual(summary(await goals(db, t.match)), [`10' ${t.home} ${t.p1}`]);
+}));
+
+test('score trim: the 70 min goal explicitly absent while the 10 min one is listed goes, the 10 min one stays', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s, { source: 'live-list' }));
+  const g1 = goalRow(s, { id: '9001', time: '10' }), g2 = goalRow(s, { id: '9002', time: '70', player: 'P2' });
+  await record(db, fixture(s, { home: 2, minute: 71, events: [g1, g2], source: 'live-list' }));
+  await record(db, fixture(s, { home: 1, minute: 73, events: [g1], source: 'live-list' }));
+  assert.deepEqual(summary(await goals(db, s.match)), [`10' ${s.home} ${s.p1}`]);
+  assert.equal(await goalPushes(db, s.match), 2);
+}));
