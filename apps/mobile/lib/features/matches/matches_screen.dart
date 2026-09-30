@@ -227,16 +227,45 @@ class MatchesScreen extends ConsumerStatefulWidget {
   ConsumerState<MatchesScreen> createState() => _MatchesScreenState();
 }
 
-class _MatchesScreenState extends ConsumerState<MatchesScreen> {
+class _MatchesScreenState extends ConsumerState<MatchesScreen>
+    with SingleTickerProviderStateMixin {
   DateTime? date;
   String filter = 'Todos';
   // Competitions collapsed by the user in this session (headers stay).
   final Set<String> _collapsed = <String>{};
 
-  void _setDate(DateTime value) => setState(() {
-    date = value;
-    _collapsed.clear();
-  });
+  // Day change transition: the same list slides in from the side the new day
+  // comes from. The list is never rebuilt under a new key (scroll, refresh
+  // and in-flight reads are untouched) and nothing is shown twice.
+  late final AnimationController _dayTransition = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+    value: 1,
+  );
+  // +1: a later day comes from the right; -1: an earlier day from the left.
+  int _dayDirection = 1;
+
+  @override
+  void dispose() {
+    _dayTransition.dispose();
+    super.dispose();
+  }
+
+  void _setDate(DateTime value) {
+    final previous = DateUtils.dateOnly(date ?? costaRicaNow());
+    final next = DateUtils.dateOnly(value);
+    setState(() {
+      date = value;
+      _collapsed.clear();
+      if (next != previous) _dayDirection = next.isAfter(previous) ? 1 : -1;
+    });
+    if (next == previous) return;
+    if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
+      _dayTransition.value = 1;
+    } else {
+      _dayTransition.forward(from: 0);
+    }
+  }
 
   void _toggleCollapsed(String competitionId) => setState(() {
     if (!_collapsed.remove(competitionId)) _collapsed.add(competitionId);
@@ -482,32 +511,47 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                 ),
               );
             },
-            child: RefreshIndicator(
-              onRefresh: () async {
-                final repository = ref.read(repositoryProvider);
-                if (repository is ApiRepository) {
-                  repository.refreshDate(selected);
-                }
-                ref.invalidate(calendarSnapshotProvider(selected));
-                try {
-                  await ref.read(calendarSnapshotProvider(selected).future);
-                } catch (_) {
-                  // CalendarDataView exposes the provider error and retry action.
-                }
+            child: AnimatedBuilder(
+              animation: _dayTransition,
+              builder: (context, child) {
+                // Always the same widget shape: the list keeps its element
+                // (scroll position, refresh state) while it slides.
+                final t = Curves.easeOutCubic.transform(_dayTransition.value);
+                return Opacity(
+                  opacity: 0.25 + 0.75 * t,
+                  child: Transform.translate(
+                    offset: Offset((1 - t) * 36 * _dayDirection, 0),
+                    child: child,
+                  ),
+                );
               },
-              child: CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) => feedItems[index](),
-                        childCount: feedItems.length,
+              child: RefreshIndicator(
+                onRefresh: () async {
+                  final repository = ref.read(repositoryProvider);
+                  if (repository is ApiRepository) {
+                    repository.refreshDate(selected);
+                  }
+                  ref.invalidate(calendarSnapshotProvider(selected));
+                  try {
+                    await ref.read(calendarSnapshotProvider(selected).future);
+                  } catch (_) {
+                    // CalendarDataView exposes the provider error and retry action.
+                  }
+                },
+                child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) => feedItems[index](),
+                          childCount: feedItems.length,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           );
@@ -960,6 +1004,10 @@ class MatchCard extends StatelessWidget {
                           Text(
                             home.name,
                             textAlign: TextAlign.center,
+                            // Very long names never stretch the card; the
+                            // full name stays in the card's semantic label.
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -1002,6 +1050,10 @@ class MatchCard extends StatelessWidget {
                           Text(
                             away.name,
                             textAlign: TextAlign.center,
+                            // Very long names never stretch the card; the
+                            // full name stays in the card's semantic label.
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,

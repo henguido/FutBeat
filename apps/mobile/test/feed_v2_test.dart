@@ -584,6 +584,62 @@ void main() {
     handle.dispose();
   });
 
+  testWidgets('very long team names never stretch a card beyond three lines', (
+    tester,
+  ) async {
+    await _pump(tester);
+    final long = tester.getSize(_row('m_es_long')).height;
+    final normal = tester.getSize(_row('m_cr_live')).height;
+    // Same card layout (both live with a latest event): at most two extra
+    // text lines, never the seven a 55-character name used to take.
+    expect(long - normal, lessThan(60));
+    final name = tester.widget<Text>(
+      find.descendant(of: _row('m_es_long'), matching: find.text(_longHome)),
+    );
+    expect(name.maxLines, 3);
+    expect(name.overflow, TextOverflow.ellipsis);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('day swipe: the list slides in (no duplicate list, nothing '
+      'rebuilt under a new key) and settles in place', (tester) async {
+    await _pump(tester);
+    final swipe = find.byKey(const ValueKey('matches-date-swipe'));
+    final list = find.descendant(
+      of: swipe,
+      matching: find.byType(CustomScrollView),
+    );
+    final before = tester.element(list);
+    final restX = tester.getTopLeft(list).dx;
+
+    await tester.fling(swipe, const Offset(-300, 0), 1200);
+    await tester.pump(); // day changed, transition starts
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(list, findsOneWidget, reason: 'one list during the transition');
+    expect(
+      tester.getTopLeft(list).dx,
+      greaterThan(restX),
+      reason: 'the next day comes in from the right',
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(list).dx, restX);
+    expect(identical(tester.element(list), before), isTrue);
+
+    await tester.fling(swipe, const Offset(300, 0), 1200);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(
+      tester.getTopLeft(list).dx,
+      lessThan(restX),
+      reason: 'the previous day comes in from the left',
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(list).dx, restX);
+    // Back on today: the same matches, once.
+    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(tester.takeException(), isNull);
+  });
+
   // --- The selected country reorders, never hides -------------------------
 
   for (final (country, first, second) in [
