@@ -16,17 +16,87 @@ bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
     follows.contains('team:${match.homeId}') ||
     follows.contains('team:${match.awayId}');
 
-/// Defensive UI-level dedupe: the daily feed renders a canonical fixture once,
-/// even if an upstream overlay accidentally supplies the same canonical id
-/// more than once. Identity is the canonical match id, never display names.
-List<FootballMatch> _dedupeMatchesByCanonicalId(
-  Iterable<FootballMatch> matches,
-) {
-  final seen = <String>{};
-  return [
-    for (final match in matches)
-      if (seen.add(match.id)) match,
-  ];
+// Lower is better: finished, live, played evidence, scheduled, called off.
+int _fixtureRank(FootballMatch match) {
+  if (match.isFinished) return 0;
+  if (match.isLive) return 1;
+  if (const {
+    'POSTPONED',
+    'CANCELLED',
+    'ABANDONED',
+    'SUSPENDED',
+  }.contains(match.status)) {
+    return 4;
+  }
+  return match.hasPlayedEvidence ? 2 : 3;
+}
+
+bool _isGhostFixture(FootballMatch match) =>
+    match.isScheduled && !match.hasPlayedEvidence;
+
+bool _isPlayedOrPlaying(FootballMatch match) =>
+    match.isFinished || match.isLive;
+
+/// Whether two matches of the day are the same real fixture. Mirrors the
+/// backend calendar rule with the evidence a client has; canonical ids
+/// only, never display names.
+///
+/// Always required: same canonical competition, home team and away team.
+/// Then: kickoff within 5 minutes; or within 3 hours when at most one of
+/// the two shows played evidence (two games that were both really played
+/// are two games); or within 24 hours when one is a scheduled ghost and the
+/// other is finished or live. Two finished matches with different final
+/// scores, and matches of different competitions, are never merged.
+bool _sameFixture(FootballMatch a, FootballMatch b) {
+  if (a.competitionId.isEmpty ||
+      a.competitionId != b.competitionId ||
+      a.homeId.isEmpty ||
+      a.homeId == a.awayId ||
+      a.homeId != b.homeId ||
+      a.awayId != b.awayId) {
+    return false;
+  }
+  if (a.isFinished &&
+      b.isFinished &&
+      a.json['score'] != null &&
+      b.json['score'] != null &&
+      a.score != b.score) {
+    return false;
+  }
+  final apart = a.startTime.difference(b.startTime).abs();
+  if (apart <= const Duration(minutes: 5)) return true;
+  bool evidence(FootballMatch m) =>
+      _isPlayedOrPlaying(m) || m.hasPlayedEvidence;
+  if (apart <= const Duration(hours: 3) && !(evidence(a) && evidence(b))) {
+    return true;
+  }
+  return apart <= const Duration(hours: 24) &&
+      ((_isGhostFixture(a) && _isPlayedOrPlaying(b)) ||
+          (_isGhostFixture(b) && _isPlayedOrPlaying(a)));
+}
+
+/// Defensive UI-level dedupe (the backend calendar is the authority): the
+/// daily feed renders one canonical fixture exactly once: the same canonical
+/// match id, or two match entities of one fixture (see [_sameFixture]). The
+/// best twin stays: finished > live > played evidence > scheduled > called
+/// off, then the lower id. The order of the surviving matches is preserved.
+List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
+  final kept = <FootballMatch>[];
+  final seenIds = <String>{};
+  for (final match in matches) {
+    if (!seenIds.add(match.id)) continue;
+    final twin = kept.indexWhere((other) => _sameFixture(match, other));
+    if (twin < 0) {
+      kept.add(match);
+      continue;
+    }
+    final other = kept[twin];
+    final byRank = _fixtureRank(match).compareTo(_fixtureRank(other));
+    if (byRank < 0 || (byRank == 0 && match.id.compareTo(other.id) < 0)) {
+      kept[twin] = match;
+    }
+  }
+  return kept;
 }
 
 String _feedEventLabel(String type) => switch (type) {
@@ -73,8 +143,19 @@ String _dateContextLabel(DateTime value, DateTime today) {
 
 /// Orders visible competitions without ever filtering the daily catalog.
 ///
-/// Explicit follows stay first. The remaining competitions are ranked by
-/// editorial relevance only. Legacy country preferences never affect this feed.
+/// The selected country (or the detected one) only REORDERS; every
+/// competition with a match stays. Order:
+///   1. pinned competitions, in the user's own order (personalized mode);
+///   2. followed competitions;
+///   3. the primary domestic competition of the user's country;
+///   4. globally relevant competitions;
+///   5. the other (secondary) competitions of the user's country;
+///   6. everything else.
+/// Inside a group, editorial relevance decides. A minor national competition
+/// therefore never outranks a big global one: only the PRIMARY domestic one
+/// does. Categories come from [competitionFeedCategory]. The stored "global
+/// first" preference has no UI and is not applied ([orderPreference] is kept
+/// only for source compatibility).
 List<Entity> orderMatchCompetitions({
   required Snapshot data,
   required List<FootballMatch> matches,
@@ -92,27 +173,51 @@ List<Entity> orderMatchCompetitions({
       .where((competition) => visibleCompetitionIds.contains(competition.id))
       .toList();
 
-  // Legacy country/preference arguments are intentionally ignored.
+  final userCountry = selectedCountry ?? detectedCountry;
+  final custom = orderMode == CompetitionOrderMode.personalized;
+  // A stale pin (no longer followed) never reorders anything.
   final pins = {
     for (var i = 0; i < pinnedCompetitionIds.length; i++)
       if (follows.contains('competition:${pinnedCompetitionIds[i]}'))
         pinnedCompetitionIds[i]: i,
   };
-  final custom = orderMode == CompetitionOrderMode.personalized;
-  int group(Entity c) => custom && pins.containsKey(c.id)
-      ? 0
-      : follows.contains('competition:${c.id}')
-      ? 1
-      : 2;
-  return visible..sort((a, b) {
-    final category = group(a).compareTo(group(b));
-    if (category != 0) return category;
-    if (custom && group(a) == 0) return pins[a.id]!.compareTo(pins[b.id]!);
-    final score = competitionImportance(b).compareTo(competitionImportance(a));
-    if (score != 0) return score;
-    final name = a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    return name != 0 ? name : a.id.compareTo(b.id);
+  int rank(Entity competition) {
+    if (custom && pins.containsKey(competition.id)) return 0;
+    return switch (competitionFeedCategory(
+      competition,
+      follows: follows,
+      userCountry: userCountry,
+    )) {
+      CompetitionFeedCategory.pinned => 1,
+      CompetitionFeedCategory.domesticPrimary => 2,
+      CompetitionFeedCategory.globalRelevance => 3,
+      CompetitionFeedCategory.domesticSecondary => 4,
+      CompetitionFeedCategory.other => 5,
+    };
+  }
+
+  // Decorate once: the comparator never re-reads the editorial fields.
+  final decorated = [
+    for (final competition in visible)
+      (
+        competition: competition,
+        rank: rank(competition),
+        relevance: competitionImportance(competition),
+        name: competition.name.toLowerCase(),
+      ),
+  ];
+  decorated.sort((a, b) {
+    final byRank = a.rank.compareTo(b.rank);
+    if (byRank != 0) return byRank;
+    if (a.rank == 0) {
+      return pins[a.competition.id]!.compareTo(pins[b.competition.id]!);
+    }
+    final byRelevance = b.relevance.compareTo(a.relevance);
+    if (byRelevance != 0) return byRelevance;
+    final byName = a.name.compareTo(b.name);
+    return byName != 0 ? byName : a.competition.id.compareTo(b.competition.id);
   });
+  return [for (final item in decorated) item.competition];
 }
 
 class MatchesScreen extends ConsumerStatefulWidget {
@@ -197,9 +302,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
-          final games = _dedupeMatchesByCanonicalId(
-            data.onDate(selected, filter),
-          );
+          final games = dedupeFixtures(data.onDate(selected, filter));
 
           final followedGames =
               games
@@ -222,9 +325,14 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             data: data,
             matches: remainingGames,
             follows: follows,
+            selectedCountry: preference?.selectedCountry,
+            detectedCountry: preference?.detectedCountry,
             orderMode:
                 preference?.competitionOrderMode ??
                 CompetitionOrderMode.automatic,
+            orderPreference:
+                preference?.competitionOrderPreference ??
+                CompetitionOrderPreference.countryFirst,
             pinnedCompetitionIds:
                 preference?.pinnedCompetitionIds ?? const <String>[],
           );
@@ -346,9 +454,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           }
 
           if (followedGames.isNotEmpty) {
-            feedItems.add(
-              () => const _FeedHeading(title: 'Favoritos'),
-            );
+            feedItems.add(() => const _FeedHeading(title: 'FAVORITOS'));
             for (final match in followedGames) {
               feedItems.add(() => MatchCard(match, data));
             }
@@ -485,14 +591,20 @@ class _FeedHeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(top: 6, bottom: 14),
-    child: Text(
-      title,
-      style: const TextStyle(
-        color: lime,
-        fontSize: 11,
-        fontWeight: FontWeight.w800,
-        letterSpacing: 1.8,
-      ),
+    child: Row(
+      children: [
+        const Icon(Icons.star_rounded, color: lime, size: 18),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: const TextStyle(
+            color: lime,
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.8,
+          ),
+        ),
+      ],
     ),
   );
 }

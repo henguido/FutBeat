@@ -44,14 +44,17 @@ test('real calendar RPC always emits all eight editorial keys, including null ti
     await competition(db, 'fb_comp_contract_international', 'Unknown international competition', 'Europe');
     await competition(db, 'fb_comp_contract_unknown', 'Unknown competition', null);
     await competition(db, 'fb_comp_contract_editorial', 'UEFA Champions League', 'Europe');
-    for (const id of ['fb_team_contract_home', 'fb_team_contract_away']) {
-      await db.query("insert into futbeat_private.entities values($1,'team',$2)", [id, JSON.stringify({id,name:id})]);
-    }
+    // One team pair per match: the same two teams at the same kickoff are one
+    // fixture for the calendar (listed once), whatever the competition.
     for (const suffix of ['domestic', 'international', 'unknown', 'editorial']) {
+      for (const side of ['home', 'away']) {
+        const team = 'fb_team_contract_'+suffix+'_'+side;
+        await db.query("insert into futbeat_private.entities values($1,'team',$2)", [team, JSON.stringify({id:team,name:team})]);
+      }
       const id = 'fb_match_contract_'+suffix;
       await db.query("insert into futbeat_private.entities values($1,'match',$2)", [id, JSON.stringify({
         id, competitionId:'fb_comp_contract_'+suffix,
-        homeTeamId:'fb_team_contract_home', awayTeamId:'fb_team_contract_away',
+        homeTeamId:'fb_team_contract_'+suffix+'_home', awayTeamId:'fb_team_contract_'+suffix+'_away',
         startTime:'2026-09-20T18:00:00Z', status:'SCHEDULED', events:[],
       })]);
     }
