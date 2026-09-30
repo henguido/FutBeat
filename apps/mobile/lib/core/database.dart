@@ -110,11 +110,17 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  /// Replaces every follow with [keys] (used when another account's
-  /// leftovers must not leak into the signed-in account).
-  Future<void> replaceFollows(Iterable<String> keys) => transaction(() async {
-    await delete(follows).go();
-    await addFollows(keys);
+  /// Removes `type:id` follow keys (another account's leftovers).
+  Future<void> removeFollows(Iterable<String> keys) => transaction(() async {
+    for (final key in keys) {
+      final separator = key.indexOf(':');
+      if (separator <= 0 || separator == key.length - 1) continue;
+      final type = key.substring(0, separator);
+      final id = key.substring(separator + 1);
+      await (delete(
+        follows,
+      )..where((f) => f.entityType.equals(type) & f.entityId.equals(id))).go();
+    }
   });
 
   Stream<CountryPreference> watchPreference() =>

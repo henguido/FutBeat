@@ -167,6 +167,7 @@ class PushService {
     this.tokens, {
     Dio? dio,
     DateTime Function()? clock,
+    this.signOutCleanupTimeout = const Duration(seconds: 5),
   }) : clock = clock ?? DateTime.now,
        dio =
            dio ??
@@ -182,6 +183,10 @@ class PushService {
   final PushTokenSource tokens;
   final Dio dio;
   final DateTime Function() clock;
+
+  /// Upper bound for the background server sign-out; its requests are
+  /// cancelled when it fires.
+  final Duration signOutCleanupTimeout;
   final storage = const FlutterSecureStorage();
 
   Map<String, dynamic>? session;
@@ -212,10 +217,15 @@ class PushService {
   /// Best-effort server cleanup started by the last [signOut] (tests).
   Future<void> signOutCleanup = Future.value();
 
+  /// Legacy key from 7ab628c; only deleted now.
   static const lastUserKey = 'futbeat.account.lastUser';
+
+  /// Follows on the device when the last account signed out:
+  /// `{"userId": ..., "follows": [...]}`. A different account signing in
+  /// drops exactly these and keeps anything the guest added afterwards.
+  static const leftoverKey = 'futbeat.account.leftover';
   static const _reconcileInterval = Duration(minutes: 5);
   static const _refreshMargin = Duration(minutes: 5);
-  static const _cleanupTimeout = Duration(seconds: 5);
 
   /// Legacy per-user flag from the first P1-C version; only deleted now.
   static String linkedFlagKey(String userId) =>
@@ -294,6 +304,7 @@ class PushService {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
+    await _awaitSignOutCleanup();
     final result = await dio.post<dynamic>(
       '${config.supabaseUrl}/auth/v1/token?grant_type=password',
       data: {'email': email.trim(), 'password': password},
@@ -315,12 +326,40 @@ class PushService {
     pendingConfirmationEmail = null;
     await storage.delete(key: 'futbeat.auth.pendingConfirmationEmail');
     await _persistSession();
+    final generation = _generation;
     try {
-      await _reconcileAccount();
+      await _queued(() => _reconcileIfDue(generation));
     } catch (_) {
       // Follows stay unpushed until a later reconcile merges the server set.
     }
+    if (_stale(generation)) return;
     await _startAccountSync();
+  }
+
+  /// A late sign-out request (device unregistration) must not land after
+  /// the next sign-in or push enable. Bounded by [signOutCleanupTimeout].
+  Future<void> _awaitSignOutCleanup() => signOutCleanup
+      .timeout(signOutCleanupTimeout, onTimeout: () {})
+      .catchError((_) {});
+
+  /// Runs [work] on the account chain, after any tick/resume in flight.
+  Future<void> _queued(Future<void> Function() work) {
+    final operation = pending.catchError((_) {}).then((_) => work());
+    pending = operation.catchError((_) {});
+    return operation;
+  }
+
+  /// Reconciles unless this generation already reconciled recently (e.g.
+  /// a resume that ran first at startup).
+  Future<void> _reconcileIfDue(int generation) async {
+    if (_stale(generation)) return;
+    final last = _lastReconcile;
+    if (_mergedGeneration == generation &&
+        last != null &&
+        clock().difference(last) < _reconcileInterval) {
+      return;
+    }
+    await _reconcileAccount();
   }
 
   Future<void> signUp(String email, String password) async {
@@ -328,6 +367,7 @@ class PushService {
       throw StateError('Account service is not configured');
     }
     final normalized = email.trim();
+    await _awaitSignOutCleanup();
     final response = await dio.post<dynamic>(
       '${config.supabaseUrl}/auth/v1/signup',
       data: {'email': normalized, 'password': password},
@@ -404,7 +444,7 @@ class PushService {
     }
     if (_stale(generation) || !authenticated) return;
     try {
-      await _reconcileAccount();
+      await _queued(() => _reconcileIfDue(generation));
     } catch (_) {
       // Retried by the renewal tick/resume before any follows are pushed.
     }
@@ -442,6 +482,16 @@ class PushService {
     await oldRotation?.cancel();
     await storage.delete(key: 'futbeat.push.session');
     if (uid != null) {
+      // Remember what this account left on the device, so a different
+      // account can drop exactly that. Without a merge in this session
+      // (no P) an older snapshot is kept as is.
+      if (await _readPushed(uid) != null) {
+        final local = await database.watchFollows().first;
+        await storage.write(
+          key: leftoverKey,
+          value: jsonEncode({'userId': uid, 'follows': local.toList()..sort()}),
+        );
+      }
       // The next sign-in of this user must union, never replace.
       await storage.delete(key: pushedKey(uid));
       await storage.delete(key: linkedFlagKey(uid));
@@ -592,32 +642,52 @@ class PushService {
     return null;
   }
 
+  Future<({String userId, Set<String> follows})?> _readLeftover() async {
+    final raw = await storage.read(key: leftoverKey);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map &&
+          decoded['userId'] is String &&
+          decoded['follows'] is List) {
+        return (
+          userId: decoded['userId'] as String,
+          follows: (decoded['follows'] as List).map((v) => '$v').toSet(),
+        );
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// Three-way merge of server [serverJson] (S), local Drift (L) and the
   /// last pushed set (P), then a push of the result:
-  /// - another account used this device last: Drift := S (no leak);
+  /// - a different account left follows here (leftover O):
+  ///   (L − O) ∪ S — its follows never leak, guest additions stay;
   /// - no P (first link, or after sign-out): L ∪ S;
   /// - otherwise L ∪ (S − P): keeps additions made elsewhere and local
-  ///   removals; nothing is removed from Drift.
+  ///   removals.
   Future<void> _mergeFollows(Object? serverJson, int generation) async {
     final server = _parseFollows(serverJson);
     final uid = userId;
     final local = await database.watchFollows().first;
     final pushed = await _readPushed(uid);
-    final lastUser = await storage.read(key: lastUserKey);
+    final leftover = await _readLeftover();
     if (_stale(generation)) return;
 
     final Set<String> next;
-    if (uid != null && lastUser != null && lastUser != uid) {
-      await database.replaceFollows(server);
-      next = server;
+    if (uid != null && leftover != null && leftover.userId != uid) {
+      next = {...local.difference(leftover.follows), ...server};
+      final drop = local.difference(next);
+      if (drop.isNotEmpty) await database.removeFollows(drop);
     } else {
       final incoming = pushed == null ? server : server.difference(pushed);
       next = {...local, ...incoming};
-      final missing = incoming.difference(local);
-      if (missing.isNotEmpty) await database.addFollows(missing);
     }
+    final missing = next.difference(local);
+    if (missing.isNotEmpty) await database.addFollows(missing);
     if (_stale(generation)) return;
-    if (uid != null) await storage.write(key: lastUserKey, value: uid);
+    if (leftover != null) await storage.delete(key: leftoverKey);
+    await storage.delete(key: lastUserKey);
     _mergedGeneration = generation;
     await _pushFollows(next, generation);
   }
@@ -898,12 +968,17 @@ class PushService {
     if (_stale(generation)) return;
     // Reconcile reads the server first (3-way follows merge, dirty profile
     // and countries), so a tick never blindly replaces the server set.
-    if (needsReconcile) await _reconcileAccount();
+    if (!throttled) {
+      await _reconcileAccount();
+    } else if (needsReconcile) {
+      await _reconcileIfDue(generation);
+    }
     if (_stale(generation)) return;
     if (!throttled && enabled) await register(true);
   }
 
   Future<void> enable() async {
+    await _awaitSignOutCleanup();
     if (!configured || !authenticated) {
       throw StateError('Push requires configuration and sign-in');
     }
@@ -947,18 +1022,28 @@ class PushService {
     await _clearLocalSession();
     await storage.write(key: 'futbeat.push.enabled', value: 'false');
     if (headers == null) return;
+    final cancel = CancelToken();
+    final timer = Timer(signOutCleanupTimeout, () => cancel.cancel());
     signOutCleanup = _serverSignOut(
       headers,
       deviceToken,
-    ).timeout(_cleanupTimeout).catchError((_) {});
+      cancel,
+    ).catchError((_) {}).whenComplete(timer.cancel);
   }
 
-  Future<void> _serverSignOut(Options headers, String? deviceToken) async {
+  /// Revokes only this session (scope=local), never the refresh tokens of
+  /// a session started later on this or another device.
+  Future<void> _serverSignOut(
+    Options headers,
+    String? deviceToken,
+    CancelToken cancel,
+  ) async {
     if (deviceToken != null) {
       try {
         await dio.post(
           '${config.supabaseUrl}/rest/v1/rpc/futbeat_register_push',
           options: headers,
+          cancelToken: cancel,
           data: {
             'p_installation': await installation(),
             'p_platform': Platform.isIOS ? 'ios' : 'android',
@@ -971,7 +1056,12 @@ class PushService {
         // Offline: the device row may stay enabled server-side.
       }
     }
-    await dio.post('${config.supabaseUrl}/auth/v1/logout', options: headers);
+    if (cancel.isCancelled) return;
+    await dio.post(
+      '${config.supabaseUrl}/auth/v1/logout?scope=local',
+      options: headers,
+      cancelToken: cancel,
+    );
   }
 
   Future<void> deleteAccount() async {
@@ -1027,6 +1117,7 @@ class PushService {
     await storage.delete(key: 'futbeat.push.session');
     // Leftover follows are guest data now: the next sign-in unions them.
     await storage.delete(key: lastUserKey);
+    await storage.delete(key: leftoverKey);
     if (deletedUser != null) {
       await storage.delete(key: pushedKey(deletedUser));
       await storage.delete(key: linkedFlagKey(deletedUser));

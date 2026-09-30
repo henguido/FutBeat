@@ -90,15 +90,22 @@ class _Http {
       'grant_type=refresh_token': refreshRoute,
       'futbeat_read_user_profile': readRoute,
       'futbeat_sync_push_follows': syncRoute,
+      'futbeat_register_push': (_) => null,
+      '/auth/v1/logout': logoutRoute,
     });
   }
 
   final dio = Dio();
   final calls = <RequestOptions>[];
   final routes = <String, _Route>{};
-  final users = {'user@example.com': 'user-a', 'b@example.com': 'user-b'};
+  final users = {
+    'user@example.com': 'user-a',
+    'b@example.com': 'user-b',
+    'c@example.com': 'user-c',
+  };
   final server = <String, Set<String>>{};
   final validRefresh = <String, String>{};
+  final refreshOf = <String, String>{};
   DateTime now = DateTime.utc(2026, 9, 29, 12);
   var _issued = 0;
 
@@ -106,6 +113,7 @@ class _Http {
     _issued++;
     final refresh = 'refresh-$uid-$_issued';
     validRefresh[refresh] = uid;
+    refreshOf['access-$uid-$_issued'] = refresh;
     return {
       'access_token': 'access-$uid-$_issued',
       'refresh_token': refresh,
@@ -131,6 +139,22 @@ class _Http {
     return uid == null
         ? const _Fail(400, {'error_code': 'refresh_token_already_used'})
         : issue(uid);
+  }
+
+  /// GoTrue logout: scope=local revokes only the calling session; the
+  /// default (global) scope revokes every session of the user.
+  Object? logoutRoute(RequestOptions options) {
+    final access = '${options.headers['Authorization']}'.replaceFirst(
+      'Bearer ',
+      '',
+    );
+    if (options.path.contains('scope=local')) {
+      validRefresh.remove(refreshOf[access]);
+    } else {
+      final uid = _caller(options);
+      validRefresh.removeWhere((_, owner) => owner == uid);
+    }
+    return null;
   }
 
   String _caller(RequestOptions options) {
@@ -195,6 +219,7 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
   Set<String> local = const {},
   Set<String> server = const {},
   _Http? http,
+  Duration cleanupTimeout = const Duration(seconds: 5),
 }) async {
   FlutterSecureStorage.setMockInitialValues(Map.of(storage));
   final db = AppDatabase(NativeDatabase.memory());
@@ -210,6 +235,7 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
     _Tokens(),
     dio: fake.dio,
     clock: () => fake.now,
+    signOutCleanupTimeout: cleanupTimeout,
   );
   addTearDown(() async {
     service.dispose();
@@ -461,6 +487,79 @@ void main() {
     });
 
     test(
+      'logout is session-scoped and never revokes the next session',
+      () async {
+        final value = await _service();
+        await value.service.signIn('user@example.com', 'password-test');
+        final gate = value.http.hold('/auth/v1/logout');
+        await value.service.signOut();
+        final signingIn = value.service.signIn(
+          'user@example.com',
+          'password-test',
+        );
+        await value.http.waitFor('/auth/v1/logout');
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(value.http.count('grant_type=password'), 1);
+
+        gate.complete();
+        await signingIn;
+        expect(value.http.count('grant_type=password'), 2);
+        final logout = value.http.calls.lastWhere(
+          (c) => c.path.contains('/auth/v1/logout'),
+        );
+        expect(logout.path, contains('scope=local'));
+
+        value.http.now = value.http.now.add(const Duration(minutes: 58));
+        await value.service.resume();
+        expect(value.http.count('grant_type=refresh_token'), 1);
+        expect(value.service.authenticated, isTrue);
+      },
+    );
+
+    test(
+      'a late device unregistration never lands after the next sign-in',
+      () async {
+        final value = await _service();
+        await value.service.signIn('user@example.com', 'password-test');
+        value.service
+          ..enabled = true
+          ..token = 'device-token';
+        final gate = value.http.hold('futbeat_register_push');
+        await value.service.signOut();
+        final signingIn = value.service.signIn(
+          'user@example.com',
+          'password-test',
+        );
+        await value.http.waitFor('futbeat_register_push');
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(value.http.count('grant_type=password'), 1);
+        final unregister = value.http.calls.firstWhere(
+          (c) => c.path.endsWith('futbeat_register_push'),
+        );
+        expect((unregister.data as Map)['p_enabled'], isFalse);
+
+        gate.complete();
+        await signingIn;
+        expect(value.http.count('grant_type=password'), 2);
+        expect(value.service.authenticated, isTrue);
+      },
+    );
+
+    test('a hanging sign-out cleanup is cancelled at its timeout', () async {
+      final value = await _service(
+        cleanupTimeout: const Duration(milliseconds: 50),
+      );
+      await value.service.signIn('user@example.com', 'password-test');
+      value.http.hold('/auth/v1/logout');
+      await value.service.signOut();
+      await value.service.signOutCleanup.timeout(const Duration(seconds: 1));
+      await value.service
+          .signIn('user@example.com', 'password-test')
+          .timeout(const Duration(seconds: 1));
+      expect(value.service.authenticated, isTrue);
+    });
+
+    test(
       'sign out during an in-flight restore refresh stays signed out',
       () async {
         final value = await _stored(server: {'team:a'});
@@ -653,7 +752,7 @@ void main() {
             .toSet(),
         union,
       );
-      expect(await _read(PushService.lastUserKey), 'user-a');
+      expect(await _read(PushService.lastUserKey), isNull);
     });
 
     test('an empty local set never wipes server follows', () async {
@@ -773,6 +872,64 @@ void main() {
       await _settle(value.service);
       expect(await value.db.watchFollows().first, isEmpty);
       expect(value.http.server['user-a'], isEmpty);
+    });
+
+    test(
+      'a new account keeps guest follows added after another sign-out',
+      () async {
+        final value = await _service();
+        value.http.server['user-a'] = {'team:a'};
+        await value.service.signIn('user@example.com', 'password-test');
+        await _settle(value.service);
+        await value.service.signOut();
+
+        // Weeks of guest use, then a brand-new account with no follows.
+        await value.db.addFollows({'team:g'});
+        await value.service.signIn('c@example.com', 'password-test');
+        await _settle(value.service);
+
+        expect(await value.db.watchFollows().first, {'team:g'});
+        expect(value.http.server['user-c'], {'team:g'});
+        expect(value.http.server['user-a'], {'team:a'});
+        expect(await _read(PushService.leftoverKey), isNull);
+      },
+    );
+
+    test(
+      'a new account with server follows unions them with guest additions',
+      () async {
+        final value = await _service();
+        value.http.server['user-a'] = {'team:a'};
+        value.http.server['user-b'] = {'team:b'};
+        await value.service.signIn('user@example.com', 'password-test');
+        await _settle(value.service);
+        await value.service.signOut();
+        await value.db.addFollows({'team:g'});
+
+        await value.service.signIn('b@example.com', 'password-test');
+        await _settle(value.service);
+
+        expect(await value.db.watchFollows().first, {'team:b', 'team:g'});
+        expect(value.http.server['user-b'], {'team:b', 'team:g'});
+        expect(value.http.server['user-a'], {'team:a'});
+      },
+    );
+
+    test('startup restore and resume run a single reconcile', () async {
+      final value = await _stored(
+        server: {'team:a'},
+        expiresIn: const Duration(minutes: 1),
+      );
+      final gate = value.http.hold('grant_type=refresh_token');
+      final restoring = value.service.restore();
+      await value.http.waitFor('grant_type=refresh_token');
+      final resuming = value.service.resume();
+      gate.complete();
+      await Future.wait([restoring, resuming]);
+      await _settle(value.service);
+
+      expect(value.http.count('futbeat_read_user_profile'), 1);
+      expect(await value.db.watchFollows().first, {'team:a'});
     });
   });
 
