@@ -793,12 +793,23 @@ class MatchCard extends StatelessWidget {
         : match.showKickoff
         ? localTime(context, match.startTime)
         : match.score;
+    void open() =>
+        context.push('/match/${match.id}', extra: data.forMatch(match.id));
+    final semanticLabel = [
+      '${home.name} contra ${away.name}',
+      centre,
+      if (status.isNotEmpty) status,
+    ].join(', ');
     return Card(
       key: ValueKey('match-card-${match.id}'),
-      child: InkWell(
+      child: Semantics(
+        key: ValueKey('match-card-action-${match.id}'),
+        container: true,
+        button: true,
+        label: semanticLabel,
+        child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () =>
-            context.push('/match/${match.id}', extra: data.forMatch(match.id)),
+        onTap: open,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
           child: Column(
@@ -914,6 +925,7 @@ class MatchCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }
