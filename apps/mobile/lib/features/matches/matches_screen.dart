@@ -244,6 +244,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   );
   // +1: a later day comes from the right; -1: an earlier day from the left.
   int _dayDirection = 1;
+  // "Today" of the feed being shown (the demo feed has its own).
+  DateTime? _today;
 
   @override
   void dispose() {
@@ -254,10 +256,14 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   void _setDate(DateTime value) {
     final previous = DateUtils.dateOnly(date ?? costaRicaNow());
     final next = DateUtils.dateOnly(value);
+    final today = _today ?? DateUtils.dateOnly(costaRicaNow());
     setState(() {
       date = value;
       _collapsed.clear();
       if (next != previous) _dayDirection = next.isAfter(previous) ? 1 : -1;
+      // #168: "En vivo" only makes sense today. On any other day it would
+      // leave an empty screen although that day has matches.
+      if (filter == 'En vivo' && next != today) filter = 'Todos';
     });
     if (next == previous) return;
     if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
@@ -328,6 +334,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
               ? DateTime(2026, 9, 15)
               : DateUtils.dateOnly(costaRicaNow());
           final selected = DateUtils.dateOnly(date ?? anchor);
+          _today = anchor;
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;

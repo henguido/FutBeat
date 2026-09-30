@@ -640,6 +640,42 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('#168: the "En vivo" filter is cleared when leaving today and '
+      'kept while staying on it', (tester) async {
+    await _pump(tester);
+    bool selected(String label) => tester
+        .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, label))
+        .selected;
+    await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+    await tester.pumpAndSettle();
+    expect(selected('En vivo'), isTrue);
+    expect(find.byType(MatchCard), findsNWidgets(2), reason: 'two live today');
+
+    final swipe = find.byKey(const ValueKey('matches-date-swipe'));
+    await tester.fling(swipe, const Offset(-300, 0), 1200); // tomorrow
+    await tester.pumpAndSettle();
+    expect(selected('En vivo'), isFalse);
+    expect(selected('Todos'), isTrue);
+
+    // Coming back does not silently re-apply the old filter.
+    await tester.fling(swipe, const Offset(300, 0), 1200);
+    await tester.pumpAndSettle();
+    expect(selected('Todos'), isTrue);
+    expect(find.byType(MatchCard), findsNWidgets(6));
+
+    // Other filters are the user's choice on any day.
+    // (The chip sits beyond the right edge of the chip row at 390 px.)
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
+    expect(selected('Finalizados'), isTrue);
+    await tester.fling(swipe, const Offset(300, 0), 1200); // yesterday
+    await tester.pumpAndSettle();
+    expect(selected('Finalizados'), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   // --- The selected country reorders, never hides -------------------------
 
   for (final (country, first, second) in [
