@@ -10,11 +10,24 @@ import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
-/// "Siguiendo" is only for matches of a favourite TEAM (never a followed
+/// "Favoritos" is only for matches of a favourite TEAM (never a followed
 /// league, never a single followed match: those only mark the follow).
 bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
     follows.contains('team:${match.homeId}') ||
     follows.contains('team:${match.awayId}');
+
+/// Defensive UI-level dedupe: the daily feed renders a canonical fixture once,
+/// even if an upstream overlay accidentally supplies the same canonical id
+/// more than once. Identity is the canonical match id, never display names.
+List<FootballMatch> _dedupeMatchesByCanonicalId(
+  Iterable<FootballMatch> matches,
+) {
+  final seen = <String>{};
+  return [
+    for (final match in matches)
+      if (seen.add(match.id)) match,
+  ];
+}
 
 String _feedEventLabel(String type) => switch (type) {
   'GOAL' => 'Gol',
@@ -184,7 +197,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
-          final games = data.onDate(selected, filter);
+          final games = _dedupeMatchesByCanonicalId(
+            data.onDate(selected, filter),
+          );
 
           final followedGames =
               games
@@ -237,7 +252,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             );
             if (!collapsed) {
               for (final match in competitionMatches) {
-                feedItems.add(() => FeedMatchRow(match, data));
+                feedItems.add(() => MatchCard(match, data));
               }
             }
             feedItems.add(() => const SizedBox(height: 8));
@@ -332,24 +347,17 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
 
           if (followedGames.isNotEmpty) {
             feedItems.add(
-              () => _FeedHeading(
-                title: 'Siguiendo',
-                subtitle: data.demo
-                    ? 'Solo esos partidos suben; la competición completa no se mueve.'
-                    : null,
-              ),
+              () => const _FeedHeading(title: 'Favoritos'),
             );
             for (final match in followedGames) {
-              final competition = data.competition(match.competitionId);
-              feedItems.add(
-                () => FeedMatchRow(match, data, caption: competition?.name),
-              );
+              feedItems.add(() => MatchCard(match, data));
             }
             feedItems.add(() => const SizedBox(height: 12));
           }
 
-          // Then every competition with its remaining matches, in the usual
-          // order (pinned / followed competitions first): no extra blocks.
+          // Then every competition with its remaining matches. Favourite-team
+          // fixtures were removed above, so every canonical match is rendered
+          // exactly once.
           for (final competition in orderedCompetitions) {
             addCompetition(competition);
           }
@@ -470,31 +478,21 @@ class _DateOption extends StatelessWidget {
 }
 
 class _FeedHeading extends StatelessWidget {
-  const _FeedHeading({required this.title, this.subtitle});
+  const _FeedHeading({required this.title});
 
   final String title;
-  final String? subtitle;
 
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(top: 6, bottom: 14),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: lime,
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.8,
-          ),
-        ),
-        if (subtitle != null) ...[
-          const SizedBox(height: 4),
-          Text(subtitle!, style: const TextStyle(color: muted, fontSize: 11)),
-        ],
-      ],
+    child: Text(
+      title,
+      style: const TextStyle(
+        color: lime,
+        fontSize: 11,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 1.8,
+      ),
     ),
   );
 }
@@ -519,91 +517,103 @@ class _CompetitionHeader extends StatelessWidget {
   final bool canToggle;
 
   @override
-  Widget build(BuildContext context) => ConstrainedBox(
-    constraints: const BoxConstraints(minHeight: 48),
-    child: Row(
-      children: [
-        Expanded(
-          child: InkWell(
-            key: ValueKey('competition-open-${competition.id}'),
-            onTap: onOpen,
-            borderRadius: BorderRadius.circular(10),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48),
-              child: Row(
-                children: [
-                  EntityAvatar(competition, size: 26),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          competition.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                          ),
-                        ),
-                        if (competition.country.isNotEmpty)
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(top: 4, bottom: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF151D20),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0xFF2A3438)),
+    ),
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 56),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              key: ValueKey('competition-open-${competition.id}'),
+              onTap: onOpen,
+              borderRadius: BorderRadius.circular(10),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Row(
+                  children: [
+                    EntityAvatar(competition, size: 32),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Text(
-                            competition.country,
+                            competition.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: muted, fontSize: 11),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                            ),
                           ),
-                      ],
+                          if (competition.country.isNotEmpty)
+                            Text(
+                              competition.country,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: muted,
+                                fontSize: 11,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-        if (collapsed && liveCount > 0) ...[
-          Text(
-            key: ValueKey('competition-live-${competition.id}'),
-            '$liveCount en vivo',
-            style: const TextStyle(
-              color: lime,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
+          if (collapsed && liveCount > 0) ...[
+            Text(
+              key: ValueKey('competition-live-${competition.id}'),
+              '$liveCount en vivo',
+              style: const TextStyle(
+                color: lime,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
             ),
+            const SizedBox(width: 8),
+          ],
+          Text(
+            '$count',
+            key: ValueKey('competition-count-${competition.id}'),
+            style: const TextStyle(color: muted, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(width: 8),
-        ],
-        Text(
-          '$count',
-          key: ValueKey('competition-count-${competition.id}'),
-          style: const TextStyle(color: muted, fontWeight: FontWeight.w700),
-        ),
-        if (canToggle)
-          Semantics(
-            expanded: !collapsed,
-            button: true,
-            enabled: true,
-            excludeSemantics: true,
-            onTap: onToggle,
-            label: collapsed
-                ? 'Mostrar partidos de ${competition.name}'
-                : 'Ocultar partidos de ${competition.name}',
-            child: IconButton(
-              key: ValueKey('competition-toggle-${competition.id}'),
-              tooltip: collapsed
+          if (canToggle)
+            Semantics(
+              expanded: !collapsed,
+              button: true,
+              enabled: true,
+              excludeSemantics: true,
+              onTap: onToggle,
+              label: collapsed
                   ? 'Mostrar partidos de ${competition.name}'
                   : 'Ocultar partidos de ${competition.name}',
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              onPressed: onToggle,
-              icon: Icon(
-                collapsed ? Icons.expand_more : Icons.expand_less,
-                color: muted,
+              child: IconButton(
+                key: ValueKey('competition-toggle-${competition.id}'),
+                tooltip: collapsed
+                    ? 'Mostrar partidos de ${competition.name}'
+                    : 'Ocultar partidos de ${competition.name}',
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                onPressed: onToggle,
+                icon: Icon(
+                  collapsed ? Icons.expand_more : Icons.expand_less,
+                  color: muted,
+                ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     ),
   );
 }
@@ -615,7 +625,7 @@ class FeedMatchRow extends StatelessWidget {
   final FootballMatch match;
   final Snapshot data;
 
-  /// Optional small context line (e.g. competition name in "Siguiendo").
+  /// Optional small context line for compact-row reuse outside this feed.
   final String? caption;
 
   @override
@@ -775,113 +785,147 @@ class MatchCard extends StatelessWidget {
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
     final latestEvent = match.latestEvent;
+    // A scheduled row whose kickoff already passed without any evidence of
+    // play is not allowed to masquerade as an upcoming match.
+    final unconfirmed = match.isAwaitingUpdate && !match.hasPlayedEvidence;
+    final status = unconfirmed ? 'Por confirmar' : match.statusLabel;
+    final centre = unconfirmed
+        ? '—'
+        : match.showKickoff
+        ? localTime(context, match.startTime)
+        : match.score;
+    void open() =>
+        context.push('/match/${match.id}', extra: data.forMatch(match.id));
+    final semanticLabel = [
+      '${home.name} contra ${away.name}',
+      centre,
+      if (status.isNotEmpty) status,
+    ].join(', ');
+
     return Card(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: () =>
-            context.push('/match/${match.id}', extra: data.forMatch(match.id)),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: match.statusLabel.isEmpty
-                        ? const SizedBox.shrink()
-                        : Text(
-                            match.statusLabel.toUpperCase(),
-                            style: TextStyle(
-                              color: match.isLive ? lime : muted,
-                              fontSize: 10,
-                              letterSpacing: 1,
+      key: ValueKey('match-card-${match.id}'),
+      child: Semantics(
+        key: ValueKey('match-card-action-${match.id}'),
+        container: true,
+        button: true,
+        label: semanticLabel,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: open,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: status.isEmpty
+                          ? const SizedBox.shrink()
+                          : Text(
+                              status.toUpperCase(),
+                              style: TextStyle(
+                                color: match.isLive ? lime : muted,
+                                fontSize: 10,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                    ),
+                    FollowButton(
+                      'match',
+                      match.id,
+                      key: ValueKey('feed-follow-${match.id}'),
+                      label: '${home.name} contra ${away.name}',
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        children: [
+                          EntityAvatar(home),
+                          const SizedBox(height: 9),
+                          Text(
+                            home.name,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                  ),
-                  FollowButton('match', match.id),
-                ],
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      children: [
-                        EntityAvatar(home),
-                        const SizedBox(height: 9),
-                        Text(
-                          home.name,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Text(
+                            centre,
+                            style: TextStyle(
+                              fontSize: unconfirmed
+                                  ? 30
+                                  : match.showKickoff
+                                  ? 21
+                                  : 30,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        Text(
-                          match.showKickoff
-                              ? localTime(context, match.startTime)
-                              : match.score,
-                          style: TextStyle(
-                            fontSize: match.showKickoff ? 21 : 30,
-                            fontWeight: FontWeight.w800,
+                          const SizedBox(height: 6),
+                          Text(
+                            unconfirmed
+                                ? 'Ver partido'
+                                : match.showKickoff
+                                ? 'Hora Costa Rica'
+                                : 'Ver partido',
+                            style: const TextStyle(fontSize: 10, color: muted),
                           ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          match.showKickoff ? 'Hora Costa Rica' : 'Ver partido',
-                          style: const TextStyle(fontSize: 10, color: muted),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        EntityAvatar(away),
-                        const SizedBox(height: 9),
-                        Text(
-                          away.name,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                    Expanded(
+                      child: Column(
+                        children: [
+                          EntityAvatar(away),
+                          const SizedBox(height: 9),
+                          Text(
+                            away.name,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              if (match.isLive && latestEvent != null) ...[
-                const SizedBox(height: 14),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    color: lime.withValues(alpha: .07),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    'Último: ${eventMinuteLabel(latestEvent)} · '
-                    '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: lime,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+                  ],
                 ),
+                if (match.isLive && latestEvent != null) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 9,
+                    ),
+                    decoration: BoxDecoration(
+                      color: lime.withValues(alpha: .07),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      'Último: ${eventMinuteLabel(latestEvent)} · '
+                      '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: lime,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

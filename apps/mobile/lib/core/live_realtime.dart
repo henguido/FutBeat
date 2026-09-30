@@ -67,14 +67,37 @@ class LiveRealtimeConfig {
     required this.publicKey,
   });
 
-  factory LiveRealtimeConfig.fromEnvironment() => LiveRealtimeConfig.fromValues(
-    apiUrl: const String.fromEnvironment('FUTBEAT_API_URL'),
-    supabaseUrl: const String.fromEnvironment('FUTBEAT_SUPABASE_URL'),
-    publishableKey: const String.fromEnvironment(
+  factory LiveRealtimeConfig.fromEnvironment() {
+    const configuredApiUrl = String.fromEnvironment('FUTBEAT_API_URL');
+    const configuredSupabaseUrl = String.fromEnvironment(
+      'FUTBEAT_SUPABASE_URL',
+    );
+    const configuredPublishableKey = String.fromEnvironment(
       'FUTBEAT_SUPABASE_PUBLISHABLE_KEY',
-    ),
-    legacyPublicToken: const String.fromEnvironment('FUTBEAT_API_PUBLIC_TOKEN'),
-  );
+    );
+    const legacyPublicToken = String.fromEnvironment(
+      'FUTBEAT_API_PUBLIC_TOKEN',
+    );
+
+    // Publishable keys are client credentials by design. The Android/iOS app
+    // gets the same public project configuration as the beta build even for a
+    // plain local debug APK. Host-side Flutter tests stay unconfigured.
+    final mobile = Platform.isAndroid || Platform.isIOS;
+    return LiveRealtimeConfig.fromValues(
+      apiUrl: configuredApiUrl.isNotEmpty
+          ? configuredApiUrl
+          : mobile
+          ? 'https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-api'
+          : '',
+      supabaseUrl: configuredSupabaseUrl,
+      publishableKey: configuredPublishableKey.isNotEmpty
+          ? configuredPublishableKey
+          : mobile
+          ? 'sb_publishable_iSH4S3fKou_EEkdG3W_Azg_9E4HXzWE'
+          : '',
+      legacyPublicToken: legacyPublicToken,
+    );
+  }
 
   factory LiveRealtimeConfig.fromValues({
     String apiUrl = '',

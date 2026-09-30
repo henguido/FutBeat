@@ -229,14 +229,14 @@ Future<List<String>> _pump(
 }
 
 Finder _row(String matchId) =>
-    find.byWidgetPredicate((w) => w is FeedMatchRow && w.match.id == matchId);
+    find.byKey(ValueKey('match-card-$matchId'));
 
 void main() {
   testWidgets('every match of the day is a row, once, without follows', (
     tester,
   ) async {
     await _pump(tester);
-    expect(find.byType(FeedMatchRow), findsNWidgets(6));
+    expect(find.byType(MatchCard), findsNWidgets(6));
     for (final id in [
       'm_cr_live',
       'm_cr_next',
@@ -247,12 +247,12 @@ void main() {
     ]) {
       expect(_row(id), findsOneWidget, reason: id);
     }
-    expect(find.text('Siguiendo'), findsNothing);
+    expect(find.text('Favoritos'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('the row star follows / unfollows the match without moving it '
-      '(only favourite teams make "Siguiendo"); the row tap still opens the '
+      '(only favourite teams make "Favoritos"); the row tap still opens the '
       'match', (tester) async {
     final db = _FollowsDb();
     addTearDown(db.changes.close);
@@ -264,14 +264,14 @@ void main() {
         )
         .tooltip!;
     expect(tooltip(), startsWith('Seguir '));
-    expect(find.text('Siguiendo'), findsNothing);
+    expect(find.text('Favoritos'), findsNothing);
     await tester.tap(star);
     await tester.pumpAndSettle();
     expect(opened, isEmpty, reason: 'the star never opens the match');
     expect(db.toggles, ['match:m_es_long']);
-    expect(find.text('Siguiendo'), findsNothing);
+    expect(find.text('Favoritos'), findsNothing);
     expect(
-      find.byType(FeedMatchRow),
+      find.byType(MatchCard),
       findsNWidgets(6),
       reason: 'reorders only',
     );
@@ -284,8 +284,8 @@ void main() {
     expect(tooltip(), startsWith('Dejar de seguir '));
     await tester.tap(star);
     await tester.pumpAndSettle();
-    expect(find.text('Siguiendo'), findsNothing);
-    expect(find.byType(FeedMatchRow), findsNWidgets(6));
+    expect(find.text('Favoritos'), findsNothing);
+    expect(find.byType(MatchCard), findsNWidgets(6));
     await tester.tap(find.text(_longHome).first);
     await tester.pumpAndSettle();
     expect(opened, ['m_es_long']);
@@ -295,9 +295,7 @@ void main() {
     final handle = tester.ensureSemantics();
     await _pump(tester);
     final row = tester.getSemantics(
-      find
-          .descendant(of: _row('m_es_1'), matching: find.byType(Semantics))
-          .first,
+      find.byKey(const ValueKey('match-card-action-m_es_1')),
     );
     expect(row.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
     expect(row.label, isNot(contains('Seguir')));
@@ -316,9 +314,9 @@ void main() {
     tester,
   ) async {
     await _pump(tester, follows: {'team:t_bet'});
-    expect(find.text('Siguiendo'), findsOneWidget);
+    expect(find.text('Favoritos'), findsOneWidget);
     // Same total, followed matches appear once.
-    expect(find.byType(FeedMatchRow), findsNWidgets(6));
+    expect(find.byType(MatchCard), findsNWidgets(6));
     expect(_row('m_es_1'), findsOneWidget);
     expect(_row('m_es_partial'), findsOneWidget);
     expect(_row('m_es_awaiting'), findsOneWidget);
@@ -380,7 +378,7 @@ void main() {
     await _pump(tester);
     final live = _row('m_cr_live');
     expect(
-      find.descendant(of: live, matching: find.text("63′ · En vivo")),
+      find.descendant(of: live, matching: find.text("63′ · EN VIVO")),
       findsOneWidget,
     );
     expect(
@@ -398,7 +396,7 @@ void main() {
   final nearMidnight = costaRicaNow().hour == 0 && costaRicaNow().minute < 20;
 
   testWidgets(
-    'awaiting matches show Por confirmar, never an upcoming kickoff',
+    'awaiting matches show POR CONFIRMAR, never an upcoming kickoff',
     (tester) async {
       final data = _snapshot();
       final awaiting = data.matches.firstWhere((m) => m.id == 'm_es_awaiting');
@@ -407,20 +405,20 @@ void main() {
       expect(partial.showKickoff, isFalse);
 
       await _pump(tester, data: data);
-      // Played evidence past kickoff: score + "Marcador parcial", no kickoff.
+      // Played evidence past kickoff: score + "MARCADOR PARCIAL", no kickoff.
       final p = _row('m_es_partial');
       expect(
         find.descendant(of: p, matching: find.text('2 - 1')),
         findsOneWidget,
       );
       expect(
-        find.descendant(of: p, matching: find.text('Marcador parcial')),
+        find.descendant(of: p, matching: find.text('MARCADOR PARCIAL')),
         findsOneWidget,
       );
-      // No evidence: dash + "Por confirmar", no kickoff time, no "Programado".
+      // No evidence: dash + "POR CONFIRMAR", no kickoff time, no "Programado".
       final a = _row('m_es_awaiting');
       expect(
-        find.descendant(of: a, matching: find.text('Por confirmar')),
+        find.descendant(of: a, matching: find.text('POR CONFIRMAR')),
         findsOneWidget,
       );
       expect(find.descendant(of: a, matching: find.text('—')), findsOneWidget);
@@ -439,10 +437,10 @@ void main() {
   );
 
   testWidgets('a directly followed match (match:<id>) or league never makes '
-      '"Siguiendo": it stays in its competition, once', (tester) async {
+      '"Favoritos": it stays in its competition, once', (tester) async {
     await _pump(tester, follows: {'match:m_es_1', 'competition:c_es'});
-    expect(find.text('Siguiendo'), findsNothing);
-    expect(find.byType(FeedMatchRow), findsNWidgets(6));
+    expect(find.text('Favoritos'), findsNothing);
+    expect(find.byType(MatchCard), findsNWidgets(6));
     expect(_row('m_es_1'), findsOneWidget);
     expect(
       tester.getTopLeft(_row('m_es_1')).dy,
@@ -518,10 +516,10 @@ void main() {
       tester,
     ) async {
       await _pump(tester, size: Size(width, 3000), follows: {'team:t_long1'});
-      expect(find.byType(FeedMatchRow), findsNWidgets(6));
+      expect(find.byType(MatchCard), findsNWidgets(6));
       expect(tester.takeException(), isNull);
-      for (final row in tester.widgetList<FeedMatchRow>(
-        find.byType(FeedMatchRow),
+      for (final row in tester.widgetList<MatchCard>(
+        find.byType(MatchCard),
       )) {
         final size = tester.getSize(_row(row.match.id));
         expect(size.height, greaterThanOrEqualTo(48));
@@ -535,8 +533,8 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await _pump(tester, size: const Size(320, 4000), follows: {'team:t_long1'});
     expect(tester.takeException(), isNull);
-    for (final row in tester.widgetList<FeedMatchRow>(
-      find.byType(FeedMatchRow),
+    for (final row in tester.widgetList<MatchCard>(
+      find.byType(MatchCard),
     )) {
       expect(
         tester.getSize(_row(row.match.id)).height,
@@ -586,10 +584,11 @@ void main() {
         label: 'Mostrar partidos de LaLiga',
       ),
     );
-    final live = tester.getSemantics(_row('m_cr_live'));
+    final live = tester.getSemantics(
+      find.byKey(const ValueKey('match-card-action-m_cr_live')),
+    );
     expect(live.label, contains('Saprissa contra Alajuelense'));
-    expect(live.label, contains('Liga Promerica'));
-    expect(live.label, contains('Último: 64′ · Gol'));
+    expect(live.label, contains('1 - 0'));
     handle.dispose();
   });
 }

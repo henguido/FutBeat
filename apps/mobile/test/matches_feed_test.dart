@@ -335,8 +335,8 @@ void main() {
       follows.add({'competition:fb_comp_cr'});
       await tester.pumpAndSettle();
       // A followed league only orders first: never its own block, never
-      // "Siguiendo".
-      expect(find.text('Siguiendo'), findsNothing);
+      // "Favoritos".
+      expect(find.text('Favoritos'), findsNothing);
       expect(find.text('TUS COMPETICIONES'), findsNothing);
       follows.add({});
       await tester.pumpAndSettle();
@@ -730,7 +730,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(data.matches, hasLength(250));
-      final builtCards = find.byType(FeedMatchRow).evaluate().length;
+      final builtCards = find.byType(MatchCard).evaluate().length;
       expect(builtCards, greaterThan(0));
       expect(builtCards, lessThan(50));
       expect(tester.takeException(), isNull);
@@ -773,9 +773,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Siguiendo'), findsOneWidget);
+      expect(find.text('Favoritos'), findsOneWidget);
       expect(find.text('TUS COMPETICIONES'), findsNothing);
-      // Competitions follow "Siguiendo" directly (no extra heading).
+      // Competitions follow "Favoritos" directly (no extra heading).
       expect(find.text('TODOS LOS PARTIDOS'), findsNothing);
       expect(find.text('Marathón'), findsOneWidget);
       expect(find.text('Equipo X'), findsOneWidget);
@@ -920,7 +920,7 @@ void main() {
     // The followed league is ordered first, without a block of its own.
     expect(find.text('TUS COMPETICIONES'), findsNothing);
     expect(find.text('TODOS LOS PARTIDOS'), findsNothing);
-    expect(find.text('Siguiendo'), findsNothing);
+    expect(find.text('Favoritos'), findsNothing);
     expect(find.text('Liga Promerica'), findsOneWidget);
     expect(find.text('LaLiga'), findsOneWidget);
     expect(
