@@ -985,6 +985,69 @@ class _SummaryColumn extends StatelessWidget {
   );
 }
 
+/// A minimal match context built from a meeting row this screen already
+/// shows (teams, score, status, competition, date), so opening a past match
+/// paints its header at once instead of waiting for the network behind a
+/// full-screen spinner. The Match Center still reads the full context.
+/// Null when anything essential is missing: the normal load then applies.
+Snapshot? meetingContext(
+  Json item,
+  Entity? home,
+  Entity? away,
+  String? competitionName,
+) {
+  final id = item['matchId'];
+  final competitionId = item['competitionId'];
+  final status = item['status'];
+  final startTime = item['startTime'];
+  if (id is! String ||
+      competitionId is! String ||
+      status is! String ||
+      startTime is! String ||
+      DateTime.tryParse(startTime) == null ||
+      home == null ||
+      away == null ||
+      competitionName == null ||
+      competitionName.isEmpty) {
+    return null;
+  }
+  final score = item['score'];
+  final complete = score is Map && score['home'] is int && score['away'] is int;
+  try {
+    final snapshot = Snapshot({
+      'schemaVersion': 1,
+      'demo': false,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      'coverage': {'partial': true},
+      'freshness': {'stale': false},
+      'competitions': [
+        {'id': competitionId, 'name': competitionName},
+      ],
+      'teams': [home.json, away.json],
+      'players': <dynamic>[],
+      'matches': [
+        {
+          'id': id,
+          'competitionId': competitionId,
+          'homeTeamId': home.id,
+          'awayTeamId': away.id,
+          'startTime': startTime,
+          'status': status,
+          'score': complete
+              ? {'home': score['home'], 'away': score['away']}
+              : null,
+          'events': <dynamic>[],
+          'statistics': <dynamic>[],
+        },
+      ],
+      'standings': <dynamic>[],
+    });
+    return snapshot.match(id) == null ? null : snapshot;
+  } catch (_) {
+    return null;
+  }
+}
+
 class _MeetingRow extends StatelessWidget {
   const _MeetingRow({
     required this.item,
@@ -1043,7 +1106,10 @@ class _MeetingRow extends StatelessWidget {
       // The selected match itself is already open.
       onTap: id == null || label != null
           ? null
-          : () => context.push('/match/$id'),
+          : () => context.push(
+              '/match/$id',
+              extra: meetingContext(item, home, away, competition),
+            ),
       child: _Card(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

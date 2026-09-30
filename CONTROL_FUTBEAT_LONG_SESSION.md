@@ -16,17 +16,31 @@ Documento operativo para que otra sesión continúe exactamente donde esta termi
 |---|---|
 | 1 cierre de `fix/matches-screen-regression` (dedup, marcador, orden) | HECHO — commit `5960d50` |
 | 2 fiabilidad LIVE | HECHO (backend) — ver commit del bloque 2 |
-| 3 rendimiento de partidos históricos | EN CURSO |
-| 4 QA pantalla de partidos | pendiente |
+| 3 rendimiento de partidos históricos | HECHO — ver commit del bloque 3 |
+| 4 QA pantalla de partidos | EN CURSO |
 | 5 UX: swipe de fecha (ya existe #128, verificar) y tabla de posiciones | pendiente |
 | 6 Match Center deuda pequeña | pendiente |
 | 7 validación final | pendiente |
 
 ## Tarea activa
 
-Bloque 3: medir primero (qué bloquea el primer render del Match Center de un partido pasado), luego optimizar.
+Bloque 4: QA deliberado de la pantalla de Partidos (favoritos, agrupación, estados, colapsar, cambio de país, días, duplicados, cuenta, navegación).
 
 Nota de entorno: el chequeo de permisos del shell falla a ratos de forma transitoria; reintentar el mismo comando.
+
+## Bloque 3 — medición y cambios
+
+Medido en producción (solo lectura, funciones `stable`): las lecturas del Match Center NO son el cuello de botella.
+- `futbeat_read_match_context`: 6-55 ms en partidos viejos, 115-204 ms en recientes (49-93 KB).
+- `futbeat_read_match_detail`: 6-24 ms. `futbeat_read_match_preview`: 16-57 ms. Vídeos: ~0 ms.
+Lo que bloqueaba el primer render:
+- P0 (equipos, marcador, estado, competición, fecha): ya era inmediato al entrar desde el feed (`initialData`). NO lo era desde el perfil de jugador ni desde las filas de Cara a cara: spinner a pantalla completa hasta que respondía la red.
+- API `match-context`: 3 llamadas a base de datos en serie.
+Cambios:
+- Perfil de jugador pasa `data.forMatch(id)`; las filas de Cara a cara pasan `meetingContext(...)` (contexto mínimo con lo que la fila ya muestra). El Match Center pinta la cabecera al instante y sigue leyendo el contexto completo.
+- `futbeat-api` `match-context`: las dos demandas (resultado terminal, tabla) van en paralelo; la lectura sigue después de ambas.
+P1/P2 (eventos, alineaciones, estadísticas, H2H, fotos) ya cargaban después y por separado; no se tocaron.
+No medido: latencia real extremo a extremo de la API (llamarla dispara demandas = escrituras en producción).
 
 ## Bloque 2 — hallazgos (diagnóstico de SOLO LECTURA en producción, 2026-09-30 14:00 UTC)
 
@@ -81,7 +95,8 @@ No toma bloqueo de fila salvo que aplique (UPDATE condicionado). Guarda `provena
 ## Commits locales de la sesión
 
 - `5960d50` fix: harden match feed reconciliation (bloque 1)
-- bloque 2: fix: stabilize live match lifecycle (ver `git log`)
+- `8e83134` fix: stabilize live match lifecycle (bloque 2)
+- bloque 3: perf: paint historical match center from known data (ver `git log`)
 
 ## Archivos del bloque 1
 

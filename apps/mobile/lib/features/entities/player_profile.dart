@@ -632,7 +632,10 @@ class PlayerEventRow extends StatelessWidget {
     final opponent = [home, away].where((name) => name.isNotEmpty).join(' vs ');
     final color = assist ? lime : eventColor(type);
     return InkWell(
-      onTap: () => context.push('/match/${match.id}'),
+      // The profile already holds this match: the Match Center header paints
+      // at once and the full context is read in the background.
+      onTap: () =>
+          context.push('/match/${match.id}', extra: data.forMatch(match.id)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
