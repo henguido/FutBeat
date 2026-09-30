@@ -164,6 +164,39 @@ void main() {
       expect(result['score'], {'home': 0, 'away': 0});
     });
 
+    test('unlabelled payload copies are kept unless re-sent or owned', () {
+      final copy = {
+        'id': 'fb_event_copy',
+        'type': 'GOAL',
+        'minute': 5,
+        'teamId': _home,
+      };
+      final resent = {
+        'id': 'fb_event_card',
+        'type': 'YELLOW_CARD',
+        'minute': 25,
+        'teamId': _away,
+      };
+      final staleSynthetic = {
+        'id': 'fb_event_syn',
+        'type': 'GOAL',
+        'minute': 40,
+        'teamId': _home,
+        'synthetic': true,
+      };
+      final result = update([card])
+          .applyTo(match([copy, resent, staleSynthetic]));
+      final ids = (result['events'] as List).map((e) => e['id']).toList();
+      expect(ids..sort(), ['fb_event_card', 'fb_event_copy']);
+      expect(
+        (result['events'] as List).firstWhere(
+          (e) => e['id'] == 'fb_event_card',
+        )['provider'],
+        'goal_api',
+        reason: 'the re-sent id takes the realtime copy',
+      );
+    });
+
     test('an empty list clears that provider (annulled goal, 1 -> 0)', () {
       final result = update(const []).applyTo(match([annulled]));
       expect(result['events'], isEmpty);

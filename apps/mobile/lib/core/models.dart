@@ -397,13 +397,23 @@ class LiveMatchUpdate {
     // P0-A: latest_events is the provider's complete, already reconciled
     // list (corrections, annulled goals, deleted cards). It REPLACES that
     // provider's events: never a union, so a row it no longer sends is gone.
-    // Events explicitly labelled with another provider are kept.
+    // Kept: events of another provider, and unlabelled events (payload
+    // copies) the list neither re-sends nor owns. Owned by this provider:
+    // its labelled rows and the synthetic score goals (GOAL feed only).
     final current = (match['events'] as List? ?? []).cast<Json>();
+    final latestIds = {for (final event in events) event['id']};
+    bool ownedByThisFeed(Json event) {
+      final label = event['provider'];
+      if (label != null) return label == provider;
+      return provider == 'goal_api' && event['synthetic'] == true;
+    }
+
     final merged = <String, Json>{};
     for (final event in [
       if (hasEventList)
         ...current.where(
-          (event) => event['provider'] != null && event['provider'] != provider,
+          (event) =>
+              !latestIds.contains(event['id']) && !ownedByThisFeed(event),
         )
       else
         ...current,

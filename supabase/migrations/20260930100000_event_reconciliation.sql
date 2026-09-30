@@ -30,9 +30,9 @@
 --     carrying (match, provider, providerEventKey) is reused and its payload
 --     is updated in place; new rows keep the historical content-based id
 --     formula (so existing ids and pushes stay valid). When another key
---     already owns that id: two fallback occurrences branch (#121), a
---     re-keyed copy of a still-listed row shares it (#121), and a key whose
---     owner is no longer listed takes the row over (re-issued id). Fallback
+--     already owns that id the new key branches to an id of its own (two
+--     upstream keys are two rows; a copy of a still-listed row is marked
+--     duplicateOf: shown once, never pushed again). Fallback
 --     keys (no provider id) change with the content: a correction there is
 --     retract old + add new.
 --   * Every rewrite / retraction / restoration is audited in
@@ -53,6 +53,26 @@
 --     stored events / cards / substitutions; only an absent / non-array key
 --     keeps the stored one.
 --
+--   * Per-path authority (review P1-2): each live_events row remembers the
+--     path of its last sighting (observation 'source': live-list | detail |
+--     results). An answer only retracts rows last seen on its own path, and
+--     never retracts a team's GOAL rows when that would leave fewer active
+--     goals than the team's current score (a genuine annulment always comes
+--     with a score decrease). The detail cache applies the same score guard.
+--   * Score decrease (review P1-1): active synthetic goals above the new team
+--     score are retracted (reason score_decrease), so a stale provisional goal
+--     never absorbs (or silences) the next real goal.
+--   * Pending pushes of a retracted event are cancelled at claim time, except
+--     when the row was replaced by a correction (that push stands for it).
+--
+-- Deploy notes:
+--   * Own goals without a provider id: the fallback key includes the credited
+--     team, so an own-goal reclassification of an anonymous row is retract +
+--     add (one push, via the correction twin); with a provider id it is an
+--     in-place update.
+--   * The new index is created non-concurrently and the legacy repair scans
+--     canonical_events once: apply outside a live-match window.
+--
 -- UNVERIFIED provider shapes (no captured GOAL sample): whether events[].id
 -- always exists and is stable across corrections, how VAR and own goals are
 -- encoded, whether an empty events array means "none". The design is correct
@@ -62,6 +82,7 @@
 -- Schema
 -- ---------------------------------------------------------------------------
 alter table futbeat_private.live_events
+  add column if not exists source text,
   add column if not exists retracted_at timestamptz,
   add column if not exists updated_at timestamptz,
   add column if not exists revision integer not null default 1;
@@ -98,6 +119,21 @@ returns text language sql immutable set search_path='' as $$
     when p_type in ('YELLOW_CARD','RED_CARD') then 'cards'
     when p_type='SUBSTITUTION' then 'substitutions'
   end
+$$;
+
+-- The normalized content of a LIVE event (never the raw provider row, whose
+-- volatile fields or list-vs-detail shape must not count as a correction).
+create or replace function futbeat_private.live_event_content(evt jsonb)
+returns jsonb language sql immutable set search_path='' as $$
+  select jsonb_build_object(
+    'type',coalesce(nullif(evt->>'type',''),'OTHER'),
+    'minute',futbeat_private.safe_result_integer(evt->>'minute'),
+    'extraMinute',futbeat_private.safe_result_integer(evt->>'extraMinute'),
+    'teamExternalId',nullif(evt->>'teamExternalId',''),
+    'playerExternalId',nullif(evt->>'playerExternalId',''),
+    'assistExternalId',nullif(evt->>'assistExternalId',''),
+    'scoreAfter',case when jsonb_typeof(evt->'scoreAfter')='object' then evt->'scoreAfter' end,
+    'ownGoal',coalesce(evt->>'ownGoal','')='true')
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -146,6 +182,14 @@ declare
   v_corrected integer;
   v_retracted integer;
   v_active integer;
+  v_source text;
+  v_side text;
+  v_team_ext text;
+  v_team_score integer;
+  v_goal_active integer;
+  v_goal_candidates integer;
+  v_protected text[];
+  v_guard_all boolean;
 begin
   if p_provider is null or btrim(p_provider) = '' then raise exception 'provider is required'; end if;
   if p_received_at is null then raise exception 'received_at is required'; end if;
@@ -163,6 +207,7 @@ begin
     v_provider_observed_at := nullif(obs ->> 'providerObservedAt', '')::timestamptz;
     v_observation_id := null;
     v_canonical_match_id := null;
+    v_source := nullif(obs ->> 'source', '');
 
     if v_external_match_id is null then raise exception 'externalMatchId is required'; end if;
     if v_payload_hash is null or v_payload_hash !~ '^[0-9a-f]{64}$' then raise exception 'invalid payloadHash'; end if;
@@ -228,15 +273,24 @@ begin
       if not found then
         insert into futbeat_private.live_events (
           provider, external_match_id, event_key, canonical_match_id, event_type, minute,
-          team_external_id, player_external_id, payload, first_seen_at
+          team_external_id, player_external_id, payload, first_seen_at, source
         ) values (
           p_provider, v_external_match_id, evt ->> 'eventKey', v_canonical_match_id,
           coalesce(nullif(evt ->> 'type', ''), 'OTHER'), nullif(evt ->> 'minute', '')::integer,
-          nullif(evt ->> 'teamExternalId', ''), nullif(evt ->> 'playerExternalId', ''), evt, p_received_at
+          nullif(evt ->> 'teamExternalId', ''), nullif(evt ->> 'playerExternalId', ''), evt, p_received_at, v_source
         ) on conflict (provider, external_match_id, event_key) do nothing;
         get diagnostics v_inserted = row_count;
         v_new_events := v_new_events + v_inserted;
-      elsif v_prev.payload is distinct from evt or v_prev.retracted_at is not null then
+      elsif futbeat_private.live_event_content(v_prev.payload) is not distinct from futbeat_private.live_event_content(evt)
+        and v_prev.retracted_at is null then
+        -- Same normalized content: never a correction; only the path of the
+        -- last sighting is remembered (no revision).
+        if v_prev.source is distinct from v_source then
+          update futbeat_private.live_events set source = v_source
+           where provider = p_provider and external_match_id = v_external_match_id
+             and event_key = evt ->> 'eventKey';
+        end if;
+      else
         -- P0-A: the latest observation of one upstream row wins (correction
         -- or restoration after a retraction).
         update futbeat_private.live_events
@@ -246,6 +300,7 @@ begin
                player_external_id = nullif(evt ->> 'playerExternalId', ''),
                payload = evt,
                canonical_match_id = coalesce(v_canonical_match_id, canonical_match_id),
+               source = v_source,
                retracted_at = null,
                updated_at = p_received_at,
                revision = revision + 1
@@ -255,16 +310,42 @@ begin
       end if;
     end loop;
 
-    -- P0-A snapshot-replace: only sections answered as a complete array.
+    -- P0-A snapshot-replace: only sections answered as a complete array,
+    -- only rows last seen on this same path, and never below the score.
     if jsonb_typeof(obs -> 'completeSections') = 'array' then
       select coalesce(array_agg(value), '{}') into v_sections
         from jsonb_array_elements_text(obs -> 'completeSections');
+      v_protected := '{}';
+      v_guard_all := false;
+      foreach v_side in array array['home','away'] loop
+        v_team_ext := coalesce(nullif(obs #>> array['rawPayload', v_side || 'Team', 'id'], ''),
+          nullif(obs #>> array['rawPayload', v_side || 'TeamId'], ''));
+        v_team_score := case v_side when 'home' then v_home_score else v_away_score end;
+        if v_team_ext is null or v_team_score is null then
+          -- Unknown side or score: goals are never retracted by this answer.
+          v_guard_all := true;
+          continue;
+        end if;
+        select count(*) filter (where retracted_at is null),
+               count(*) filter (where retracted_at is null and not (event_key = any(v_keys))
+                 and source is not distinct from v_source)
+          into v_goal_active, v_goal_candidates
+          from futbeat_private.live_events
+         where provider = p_provider and external_match_id = v_external_match_id
+           and event_type = 'GOAL' and team_external_id = v_team_ext;
+        if v_goal_active - v_goal_candidates < v_team_score then
+          v_protected := v_protected || v_team_ext;
+        end if;
+      end loop;
       update futbeat_private.live_events
          set retracted_at = p_received_at, updated_at = p_received_at, revision = revision + 1
        where provider = p_provider and external_match_id = v_external_match_id
          and retracted_at is null
+         and source is not distinct from v_source
          and futbeat_private.live_event_section(event_type) = any(v_sections)
-         and not (event_key = any(v_keys));
+         and not (event_key = any(v_keys))
+         and not (event_type = 'GOAL' and team_external_id is not null
+           and (v_guard_all or team_external_id = any(v_protected)));
       get diagnostics v_retracted = row_count;
     end if;
 
@@ -338,6 +419,56 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Projection
 -- ---------------------------------------------------------------------------
+
+-- Same logical occurrence (copied from 20260926030000). Changed only: a row
+-- stored as the re-keyed copy of another (duplicateOf, see
+-- record_live_events) is that occurrence; it keeps its own canonical row (no
+-- shared id, no key ping-pong) but is shown once, as #121 did.
+create or replace function futbeat_private.events_equivalent(a jsonb,b jsonb)
+returns boolean language plpgsql immutable set search_path='' as $$
+declare
+ ka text:=nullif(a->>'providerEventKey',''); kb text:=nullif(b->>'providerEventKey','');
+ ta text:=nullif(a->>'teamId',''); tb text:=nullif(b->>'teamId','');
+ pa text:=nullif(a->>'playerId',''); pb text:=nullif(b->>'playerId','');
+ va integer; vb integer; sa text; sb text;
+begin
+ if a->>'type' is distinct from b->>'type' then return false; end if;
+ if nullif(a->>'id','') is not null and a->>'id'=b->>'id' then return true; end if;
+ if futbeat_private.is_phase_event(a->>'type') then return false; end if;
+ if nullif(a->>'matchId','') is not null and nullif(b->>'matchId','') is not null
+   and a->>'matchId'<>b->>'matchId' then return false; end if;
+ -- Synthetic goals need the match context (ordinal); see dedupe_match_events.
+ if futbeat_private.is_synthetic_event(a) or futbeat_private.is_synthetic_event(b) then return false; end if;
+ if (nullif(a->>'duplicateOf','') is not null and a->>'duplicateOf'=b->>'id')
+   or (nullif(b->>'duplicateOf','') is not null and b->>'duplicateOf'=a->>'id') then return true; end if;
+ if ka is not null and kb is not null and coalesce(a->>'provider','')=coalesce(b->>'provider','') then
+   if ka=kb then return true; end if;
+   -- Two upstream row ids of one provider are two occurrences; composed
+   -- fallback keys (type:minute:...) are weak and fall through.
+   if position(':' in ka)=0 and position(':' in kb)=0 then return false; end if;
+ end if;
+ -- Conservative from here on: type + team + minute alone never merges two
+ -- real events. A possible duplicate is better than losing a real goal.
+ if ta is null or tb is null or ta<>tb then return false; end if;
+ if pa is not null and pb is not null and pa<>pb then return false; end if;
+ if a->>'type'='SUBSTITUTION' and nullif(a->>'assistPlayerId','') is not null
+   and nullif(b->>'assistPlayerId','') is not null and a->>'assistPlayerId'<>b->>'assistPlayerId' then
+   return false;
+ end if;
+ sa:=futbeat_private.event_score_after(a); sb:=futbeat_private.event_score_after(b);
+ -- Different score after the event: always two events.
+ if sa is not null and sb is not null and sa<>sb then return false; end if;
+ va:=futbeat_private.event_minute_value(a); vb:=futbeat_private.event_minute_value(b);
+ if pa is not null and pb is not null then
+   -- The same canonical player: compatible minute (one minute of
+   -- cross-provider rounding).
+   return futbeat_private.event_minutes_compatible(a,b)
+     or (va is not null and vb is not null and abs(va-vb)<=1);
+ end if;
+ -- Player identity missing on either side: only the exact same score after
+ -- the event (GOAL) plus a compatible minute is strong enough.
+ return sa is not null and sb is not null and sa=sb and futbeat_private.event_minutes_compatible(a,b);
+end $$;
 
 -- Keep the stronger event; fill only what it lacks (copied from
 -- 20260926030000, unchanged; the latest-observation rule lives in
@@ -481,7 +612,7 @@ create or replace function futbeat_private.visible_match_events(
 returns jsonb language sql immutable set search_path='' as $$
   select coalesce(jsonb_agg(case
       when futbeat_private.is_synthetic_event(x) or x->>'detail'='Marcador actualizado'
-        then x-'_members'-'observedAt'-'detail' else x-'_members'-'observedAt' end order by ordinal),'[]'::jsonb)
+        then x-'_members'-'observedAt'-'duplicateOf'-'detail' else x-'_members'-'observedAt'-'duplicateOf' end order by ordinal),'[]'::jsonb)
   from jsonb_array_elements(futbeat_private.dedupe_match_events(p_events,p_home_team,p_away_team,p_score))
     with ordinality as events(x,ordinal)
 $$;
@@ -508,7 +639,7 @@ $$;
 
 -- True when a just-stored event is the same occurrence as another ACTIVE
 -- event already stored for the match (base: 20260926030000; retracted rows
--- are excluded, corrections are caught by event_is_correction).
+-- are excluded, corrections are caught by event_correction_twin).
 create or replace function futbeat_private.event_already_known(ev jsonb,m jsonb)
 returns boolean language sql stable security invoker set search_path='' as $$
   select not futbeat_private.is_phase_event(ev->>'type') and exists(
@@ -520,16 +651,26 @@ returns boolean language sql stable security invoker set search_path='' as $$
     where g->'_members' ? (ev->>'id') and jsonb_array_length(g->'_members')>1)
 $$;
 
--- A new row that replaces a row retracted by the same observation: same type
--- and team, or the same identified player (an own-goal / team correction).
-create or replace function futbeat_private.event_is_correction(ev jsonb,p_at timestamptz)
-returns boolean language sql stable security invoker set search_path='' as $$
-  select not futbeat_private.is_phase_event(ev->>'type') and exists(
-    select 1 from futbeat_private.canonical_events c
-    where c.match_id=ev->>'matchId' and c.event_type=ev->>'type' and c.id<>ev->>'id'
-      and c.retracted_at=p_at
-      and (c.payload->>'teamId' is not distinct from ev->>'teamId'
-        or (nullif(c.payload->>'playerId','') is not null and c.payload->>'playerId'=ev->>'playerId')))
+-- The row a new event corrects: retracted by the same observation, same
+-- type, same team or the same identified player, and close enough to be the
+-- same occurrence (same player, minute within 5, or the same score-after).
+-- Rows already consumed by another correction are never reused.
+create or replace function futbeat_private.event_correction_twin(ev jsonb,p_at timestamptz)
+returns text language sql stable security invoker set search_path='' as $$
+  select c.id from futbeat_private.canonical_events c
+  where not futbeat_private.is_phase_event(ev->>'type')
+    and c.match_id=ev->>'matchId' and c.event_type=ev->>'type' and c.id<>ev->>'id'
+    and c.retracted_at=p_at
+    and coalesce(c.retraction_reason,'') in ('provider_retracted','absent_from_snapshot','superseded')
+    and (c.payload->>'teamId' is not distinct from ev->>'teamId'
+      or (nullif(c.payload->>'playerId','') is not null and c.payload->>'playerId'=ev->>'playerId'))
+    and ((nullif(c.payload->>'playerId','') is not null and c.payload->>'playerId'=ev->>'playerId')
+      or abs(futbeat_private.event_minute_value(c.payload)-futbeat_private.event_minute_value(ev))<=5
+      or (futbeat_private.event_score_after(c.payload) is not null
+        and futbeat_private.event_score_after(c.payload)=futbeat_private.event_score_after(ev)))
+  order by (c.payload->>'playerId' is not distinct from ev->>'playerId') desc,
+    abs(coalesce(futbeat_private.event_minute_value(c.payload),999)-coalesce(futbeat_private.event_minute_value(ev),0)),c.id
+  limit 1
 $$;
 
 -- Soft retraction with audit; never deletes. True when it changed the row.
@@ -571,6 +712,7 @@ declare
   involved record;
   v_old futbeat_private.canonical_events%rowtype;
   v_new jsonb;
+  v_twin text;
 begin
   select * into v_old from futbeat_private.canonical_events where id=ev->>'id' for update;
   if found then
@@ -605,7 +747,15 @@ begin
 
   -- P0-A: the same observation retracted the row this one replaces (a
   -- re-keyed or corrected upstream row): one push per logical occurrence.
-  if futbeat_private.event_is_correction(ev,p_at) then
+  v_twin:=futbeat_private.event_correction_twin(ev,p_at);
+  if v_twin is not null then
+    -- The twin's push (sent or pending) stands for this occurrence.
+    update futbeat_private.canonical_events set retraction_reason='corrected' where id=v_twin;
+    update futbeat_private.canonical_events set notify_candidate=false where id=ev->>'id';
+    return;
+  end if;
+  -- #121: a re-keyed copy of an active row never pushes again.
+  if nullif(ev->>'duplicateOf','') is not null then
     update futbeat_private.canonical_events set notify_candidate=false where id=ev->>'id';
     return;
   end if;
@@ -710,12 +860,13 @@ declare
   v_team text;
   v_explained integer;
   v_ordinal integer;
+  v_retract record;
 begin
   if new.provider<>'goal_api'
      or new.canonical_match_id is null
      or (
-       coalesce(new.home_score,0)<=coalesce(old.home_score,0)
-       and coalesce(new.away_score,0)<=coalesce(old.away_score,0)
+       new.home_score is not distinct from old.home_score
+       and new.away_score is not distinct from old.away_score
      )
   then
     return new;
@@ -726,6 +877,29 @@ begin
   where id=new.canonical_match_id and kind='match';
 
   if m is null then
+    return new;
+  end if;
+
+  -- Review P1-1: a (known) score decrease retracts the provisional goals it
+  -- no longer supports, so they never absorb or silence a later real goal.
+  if new.home_score is not null and new.away_score is not null then
+    foreach v_side in array array['home','away'] loop
+      v_new:=case v_side when 'home' then new.home_score else new.away_score end;
+      v_old:=case v_side when 'home' then coalesce(old.home_score,0) else coalesce(old.away_score,0) end;
+      continue when v_new>=v_old;
+      for v_retract in select c.id from futbeat_private.canonical_events c
+        where c.match_id=new.canonical_match_id and c.provider='goal_api'
+          and c.retracted_at is null and futbeat_private.is_synthetic_event(c.payload)
+          and c.payload->>'teamId'=m->>(v_side||'TeamId')
+          and coalesce(futbeat_private.event_team_ordinal(c.payload,m->>'homeTeamId',m->>'awayTeamId'),0)>v_new
+      loop
+        perform futbeat_private.retract_canonical_event(v_retract.id,new.changed_at,'score_decrease');
+      end loop;
+    end loop;
+  end if;
+
+  if coalesce(new.home_score,0)<=coalesce(old.home_score,0)
+     and coalesce(new.away_score,0)<=coalesce(old.away_score,0) then
     return new;
   end if;
 
@@ -807,7 +981,7 @@ returns jsonb language plpgsql security definer set search_path='' as $$
 declare result jsonb; c jsonb; m jsonb; mid text; e record; tid text; pid text; aid text;
  ev jsonb; eid text; can_notify boolean; baseline boolean; typ text; state futbeat_private.live_match_state;
  obs jsonb; kept jsonb:='[]'; suppressed jsonb:='[]'; v_ext text; v_status text; v_claimed text;
- v_hit text; v_obs jsonb; v_sections text[]; v_backed text[]; r record; v_key text;
+ v_hit text; v_obs jsonb; v_sections text[]; v_backed text[]; r record; v_key text; v_dup text; v_content text;
 begin
  -- Ignore delayed observations instead of regressing a live match.
  if exists(select 1 from jsonb_array_elements(p_observations) o
@@ -888,43 +1062,46 @@ begin
    select canonical_id into pid from futbeat_private.provider_entities where provider=p_provider and kind='player' and external_id=e.player_external_id;
    select canonical_id into aid from futbeat_private.provider_entities where provider=p_provider and kind='player'
      and external_id=coalesce(e.payload->>'assistExternalId',e.payload#>>'{payload,assist,id}');
+   v_hit:=null; v_key:=e.event_key; v_dup:=null;
+   -- Historical content-based id of this row.
+   v_content:='fb_event_'||md5(concat_ws('|',mid,p_provider,e.event_type,e.minute,
+     coalesce(e.payload->>'extraMinute',e.payload#>>'{payload,time,extra}'),
+     e.team_external_id,e.player_external_id,
+     case when e.event_type='SUBSTITUTION' then coalesce(e.payload->>'assistExternalId',e.payload#>>'{payload,assist,id}') else '' end));
    -- P0-A: the canonical row already carrying this upstream key is the
    -- identity (active first, then the oldest), whatever its content.
-   v_hit:=null; v_key:=e.event_key;
    select id into v_hit from futbeat_private.canonical_events
     where match_id=mid and provider=p_provider and payload->>'providerEventKey'=e.event_key
     order by (retracted_at is not null),first_seen_at,id limit 1;
+   v_claimed:=null;
+   select payload->>'providerEventKey' into v_claimed from futbeat_private.canonical_events where id=v_content;
    if v_hit is not null then
     eid:=v_hit;
+   elsif v_claimed is not null and v_claimed<>e.event_key then
+    -- New upstream key whose historical id another key owns: an id of its
+    -- own (two upstream keys are two rows: no shared row, no ping-pong).
+    eid:='fb_event_'||md5(v_content||'|'||e.event_key);
    else
-    -- New upstream key: the historical content-based id, unless another key
-    -- already owns it (then a stable id of its own). A pre-#121 row without
-    -- a key is claimed by the first occurrence.
-    eid:='fb_event_'||md5(concat_ws('|',mid,p_provider,e.event_type,e.minute,
-      coalesce(e.payload->>'extraMinute',e.payload#>>'{payload,time,extra}'),
-      e.team_external_id,e.player_external_id,
-      case when e.event_type='SUBSTITUTION' then coalesce(e.payload->>'assistExternalId',e.payload#>>'{payload,assist,id}') else '' end));
-    select payload->>'providerEventKey' into v_claimed from futbeat_private.canonical_events where id=eid;
-    if found and v_claimed is not null and v_claimed<>e.event_key then
-     if v_claimed like 'fallback:%' and e.event_key like 'fallback:%' then
-      -- Two anonymous occurrences with the same attributes (#121).
-      eid:='fb_event_'||md5(eid||'|'||e.event_key);
-     elsif exists(select 1 from futbeat_private.live_events o
-         where o.provider=p_provider and o.external_match_id=c->>'externalMatchId'
-           and o.event_key=v_claimed and o.retracted_at is null) then
-      -- A re-keyed copy of a still-active row is the same event (#121): it
-      -- shares that row and keeps the owner's key (no key flapping).
-      v_key:=v_claimed;
-     end if;
-     -- Otherwise the owner row is no longer listed: this key takes it over
-     -- (a re-issued id with the same content is restored, never re-pushed).
-    end if;
+    -- The historical id (a pre-#121 row without a key is claimed).
+    eid:=v_content;
+   end if;
+   -- A copy of a still-listed row (#121 re-keyed row, real provider ids) is
+   -- that occurrence: duplicateOf, shown once, never pushed again. Two
+   -- anonymous occurrences stay distinct (#121).
+   if v_claimed is not null and v_claimed<>e.event_key and eid<>v_content
+      and not (v_claimed like 'fallback:%' and e.event_key like 'fallback:%')
+      and exists(select 1 from futbeat_private.live_events o
+        where o.provider=p_provider and o.external_match_id=c->>'externalMatchId'
+          and o.event_key=v_claimed and o.retracted_at is null)
+      and exists(select 1 from futbeat_private.canonical_events x
+        where x.id=v_content and x.retracted_at is null) then
+    v_dup:=v_content;
    end if;
    ev:=jsonb_strip_nulls(jsonb_build_object('id',eid,'matchId',mid,'type',e.event_type,'minute',e.minute,
     'extraMinute',coalesce(e.payload->'extraMinute',e.payload#>'{payload,time,extra}'),
     'teamId',tid,'playerId',pid,'assistPlayerId',aid,
     -- #121: upstream identity (provider row id, or the stable fallback key).
-    'providerEventKey',v_key,'provider',p_provider,
+    'providerEventKey',v_key,'provider',p_provider,'duplicateOf',v_dup,
     'score',case when jsonb_typeof(e.payload->'scoreAfter')='object' then e.payload->'scoreAfter' end,
     -- UNVERIFIED own-goal marker (see _shared/live_events.ts): teamId is the
     -- benefiting team, playerId the scorer.
@@ -1139,11 +1316,31 @@ begin
    ||case when v_mismatch then jsonb_build_object('scoreMismatch',true) else '{}'::jsonb end;
 end $$;
 
+-- GOAL rows of one side in a stored detail events list (same classification
+-- as _shared/match_detail.ts, own goals credited to the other side).
+create or replace function futbeat_private.detail_side_goals(p_events jsonb,p_side text)
+returns integer language sql immutable set search_path='' as $$
+  select count(*)::integer from (
+    select upper(coalesce(r->>'type','')) t,
+      case when coalesce(nullif(btrim(r->>'homeScorer'),''),nullif(btrim(r->>'homeScorerId'),''),
+          nullif(btrim(r->>'homeAssist'),'')) is not null then 'home'
+        when coalesce(nullif(btrim(r->>'awayScorer'),''),nullif(btrim(r->>'awayScorerId'),''),
+          nullif(btrim(r->>'awayAssist'),'')) is not null then 'away' end side,
+      coalesce(r->>'isOwnGoal','')='true' or coalesce(r->>'ownGoal','')='true'
+        or upper(coalesce(r->>'type','')) ~ '(^|[^A-Z])OWN' own
+    from jsonb_array_elements(case when jsonb_typeof(p_events)='array' then p_events else '[]'::jsonb end) r
+    where jsonb_typeof(r)='object'
+  ) x
+  where t like '%GOAL%' and not (t like '%MISSED%' and t like '%PENAL%') and t not like '%VAR%'
+    and case when own then case side when 'home' then 'away' when 'away' then 'home' end else side end=p_side
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Match detail storage (copied from 20260923020000). Changed only for
 -- events / cards / substitutions: a present array (even shorter or empty:
 -- an annulled goal, a deleted card) replaces the stored one; the stored one
--- is kept only when the newer answer omits the key or it is not an array.
+-- is kept only when the newer answer omits the key or it is not an array,
+-- or (events) when the shorter list drops goals the score still requires.
 -- ---------------------------------------------------------------------------
 create or replace function futbeat_private.store_match_detail_before_media(
   p_match_id text,
@@ -1187,6 +1384,19 @@ begin
       v_merged:=jsonb_set(v_merged,array[v_key],v_existing->v_key,true);
     end if;
   end loop;
+  -- Score guard (review P1-2): a shorter events list never drops goals the
+  -- stored score still requires (a genuine annulment lowers the score).
+  if jsonb_typeof(p_payload->'events')='array' and jsonb_typeof(v_existing->'events')='array' then
+    foreach v_key in array array['home','away'] loop
+      v_new_count:=futbeat_private.detail_side_goals(p_payload->'events',v_key);
+      v_old_count:=futbeat_private.detail_side_goals(v_existing->'events',v_key);
+      if v_new_count<v_old_count
+         and v_new_count<coalesce(futbeat_private.safe_result_integer(v_merged->>(v_key||'TeamScore')),0) then
+        v_merged:=jsonb_set(v_merged,'{events}',v_existing->'events',true);
+        exit;
+      end if;
+    end loop;
+  end if;
 
   -- Statistics in any shape (array rows, {match:{fullTime}}, team-keyed):
   -- keep the stored ones only when the newer response has none.
@@ -1230,6 +1440,119 @@ end
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Pre-send revalidation (copied from 20260928100000). Changed: pending rows
+-- of a retracted event are cancelled.
+-- ---------------------------------------------------------------------------
+create or replace function public.futbeat_claim_notifications(
+  p_mode text default 'dry_run',
+  p_limit int default 20
+) returns jsonb
+language plpgsql
+security invoker
+set search_path=''
+as $$
+declare
+  row record;
+  rows jsonb:='[]';
+  attempt uuid;
+  still_following boolean;
+begin
+  if p_mode not in ('dry_run','live') then
+    raise exception 'Invalid mode';
+  end if;
+
+  update futbeat_private.notification_outbox
+  set state='uncertain',finished_at=now()
+  where state='sending'
+    and attempt_at<now()-interval '5 minutes';
+
+  for row in
+    select
+      o.*,
+      d.transport,
+      d.token,
+      d.enabled,
+      m.payload as match,
+      e.retracted_at as event_retracted_at,
+      e.retraction_reason as event_retraction_reason
+    from futbeat_private.notification_outbox o
+    join futbeat_private.push_devices d
+      on d.id=o.device_id and d.user_id=o.user_id
+    left join futbeat_private.canonical_events e
+      on e.id=o.event_id
+    left join futbeat_private.entities m
+      on m.id=e.match_id
+    where o.state='pending'
+      and (p_mode='live' or d.transport='test')
+    order by o.created_at
+    for update of o skip locked
+    limit least(greatest(p_limit,1),100)
+  loop
+    -- Any subject carried by the message (#106 player alerts, news,
+    -- transfers, lineups) that is still followed keeps the row.
+    select exists(
+      select 1
+      from futbeat_private.push_follows f
+      join lateral jsonb_array_elements(
+        coalesce(row.message->'subjectRefs','[]'::jsonb)
+      ) ref on true
+      where f.user_id=row.user_id
+        and f.entity_type=ref->>'type'
+        and f.entity_id=ref->>'id'
+    )
+    into still_following;
+
+    if row.event_id is not null and not still_following then
+      select exists(
+        select 1
+        from futbeat_private.push_follows f
+        where f.user_id=row.user_id
+          and (
+            f.entity_id=row.message->>'matchId'
+            or (
+              row.match is not null
+              and f.entity_id in (
+                row.match->>'homeTeamId',
+                row.match->>'awayTeamId'
+              )
+            )
+          )
+      )
+      into still_following;
+    end if;
+
+    -- P0-A: an event retracted before dispatch (annulled goal, deleted card,
+    -- score decrease) is never sent; a correction's twin keeps its push.
+    if not row.enabled or not coalesce(still_following,false)
+       or (row.event_retracted_at is not null
+         and coalesce(row.event_retraction_reason,'') not in ('corrected','superseded','legacy_superseded')) then
+      update futbeat_private.notification_outbox
+      set state='cancelled',finished_at=now()
+      where id=row.id;
+      continue;
+    end if;
+
+    attempt:=gen_random_uuid();
+    update futbeat_private.notification_outbox
+    set state='sending',attempt_id=attempt,attempt_at=now()
+    where id=row.id;
+
+    rows:=rows||jsonb_build_array(
+      jsonb_build_object(
+        'id',row.id,
+        'attemptId',attempt,
+        'transport',row.transport,
+        'token',row.token,
+        'message',row.message
+      )
+    );
+  end loop;
+
+  return rows;
+end
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Legacy repair (one time, audited, nothing deleted): several active rich
 -- canonical rows carrying the same upstream key of one provider keep the
 -- most recent one. Rows without a key reconcile on the next complete
@@ -1254,7 +1577,8 @@ do $$ declare fn regprocedure; role_name text; begin
  for fn in select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid=p.pronamespace
  where n.nspname='futbeat_private' and p.proname in
    ('live_event_section','event_team_ordinal','dedupe_match_events','visible_match_events',
-    'event_score_mismatch','event_already_known','event_is_correction','retract_canonical_event',
+    'event_score_mismatch','event_already_known','event_correction_twin',
+    'retract_canonical_event','live_event_content','detail_side_goals','events_equivalent',
     'merge_event_evidence','store_canonical_event','record_live_batch_core','record_live_events',
     'synthesize_goal_from_score_change','store_match_detail_before_media')
  loop

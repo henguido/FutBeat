@@ -55,13 +55,14 @@ async function seed(db, { follow = true } = {}) {
 // A GOAL fixture exactly as the worker normalizes it: completeSections are
 // the sections present as arrays; the payload hash covers the event content
 // (same inputs as futbeat-goal-live-sync normalizeLiveFixture).
-function fixture(s, { home = 0, away = 0, minute = 10, status = 'LIVE', events = [], cards = [], substitutions = [], omit = [] } = {}) {
+function fixture(s, { home = 0, away = 0, minute = 10, status = 'LIVE', events = [], cards = [], substitutions = [], omit = [], source, extra = {} } = {}) {
   const raw = { id: s.ext, matchStatus: status, matchElapsed: minute, homeTeamScore: home, awayTeamScore: away,
-    homeTeam: { id: s.homeExt }, awayTeam: { id: s.awayExt }, events, cards, substitutions };
+    homeTeam: { id: s.homeExt }, awayTeam: { id: s.awayExt }, events, cards, substitutions, ...extra };
   for (const key of omit) delete raw[key];
   const normalized = normalizeFixtureEvents(raw);
   const completeSections = fixtureEventSections(raw);
-  const obs = { externalMatchId: s.ext, status, minute, score: { home, away }, events: normalized, completeSections, rawPayload: raw };
+  const obs = { externalMatchId: s.ext, status, minute, score: { home, away }, events: normalized, completeSections, rawPayload: raw,
+    ...(source ? { source } : {}) };
   obs.payloadHash = createHash('sha256').update(JSON.stringify([s.ext, status, minute, home, away,
     normalized.map((event) => event.eventKey), liveEventsContentSignature(normalized, completeSections)])).digest('hex');
   return obs;
@@ -118,7 +119,10 @@ test('worker hashes the normalized event content and marks full answers authorit
   assert.match(source, /liveEventsContentSignature\(events, completeSections\)/);
   assert.match(source, /fixtureEventSections\(fixture\)/);
   // The results list shape is unverified: it never retracts.
-  assert.match(source, /normalizeLiveFixture\(fixture, \{ authoritativeEvents: false \}\)/);
+  assert.match(source, /authoritativeEvents: false,\s*source: "results"/);
+  // Every answer names its path (retraction is per path).
+  assert.match(source, /source: "live-list"/);
+  assert.match(source, /\{ source: "detail" \}/);
 });
 
 test('own goal marker (UNVERIFIED shape): credited to the other team, player kept, detail agrees', () => {
@@ -162,7 +166,8 @@ test('replace scorer without a provider id: retract old + add new, one visible, 
   assert.equal((await realtimeGoals(db, s.match)).length, 1);
   const rows = await canonical(db, s.match);
   assert.equal(rows.length, 2, 'audit keeps the old row');
-  assert.deepEqual(rows.map((r) => r.retraction_reason), ['provider_retracted', null]);
+  // Retracted by the provider, then consumed as the twin of its correction.
+  assert.deepEqual(rows.map((r) => r.retraction_reason), ['corrected', null]);
   assert.equal(await goalPushes(db, s.match), 1, 'the correction never pushes again');
 }));
 
@@ -301,7 +306,7 @@ test('provider re-issues a new id for the same goal: one visible, one push', () 
   assert.equal(await goalPushes(db, s.match), 1);
 }));
 
-test('a re-keyed copy in a non-authoritative answer (no completeSections) stays one event', () => withDb(async (db) => {
+test('a re-keyed copy in a non-authoritative answer: its own row (no ping-pong), shown once, never a second push', () => withDb(async (db) => {
   const s = await seed(db);
   await record(db, fixture(s));
   await record(db, fixture(s, { home: 1, minute: 20, events: [goalRow(s, { id: '9001', time: '19' })] }));
@@ -310,9 +315,11 @@ test('a re-keyed copy in a non-authoritative answer (no completeSections) stays 
     delete partial.completeSections;
     await record(db, partial);
   }
+  // One canonical row per provider id (no shared row, nothing rewritten);
+  // the exact copy is shown once and never pushed.
+  assert.equal((await canonical(db, s.match)).length, 2, 'one row per provider id');
+  assert.equal((await revisions(db, s.match)).length, 0, 'no key ping-pong');
   assert.equal((await goals(db, s.match)).length, 1);
-  assert.equal((await canonical(db, s.match)).length, 1, 'shares the row of the still-listed original');
-  assert.equal((await revisions(db, s.match)).length, 0, 'no key flapping');
   assert.equal(await goalPushes(db, s.match), 1);
 }));
 
@@ -345,12 +352,13 @@ test('absent section never retracts; an empty array does', () => withDb(async (d
   await record(db, legacy);
   assert.equal((await goals(db, s.match)).length, 1);
   assert.equal((await ofType(db, s.match, 'YELLOW_CARD')).length, 1);
-  // Explicit empty arrays retract.
+  // Explicit empty arrays retract (cards at once; a goal only when the score
+  // no longer requires it).
   await record(db, fixture(s, { home: 1, minute: 49, events: [], cards: [] }));
   assert.equal((await ofType(db, s.match, 'YELLOW_CARD')).length, 0);
-  const shown = await goals(db, s.match);
-  assert.equal(shown.filter((e) => !e.synthetic).length, 0, 'rich goal retracted');
-  assert.equal((await readModel(db, s.match)).score.home, 1, 'score kept');
+  assert.equal((await goals(db, s.match)).length, 1, 'score 1 still requires the goal');
+  await record(db, fixture(s, { home: 0, minute: 50, events: [], cards: [] }));
+  assert.equal((await goals(db, s.match)).length, 0, 'rich goal retracted with the score');
 }));
 
 // ---------------------------------------------------------------------------
@@ -411,7 +419,9 @@ test('detail cache: a present shorter / empty array replaces, an absent key pres
   assert.deepEqual(payload.events.map((e) => e.id), ['9002'], 'null (not an array) preserves');
   assert.deepEqual(payload.cards, []);
   await store({ events: [] });
-  assert.deepEqual((await cached()).events, [], 'annulled goal: empty array replaces');
+  assert.deepEqual((await cached()).events.map((e) => e.id), ['9002'], 'score 1-0 still requires the goal');
+  await store({ events: [], homeTeamScore: '0' });
+  assert.deepEqual((await cached()).events, [], 'annulled goal (score 0-0): empty array replaces');
 }));
 
 // ---------------------------------------------------------------------------
@@ -447,5 +457,128 @@ test('legacy rows reconcile on the next complete observation', () => withDb(asyn
   await db.query(`update futbeat_private.entities set payload=jsonb_set(payload,'{events}',
     (select jsonb_agg(payload) from futbeat_private.canonical_events where match_id=$1)) where id=$1`, [s.match]);
   assert.deepEqual(summary(await goals(db, s.match)), [`19' ${s.home} ${s.p2}`]);
+  assert.equal(await goalPushes(db, s.match), 1);
+}));
+
+// ---------------------------------------------------------------------------
+// Review follow-up (P1 / P2)
+// ---------------------------------------------------------------------------
+
+test('P1-1 A: VAR annuls synthetic + rich goal; the next real goal pushes once at its own minute', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  await record(db, fixture(s, { home: 1, minute: 10 }));                                       // synthetic S1
+  await record(db, fixture(s, { home: 1, minute: 11, events: [goalRow(s, { id: '9001', time: '10' })] }));
+  assert.equal(await goalPushes(db, s.match), 1);
+  await record(db, fixture(s, { home: 0, minute: 13, events: [] }));                           // VAR
+  const syn = (await canonical(db, s.match)).find((r) => r.payload.synthetic);
+  assert.equal(syn.retraction_reason, 'score_decrease');
+  assert.ok((await revisions(db, s.match)).some((r) => r.reason === 'score_decrease'), 'audited');
+  assert.equal((await goals(db, s.match)).length, 0);
+  await record(db, fixture(s, { home: 1, minute: 31, events: [goalRow(s, { id: '9002', time: '30', player: 'P2' })] }));
+  assert.deepEqual(summary(await goals(db, s.match)), [`30' ${s.home} ${s.p2}`]);
+  assert.deepEqual(summary(await realtimeGoals(db, s.match)), [`30' ${s.home} ${s.p2}`]);
+  assert.equal(await goalPushes(db, s.match), 2, 'the second real goal pushes exactly once');
+}));
+
+test('P1-1 B: synthetic-only 1-0 -> 0-0 -> 1-0: the new goal pushes and shows its own minute', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  await record(db, fixture(s, { home: 1, minute: 10 }));
+  await record(db, fixture(s, { home: 0, minute: 13 }));
+  assert.equal((await goals(db, s.match)).length, 0);
+  await record(db, fixture(s, { home: 1, minute: 40 }));
+  assert.deepEqual(summary(await goals(db, s.match)), [`40' ${s.home} - SYN`]);
+  assert.equal(await goalPushes(db, s.match), 2);
+  // Another increase with the same ordinal never repeats that push.
+  await record(db, fixture(s, { home: 1, minute: 41 }));
+  assert.equal(await goalPushes(db, s.match), 2);
+}));
+
+test('P1-2 D: a transient empty list answer never retracts a goal the score requires (no flicker)', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  const g = goalRow(s, { id: '9001', time: '10' });
+  await record(db, fixture(s, { home: 1, minute: 10, events: [g], source: 'live-list' }));
+  await record(db, fixture(s, { home: 1, minute: 11, events: [], source: 'live-list' }));
+  assert.equal((await goals(db, s.match)).length, 1, 'no flicker');
+  assert.equal((await realtimeGoals(db, s.match)).length, 1);
+  await record(db, fixture(s, { home: 1, minute: 12, events: [g], source: 'live-list' }));
+  assert.equal((await revisions(db, s.match)).length, 0, 'no audit churn');
+  const [live] = (await db.query('select revision,retracted_at from futbeat_private.live_events where external_match_id=$1', [s.ext])).rows;
+  assert.deepEqual([live.revision, live.retracted_at], [1, null]);
+  assert.equal(await goalPushes(db, s.match), 1);
+}));
+
+test('P1-2: list vs detail answers only retract rows last seen on their own path', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  // The detail answer lists a card the (partial) live list does not.
+  await record(db, fixture(s, { minute: 40, cards: [cardRow(s, { id: 'c1' })], source: 'detail' }));
+  for (const minute of [41, 42]) await record(db, fixture(s, { minute, cards: [], source: 'live-list' }));
+  assert.equal((await ofType(db, s.match, 'YELLOW_CARD')).length, 1, 'the list never undoes the detail row');
+  assert.equal((await revisions(db, s.match)).length, 0);
+  // Once the list itself has seen it, the list's complete answer may drop it.
+  await record(db, fixture(s, { minute: 43, cards: [cardRow(s, { id: 'c1' })], source: 'live-list' }));
+  await record(db, fixture(s, { minute: 44, cards: [], source: 'live-list' }));
+  assert.equal((await ofType(db, s.match, 'YELLOW_CARD')).length, 0);
+  // A genuine annulment (score drops) still retracts on either path.
+  await record(db, fixture(s, { home: 1, minute: 50, events: [goalRow(s, { id: '9001', time: '49' })], source: 'live-list' }));
+  await record(db, fixture(s, { home: 0, minute: 52, events: [], source: 'live-list' }));
+  assert.equal((await goals(db, s.match)).length, 0);
+}));
+
+test('P2-1: annul one goal and a different player scores in the same poll: the new goal pushes', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  await record(db, fixture(s, { home: 1, minute: 10, events: [goalRow(s, { id: '9001', time: '10' })] }));
+  await record(db, fixture(s, { home: 1, minute: 31, events: [goalRow(s, { id: '9002', time: '30', player: 'P2' })] }));
+  assert.deepEqual(summary(await goals(db, s.match)), [`30' ${s.home} ${s.p2}`]);
+  assert.equal(await goalPushes(db, s.match), 2);
+  const reasons = (await canonical(db, s.match)).map((r) => r.retraction_reason);
+  assert.deepEqual(reasons, ['provider_retracted', null], 'the annulled goal is not a correction twin');
+}));
+
+test('P2-2: two provider ids with the same content are two rows; re-polls never ping-pong', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  const rows = [goalRow(s, { id: '7001', time: '12' }), goalRow(s, { id: '7002', time: '12' })];
+  for (const minute of [13, 14, 15]) await record(db, fixture(s, { home: 2, minute, events: rows }));
+  const stored = await canonical(db, s.match);
+  assert.equal(stored.length, 2);
+  assert.deepEqual(stored.map((r) => r.payload.providerEventKey).sort(), ['7001', '7002']);
+  assert.equal((await revisions(db, s.match)).length, 0, 'no audit churn');
+  // Exact copies are shown once (as #121 did with its shared id); two ids with
+  // a different player or minute stay two.
+  assert.equal((await goals(db, s.match)).length, 1);
+  await record(db, fixture(s, { home: 2, minute: 16, events: [rows[0], goalRow(s, { id: '7002', time: '12', player: 'P2' })] }));
+  assert.equal((await goals(db, s.match)).length, 2);
+}));
+
+test('P2-3: a pending push of a retracted event is cancelled at claim; a correction keeps its push', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  await record(db, fixture(s, { home: 1, minute: 10, events: [goalRow(s, { id: '9001', time: '10' })] }));
+  await record(db, fixture(s, { home: 0, minute: 12, events: [] }));
+  const t = await seed(db);
+  await record(db, fixture(t));
+  await record(db, fixture(t, { home: 1, minute: 10, events: [goalRow(t, { time: '10' })] }));
+  await record(db, fixture(t, { home: 1, minute: 12, events: [goalRow(t, { time: '10', player: 'P2' })] }));
+  await db.query("select public.futbeat_claim_notifications('dry_run',100)");
+  const state = (match) => db.query('select o.state from futbeat_private.notification_outbox o join futbeat_private.canonical_events e on e.id=o.event_id where e.match_id=$1', [match]).then((r) => r.rows.map((x) => x.state));
+  assert.deepEqual(await state(s.match), ['cancelled'], 'annulled goal never sent');
+  assert.deepEqual(await state(t.match), ['sending'], 'the corrected goal is still announced once');
+}));
+
+test('P2-5: identical normalized content with a different raw row never bumps a revision', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  const base = goalRow(s, { id: '9001', time: '10' });
+  await record(db, fixture(s, { home: 1, minute: 10, events: [base], source: 'live-list' }));
+  await record(db, fixture(s, { home: 1, minute: 11, events: [{ ...base, lastUpdated: 'x1', homeScorer: 'N. Ombre' }], source: 'detail' }));
+  await record(db, fixture(s, { home: 1, minute: 12, events: [{ ...base, lastUpdated: 'x2' }], source: 'live-list' }));
+  const [live] = (await db.query('select revision,updated_at from futbeat_private.live_events where external_match_id=$1', [s.ext])).rows;
+  assert.deepEqual([live.revision, live.updated_at], [1, null]);
+  assert.equal((await revisions(db, s.match)).length, 0);
   assert.equal(await goalPushes(db, s.match), 1);
 }));
