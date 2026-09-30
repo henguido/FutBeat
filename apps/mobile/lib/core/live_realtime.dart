@@ -68,10 +68,18 @@ class LiveRealtimeConfig {
   });
 
   factory LiveRealtimeConfig.fromEnvironment() => LiveRealtimeConfig.fromValues(
-    apiUrl: const String.fromEnvironment('FUTBEAT_API_URL'),
+    apiUrl: const String.fromEnvironment(
+      'FUTBEAT_API_URL',
+      defaultValue:
+          'https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-api',
+    ),
     supabaseUrl: const String.fromEnvironment('FUTBEAT_SUPABASE_URL'),
     publishableKey: const String.fromEnvironment(
       'FUTBEAT_SUPABASE_PUBLISHABLE_KEY',
+      // Supabase publishable keys are client credentials by design. Keeping
+      // the same public default as the Android beta makes local APKs support
+      // account creation without a special build command.
+      defaultValue: 'sb_publishable_iSH4S3fKou_EEkdG3W_Azg_9E4HXzWE',
     ),
     legacyPublicToken: const String.fromEnvironment('FUTBEAT_API_PUBLIC_TOKEN'),
   );
