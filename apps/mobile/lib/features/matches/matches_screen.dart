@@ -538,7 +538,7 @@ class _CompetitionHeader extends StatelessWidget {
     child: ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 56),
       child: Row(
-      children: [
+        children: [
         Expanded(
           child: InkWell(
             key: ValueKey('competition-open-${competition.id}'),
@@ -816,11 +816,11 @@ class MatchCard extends StatelessWidget {
         button: true,
         label: semanticLabel,
         child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: open,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
-          child: Column(
+          borderRadius: BorderRadius.circular(18),
+          onTap: open,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
+            child: Column(
             children: [
               Row(
                 children: [
@@ -930,10 +930,10 @@ class MatchCard extends StatelessWidget {
                   ),
                 ),
               ],
-            ],
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
