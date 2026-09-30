@@ -10,7 +10,7 @@ import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
-/// "Siguiendo" is only for matches of a favourite TEAM (never a followed
+/// "Favoritos" is only for matches of a favourite TEAM (never a followed
 /// league, never a single followed match: those only mark the follow).
 bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
     follows.contains('team:${match.homeId}') ||
@@ -350,7 +350,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               () => const _FeedHeading(title: 'Favoritos'),
             );
             for (final match in followedGames) {
-              final competition = data.competition(match.competitionId);
               feedItems.add(() => MatchCard(match, data));
             }
             feedItems.add(() => const SizedBox(height: 12));
@@ -528,9 +527,17 @@ class _CompetitionHeader extends StatelessWidget {
   final bool canToggle;
 
   @override
-  Widget build(BuildContext context) => ConstrainedBox(
-    constraints: const BoxConstraints(minHeight: 48),
-    child: Row(
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(top: 4, bottom: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF151D20),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0xFF2A3438)),
+    ),
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 56),
+      child: Row(
       children: [
         Expanded(
           child: InkWell(
@@ -541,7 +548,7 @@ class _CompetitionHeader extends StatelessWidget {
               constraints: const BoxConstraints(minHeight: 48),
               child: Row(
                 children: [
-                  EntityAvatar(competition, size: 26),
+                  EntityAvatar(competition, size: 32),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -612,7 +619,8 @@ class _CompetitionHeader extends StatelessWidget {
               ),
             ),
           ),
-      ],
+        ],
+      ),
     ),
   );
 }
@@ -624,7 +632,7 @@ class FeedMatchRow extends StatelessWidget {
   final FootballMatch match;
   final Snapshot data;
 
-  /// Optional small context line (e.g. competition name in "Siguiendo").
+  /// Optional small context line for compact-row reuse outside this feed.
   final String? caption;
 
   @override
