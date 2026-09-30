@@ -543,16 +543,26 @@ test('P2-2: two provider ids with the same content are two rows; re-polls never 
   const s = await seed(db);
   await record(db, fixture(s));
   const rows = [goalRow(s, { id: '7001', time: '12' }), goalRow(s, { id: '7002', time: '12' })];
-  for (const minute of [13, 14, 15]) await record(db, fixture(s, { home: 2, minute, events: rows }));
+  // Score 1-0: the second id is a surplus copy (shown once, never pushed).
+  for (const minute of [13, 14, 15]) await record(db, fixture(s, { home: 1, minute, events: rows }));
   const stored = await canonical(db, s.match);
   assert.equal(stored.length, 2);
   assert.deepEqual(stored.map((r) => r.payload.providerEventKey).sort(), ['7001', '7002']);
   assert.equal((await revisions(db, s.match)).length, 0, 'no audit churn');
-  // Exact copies are shown once (as #121 did with its shared id); two ids with
-  // a different player or minute stay two.
   assert.equal((await goals(db, s.match)).length, 1);
-  await record(db, fixture(s, { home: 2, minute: 16, events: [rows[0], goalRow(s, { id: '7002', time: '12', player: 'P2' })] }));
+  assert.equal(await goalPushes(db, s.match), 1);
+}));
+
+test('P2-2: two provider ids with the same content at score 2-0 are two goals and two pushes', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  const rows = [goalRow(s, { id: '7101', time: '12' }), goalRow(s, { id: '7102', time: '12' })];
+  await record(db, fixture(s, { home: 2, minute: 13, events: rows }));
+  await record(db, fixture(s, { home: 2, minute: 14, events: rows }));
   assert.equal((await goals(db, s.match)).length, 2);
+  assert.equal((await readModel(db, s.match)).scoreMismatch, undefined);
+  assert.equal(await goalPushes(db, s.match), 2);
+  assert.equal((await revisions(db, s.match)).length, 0);
 }));
 
 test('P2-3: a pending push of a retracted event is cancelled at claim; a correction keeps its push', () => withDb(async (db) => {
@@ -581,4 +591,68 @@ test('P2-5: identical normalized content with a different raw row never bumps a 
   assert.deepEqual([live.revision, live.updated_at], [1, null]);
   assert.equal((await revisions(db, s.match)).length, 0);
   assert.equal(await goalPushes(db, s.match), 1);
+}));
+
+// ---------------------------------------------------------------------------
+// Re-review follow-up (cross-path authority)
+// ---------------------------------------------------------------------------
+
+test('E: a full-time detail answer corrects a list-only goal (no provider id): one goal, one push', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s, { source: 'live-list' }));
+  await record(db, fixture(s, { home: 1, minute: 20, events: [goalRow(s, { time: '19' })], source: 'live-list' }));
+  await record(db, fixture(s, { home: 1, minute: 90, status: 'FINISHED_PENDING_VERIFICATION',
+    events: [goalRow(s, { time: '19', player: 'P2' })], source: 'detail' }));
+  assert.deepEqual(summary(await goals(db, s.match)), [`19' ${s.home} ${s.p2}`]);
+  assert.equal(await goalPushes(db, s.match), 1);
+}));
+
+test('F: annulled right after a detail sighting: the list answer at 0-0 removes it at once', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s, { source: 'live-list' }));
+  const g = goalRow(s, { id: '9001', time: '19' });
+  await record(db, fixture(s, { home: 1, minute: 20, events: [g], source: 'live-list' }));
+  await record(db, fixture(s, { home: 1, minute: 21, events: [g], source: 'detail' }));
+  await record(db, fixture(s, { home: 0, minute: 23, events: [], source: 'live-list' }));
+  assert.equal((await goals(db, s.match)).length, 0);
+  assert.equal((await realtimeGoals(db, s.match)).length, 0);
+}));
+
+test('G: a pre-deploy row (no recorded path) annulled 0-0 by a list answer is retracted', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  await record(db, fixture(s, { home: 1, minute: 20, events: [goalRow(s, { id: '9001', time: '19' })] }));
+  await record(db, fixture(s, { home: 0, minute: 23, events: [], source: 'live-list' }));
+  assert.equal((await goals(db, s.match)).length, 0);
+  const [row] = await canonical(db, s.match);
+  assert.ok(row.retracted_at);
+}));
+
+test('a list answer never retracts detail-seen rows while the score holds; score evidence trims any path', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s, { source: 'live-list' }));
+  const g1 = goalRow(s, { id: '9001', time: '19' }), g2 = goalRow(s, { id: '9002', time: '40', player: 'P2' });
+  await record(db, fixture(s, { home: 2, minute: 41, events: [g1, g2], source: 'detail' }));
+  await record(db, fixture(s, { home: 2, minute: 42, events: [g1], source: 'live-list' }));
+  assert.equal((await goals(db, s.match)).length, 2, 'detail-seen goal kept (score 2)');
+  // Score 1: exactly one unlisted goal goes, whatever its path.
+  await record(db, fixture(s, { home: 1, minute: 44, events: [g1], source: 'live-list' }));
+  assert.deepEqual(summary(await goals(db, s.match)), [`19' ${s.home} ${s.p1}`]);
+}));
+
+test('P2-3b: a correction that may not notify still keeps the original push', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s));
+  await record(db, fixture(s, { home: 1, minute: 10, events: [goalRow(s, { time: '10' })] }));
+  const [original] = await canonical(db, s.match);
+  const at = tick();
+  const match = (await db.query('select payload from futbeat_private.entities where id=$1', [s.match])).rows[0].payload;
+  await db.query("select futbeat_private.retract_canonical_event($1,$2,'provider_retracted')", [original.id, at]);
+  await db.query("select futbeat_private.store_canonical_event($1,'goal_api',false,$2,$3)", [JSON.stringify({
+    id: 'fb_event_correction_quiet', matchId: s.match, type: 'GOAL', minute: 10, teamId: s.home, playerId: s.p2,
+    providerEventKey: 'fallback:quiet:1', provider: 'goal_api' }), at, JSON.stringify(match)]);
+  assert.equal((await canonical(db, s.match)).find((r) => r.id === original.id).retraction_reason, 'corrected');
+  await db.query("select public.futbeat_claim_notifications('dry_run',100)");
+  const states = (await db.query('select o.state from futbeat_private.notification_outbox o where o.event_id=$1', [original.id])).rows.map((r) => r.state);
+  assert.deepEqual(states, ['sending'], 'the original push is still sent');
 }));

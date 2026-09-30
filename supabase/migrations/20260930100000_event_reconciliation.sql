@@ -53,12 +53,16 @@
 --     stored events / cards / substitutions; only an absent / non-array key
 --     keeps the stored one.
 --
---   * Per-path authority (review P1-2): each live_events row remembers the
---     path of its last sighting (observation 'source': live-list | detail |
---     results). An answer only retracts rows last seen on its own path, and
---     never retracts a team's GOAL rows when that would leave fewer active
---     goals than the team's current score (a genuine annulment always comes
---     with a score decrease). The detail cache applies the same score guard.
+--   * Per-path authority (review P1-2, re-review): each live_events row
+--     remembers the path of its last sighting (observation 'source':
+--     live-list | detail | results). A DETAIL answer is authoritative over
+--     every path; a LIST answer (or one without a source) only retracts rows
+--     last seen on the list or with no recorded path (legacy); the results
+--     list never retracts. GOALs follow the score: path retraction never
+--     leaves a team with fewer active goals than its current score, and when
+--     a team's active goals exceed its score any answer retracts that team's
+--     unlisted goals (oldest first) down to the score. The detail cache
+--     applies a (coarser) score guard.
 --   * Score decrease (review P1-1): active synthetic goals above the new team
 --     score are retracted (reason score_decrease), so a stale provisional goal
 --     never absorbs (or silences) the next real goal.
@@ -190,6 +194,12 @@ declare
   v_goal_candidates integer;
   v_protected text[];
   v_guard_all boolean;
+  v_detail boolean;
+  v_unlisted text[];
+  v_unlisted_path text[];
+  v_rest text[];
+  v_goal_keys text[];
+  v_take integer;
 begin
   if p_provider is null or btrim(p_provider) = '' then raise exception 'provider is required'; end if;
   if p_received_at is null then raise exception 'received_at is required'; end if;
@@ -310,42 +320,65 @@ begin
       end if;
     end loop;
 
-    -- P0-A snapshot-replace: only sections answered as a complete array,
-    -- only rows last seen on this same path, and never below the score.
+    -- P0-A snapshot-replace: only sections answered as a complete array.
+    -- Path rule: a detail answer covers every path; any other answer only
+    -- rows last seen on the list or with no recorded path (legacy).
+    -- GOALs: never below the team score; above it, any path trims the
+    -- team's unlisted goals (oldest first) down to the score.
     if jsonb_typeof(obs -> 'completeSections') = 'array' then
       select coalesce(array_agg(value), '{}') into v_sections
         from jsonb_array_elements_text(obs -> 'completeSections');
-      v_protected := '{}';
+      v_detail := v_source = 'detail';
       v_guard_all := false;
-      foreach v_side in array array['home','away'] loop
-        v_team_ext := coalesce(nullif(obs #>> array['rawPayload', v_side || 'Team', 'id'], ''),
-          nullif(obs #>> array['rawPayload', v_side || 'TeamId'], ''));
-        v_team_score := case v_side when 'home' then v_home_score else v_away_score end;
-        if v_team_ext is null or v_team_score is null then
-          -- Unknown side or score: goals are never retracted by this answer.
-          v_guard_all := true;
-          continue;
-        end if;
-        select count(*) filter (where retracted_at is null),
-               count(*) filter (where retracted_at is null and not (event_key = any(v_keys))
-                 and source is not distinct from v_source)
-          into v_goal_active, v_goal_candidates
-          from futbeat_private.live_events
-         where provider = p_provider and external_match_id = v_external_match_id
-           and event_type = 'GOAL' and team_external_id = v_team_ext;
-        if v_goal_active - v_goal_candidates < v_team_score then
-          v_protected := v_protected || v_team_ext;
-        end if;
-      end loop;
+      v_goal_keys := '{}';
+      if 'events' = any(v_sections) then
+        foreach v_side in array array['home','away'] loop
+          v_team_ext := coalesce(nullif(obs #>> array['rawPayload', v_side || 'Team', 'id'], ''),
+            nullif(obs #>> array['rawPayload', v_side || 'TeamId'], ''));
+          v_team_score := case v_side when 'home' then v_home_score else v_away_score end;
+          if v_team_ext is null or v_team_score is null then
+            -- Unknown side or score: goals are never retracted by this answer.
+            v_guard_all := true;
+            continue;
+          end if;
+          select count(*),
+                 coalesce(array_agg(event_key order by first_seen_at, event_key)
+                   filter (where not (event_key = any(v_keys))), '{}'),
+                 coalesce(array_agg(event_key order by first_seen_at, event_key)
+                   filter (where not (event_key = any(v_keys))
+                     and (v_detail or source is null or source = 'live-list')), '{}')
+            into v_goal_active, v_unlisted, v_unlisted_path
+            from futbeat_private.live_events
+           where provider = p_provider and external_match_id = v_external_match_id
+             and event_type = 'GOAL' and team_external_id = v_team_ext and retracted_at is null;
+          -- (a)/(b) path retraction, only when the score still holds.
+          if v_goal_active - cardinality(v_unlisted_path) >= v_team_score then
+            v_goal_keys := v_goal_keys || v_unlisted_path;
+            v_goal_candidates := cardinality(v_unlisted_path);
+            select coalesce(array_agg(k order by o), '{}') into v_rest
+              from unnest(v_unlisted) with ordinality u(k, o) where not (k = any(v_unlisted_path));
+          else
+            v_goal_candidates := 0;
+            v_rest := v_unlisted;
+          end if;
+          -- (c) score evidence overrides the path: trim down to the score.
+          v_take := greatest(0, least(v_goal_active - v_goal_candidates - v_team_score, cardinality(v_rest)));
+          if v_take > 0 then
+            v_goal_keys := v_goal_keys || v_rest[1:v_take];
+          end if;
+        end loop;
+      end if;
       update futbeat_private.live_events
          set retracted_at = p_received_at, updated_at = p_received_at, revision = revision + 1
        where provider = p_provider and external_match_id = v_external_match_id
          and retracted_at is null
-         and source is not distinct from v_source
          and futbeat_private.live_event_section(event_type) = any(v_sections)
          and not (event_key = any(v_keys))
-         and not (event_type = 'GOAL' and team_external_id is not null
-           and (v_guard_all or team_external_id = any(v_protected)));
+         and case
+           when event_type = 'GOAL' and team_external_id is not null
+             then not v_guard_all and event_key = any(v_goal_keys)
+           else v_detail or source is null or source = 'live-list'
+         end;
       get diagnostics v_retracted = row_count;
     end if;
 
@@ -743,10 +776,12 @@ begin
   on conflict(id) do nothing;
 
   get diagnostics inserted=row_count;
-  if inserted=0 or not p_notify then return; end if;
+  if inserted=0 then return; end if;
 
   -- P0-A: the same observation retracted the row this one replaces (a
   -- re-keyed or corrected upstream row): one push per logical occurrence.
+  -- Resolved even when this row may not notify, so the twin's push is never
+  -- cancelled at claim time.
   v_twin:=futbeat_private.event_correction_twin(ev,p_at);
   if v_twin is not null then
     -- The twin's push (sent or pending) stands for this occurrence.
@@ -754,6 +789,7 @@ begin
     update futbeat_private.canonical_events set notify_candidate=false where id=ev->>'id';
     return;
   end if;
+  if not p_notify then return; end if;
   -- #121: a re-keyed copy of an active row never pushes again.
   if nullif(ev->>'duplicateOf','') is not null then
     update futbeat_private.canonical_events set notify_candidate=false where id=ev->>'id';
@@ -982,6 +1018,7 @@ declare result jsonb; c jsonb; m jsonb; mid text; e record; tid text; pid text; 
  ev jsonb; eid text; can_notify boolean; baseline boolean; typ text; state futbeat_private.live_match_state;
  obs jsonb; kept jsonb:='[]'; suppressed jsonb:='[]'; v_ext text; v_status text; v_claimed text;
  v_hit text; v_obs jsonb; v_sections text[]; v_backed text[]; r record; v_key text; v_dup text; v_content text;
+ v_team_goals integer; v_team_score integer; v_dups jsonb;
 begin
  -- Ignore delayed observations instead of regressing a live match.
  if exists(select 1 from jsonb_array_elements(p_observations) o
@@ -1040,6 +1077,8 @@ begin
   v_sections:=case when jsonb_typeof(v_obs->'completeSections')='array'
     then array(select jsonb_array_elements_text(v_obs->'completeSections')) end;
   v_backed:='{}';
+  v_dups:='{}';
+  select * into state from futbeat_private.live_match_state where provider=p_provider and external_match_id=c->>'externalMatchId';
   -- P0-A pass 1: upstream rows the provider no longer lists.
   for e in select * from futbeat_private.live_events
     where provider=p_provider and external_match_id=c->>'externalMatchId' and retracted_at is not null loop
@@ -1094,8 +1133,26 @@ begin
         where o.provider=p_provider and o.external_match_id=c->>'externalMatchId'
           and o.event_key=v_claimed and o.retracted_at is null)
       and exists(select 1 from futbeat_private.canonical_events x
-        where x.id=v_content and x.retracted_at is null) then
+        where x.id=v_content and x.retracted_at is null
+          -- Never when the score-after tells them apart.
+          and not (jsonb_typeof(x.payload->'score')='object' and jsonb_typeof(e.payload->'scoreAfter')='object'
+            and futbeat_private.event_score_after(x.payload)
+              is distinct from futbeat_private.event_score_after(jsonb_build_object('score',e.payload->'scoreAfter')))) then
     v_dup:=v_content;
+    -- Never when it would leave the team with fewer active goals than its
+    -- current score (two ids, same content, score 2-0: two goals).
+    if e.event_type='GOAL' then
+     v_team_score:=case tid when m->>'homeTeamId' then state.home_score when m->>'awayTeamId' then state.away_score end;
+     select count(*) into v_team_goals from futbeat_private.live_events o
+      where o.provider=p_provider and o.external_match_id=c->>'externalMatchId'
+        and o.event_type='GOAL' and o.retracted_at is null and o.team_external_id=e.team_external_id;
+     if v_team_score is null
+        or v_team_goals-coalesce((v_dups->>coalesce(tid,''))::integer,0)-1<v_team_score then
+      v_dup:=null;
+     else
+      v_dups:=v_dups||jsonb_build_object(coalesce(tid,''),coalesce((v_dups->>coalesce(tid,''))::integer,0)+1);
+     end if;
+    end if;
    end if;
    ev:=jsonb_strip_nulls(jsonb_build_object('id',eid,'matchId',mid,'type',e.event_type,'minute',e.minute,
     'extraMinute',coalesce(e.payload->'extraMinute',e.payload#>'{payload,time,extra}'),
@@ -1386,6 +1443,8 @@ begin
   end loop;
   -- Score guard (review P1-2): a shorter events list never drops goals the
   -- stored score still requires (a genuine annulment lowers the score).
+  -- Deliberately coarse: the whole stored events list is kept (other rows'
+  -- corrections wait for the next answer that satisfies the score).
   if jsonb_typeof(p_payload->'events')='array' and jsonb_typeof(v_existing->'events')='array' then
     foreach v_key in array array['home','away'] loop
       v_new_count:=futbeat_private.detail_side_goals(p_payload->'events',v_key);
