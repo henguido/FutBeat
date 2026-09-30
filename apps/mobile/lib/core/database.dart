@@ -89,6 +89,40 @@ class AppDatabase extends _$AppDatabase {
       )..where((f) => f.entityType.equals(type) & f.entityId.equals(id))).go();
     }
   });
+
+  /// Inserts `type:id` follow keys, ignoring ones already present. Unlike
+  /// [toggle] it never removes anything, so it is safe for merges.
+  Future<void> addFollows(Iterable<String> keys) async {
+    final rows = <FollowsCompanion>[];
+    for (final key in keys) {
+      final separator = key.indexOf(':');
+      if (separator <= 0 || separator == key.length - 1) continue;
+      rows.add(
+        FollowsCompanion.insert(
+          entityType: key.substring(0, separator),
+          entityId: key.substring(separator + 1),
+        ),
+      );
+    }
+    if (rows.isEmpty) return;
+    await batch(
+      (b) => b.insertAll(follows, rows, mode: InsertMode.insertOrIgnore),
+    );
+  }
+
+  /// Removes `type:id` follow keys (another account's leftovers).
+  Future<void> removeFollows(Iterable<String> keys) => transaction(() async {
+    for (final key in keys) {
+      final separator = key.indexOf(':');
+      if (separator <= 0 || separator == key.length - 1) continue;
+      final type = key.substring(0, separator);
+      final id = key.substring(separator + 1);
+      await (delete(
+        follows,
+      )..where((f) => f.entityType.equals(type) & f.entityId.equals(id))).go();
+    }
+  });
+
   Stream<CountryPreference> watchPreference() =>
       (select(
         preferences,

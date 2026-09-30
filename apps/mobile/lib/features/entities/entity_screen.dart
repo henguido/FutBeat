@@ -13,6 +13,7 @@ import '../matches/matches_screen.dart';
 import 'player_profile.dart';
 import 'standings.dart';
 import 'team_profile.dart';
+import 'team_summary.dart' show NextMatchCard, nextTeamMatch;
 
 List<Entity> orderedTeamCompetitions(Snapshot data, String teamId) {
   final counts = <String, int>{};
@@ -305,17 +306,15 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                               style: const TextStyle(color: muted),
                             ),
                           ),
-                        heading(context, 'Partidos destacados'),
-                        if (matches.isEmpty)
-                          const EmptyState(
-                            'Sin partidos disponibles',
-                            'El calendario se mostrará cuando esté disponible.',
+                        // The real next match (live now, else the soonest
+                        // upcoming; never a past one), only when there is one.
+                        if (nextTeamMatch(matches, data) case final next?) ...[
+                          heading(
+                            context,
+                            next.isLive ? 'En vivo' : 'Partido siguiente',
                           ),
-                        for (final match
-                            in matches
-                                .where((m) => m.isLive || m.isUpcoming)
-                                .take(2))
-                          MatchCard(match, data),
+                          NextMatchCard(match: next, data: data, teamId: ''),
+                        ],
                         if (matches.any((m) => m.isFinished)) ...[
                           heading(context, 'Último resultado'),
                           MatchCard(

@@ -185,31 +185,39 @@ String? _scoreAfter(Json event) {
   return home is int && away is int ? '$home-$away' : null;
 }
 
-/// Folds each synthetic GOAL into at most one rich GOAL of the same side:
-/// the one whose ordinal among that side's rich goals equals the
-/// synthetic's score-after-goal, within 3 minutes (closest wins).
+/// Score-authoritative synthetic goals (same rules as the backend
+/// projection): a synthetic GOAL with ordinal n (its side's score after the
+/// goal) is explained by the side's rich goal of rank n, whatever its minute;
+/// it is dropped when n exceeds the current score of that side, and at most
+/// one is kept per ordinal. Without an ordinal the #121 rule applies (the
+/// closest unabsorbed rich goal of the side within 3 minutes).
 List<Json> _foldSyntheticGoals(
   List<Json> rich,
   List<Json> synthetic,
   FootballMatch match,
 ) {
-  final ordinal = <Json, int>{};
-  for (final side in ['home', 'away']) {
-    final goals =
-        rich
-            .where((e) => e['type'] == 'GOAL' && _eventSide(e, match) == side)
-            .toList()
-          ..sort(compareTimelineEvents);
-    for (var i = 0; i < goals.length; i++) {
-      ordinal[goals[i]] = i + 1;
+  final richGoals = <String, int>{'home': 0, 'away': 0};
+  for (final event in rich) {
+    final side = _eventSide(event, match);
+    if (event['type'] == 'GOAL' && side != null) {
+      richGoals[side] = richGoals[side]! + 1;
     }
   }
+  final score = match.json['score'];
   final absorbed = <Json>{};
+  final shownOrdinals = <String>{};
   final remaining = <Json>[];
   for (final event in [...synthetic]..sort(compareTimelineEvents)) {
     final side = _eventSide(event, match);
-    final score = event['score'];
-    final teamGoals = score is Map && side != null ? score[side] : null;
+    final eventScore = event['score'];
+    final ordinal = eventScore is Map && side != null ? eventScore[side] : null;
+    if (event['type'] == 'GOAL' && side != null && ordinal is int) {
+      final cap = score is Map ? score[side] : null;
+      if (cap is int && ordinal > cap) continue;
+      if (ordinal <= richGoals[side]!) continue;
+      if (shownOrdinals.add('$side:$ordinal')) remaining.add(event);
+      continue;
+    }
     Json? best;
     int? bestDistance;
     for (final candidate in rich) {
@@ -219,12 +227,10 @@ List<Json> _foldSyntheticGoals(
           absorbed.contains(candidate)) {
         continue;
       }
-      if (teamGoals is int && ordinal[candidate] != teamGoals) continue;
       final a = _absoluteMinute(candidate), b = _absoluteMinute(event);
       final distance = a == null || b == null ? null : (a - b).abs();
       if (!_minutesCompatible(candidate, event) &&
-          !(distance != null && distance <= 3) &&
-          !(distance == null && teamGoals is int)) {
+          !(distance != null && distance <= 3)) {
         continue;
       }
       if (best == null || (distance ?? 99) < (bestDistance ?? 99)) {
@@ -286,6 +292,7 @@ class LiveMatchUpdate {
     required this.eventCount,
     required this.changedAt,
     this.events = const [],
+    this.hasEventList = false,
     this.receivedAt,
   });
 
@@ -309,6 +316,7 @@ class LiveMatchUpdate {
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList(),
+        hasEventList: json['latest_events'] is List,
         receivedAt: receivedAt,
       );
 
@@ -340,6 +348,11 @@ class LiveMatchUpdate {
   final int revision, eventCount;
   final DateTime changedAt;
   final List<Json> events;
+
+  /// The row carried its provider's complete visible event list
+  /// (`latest_events`). Only then are that provider's events replaced; an
+  /// update without a list overlays score/status and keeps the events.
+  final bool hasEventList;
 
   /// Device time this row was received (see [LiveMatchUpdate.fromJson]).
   /// Staleness is measured on the device clock only.
@@ -381,9 +394,29 @@ class LiveMatchUpdate {
         (match['liveRevision'] as int? ?? 0) > revision) {
       return match;
     }
+    // P0-A: latest_events is the provider's complete, already reconciled
+    // list (corrections, annulled goals, deleted cards). It REPLACES that
+    // provider's events: never a union, so a row it no longer sends is gone.
+    // Kept: events of another provider, and unlabelled events (payload
+    // copies) the list neither re-sends nor owns. Owned by this provider:
+    // its labelled rows and the synthetic score goals (GOAL feed only).
+    final current = (match['events'] as List? ?? []).cast<Json>();
+    final latestIds = {for (final event in events) event['id']};
+    bool ownedByThisFeed(Json event) {
+      final label = event['provider'];
+      if (label != null) return label == provider;
+      return provider == 'goal_api' && event['synthetic'] == true;
+    }
+
     final merged = <String, Json>{};
     for (final event in [
-      ...(match['events'] as List? ?? []).cast<Json>(),
+      if (hasEventList)
+        ...current.where(
+          (event) =>
+              !latestIds.contains(event['id']) && !ownedByThisFeed(event),
+        )
+      else
+        ...current,
       ...events,
     ]) {
       final id = event['id'];
@@ -728,20 +761,47 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
     }
   }
 
-  // Each detail row replaces at most one canonical twin (one-to-one).
+  // P0-A pairing. 1) Same upstream key: the detail row replaces EVERY
+  // canonical row sharing it (stale twins of an older observation included).
+  // 2) Remaining rows pair one-to-one by type + side + compatible minute +
+  // compatible score-after. A paired detail row carries the canonical player
+  // identity (canonicalPlayerId) for the scorer summary.
   final replaced = <Json>{};
+  final paired = <Json, Json>{};
   for (final row in detailed) {
+    final key = _upstreamKey(row);
+    if (key == null) continue;
     for (final event in canonical) {
-      if (!replaced.contains(event) &&
-          _sameRichEvent(row, event, match, sameIdSpace: false)) {
+      if (event['type'] == row['type'] && _upstreamKey(event) == key) {
         replaced.add(event);
-        break;
+        paired.putIfAbsent(row, () => event);
       }
+    }
+  }
+  for (final row in detailed) {
+    if (paired.containsKey(row)) continue;
+    for (final event in canonical) {
+      if (replaced.contains(event) || event['type'] != row['type']) continue;
+      final ka = _upstreamKey(row), kb = _upstreamKey(event);
+      // Two different upstream rows of the same feed are two occurrences.
+      if (ka != null && kb != null && ka != kb && !kb.contains(':')) continue;
+      final sideA = _eventSide(row, match), sideB = _eventSide(event, match);
+      if (sideA != null && sideB != null && sideA != sideB) continue;
+      final sa = _scoreAfter(row), sb = _scoreAfter(event);
+      if (sa != null && sb != null && sa != sb) continue;
+      if (!_minutesCompatible(row, event)) continue;
+      replaced.add(event);
+      paired[row] = event;
+      break;
     }
   }
   final rich = [
     ...canonical.where((event) => !replaced.contains(event)),
-    ...detailed,
+    for (final row in detailed)
+      if (paired[row]?['playerId'] != null)
+        {...row, 'canonicalPlayerId': paired[row]!['playerId']}
+      else
+        row,
   ];
 
   final merged = <Json>[

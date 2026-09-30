@@ -169,6 +169,15 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Retry a session refresh/merge that failed offline, without creating
+    // the account service just for this.
+    if (state == AppLifecycleState.resumed && ref.exists(pushServiceProvider)) {
+      unawaited(ref.read(pushServiceProvider).resume());
+    }
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     if (widget.router == null) router.dispose();

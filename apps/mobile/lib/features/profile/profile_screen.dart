@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/auth_errors.dart';
 import '../../core/providers.dart';
 import '../../core/push.dart';
 import 'competition_order_preferences.dart';
@@ -24,6 +25,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool busy = false;
   bool loaded = false;
   String? message;
+  String? emailError;
+  String? passwordError;
 
   @override
   void initState() {
@@ -51,7 +54,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     });
   }
 
-  Future<void> action(Future<void> Function() work, String success) async {
+  Future<void> action(
+    Future<void> Function() work,
+    String success, {
+    String Function()? successFor,
+  }) async {
     setState(() {
       busy = true;
       message = null;
@@ -59,14 +66,46 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     try {
       await work();
       await _load();
-      if (mounted) setState(() => message = success);
-    } catch (_) {
-      if (mounted) {
-        setState(() => message = 'No se pudo completar la operación.');
-      }
+      if (mounted) setState(() => message = successFor?.call() ?? success);
+    } catch (error) {
+      if (mounted) setState(() => message = authErrorMessage(error));
     } finally {
       if (mounted) setState(() => busy = false);
     }
+  }
+
+  /// Validates the form locally before any request is sent.
+  bool _validCredentials({required bool signUp}) {
+    final nextEmail = validateEmail(email.text);
+    final nextPassword = validatePassword(password.text, signUp: signUp);
+    setState(() {
+      emailError = nextEmail;
+      passwordError = nextPassword;
+      message = null;
+    });
+    return nextEmail == null && nextPassword == null;
+  }
+
+  Future<void> signIn(PushService service) async {
+    if (!_validCredentials(signUp: false)) return;
+    await action(() async {
+      await service.signIn(email.text, password.text);
+      password.clear();
+    }, 'Sesión iniciada.');
+  }
+
+  Future<void> signUp(PushService service) async {
+    if (!_validCredentials(signUp: true)) return;
+    await action(
+      () async {
+        await service.signUp(email.text, password.text);
+        password.clear();
+      },
+      'Cuenta creada. Revisa tu correo para confirmarla.',
+      successFor: () => service.authenticated
+          ? 'Cuenta creada.'
+          : 'Cuenta creada. Revisa tu correo para confirmarla.',
+    );
   }
 
   Future<void> saveSettings(UserProfileSettings value) async {
@@ -265,6 +304,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
           ),
           const SizedBox(height: 10),
+          if (!service.authenticated) const _GuestCard(),
           if (!service.accountConfigured)
             const ListTile(
               contentPadding: EdgeInsets.zero,
@@ -294,55 +334,70 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               controller: email,
               keyboardType: TextInputType.emailAddress,
               autofillHints: const [AutofillHints.email],
-              decoration: const InputDecoration(labelText: 'Correo'),
+              decoration: InputDecoration(
+                labelText: 'Correo',
+                errorText: emailError,
+              ),
+              onChanged: (_) {
+                if (emailError != null) setState(() => emailError = null);
+              },
             ),
             const SizedBox(height: 10),
             TextField(
               controller: password,
               obscureText: true,
               autofillHints: const [AutofillHints.password],
-              decoration: const InputDecoration(labelText: 'Contraseña'),
+              decoration: InputDecoration(
+                labelText: 'Contraseña',
+                helperText: 'Mínimo 8 caracteres para crear cuenta.',
+                errorText: passwordError,
+              ),
+              onChanged: (_) {
+                if (passwordError != null) {
+                  setState(() => passwordError = null);
+                }
+              },
             ),
             const SizedBox(height: 10),
             FilledButton(
-              onPressed: busy
-                  ? null
-                  : () => action(
-                      () => service.signIn(email.text, password.text),
-                      'Sesión iniciada.',
-                    ),
+              onPressed: busy ? null : () => signIn(service),
               child: const Text('Iniciar sesión'),
             ),
             TextButton(
-              onPressed: busy
-                  ? null
-                  : () => action(
-                      () => service.signUp(email.text, password.text),
-                      'Cuenta creada. Revisa tu correo para confirmarla.',
-                    ),
+              onPressed: busy ? null : () => signUp(service),
               child: const Text('Crear cuenta'),
             ),
           ] else ...[
-            if (service.emailVerified == false)
-              Card(
-                color: Theme.of(context).colorScheme.secondaryContainer,
-                child: ListTile(
-                  leading: const Icon(Icons.mark_email_unread_outlined),
-                  title: const Text('Confirma tu correo'),
-                  subtitle: const Text(
-                    'Revisa tu bandeja para completar la verificación.',
-                  ),
-                  trailing: TextButton(
-                    onPressed: busy
-                        ? null
-                        : () => action(
-                            service.resendEmailConfirmation,
-                            'Correo de confirmación reenviado.',
-                          ),
-                    child: const Text('Reenviar correo'),
-                  ),
+            Card(
+              color: service.emailVerified == false
+                  ? Theme.of(context).colorScheme.secondaryContainer
+                  : null,
+              child: ListTile(
+                leading: Icon(
+                  service.emailVerified == false
+                      ? Icons.mark_email_unread_outlined
+                      : Icons.verified_user_outlined,
                 ),
+                title: Text(service.email ?? 'Sesión iniciada'),
+                subtitle: switch (service.emailVerified) {
+                  true => const Text('Correo verificado'),
+                  false => const Text('Confirma tu correo'),
+                  null => null,
+                },
+                trailing: service.emailVerified == false
+                    ? TextButton(
+                        onPressed: busy
+                            ? null
+                            : () => action(
+                                service.resendEmailConfirmation,
+                                'Correo de confirmación reenviado.',
+                              ),
+                        child: const Text('Reenviar correo'),
+                      )
+                    : null,
               ),
+            ),
+            const SizedBox(height: 10),
             TextField(
               controller: displayName,
               enabled: !busy,
@@ -461,4 +516,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ),
     );
   }
+}
+
+class _GuestCard extends StatelessWidget {
+  const _GuestCard();
+
+  @override
+  Widget build(BuildContext context) => const Card(
+    child: ListTile(
+      leading: Icon(Icons.person_outline),
+      title: Text('Invitado'),
+      subtitle: Text('Tus favoritos se guardan en este dispositivo.'),
+    ),
+  );
 }

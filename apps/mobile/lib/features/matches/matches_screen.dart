@@ -10,8 +10,9 @@ import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
+/// "Siguiendo" is only for matches of a favourite TEAM (never a followed
+/// league, never a single followed match: those only mark the follow).
 bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
-    follows.contains('match:${match.id}') ||
     follows.contains('team:${match.homeId}') ||
     follows.contains('team:${match.awayId}');
 
@@ -27,9 +28,6 @@ String _feedEventLabel(String type) => switch (type) {
   'FULL_TIME' => 'Final',
   _ => 'Evento',
 };
-
-bool _isFollowedCompetition(Entity competition, Set<String> follows) =>
-    follows.contains('competition:${competition.id}');
 
 String _compactDate(DateTime value) {
   const months = [
@@ -215,21 +213,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             pinnedCompetitionIds:
                 preference?.pinnedCompetitionIds ?? const <String>[],
           );
-          final followedCompetitions = orderedCompetitions
-              .where(
-                (competition) => _isFollowedCompetition(competition, follows),
-              )
-              .toList();
-          final followedCompetitionIds = followedCompetitions
-              .map((competition) => competition.id)
-              .toSet();
-          final allOtherCompetitions = orderedCompetitions
-              .where(
-                (competition) =>
-                    !followedCompetitionIds.contains(competition.id),
-              )
-              .toList();
-
           final feedItems = <Widget Function()>[];
 
           void addCompetition(Entity competition) {
@@ -365,32 +348,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             feedItems.add(() => const SizedBox(height: 12));
           }
 
-          if (followedCompetitions.isNotEmpty) {
-            feedItems.add(
-              () => _FeedHeading(
-                title: 'TUS COMPETICIONES',
-                subtitle: data.demo
-                    ? 'Solo las competiciones que elegiste explícitamente.'
-                    : null,
-              ),
-            );
-            for (final competition in followedCompetitions) {
-              addCompetition(competition);
-            }
-          }
-
-          if (allOtherCompetitions.isNotEmpty) {
-            feedItems.add(
-              () => _FeedHeading(
-                title: 'TODOS LOS PARTIDOS',
-                subtitle: data.demo
-                    ? 'Todo lo demás que la fuente entregó para este día, sin ocultar ligas.'
-                    : null,
-              ),
-            );
-            for (final competition in allOtherCompetitions) {
-              addCompetition(competition);
-            }
+          // Then every competition with its remaining matches, in the usual
+          // order (pinned / followed competitions first): no extra blocks.
+          for (final competition in orderedCompetitions) {
+            addCompetition(competition);
           }
 
           // Horizontal fling = previous/next day. Vertical scrolling and

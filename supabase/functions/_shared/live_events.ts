@@ -62,6 +62,59 @@ function asRows(value: unknown) {
     : [];
 }
 
+/**
+ * Event sections the provider answered as a complete list (present as an
+ * array, possibly empty). Only these may retract previously stored rows
+ * (snapshot-replace); an absent / null / non-array section never retracts.
+ */
+export const LIVE_EVENT_SECTIONS = ["events", "cards", "substitutions"] as const;
+
+export function fixtureEventSections(fixture: Record<string, unknown>) {
+  return LIVE_EVENT_SECTIONS.filter((section) =>
+    Array.isArray(fixture?.[section])
+  );
+}
+
+/**
+ * Own-goal marker. UNVERIFIED provider shape: no captured GOAL sample shows
+ * how an own goal is encoded. Accepted markers: a boolean isOwnGoal/ownGoal
+ * flag, or a provider type mentioning OWN as a word ("own goal",
+ * "OWN_GOAL", "goal-own"; never "KNOWN"/"DOWN").
+ */
+export function isOwnGoalRow(row: Record<string, unknown>) {
+  if (row.isOwnGoal === true || row.ownGoal === true) return true;
+  return /(^|[^A-Z])OWN/.test(clean(row.type).toUpperCase());
+}
+
+/**
+ * Stable text of the normalized event content (never the raw row, which may
+ * carry volatile fields): part of the observation payload hash, so a
+ * content correction with the same ids and the same score is a new
+ * observation instead of a dropped duplicate.
+ */
+export function liveEventsContentSignature(
+  events: Array<Record<string, unknown>>,
+  sections: readonly string[] = [],
+) {
+  return JSON.stringify([
+    [...sections],
+    events.map((event) => [
+      event.eventKey ?? null,
+      event.type ?? null,
+      event.minute ?? null,
+      event.extraMinute ?? null,
+      event.teamExternalId ?? null,
+      event.playerExternalId ?? null,
+      event.assistExternalId ?? null,
+      event.scoreAfter ?? null,
+      event.ownGoal === true,
+      clean((event.payload as Record<string, unknown> | undefined)?.type),
+      clean((event.payload as Record<string, unknown> | undefined)?.card),
+      clean((event.payload as Record<string, unknown> | undefined)?.info),
+    ]),
+  ]);
+}
+
 export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
   const homeTeam = fixture.homeTeam && typeof fixture.homeTeam === "object"
     ? fixture.homeTeam as Record<string, unknown>
@@ -87,7 +140,18 @@ export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
 
     const homePlayer = clean(row.homeScorerId);
     const awayPlayer = clean(row.awayScorerId);
-    const teamExternalId = homePlayer ? homeTeamId : awayPlayer ? awayTeamId : "";
+    const playerTeamExternalId = homePlayer
+      ? homeTeamId
+      : awayPlayer
+      ? awayTeamId
+      : "";
+    // UNVERIFIED: an own goal is assumed to be listed under the side of the
+    // player who scored it; the goal is credited to the other (benefiting)
+    // team, the player keeps their identity.
+    const ownGoal = type === "GOAL" && isOwnGoalRow(row);
+    const teamExternalId = ownGoal
+      ? (homePlayer ? awayTeamId : awayPlayer ? homeTeamId : "")
+      : playerTeamExternalId;
     const playerExternalId = homePlayer || awayPlayer;
     const assistExternalId = clean(row.homeAssistId ?? row.awayAssistId);
     const { minute, extraMinute } = parseEventMinute(row.time);
@@ -107,6 +171,10 @@ export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
       playerExternalId: playerExternalId || null,
       assistExternalId: assistExternalId || null,
       scoreAfter,
+      ...(ownGoal
+        ? { ownGoal: true, playerTeamExternalId: playerTeamExternalId || null }
+        : {}),
+      section: "events",
       payload: row,
     });
   }
@@ -130,6 +198,7 @@ export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
       extraMinute,
       teamExternalId: teamExternalId || null,
       playerExternalId: playerExternalId || null,
+      section: "cards",
       payload: row,
     });
   }
@@ -159,6 +228,7 @@ export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
       teamExternalId: teamExternalId || null,
       playerExternalId: ids[0] || null,
       assistExternalId: ids[1] || null,
+      section: "substitutions",
       payload: row,
     });
   }

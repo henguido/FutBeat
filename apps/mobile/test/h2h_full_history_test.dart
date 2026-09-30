@@ -391,6 +391,42 @@ void main() {
     expect(find.byKey(const ValueKey('h2h-empty')), findsNothing);
   });
 
+  for (final (availability, key, copy) in [
+    ('PENDING', 'h2h-pending', 'Cargando historial'),
+    ('UNAVAILABLE', 'h2h-no-source', 'Historial no disponible'),
+    ('CONFIRMED_EMPTY', 'h2h-empty', 'Sin enfrentamientos anteriores'),
+  ]) {
+    testWidgets('a pair with only its current match and no stored meetings '
+        'reads "$copy" when the server says $availability', (tester) async {
+      final preview = _preview(const [])
+        ..['h2h'] = {
+          'availability': availability,
+          'meetings': <dynamic>[],
+          'coverage': <String, dynamic>{},
+          'totals': {'homeWins': 0, 'draws': 0, 'awayWins': 0, 'counted': 0},
+          'current': {
+            'matchId': _target,
+            'competitionId': _liga,
+            'startTime': _at(20),
+            'status': 'SCHEDULED',
+            'homeTeamId': _home,
+            'awayTeamId': _away,
+          },
+        };
+      await _pump(
+        tester,
+        preview,
+        _FakeH2hApi(const [], serverCanExtend: false),
+      );
+      expect(find.byKey(const ValueKey('h2h-current')), findsOneWidget);
+      expect(find.byKey(ValueKey(key)), findsOneWidget);
+      expect(find.text(copy), findsWidgets);
+      if (availability != 'CONFIRMED_EMPTY') {
+        expect(find.text('Sin enfrentamientos anteriores'), findsNothing);
+      }
+    });
+  }
+
   testWidgets('the server says nothing older can be asked (floor / no '
       'source): no offer, no window claimed', (tester) async {
     final all = _history(3);

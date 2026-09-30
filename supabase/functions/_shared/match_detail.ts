@@ -1,7 +1,7 @@
 // Pure normalizers for stored GOAL match detail (lineups, statistics). Shared
 // by the futbeat-api edge function and node tests; no I/O here.
 
-import { parseEventMinute } from './live_events.ts';
+import { isOwnGoalRow, parseEventMinute } from './live_events.ts';
 
 export type PlayerMedia = Record<string, { canonicalId?: unknown; image?: unknown }>;
 
@@ -290,11 +290,17 @@ export function normalizeMatchDetail(
         cleanText(row.awayAssist) ||
         cleanText(row.assist);
       const score = cleanText(row.score);
-      const side = cleanText(row.homeScorer) || cleanText(row.homeAssist)
+      const scorerSide = cleanText(row.homeScorer) || cleanText(row.homeAssist)
         ? 'home'
         : cleanText(row.awayScorer) || cleanText(row.awayAssist)
         ? 'away'
         : null;
+      // Same (UNVERIFIED) own-goal rule as the LIVE normalizer: listed under
+      // the scorer's side, credited to the other team.
+      const ownGoal = type === 'GOAL' && isOwnGoalRow(row);
+      const side = ownGoal && scorerSide
+        ? (scorerSide === 'home' ? 'away' : 'home')
+        : scorerSide;
       return {
         type,
         minute: minuteValue(row.time),
@@ -320,6 +326,7 @@ export function normalizeMatchDetail(
         assistName: assist || null,
         info: cleanText(row.info) || null,
         side,
+        ...(ownGoal ? { ownGoal: true } : {}),
       };
     }),
     ...asList(payload.cards).map((value) => {

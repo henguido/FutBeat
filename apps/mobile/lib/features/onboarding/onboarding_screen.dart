@@ -696,6 +696,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Text(
+          'Opcional. Sin cuenta, tus favoritos se guardan en este dispositivo.',
+          style: TextStyle(color: muted),
+        ),
+        const SizedBox(height: 12),
         FilledButton.tonal(
           onPressed: _openProfile,
           child: const Text('Crear cuenta'),
@@ -704,6 +709,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         OutlinedButton(
           onPressed: _openProfile,
           child: const Text('Iniciar sesión'),
+        ),
+        const SizedBox(height: 8),
+        TextButton(
+          onPressed: busy ? null : _finish,
+          child: const Text('Continuar como invitado'),
         ),
       ],
     );

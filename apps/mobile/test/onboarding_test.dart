@@ -1,10 +1,12 @@
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/countries.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/interests.dart';
+import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
@@ -77,6 +79,7 @@ Future<void> pumpOnboarding(
   ),
   bool livePreference = false,
   bool offline = false,
+  PushService? pushService,
 }) async {
   tester.view.physicalSize = Size(width, 844);
   tester.view.devicePixelRatio = 1;
@@ -99,6 +102,8 @@ Future<void> pumpOnboarding(
         profileSettingsProvider.overrideWith(
           (ref) async => const UserProfileSettings(notifyGoals: false),
         ),
+        if (pushService != null)
+          pushServiceProvider.overrideWithValue(pushService),
       ],
       child: const MaterialApp(home: OnboardingScreen()),
     ),
@@ -693,6 +698,38 @@ void main() {
     expect(find.text('Ir a Partidos'), findsOneWidget);
   });
 
+  testWidgets('configured account step offers an optional guest path', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final db = AppDatabase(NativeDatabase.memory());
+    final service = PushService(
+      const LiveRealtimeConfig(
+        supabaseUrl: 'https://supabase.test',
+        publicKey: 'publishable-test-key',
+      ),
+      db,
+      _NoTokens(),
+    );
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+    });
+    await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+    await pumpOnboarding(tester, database: db, pushService: service);
+    for (var i = 0; i < 5; i++) {
+      await tester.tap(find.text('Continuar'));
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(find.text('Crear cuenta'), findsOneWidget);
+    expect(find.text('Iniciar sesión'), findsOneWidget);
+    expect(find.text('Continuar como invitado'), findsOneWidget);
+    expect(
+      find.textContaining('tus favoritos se guardan en este dispositivo'),
+      findsOneWidget,
+    );
+  });
+
   for (final width in [320.0, 360.0, 390.0, 430.0]) {
     testWidgets('responsive onboarding has no overflow at ${width.toInt()}px', (
       tester,
@@ -705,4 +742,12 @@ void main() {
       expect(find.text('Continuar'), findsOneWidget);
     });
   }
+}
+
+class _NoTokens implements PushTokenSource {
+  @override
+  Future<String?> requestToken() async => null;
+
+  @override
+  Stream<String> get rotations => const Stream.empty();
 }

@@ -6,7 +6,11 @@ import {
   normalizeGoalPlayerSearch,
   normalizeGoalPlayerStatistics,
 } from "../_shared/goal_players.ts";
-import { normalizeFixtureEvents } from "../_shared/live_events.ts";
+import {
+  fixtureEventSections,
+  liveEventsContentSignature,
+  normalizeFixtureEvents,
+} from "../_shared/live_events.ts";
 import {
   GOAL_STANDINGS_ENDPOINT,
   goalStandingsRows,
@@ -108,7 +112,21 @@ async function secureEqual(left: string, right: string) {
   return a === b;
 }
 
-async function normalizeLiveFixture(fixture: Record<string, unknown>) {
+// authoritativeEvents: the answer is a full match answer (live list, match
+// detail), so every event section present as an array is the complete set
+// for this fixture (snapshot-replace: rows it no longer lists are retracted).
+// The results list shape is UNVERIFIED (it may carry summary or empty
+// sections), so it only adds / corrects, never retracts.
+// source: the path of this answer. The database only retracts rows whose
+// last sighting came from the same path (a partial list answer never undoes
+// what the detail answer listed, and vice versa).
+async function normalizeLiveFixture(
+  fixture: Record<string, unknown>,
+  { authoritativeEvents = true, source }: {
+    authoritativeEvents?: boolean;
+    source: "live-list" | "detail" | "results";
+  },
+) {
   const externalMatchId = clean(fixture.apiId ?? fixture.id);
   if (!externalMatchId) throw new Error("Missing GOAL live fixture id");
 
@@ -117,6 +135,11 @@ async function normalizeLiveFixture(fixture: Record<string, unknown>) {
   const home = nonNegativeInteger(fixture.homeTeamScore);
   const away = nonNegativeInteger(fixture.awayTeamScore);
   const events = normalizeFixtureEvents(fixture);
+  const completeSections = authoritativeEvents
+    ? fixtureEventSections(fixture)
+    : [];
+  // The hash covers the normalized event CONTENT, not only the keys: a
+  // corrected scorer/minute/team with the same ids is a new observation.
   const payloadHash = await sha256Hex(JSON.stringify([
     externalMatchId,
     status,
@@ -124,6 +147,7 @@ async function normalizeLiveFixture(fixture: Record<string, unknown>) {
     home,
     away,
     events.map((event) => event.eventKey),
+    liveEventsContentSignature(events, completeSections),
   ]));
 
   return {
@@ -133,6 +157,8 @@ async function normalizeLiveFixture(fixture: Record<string, unknown>) {
     minute,
     score: { home, away },
     events,
+    ...(authoritativeEvents ? { completeSections } : {}),
+    source,
     rawPayload: fixture,
   };
 }
@@ -447,7 +473,9 @@ async function syncLive() {
     }, 30000);
 
     const observations = await Promise.all(
-      fixtures.map((fixture) => normalizeLiveFixture(fixture)),
+      fixtures.map((fixture) =>
+        normalizeLiveFixture(fixture, { source: "live-list" })
+      ),
     );
     // Provider vocabulary drift is invisible otherwise: an unknown status
     // silently maps to SCHEDULED (never inferred as live or final).
@@ -637,7 +665,14 @@ async function syncOneResultsDate() {
       p_fixtures: fixtures,
     }, 30000);
     stage = "normalize";
-    const observations = await Promise.all(fixtures.map(normalizeLiveFixture));
+    const observations = await Promise.all(
+      fixtures.map((fixture) =>
+        normalizeLiveFixture(fixture, {
+          authoritativeEvents: false,
+          source: "results",
+        })
+      ),
+    );
     stage = "record";
     const persistence = await rpc("futbeat_record_live_batch", {
       p_provider: "goal_api",
@@ -833,6 +868,7 @@ async function syncOneMatchDetail(
 
     const liveObservation = await normalizeLiveFixture(
       detail as Record<string, unknown>,
+      { source: "detail" },
     );
     if ([
       "LIVE",
