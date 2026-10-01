@@ -138,6 +138,7 @@ class TeamProfileView extends ConsumerWidget {
     required this.matches,
     this.initialCompetitionId,
     this.initialSeason,
+    this.loading = false,
     super.key,
   });
 
@@ -145,6 +146,12 @@ class TeamProfileView extends ConsumerWidget {
   final Entity team;
   final List<Entity> competitions;
   final List<FootballMatch> matches;
+
+  /// [data] is only what the session already knew about the team (search,
+  /// Explorar, calendar…) while the profile itself loads: the header and
+  /// every independent section render now, and the sections that need the
+  /// profile say they are loading instead of "empty".
+  final bool loading;
 
   /// Context of the match the profile was opened from (#161), if any.
   final String? initialCompetitionId;
@@ -221,6 +228,11 @@ class TeamProfileView extends ConsumerWidget {
     Widget body(String tab) => switch (tab) {
       'Resumen' => ProfileTabList('resumen', [
         if (data.demo) const DemoNotice(),
+        if (loading)
+          const ProfileLoadingNotice(
+            'Cargando datos del equipo…',
+            key: ValueKey('team-profile-loading'),
+          ),
         Builder(
           builder: (tabContext) => TeamSummary(
             data: data,
@@ -268,25 +280,42 @@ class TeamProfileView extends ConsumerWidget {
       ]),
       'Plantilla' => ProfileTabList('plantilla', [
         if (data.demo) const DemoNotice(),
-        TeamSquad(
-          players,
-          demo: data.demo,
-          state: data.squadState,
-          updatedAt: DateTime.tryParse(
-            ((data.coverage?['squad'] as Map?)?['updatedAt'])?.toString() ?? '',
+        if (loading)
+          const ProfileLoadingNotice(
+            'Cargando plantilla…',
+            key: ValueKey('squad-loading'),
+          )
+        else
+          TeamSquad(
+            players,
+            demo: data.demo,
+            state: data.squadState,
+            updatedAt: DateTime.tryParse(
+              ((data.coverage?['squad'] as Map?)?['updatedAt'])?.toString() ??
+                  '',
+            ),
           ),
-        ),
       ]),
       'Noticias' => ProfileTabList('noticias', [
         if (data.demo) const DemoNotice(),
-        if (data.news.isEmpty)
+        if (loading)
+          const ProfileLoadingNotice(
+            'Cargando noticias…',
+            key: ValueKey('news-loading'),
+          )
+        else if (data.news.isEmpty)
           const InlineEmpty(Icons.article_outlined, 'Sin noticias disponibles')
         else
           for (final article in data.news) NewsArticleCard(article),
       ]),
       _ => ProfileTabList('transferencias', [
         if (data.demo) const DemoNotice(),
-        if (data.transfers.isEmpty)
+        if (loading)
+          const ProfileLoadingNotice(
+            'Cargando transferencias…',
+            key: ValueKey('transfers-loading'),
+          )
+        else if (data.transfers.isEmpty)
           const InlineEmpty(
             Icons.swap_horiz,
             'Sin cambios de plantilla disponibles',

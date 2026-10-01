@@ -167,6 +167,52 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
         (data.squadState == 'PENDING' || team.imageUrl == null);
   }
 
+  TeamProfileView _teamView(
+    Snapshot data,
+    Entity team,
+    List<FootballMatch> matches,
+    List<Entity> competitions, {
+    bool loading = false,
+  }) => TeamProfileView(
+    data: data,
+    team: team,
+    competitions: competitions,
+    matches: matches,
+    initialCompetitionId: widget.competitionId,
+    initialSeason: widget.season,
+    loading: loading,
+  );
+
+  /// Looked up once per screen: the seed only changes with new reads.
+  Snapshot? _seed;
+  bool _seedLooked = false;
+
+  /// The team profile painted from what this session already read about the
+  /// team (see [ApiRepository.entitySeed]) while `/v1/entity` loads; null
+  /// when nothing is known (then the screen keeps its spinner).
+  Widget? _seededTeamView() {
+    if (widget.type != 'team') return null;
+    if (!_seedLooked) {
+      _seedLooked = true;
+      final repository = ref.read(repositoryProvider);
+      if (repository is ApiRepository) {
+        _seed = repository.entitySeed(widget.type, widget.id);
+      }
+    }
+    final seed = _seed;
+    if (seed == null) return null;
+    final canonicalId = seed.resolveEntityId(widget.id);
+    final team = seed.team(canonicalId);
+    if (team == null) return null;
+    return _teamView(
+      seed,
+      team,
+      const [],
+      orderedTeamCompetitions(seed, canonicalId),
+      loading: true,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final type = widget.type, id = widget.id;
@@ -181,10 +227,15 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     final detail = ref.watch(entitySnapshotProvider((type: type, id: id)));
 
     return detail.when(
-      loading: () => Scaffold(
-        appBar: AppBar(title: const Text('FutBeat')),
-        body: const Center(child: CircularProgressIndicator()),
-      ),
+      // First open: paint what the session already knows (header, context,
+      // matches tab) while the profile loads; a full-screen spinner only when
+      // nothing is known about the entity yet.
+      loading: () =>
+          _seededTeamView() ??
+          Scaffold(
+            appBar: AppBar(title: const Text('FutBeat')),
+            body: const Center(child: CircularProgressIndicator()),
+          ),
       error: (_, stack) => Scaffold(
         appBar: AppBar(title: const Text('FutBeat')),
         body: Center(
@@ -242,14 +293,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ? const <Entity>[]
             : orderedTeamCompetitions(data, teamId);
         if (type == 'team') {
-          return TeamProfileView(
-            data: data,
-            team: entity,
-            competitions: teamCompetitions,
-            matches: matches,
-            initialCompetitionId: widget.competitionId,
-            initialSeason: widget.season,
-          );
+          return _teamView(data, entity, matches, teamCompetitions);
         }
         if (type == 'player') {
           return PlayerProfileView(

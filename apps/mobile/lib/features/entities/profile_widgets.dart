@@ -185,6 +185,32 @@ class InlineEmpty extends StatelessWidget {
   );
 }
 
+/// Small inline "loading" line for one profile section (same look as the
+/// player's "Actualizando datos del jugador…"): the rest of the profile stays
+/// usable instead of a full-screen spinner.
+class ProfileLoadingNotice extends StatelessWidget {
+  const ProfileLoadingNotice(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(2, 10, 2, 0),
+    child: Row(
+      children: [
+        const SizedBox.square(
+          dimension: 12,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(text, style: const TextStyle(color: muted, fontSize: 12)),
+        ),
+      ],
+    ),
+  );
+}
+
 class ProfileSectionTitle extends StatelessWidget {
   const ProfileSectionTitle(this.title, {super.key});
 
