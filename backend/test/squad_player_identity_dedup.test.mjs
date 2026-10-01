@@ -117,6 +117,52 @@ test('read: a stale member never pairs with a later answer', () => withDb(async 
   assert.deepEqual(await squadNames(db), ['Filler Uno', 'Mora Rafael', 'Rafael Mora']);
 }));
 
+const hiddenTwins = async (db, teamId = TEAM) =>
+  (await db.query('select * from futbeat_private.team_squad_hidden_twins($1)', [teamId])).rows;
+
+test('read: a twin stays hidden only while its evidence holds', () => withDb(async (db) => {
+  await storeSquad(db, TEAM, twinRows, T1);
+  assert.equal((await hiddenTwins(db)).length, 1);
+  // The rich partner moves to another club: the sparse row is visible again.
+  await storeSquad(db, 'fb_team_other', [rich('full-1', 'Ana Maria Ruiz', 10)], T2);
+  assert.deepEqual(await squadNames(db), ['Diego Solano', 'Ruiz Ana Maria']);
+  assert.equal((await detail(db, 'team', TEAM)).coverage.squad.playerCount, 2);
+  assert.equal((await hiddenTwins(db)).length, 0);
+}));
+
+test('read: a hidden twin that gains a photo is shown again', () => withDb(async (db) => {
+  await storeSquad(db, TEAM, twinRows, T1);
+  const sparse = await pidOf(db, 'sparse-1');
+  await db.query("update futbeat_private.entities set payload=jsonb_set(payload,'{media}',$2::jsonb) where id=$1", [sparse,
+    JSON.stringify({ url: cdn('sparse-1'), kind: 'PLAYER_PHOTO', source: 'GOAL API', verificationStatus: 'VERIFIED',
+      rightsStatus: 'REVIEW_REQUIRED', usageScope: 'DEVELOPMENT_ONLY' })]);
+  assert.deepEqual(await squadNames(db), ['Ana Maria Ruiz', 'Diego Solano', 'Ruiz Ana Maria']);
+  assert.equal((await hiddenTwins(db)).length, 0);
+}));
+
+test('read: twins survive a team redirect onto the canonical team', () => withDb(async (db) => {
+  await db.query(`insert into futbeat_private.entities values ('fb_team_legacy','team','{"id":"fb_team_legacy","name":"Club Uno Legacy"}')`);
+  await storeSquad(db, 'fb_team_legacy', twinRows, T1);
+  await db.query("select futbeat_private.futbeat_register_entity_redirect('team','fb_team_legacy',$1,'test')", [TEAM]);
+  assert.deepEqual(await squadNames(db), ['Ana Maria Ruiz', 'Diego Solano']);
+  assert.equal((await hiddenTwins(db)).length, 1);
+}));
+
+test('twin refresh is idempotent and serialized per team', () => withDb(async (db) => {
+  await storeSquad(db, TEAM, twinRows, T1);
+  await db.query('select futbeat_private.refresh_team_squad_twins($1), futbeat_private.refresh_team_squad_twins($1)', [TEAM]);
+  assert.equal(await one(db, 'select count(*)::int v from futbeat_private.team_squad_twins where team_id=$1', [TEAM]), 1);
+}));
+
+test('merge tool refuses a merge INTO a hidden sparse twin', () => withDb(async (db) => {
+  await storeSquad(db, TEAM, twinRows, T1);
+  const full = await pidOf(db, 'full-1');
+  const sparse = await pidOf(db, 'sparse-1');
+  await assert.rejects(merge(db, full, sparse), /hidden sparse twin/);
+  assert.equal(await playerRedirects(db), 0);
+  assert.deepEqual(await squadNames(db), ['Ana Maria Ruiz', 'Diego Solano']);
+}));
+
 test('ingestion: two rows of one canonical identity keep the established row and name', () => withDb(async (db) => {
   await storeSquad(db, TEAM, twinRows);
   const kept = await pidOf(db, 'full-1');

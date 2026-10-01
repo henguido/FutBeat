@@ -8,11 +8,13 @@
 -- merges automatically. This script merges exactly the pairs the read side
 -- hides, so search, profiles and lineups also converge on one identity.
 --
--- Candidates = futbeat_private.team_squad_twin_aliases (the read rule):
---   same team AND same squad answer (equal updated_at) AND same known shirt
---   number AND identical, safely folded name-token multisets (>= 2 tokens) AND
---   exactly two such rows, one sparse (no photo/birth date/age), one rich
---   (photo or birth date). The alias (sparse) is redirected to the rich one
+-- Candidates = futbeat_private.team_squad_hidden_twins: EXACTLY what the read
+-- side hides now. Twins were found when a squad answer was stored (same
+-- team AND same answer AND same known shirt number AND identical, safely
+-- folded name-token multisets (>= 2 tokens) AND exactly two such rows, one
+-- sparse (no photo/birth date/age), one rich (photo or birth date)), and the
+-- evidence still holds live (rich partner still a member of the team, hidden
+-- row still sparse). The alias (sparse) is redirected to the rich one
 --   through futbeat_private.futbeat_merge_player_identity, which refuses
 --   conflicting birth dates and never deletes an entity.
 --
@@ -53,11 +55,11 @@
 -- [dry-run] ------------------------------------------------------------------
 with installed as (
   select to_regprocedure('futbeat_private.futbeat_merge_player_identity(text,text,text)') is not null
-    and to_regprocedure('futbeat_private.team_squad_twin_aliases(text)') is not null ok
+    and to_regprocedure('futbeat_private.team_squad_hidden_twins(text)') is not null ok
 ), candidates as (
   select distinct on (d.alias_id) t.team_id,d.alias_id,d.canonical_id
   from (select distinct team_id from futbeat_private.team_squad_members) t
-  cross join lateral futbeat_private.team_squad_twin_aliases(t.team_id) d
+  cross join lateral futbeat_private.team_squad_hidden_twins(t.team_id) d
   where not exists(
     select 1 from futbeat_private.entity_redirects r where r.alias_id=d.alias_id)
   order by d.alias_id,t.team_id
@@ -82,14 +84,14 @@ declare
   v_merged integer:=0;
 begin
   if to_regprocedure('futbeat_private.futbeat_merge_player_identity(text,text,text)') is null
-     or to_regprocedure('futbeat_private.team_squad_twin_aliases(text)') is null then
+     or to_regprocedure('futbeat_private.team_squad_hidden_twins(text)') is null then
     raise exception 'Squad identity merge refused: migration 20261001130000 is not installed';
   end if;
 
   with candidates as (
     select distinct on (d.alias_id) t.team_id,d.alias_id,d.canonical_id
     from (select distinct team_id from futbeat_private.team_squad_members) t
-    cross join lateral futbeat_private.team_squad_twin_aliases(t.team_id) d
+    cross join lateral futbeat_private.team_squad_hidden_twins(t.team_id) d
     where not exists(
       select 1 from futbeat_private.entity_redirects r where r.alias_id=d.alias_id)
     order by d.alias_id,t.team_id

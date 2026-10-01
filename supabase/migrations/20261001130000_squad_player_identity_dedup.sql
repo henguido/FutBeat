@@ -24,7 +24,9 @@
 --   Subset names ("Juan Perez" vs "Juan Carlos Perez Lopez") are never
 --   collapsed: they are indistinguishable from two different people.
 --   Twins are found when a squad answer is stored (grouping, no pairwise
---   scan) and kept in team_squad_twins; reads only consult that table.
+--   scan) and kept in team_squad_twins; reads only consult that table and
+--   hide a twin only while the evidence still holds (rich partner still a
+--   member of the team, hidden row still sparse).
 --
 -- Ingestion keeps storing every provider row; it only stores ONE row when two
 -- rows resolve to the same canonical player (already the same identity), and
@@ -171,10 +173,13 @@ create function futbeat_private.refresh_team_squad_twins(p_team_id text)
 returns integer language plpgsql security definer set search_path='' as $$
 declare n integer;
 begin
+  -- Two concurrent stores of one team never interleave their refreshes.
+  perform pg_catalog.pg_advisory_xact_lock(hashtextextended('squad-twins:'||p_team_id,0));
   delete from futbeat_private.team_squad_twins where team_id=p_team_id;
   insert into futbeat_private.team_squad_twins(team_id,alias_id,canonical_id)
   select p_team_id,alias_id,canonical_id
-  from futbeat_private.team_squad_twin_aliases(p_team_id);
+  from futbeat_private.team_squad_twin_aliases(p_team_id)
+  on conflict(team_id,alias_id) do nothing;
   get diagnostics n=row_count;
   return n;
 end $$;
@@ -188,15 +193,37 @@ begin
   end loop;
 end $$;
 
+-- Twins hidden right now: the stored evidence, still true live. A twin is
+-- hidden only while its rich partner is still a member of this team and the
+-- hidden row is still sparse. Rows stored under a team alias (team
+-- redirects move memberships, not twins) count for the canonical team.
+-- Single source of truth for the read and the manual merge script.
+create function futbeat_private.team_squad_hidden_twins(p_team_id text)
+returns table(alias_id text,canonical_id text)
+language sql stable set search_path='' as $$
+  select t.alias_id,t.canonical_id
+  from futbeat_private.team_squad_twins t
+  join futbeat_private.team_squad_members alias_sm
+    on alias_sm.team_id=p_team_id and alias_sm.player_id=t.alias_id
+  join futbeat_private.team_squad_members partner_sm
+    on partner_sm.team_id=p_team_id and partner_sm.player_id=t.canonical_id
+  join futbeat_private.entities e on e.id=t.alias_id and e.kind='player'
+  where t.team_id=any(futbeat_private.team_identity_ids(p_team_id))
+    and futbeat_private.squad_player_sparse(e.payload)
+    and not exists(select 1 from futbeat_private.entity_redirects r
+      where r.kind='player' and r.alias_id in (t.alias_id,t.canonical_id))
+$$;
+
 -- The squad as users see it: canonical players, sparse twins hidden.
 create function futbeat_private.team_squad_player_ids(p_team_id text)
 returns setof text language sql stable set search_path='' as $$
-  with members as materialized (
+  with hidden as materialized (
+    select alias_id from futbeat_private.team_squad_hidden_twins(p_team_id)
+  ), members as materialized (
     select distinct futbeat_private.futbeat_resolve_entity_id('player',sm.player_id) id
     from futbeat_private.team_squad_members sm
     where sm.team_id=p_team_id
-      and not exists(select 1 from futbeat_private.team_squad_twins t
-        where t.team_id=p_team_id and t.alias_id=sm.player_id)
+      and not exists(select 1 from hidden h where h.alias_id=sm.player_id)
   )
   select e.id
   from members m
@@ -375,6 +402,10 @@ begin
   if v_alias is null or v_canonical is null then
     raise exception 'Player merge entities must exist';
   end if;
+  -- Wrong direction: the kept identity must not be a known sparse twin.
+  if exists(select 1 from futbeat_private.team_squad_twins where alias_id=v_target) then
+    raise exception 'Player merge refused: target % is a hidden sparse twin; merge it into its rich partner instead',v_target;
+  end if;
   if coalesce(btrim(v_alias->>'dateOfBirth'),'')<>''
      and coalesce(btrim(v_canonical->>'dateOfBirth'),'')<>''
      and btrim(v_alias->>'dateOfBirth')<>btrim(v_canonical->>'dateOfBirth') then
@@ -453,7 +484,8 @@ begin
   on conflict(team_id,player_id) do update
     set updated_at=greatest(futbeat_private.team_squad_members.updated_at,excluded.updated_at);
   delete from futbeat_private.team_squad_members where player_id=p_alias_id;
-  delete from futbeat_private.team_squad_twins where alias_id=p_alias_id;
+  delete from futbeat_private.team_squad_twins
+  where alias_id=p_alias_id or canonical_id=p_alias_id;
 
   insert into futbeat_private.push_follows(user_id,entity_type,entity_id,created_at)
   select user_id,'player',v_target,created_at from futbeat_private.push_follows
@@ -547,6 +579,7 @@ revoke all on function
   futbeat_private.squad_player_rich(jsonb),
   futbeat_private.team_squad_twin_aliases(text),
   futbeat_private.refresh_team_squad_twins(text),
+  futbeat_private.team_squad_hidden_twins(text),
   futbeat_private.team_squad_player_ids(text),
   futbeat_private.player_identity_richness(jsonb),
   futbeat_private.futbeat_merge_player_identity(text,text,text),
