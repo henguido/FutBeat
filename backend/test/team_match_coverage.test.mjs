@@ -18,6 +18,10 @@ const at = (hours) => new Date(Date.now() + hours * 3600e3).toISOString();
 
 async function withDb(fn) {
   const db = await openDatabase();
+  // The coverage window uses current_date. Production sessions run in UTC
+  // and the expectations below are UTC dates; without this the suite failed
+  // for six hours a day on a host whose local zone is behind UTC.
+  await db.exec("set timezone='UTC'");
   try { await fn(db); } finally { await db.close(); }
 }
 

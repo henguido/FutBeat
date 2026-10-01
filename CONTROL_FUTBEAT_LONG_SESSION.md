@@ -7,7 +7,7 @@ Documento operativo para que otra sesión continúe exactamente donde esta termi
 - Inicio: 2026-09-30 07:38 (hora local CR). Cierre de la sesión: mismo día.
 - HEAD inicial: `7702e4e` (main = origin/main, PR #170).
 - Rama de trabajo: `fix/matches-screen-regression` (local, SIN push, SIN PR). 5 commits de código sobre `7702e4e`, más el de este archivo.
-- Árbol limpio al cerrar (solo `CONTROL_FUTBEAT_4H.md`, de otra sesión, sin versionar).
+- Árbol limpio al cerrar. `CONTROL_FUTBEAT_4H.md` (otra sesión, sin versionar) se retiró en la Fase 1 tras migrar lo vigente; copia íntegra en `F:\FutBeat\backups\`.
 - Reglas cumplidas: no deploy, no migraciones remotas, no push, no PR, no merge. Producción solo lectura.
 
 ## Cola de bloques
@@ -36,7 +36,7 @@ Documento operativo para que otra sesión continúe exactamente donde esta termi
 - `flutter analyze`: sin issues. `flutter test`: 660/660.
 - `npm test`: 977/978. `npm run check`: OK. `git diff --check`: limpio.
 - Deno check de `futbeat-goal-live-sync` y `futbeat-api`: exit 0.
-- Único fallo: `#131 planner profiles…` en `backend/test/match_detail_planner_scale.test.mjs`. PREEXISTENTE (comprobado dos veces en `7702e4e` limpio con `git stash -u`): el test busca `'loop\n'` y el checkout de Windows tiene CRLF. No se tocó.
+- Único fallo entonces: `#131 planner profiles…` (CRLF), preexistente. Corregido en la Fase 1 junto con `team_match_coverage` (zona horaria): la Fase 1 cierra con `npm test` 989/989.
 
 ## Migraciones locales nuevas (NINGUNA aplicada en remoto)
 
@@ -92,18 +92,52 @@ Medido (producción, solo lectura): `read_match_context` 6-204 ms, `read_match_d
 - No se ejecutó la app en emulador (no hay en este entorno); el QA visual fue con renders de tests.
 - No se midió la latencia extremo a extremo de la API (llamarla dispara demandas = escrituras).
 - No se cambió la tabla de posiciones (ya cumplía lo pedido con tests de #166 y fase 1).
-- `CONTROL_FUTBEAT_4H.md` (de otra sesión) no se tocó ni se versiona.
+- `CONTROL_FUTBEAT_4H.md`: retirado en la Fase 1 (ver "Contexto operativo heredado").
 
 ## Próximos pasos (por prioridad)
 
 1. Revisar y decidir push/PR único de `fix/matches-screen-regression`.
-2. Despliegue controlado: migraciones 1→2→3 + `futbeat-goal-live-sync` + `futbeat-api`, fuera de ventana de partidos. Una vez aplicada la migración 1, correr (solo lectura) `select * from futbeat_private.duplicate_calendar_fixtures(current_date-14,current_date+7)`.
+2. Despliegue controlado: primero `20260930100000_event_reconciliation` (#169, pendiente en prod), luego migraciones 1→2→3, y después `futbeat-goal-live-sync` + `futbeat-api`, fuera de ventana de partidos. Revisar antes el drift de #133 (ver contexto heredado). Una vez aplicada la migración 1, correr (solo lectura) `select * from futbeat_private.duplicate_calendar_fixtures(current_date-14,current_date+7)`.
 3. Tras el despliegue, medir 48 h: partidos creados/re-enlazados por descubrimiento, fechas de resultados con `truncatedBy`, recuperaciones `EXHAUSTED` con `attempts=0`, consumo de cuota.
 4. Revisar el reparto de cuota GOAL (`match-detail` 400-550/día frente a finales que no llegan).
-5. Fusión a nivel de partido para los duplicados reales (perfil, H2H y tablas) y arreglar el test CRLF del planner #131.
+5. Fusión a nivel de partido para los duplicados reales (perfil, H2H y tablas). (El test CRLF #131 quedó arreglado en la Fase 1.)
+
+## Fase 1 — auditoría preproducción (2026-09-30, tarde)
+
+Auditoría de la rama antes de push/PR. Cambios en un commit local aparte, sin reescribir los seis anteriores.
+
+Hallazgos corregidos:
+
+1. **Calendario cuadrático.** `build_compact_calendar` comparaba cada par del día dentro de `same_fixture_level` (sin igualdades en SQL). Bench PGlite, 1000 partidos: 1754 ms frente a 288 ms antes del dedup. Con las igualdades comp/local/visita explícitas: 353 ms (lineal). El día de hoy, todo programado: +12 %.
+2. **Secuestro de un segundo partido.** El re-enlace y la regla `ghost_24h` actuaban en ±24 h, en ambas direcciones. Un partido programado DESPUÉS del que se juega (doble partido) se movía o se ocultaba. Ahora solo un fantasma ANTERIOR (su hora pasó sin evidencia), o hasta 3 h después en el re-enlace. Mismo cambio en Flutter (`_sameFixture`).
+3. **Fantasma vivo.** Un fantasma cuyo propio id de proveedor viene en el mismo lote no se re-enlaza (`ghost_still_reported`).
+4. **Creación doble.** El descubrimiento y el resolver de la ingesta (`futbeat_resolve_global_entity`) no compartían lock y mapeaban con "el último gana" (entidad huérfana). Ahora usan el lock por id `match:goal_api:<id>`, en orden ascendente, y mapean con DO NOTHING + relectura. El lock se toma después de los chequeos baratos: las filas sin identidad no bloquean nada.
+5. **Corrección de finales no monotónica ante escritores concurrentes.** La guarda del UPDATE exigía "payload igual al leído": una corrección más nueva podía perderse si la conciliación escribía entre la lectura y el UPDATE. Ahora la guarda se reevalúa sobre la fila escrita: terminal, evidencia canónica no más nueva que la observación, y algo cambia. Además se comparan siempre tiempos de FutBeat (`received_at`), no el reloj del proveedor.
+6. **Snapshots viejos.** Los días completos se cachean hasta 30 días con una versión que solo sigue los datos, así que el constructor nuevo no los habría reconstruido. La migración 1 los expira (sin borrar nada).
+7. **Test #131 dependiente de CRLF.** Corregido en el test (regex `loop\r?\n` + guarda).
+7b. **`team_match_coverage` dependiente de la zona horaria.** La ventana usa `current_date`: PGlite toma la zona local del host (CR) y el test espera fechas UTC (como prod). Fallaba de 00:00 a 06:00 UTC, también en `origin/main`. El test fija `timezone='UTC'` en su sesión.
+8. **Transición de día.** Sin fecha elegida usaba el reloj y no el ancla del feed (dirección errónea en demo).
+
+Evidencia de producción (solo lectura):
+- 134 días, 27 420 partidos: 6 pares de misma competición/equipos a ≤ 24 h, todos duplicados reales a ≤ 3 h; ningún doble partido legítimo.
+- Por fecha de resultados: 8-40 fixtures sin mapear. `max_locks_per_transaction` 64, `max_connections` 60.
+- EXPLAIN ANALYZE de la búsqueda de gemelo jugado: índice `entities_match_away_team_idx`, ~1,1 ms por fantasma. No hacen falta índices nuevos.
+- Última migración aplicada en prod: `20260929150000`. `20260930100000_event_reconciliation` (#169, ya en main) TAMBIÉN está pendiente y va antes que las tres nuevas.
+
+Límites de la verificación:
+- No hay Postgres real ni Docker en este host. La concurrencia se probó con interleavings deterministas en PGlite y con el razonamiento READ COMMITTED (detalle en el informe de la fase).
+- Riesgo residual aceptado: dos programados sin evidencia a ≤ 3 h de la misma competición se muestran como uno (así son todos los re-emitidos observados).
+
+## Contexto operativo heredado (de `CONTROL_FUTBEAT_4H.md`, 27-28 sep)
+
+Copia íntegra en `F:\FutBeat\backups\CONTROL_FUTBEAT_4H_2026-09-29.md`. Lo que sigue vigente para el próximo despliegue:
+- Método del último despliegue controlado (28-sep): migraciones aplicadas con `db query` transaccional + `migration repair` exacto, comprobando local/remoto.
+- Drift conocido: #133 está aplicada pero registrada en remoto como `20260926180523` y `20260926183939` (md5 idéntico a la local `20260926174500`). Revisar `migration list --linked` antes de aplicar nada.
+- Backup lógico previo a ese despliegue: `F:\FutBeat\backups\2026-09-28-predeploy\futbeat_private_account_tables.json`.
+- Móvil: NO publicado. La firma release requiere la upload key autorizada. Gradle/PKIX falló en este host (AVG intercepta TLS).
 
 ## Cómo reanudar
 
 1. `git checkout fix/matches-screen-regression` y `git status` (debe estar limpio salvo `CONTROL_FUTBEAT_4H.md`).
 2. `git log --oneline -7` debe mostrar los commits de arriba sobre `7702e4e`.
-3. Validar: `cd apps/mobile && flutter analyze && flutter test`; en la raíz `npm test` (esperado 977/978 por el test CRLF) y `npm run check`.
+3. Validar: `cd apps/mobile && flutter analyze && flutter test` (660/660); en la raíz `npm test` (989/989 tras la Fase 1) y `npm run check`.
