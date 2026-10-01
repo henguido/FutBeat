@@ -531,6 +531,44 @@ class ApiRepository implements FootballRepository {
     _calendarFetchedAt.remove(_dateParam(date));
   }
 
+  /// What this session already read about a team (search, Explorar,
+  /// calendar days, favorites…), as a minimal snapshot: the team itself and
+  /// its main competition when known. A profile paints its header from it at
+  /// once while `/v1/entity` loads. Memory only: never a request. Null when
+  /// nothing read so far mentions the team.
+  Snapshot? entitySeed(String type, String id) {
+    if (type != 'team') return null;
+    final snapshots = _snapshotCache.values.toList().reversed.toList();
+    for (final snapshot in snapshots) {
+      final resolved = snapshot.resolveEntityId(id);
+      final team = snapshot.team(resolved);
+      if (team == null) continue;
+      final competitionId = team.json['competitionId']?.toString() ?? '';
+      Entity? competition;
+      if (competitionId.isNotEmpty) {
+        for (final other in [snapshot, ...snapshots]) {
+          competition = other.competition(competitionId);
+          if (competition != null) break;
+        }
+      }
+      return Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'coverage': {'seed': true},
+        'updatedAt': snapshot.updatedAt.toIso8601String(),
+        'entityRedirects': {if (resolved != id) id: resolved},
+        'teams': [team.json],
+        'players': const <dynamic>[],
+        'competitions': [?competition?.json],
+        'matches': const <dynamic>[],
+        'standings': const <dynamic>[],
+        'news': const <dynamic>[],
+        'transfers': const <dynamic>[],
+      });
+    }
+    return null;
+  }
+
   Future<Snapshot> loadEntity(String type, String id) => _loadSnapshot(
     'entity:$type:$id',
     '/v1/entity',
