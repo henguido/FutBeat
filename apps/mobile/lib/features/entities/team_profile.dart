@@ -56,11 +56,7 @@ String squadGroupOf(Object? position) {
   return 'Otros';
 }
 
-int? _shirtNumber(Entity player) {
-  final value = player.json['shirtNumber'] ?? player.json['number'];
-  if (value is int) return value;
-  return int.tryParse(value?.toString() ?? '');
-}
+int? _shirtNumber(Entity player) => player.shirtNumber;
 
 /// Age in whole years from `age` or `dateOfBirth` (null when unknown).
 int? playerAge(Entity player, {DateTime? now}) {

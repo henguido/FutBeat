@@ -323,11 +323,11 @@ class EntityTile extends StatelessWidget {
     if (type != 'player') return entity.country;
 
     final parts = <String>[];
-    final number = entity.json['shirtNumber'];
+    final number = entity.shirtNumber;
     final position = playerPositionLabel(
       entity.json['position']?.toString() ?? '',
     );
-    if (number is int) parts.add('#$number');
+    if (number != null) parts.add('#$number');
     if (position.isNotEmpty) parts.add(position);
     if (entity.country.isNotEmpty) parts.add(entity.country);
     return parts.join(' · ');

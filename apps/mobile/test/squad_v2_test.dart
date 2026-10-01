@@ -111,4 +111,32 @@ void main() {
     await _pump(tester, const TeamSquad([], state: 'CONFIRMED_EMPTY'));
     expect(find.text('Plantilla no disponible'), findsOneWidget);
   });
+
+  test('shirt number: only a real dorsal, never 0 or garbage', () {
+    expect(_player('a', number: 7).shirtNumber, 7);
+    expect(_player('b', number: '23').shirtNumber, 23);
+    expect(_player('c', number: 9.0).shirtNumber, 9);
+    for (final unknown in <Object>[0, '0', '', '  ', 'n/a', -1, 7.5]) {
+      expect(
+        _player('x', number: unknown).shirtNumber,
+        isNull,
+        reason: '$unknown',
+      );
+    }
+    expect(_player('y').shirtNumber, isNull);
+    expect(shirtNumberOf(null), isNull);
+  });
+
+  testWidgets('squad rows never print a 0 dorsal', (tester) async {
+    await _pump(
+      tester,
+      TeamSquad([
+        _player('p1', number: 0),
+        _player('p2', number: 8),
+      ], state: 'AVAILABLE'),
+    );
+    expect(find.text('0'), findsNothing);
+    expect(find.text('8'), findsOneWidget);
+    expect(find.text('–'), findsOneWidget);
+  });
 }

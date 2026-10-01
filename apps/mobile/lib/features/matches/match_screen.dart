@@ -2843,7 +2843,7 @@ class _PitchPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final name = player['name']?.toString() ?? 'Jugador';
-    final number = player['number']?.toString().trim() ?? '';
+    final number = shirtNumberOf(player['number'])?.toString() ?? '';
 
     final content = Column(
       children: [
@@ -2951,7 +2951,7 @@ class _BenchPlayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final number = player['number']?.toString().trim() ?? '';
+    final number = shirtNumberOf(player['number'])?.toString() ?? '';
     final position = _positionLabel(player['position']);
 
     final content = Container(
@@ -3057,7 +3057,9 @@ class _PlayerAvatar extends StatelessWidget {
         border: Border.all(color: lime.withValues(alpha: .45)),
       ),
       child: Text(
-        initials.isNotEmpty ? initials : player['number']?.toString() ?? '',
+        initials.isNotEmpty
+            ? initials
+            : shirtNumberOf(player['number'])?.toString() ?? '',
         style: TextStyle(
           color: Colors.white,
           fontSize: size * .32,
@@ -3393,7 +3395,7 @@ class MatchPlayerSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final name = player['name']?.toString().trim();
-    final number = player['number']?.toString().trim() ?? '';
+    final number = shirtNumberOf(player['number'])?.toString() ?? '';
     final position = _positionLabel(player['position']);
     final age = player['age'];
     final summary = playerMatchSummary(player, events);
