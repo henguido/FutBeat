@@ -1943,7 +1943,7 @@ const _statLabels = {
   'tiros a puerta': 'Tiros a puerta',
   'pases': 'Pases',
   'córners': 'Córners',
-  'saques de esquina': 'Córners',
+  'saques de esquina': 'Saques de esquina',
   'faltas': 'Faltas',
   'tarjetas amarillas': 'Tarjetas amarillas',
   'tarjetas rojas': 'Tarjetas rojas',
