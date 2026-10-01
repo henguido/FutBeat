@@ -1,62 +1,105 @@
--- One real person = one player identity in a squad.
+-- One real person = one row in a team's squad.
 --
 -- Root cause (production, read-only diagnosis 2026-10-01): GOAL's
--- /teams/:id/players answer lists the SAME person twice, under two catalog ids
--- from two GOAL catalog batches: a complete record ("Pablo Arboine", photo,
--- birth date, stats) and a sparse one with the name in "Last First" order or
--- shortened ("Arboine Pablo", no photo/age), both with the same shirt number.
+-- /teams/:id/players answer can list the SAME person twice under two catalog
+-- ids from two GOAL catalog batches: a complete record ("Pablo Arboine",
+-- photo, birth date, stats) and a sparse twin with the name tokens in another
+-- order ("Arboine Pablo", no photo/birth date/age), same shirt number.
 -- Squad ingestion canonicalizes players strictly by provider id, so each id
--- became its own canonical player and both joined team_squad_members (693 of
--- 695 same-number duplicate pairs were stored by the same squad fetch; with
--- the rule below ~718 duplicate identities in ~270 of 752 stored squads).
+-- became its own canonical player and both joined team_squad_members.
 --
--- Fix (generic: no names or ids):
---   * One rule decides "same person in this squad" (same_squad_player):
---     same team AND names compatible (tokens compared order-free) AND
---       - both shirt numbers known and equal, one name's tokens contained in
---         the other's (>= 2 tokens each), or
---       - a shirt number unknown and identical full names (>= 2 tokens, no
---         initials).
---     Two known, different shirt numbers are never the same person. A
---     candidate whose matches are not all mutually compatible (e.g. one
---     "A. B" without number next to two different "A. B" numbers) is
---     ambiguous and never collapsed.
---   * The richest identity is kept (verified photo, birth date, age, stats,
---     position, country; then the established provider identity; then the
---     fuller name).
---   * Read: the team profile squad and its coverage count list each person
---     once (immediate for every team, no data change).
---   * Ingestion: a squad answer that lists one person twice stores only the
---     kept row; the other provider identity is MERGED onto the kept player
---     through entity_redirects (kind 'player', new): its provider ids,
---     memberships, follows and interests move to the kept player, the alias
---     entity row is kept for old links. Lineups, search and profiles then
---     resolve every id of that person to one identity and one photo.
---   * Snapshot reads only ship player redirects relevant to their players.
--- Existing duplicates merge on each team's next squad refresh; an optional
--- bounded manual script (supabase/manual/2026-10-01_squad_player_identity_merge.sql)
--- merges them immediately.
+-- Fix: READ-SIDE ONLY, conservative, no automatic data merge.
+--   A member is hidden from the squad as the sparse twin of another member
+--   only when ALL hold (squad_twin_key / team_squad_twin_aliases):
+--     * same team, written by the SAME squad answer (equal updated_at), so a
+--       stale retained member never pairs with a current one;
+--     * same KNOWN shirt number (1..999; 0/blank is unknown, never matched);
+--     * identical name token MULTISETS (order-free); names are folded with an
+--       explicit accent list and a name with any other character (Đ, ł, ø,
+--       non-Latin scripts...) is not comparable; at least 2 tokens;
+--     * exactly two members share that (fetch, number, name multiset) and one
+--       is sparse (no verified photo, no birth date, no age) while the other
+--       is rich (verified photo or birth date). Groups of 3+, two sparse or
+--       two rich rows are never collapsed.
+--   Subset names ("Juan Perez" vs "Juan Carlos Perez Lopez") are never
+--   collapsed: they are indistinguishable from two different people.
+--   Twins are found when a squad answer is stored (grouping, no pairwise
+--   scan) and kept in team_squad_twins; reads only consult that table.
+--
+-- Ingestion keeps storing every provider row; it only stores ONE row when two
+-- rows resolve to the same canonical player (already the same identity), and
+-- such a row never renames that identity.
+--
+-- Data merges are an operator tool only: futbeat_merge_player_identity (with a
+-- per-merge audit row holding everything needed to undo it) and the guarded
+-- manual script supabase/manual/2026-10-01_squad_player_identity_merge.sql,
+-- whose candidates are exactly the pairs this read rule hides.
 
 -- ---------------------------------------------------------------------------
--- Player redirects.
+-- Player redirects (used only by the operator merge tool).
 -- ---------------------------------------------------------------------------
 
-alter table futbeat_private.entity_redirects
-  drop constraint if exists entity_redirects_kind_check;
-alter table futbeat_private.entity_redirects
-  add constraint entity_redirects_kind_check
-  check(kind in ('competition','team','player'));
+do $$
+declare c record; remaining integer;
+begin
+  for c in
+    select con.conname
+    from pg_catalog.pg_constraint con
+    where con.conrelid='futbeat_private.entity_redirects'::regclass
+      and con.contype='c'
+      and pg_catalog.pg_get_constraintdef(con.oid) ~ '\mkind\M'
+  loop
+    execute format('alter table futbeat_private.entity_redirects drop constraint %I',c.conname);
+  end loop;
+  alter table futbeat_private.entity_redirects
+    add constraint entity_redirects_kind_check
+    check(kind in ('competition','team','player'));
+  select count(*) into remaining
+  from pg_catalog.pg_constraint con
+  where con.conrelid='futbeat_private.entity_redirects'::regclass
+    and con.contype='c'
+    and pg_catalog.pg_get_constraintdef(con.oid) ~ '\mkind\M';
+  if remaining<>1 then
+    raise exception 'entity_redirects must have exactly one kind check, found %',remaining;
+  end if;
+end $$;
+
+-- Audit of every operator merge: everything needed to undo it.
+create table futbeat_private.player_identity_merges (
+  id bigint generated always as identity primary key,
+  alias_id text not null,
+  canonical_id text not null,
+  reason text not null,
+  merged_at timestamptz not null default now(),
+  alias_payload jsonb not null,
+  canonical_payload_before jsonb not null,
+  moved_provider_ids text[] not null default '{}',
+  moved_media_cache text[] not null default '{}',
+  moved_memberships jsonb not null default '[]',
+  moved_follows jsonb not null default '[]',
+  moved_interests jsonb not null default '[]',
+  redirected_aliases text[] not null default '{}'
+);
+alter table futbeat_private.player_identity_merges enable row level security;
+revoke all on futbeat_private.player_identity_merges from public,anon,authenticated;
 
 -- ---------------------------------------------------------------------------
--- The "same person in one squad" rule.
+-- The conservative twin rule.
 -- ---------------------------------------------------------------------------
 
--- Order-free name tokens: accents folded, punctuation dropped.
-create function futbeat_private.player_name_tokens(p_name text)
-returns text[] language sql immutable set search_path='' as $$
-  select coalesce(array(
-    select t from unnest(string_to_array(futbeat_private.normalize_live_name(p_name),' ')) t
-    where t<>'' order by t),'{}'::text[])
+-- Order-free name key, or null when the name is not safely comparable.
+create function futbeat_private.squad_name_key(p_name text)
+returns text language sql immutable set search_path='' as $$
+  with folded as (
+    select btrim(regexp_replace(translate(lower(coalesce(p_name,'')),
+      'áàäâãåéèëêíìïîóòöôõúùüûñçý',
+      'aaaaaaeeeeiiiiooooouuuuncy'),
+      '[[:space:].''’`´-]+',' ','g')) s
+  ), tokens as (
+    select array(select t from unnest(string_to_array(s,' ')) t where t<>'' order by t) toks
+    from folded where s ~ '^[a-z0-9 ]+$'
+  )
+  select case when cardinality(toks)>=2 then array_to_string(toks,' ') end from tokens
 $$;
 
 -- A real dorsal (0, blanks, decimals and absurd values are unknown).
@@ -69,297 +112,96 @@ returns integer language sql immutable set search_path='' as $$
     then (p_value::text)::numeric::integer end
 $$;
 
-create function futbeat_private.same_squad_player(
-  a_tokens text[],a_shirt integer,b_tokens text[],b_shirt integer
-) returns boolean language sql immutable set search_path='' as $$
-  select coalesce(cardinality(a_tokens)>=2 and cardinality(b_tokens)>=2
-    and case
-      when a_shirt is not null and b_shirt is not null then
-        a_shirt=b_shirt and (a_tokens<@b_tokens or b_tokens<@a_tokens)
-      else a_tokens=b_tokens
-        and not exists(select 1 from unnest(a_tokens) t where length(t)<2)
-    end,false)
+-- sparse: nothing that identifies the person beyond the name.
+create function futbeat_private.squad_player_sparse(p jsonb)
+returns boolean language sql immutable set search_path='' as $$
+  select not futbeat_private.valid_player_media(p->'media')
+    and coalesce(btrim(p->>'dateOfBirth'),'')=''
+    and coalesce(btrim(p->>'age'),'')=''
 $$;
 
--- How much a player identity really knows (higher = richer).
-create function futbeat_private.player_identity_richness(p jsonb)
-returns integer language sql immutable set search_path='' as $$
-  select case when futbeat_private.valid_player_media(p->'media') then 32 else 0 end
-    + case when coalesce(btrim(p->>'dateOfBirth'),'')<>'' then 16 else 0 end
-    + case when jsonb_typeof(p->'age')='number' then 8 else 0 end
-    + case when jsonb_typeof(p->'matchesPlayed')='number' then 4 else 0 end
-    + case when coalesce(btrim(p->>'position'),'')<>'' then 2 else 0 end
-    + case when coalesce(btrim(p->>'country'),'')<>'' then 1 else 0 end
-    + case when jsonb_typeof(p->'height')='number' then 1 else 0 end
+create function futbeat_private.squad_player_rich(p jsonb)
+returns boolean language sql immutable set search_path='' as $$
+  select futbeat_private.valid_player_media(p->'media')
+    or coalesce(btrim(p->>'dateOfBirth'),'')<>''
 $$;
 
--- Candidates: [{key,name,shirtNumber,score,established}] of ONE squad.
--- Returns each duplicate key with the key of the identity that is kept.
-create function futbeat_private.squad_identity_duplicates(p_candidates jsonb)
-returns table(alias_key text,keeper_key text)
-language sql stable set search_path='' as $$
-  with c as (
-    select distinct on (x->>'key')
-      x->>'key' k,
-      futbeat_private.player_name_tokens(x->>'name') toks,
-      futbeat_private.squad_shirt_number(x->'shirtNumber') shirt,
-      coalesce((x->>'score')::integer,0) score,
-      coalesce((x->>'established')::boolean,false) est
-    from jsonb_array_elements(case when jsonb_typeof(p_candidates)='array'
-      then p_candidates else '[]'::jsonb end) x
-    where nullif(x->>'key','') is not null
-    order by x->>'key'
-  ), p as materialized (
-    select a.k a,b.k b
-    from c a join c b on a.k<>b.k
-    where futbeat_private.same_squad_player(a.toks,a.shirt,b.toks,b.shirt)
-  ), clean as (
-    -- Every match of this candidate also matches every other one.
-    select c.* from c
-    where exists(select 1 from p where p.a=c.k)
-      and not exists(
-        select 1 from p n1 join p n2 on n2.a=n1.a and n1.b<n2.b
-        where n1.a=c.k
-          and not exists(select 1 from p x where x.a=n1.b and x.b=n2.b))
-  ), ranked as (
-    select k,row_number() over(
-      order by score desc,est desc,cardinality(toks) desc,k) r
-    from clean
-  )
-  select a.k,(
-    select b.k from p join ranked b on b.k=p.b
-    where p.a=a.k order by b.r limit 1)
-  from ranked a
-  where exists(
-    select 1 from p join ranked b on b.k=p.b
-    where p.a=a.k and b.r<a.r)
-$$;
-
--- Duplicate identities currently in a team's stored squad (canonical ids).
-create function futbeat_private.team_squad_duplicate_pairs(p_team_id text)
+-- Sparse twins hidden from a team's squad, with the member they duplicate.
+create function futbeat_private.team_squad_twin_aliases(p_team_id text)
 returns table(alias_id text,canonical_id text)
 language sql stable set search_path='' as $$
   with members as (
+    select sm.updated_at,e.id,
+      futbeat_private.squad_shirt_number(e.payload->'shirtNumber') shirt,
+      futbeat_private.squad_name_key(e.payload->>'name') name_key,
+      futbeat_private.squad_player_sparse(e.payload) sparse,
+      futbeat_private.squad_player_rich(e.payload) rich
+    from futbeat_private.team_squad_members sm
+    join futbeat_private.entities e on e.id=sm.player_id and e.kind='player'
+    where sm.team_id=p_team_id
+      and not exists(select 1 from futbeat_private.entity_redirects r
+        where r.alias_id=sm.player_id and r.kind='player')
+  ), groups as (
+    select
+      min(id) filter (where sparse) alias_id,
+      min(id) filter (where rich and not sparse) canonical_id
+    from members
+    where shirt is not null and name_key is not null
+    group by updated_at,shirt,name_key
+    having count(*)=2
+      and count(*) filter (where sparse)=1
+      and count(*) filter (where rich and not sparse)=1
+  )
+  select alias_id,canonical_id from groups
+$$;
+
+-- Twins found when a squad answer is stored (the evidence is that answer).
+-- Reads only consult this small table: no per-read pairing work.
+create table futbeat_private.team_squad_twins (
+  team_id text not null,
+  alias_id text not null,
+  canonical_id text not null,
+  computed_at timestamptz not null default now(),
+  primary key(team_id,alias_id)
+);
+alter table futbeat_private.team_squad_twins enable row level security;
+revoke all on futbeat_private.team_squad_twins from public,anon,authenticated;
+
+create function futbeat_private.refresh_team_squad_twins(p_team_id text)
+returns integer language plpgsql security definer set search_path='' as $$
+declare n integer;
+begin
+  delete from futbeat_private.team_squad_twins where team_id=p_team_id;
+  insert into futbeat_private.team_squad_twins(team_id,alias_id,canonical_id)
+  select p_team_id,alias_id,canonical_id
+  from futbeat_private.team_squad_twin_aliases(p_team_id);
+  get diagnostics n=row_count;
+  return n;
+end $$;
+
+-- Every stored squad today (no provider call; same rule as ingestion).
+do $$
+declare t record;
+begin
+  for t in select distinct team_id from futbeat_private.team_squad_members loop
+    perform futbeat_private.refresh_team_squad_twins(t.team_id);
+  end loop;
+end $$;
+
+-- The squad as users see it: canonical players, sparse twins hidden.
+create function futbeat_private.team_squad_player_ids(p_team_id text)
+returns setof text language sql stable set search_path='' as $$
+  with members as materialized (
     select distinct futbeat_private.futbeat_resolve_entity_id('player',sm.player_id) id
     from futbeat_private.team_squad_members sm
     where sm.team_id=p_team_id
-  ), players as (
-    select e.id,e.payload
-    from members m join futbeat_private.entities e on e.id=m.id and e.kind='player'
+      and not exists(select 1 from futbeat_private.team_squad_twins t
+        where t.team_id=p_team_id and t.alias_id=sm.player_id)
   )
-  select d.alias_key,d.keeper_key
-  from futbeat_private.squad_identity_duplicates((
-    select coalesce(jsonb_agg(jsonb_build_object(
-      'key',id,'name',payload->>'name','shirtNumber',payload->'shirtNumber',
-      'score',futbeat_private.player_identity_richness(payload))),'[]'::jsonb)
-    from players)) d
+  select e.id
+  from members m
+  join futbeat_private.entities e on e.id=m.id and e.kind='player'
 $$;
-
--- The squad as users see it: canonical players, each person once.
-create function futbeat_private.team_squad_player_ids(p_team_id text)
-returns setof text language sql stable set search_path='' as $$
-  with dup as materialized (
-    select alias_id from futbeat_private.team_squad_duplicate_pairs(p_team_id)
-  )
-  select distinct e.id
-  from futbeat_private.team_squad_members sm
-  join futbeat_private.entities e
-    on e.id=futbeat_private.futbeat_resolve_entity_id('player',sm.player_id)
-   and e.kind='player'
-  where sm.team_id=p_team_id
-    and not exists(select 1 from dup where dup.alias_id=e.id)
-$$;
-
--- ---------------------------------------------------------------------------
--- Player identity merge (redirect; the alias entity row is never deleted).
--- ---------------------------------------------------------------------------
-
-create function futbeat_private.futbeat_merge_player_identity(
-  p_alias_id text,p_canonical_id text,p_reason text
-) returns jsonb language plpgsql security definer set search_path='' as $$
-declare
-  v_target text; v_alias jsonb; v_canonical jsonb; v_next jsonb; v_key text;
-  v_aliases jsonb; v_name text; v_interests integer:=0;
-begin
-  if nullif(p_alias_id,'') is null or nullif(p_canonical_id,'') is null
-     or nullif(btrim(p_reason),'') is null then
-    raise exception 'Invalid player merge';
-  end if;
-  perform pg_catalog.pg_advisory_xact_lock(hashtext('futbeat-player-merge'));
-  v_target:=futbeat_private.futbeat_resolve_entity_id('player',p_canonical_id);
-  if v_target=p_alias_id then raise exception 'Player merge cycle'; end if;
-  if futbeat_private.futbeat_resolve_entity_id('player',p_alias_id)=v_target then
-    return jsonb_build_object('status','already_merged','aliasId',p_alias_id,'canonicalId',v_target);
-  end if;
-  if exists(select 1 from futbeat_private.entity_redirects where alias_id=p_alias_id) then
-    raise exception 'Player alias is already redirected';
-  end if;
-  select payload into v_alias from futbeat_private.entities
-  where id=p_alias_id and kind='player' for update;
-  select payload into v_canonical from futbeat_private.entities
-  where id=v_target and kind='player' for update;
-  if v_alias is null or v_canonical is null then
-    raise exception 'Player merge entities must exist';
-  end if;
-
-  insert into futbeat_private.entity_redirects(alias_id,canonical_id,kind,reason,created_at)
-  values(p_alias_id,v_target,'player',left(btrim(p_reason),500),now());
-  -- Older aliases of the alias now point straight to the kept player.
-  update futbeat_private.entity_redirects set canonical_id=v_target
-  where kind='player' and canonical_id=p_alias_id;
-
-  -- The kept identity only gains facts it lacks; its name stays.
-  v_next:=v_canonical;
-  foreach v_key in array array['shortName','country','dateOfBirth','age','height','preferredFoot','position'] loop
-    if coalesce(btrim(v_next->>v_key),'')='' and coalesce(btrim(v_alias->>v_key),'')<>'' then
-      v_next:=v_next||jsonb_build_object(v_key,v_alias->v_key);
-    end if;
-  end loop;
-  if futbeat_private.squad_shirt_number(v_next->'shirtNumber') is null
-     and futbeat_private.squad_shirt_number(v_alias->'shirtNumber') is not null then
-    v_next:=v_next||jsonb_build_object('shirtNumber',v_alias->'shirtNumber');
-  end if;
-  if not futbeat_private.valid_player_media(v_next->'media')
-     and futbeat_private.valid_player_media(v_alias->'media') then
-    v_next:=jsonb_set(v_next,'{media}',v_alias->'media',true);
-  end if;
-  v_aliases:=case when jsonb_typeof(v_next->'aliases')='array' then v_next->'aliases' else '[]'::jsonb end;
-  v_name:=nullif(btrim(v_alias->>'name'),'');
-  if v_name is not null and lower(v_name)<>lower(coalesce(v_next->>'name',''))
-     and not exists(select 1 from jsonb_array_elements_text(v_aliases) a where lower(a)=lower(v_name)) then
-    v_next:=v_next||jsonb_build_object('aliases',v_aliases||jsonb_build_array(v_name));
-  end if;
-  if v_next is distinct from v_canonical then
-    update futbeat_private.entities set payload=v_next where id=v_target and kind='player';
-  end if;
-
-  update futbeat_private.provider_entities set canonical_id=v_target
-  where kind='player' and canonical_id=p_alias_id;
-  update futbeat_private.provider_media_cache set canonical_id=v_target
-  where kind='player' and canonical_id=p_alias_id;
-
-  insert into futbeat_private.team_squad_members(team_id,player_id,provider,updated_at)
-  select team_id,v_target,provider,updated_at
-  from futbeat_private.team_squad_members where player_id=p_alias_id
-  on conflict(team_id,player_id) do update
-    set updated_at=greatest(futbeat_private.team_squad_members.updated_at,excluded.updated_at);
-  delete from futbeat_private.team_squad_members where player_id=p_alias_id;
-
-  insert into futbeat_private.push_follows(user_id,entity_type,entity_id,created_at)
-  select user_id,'player',v_target,created_at from futbeat_private.push_follows
-  where entity_type='player' and entity_id=p_alias_id
-  on conflict(user_id,entity_type,entity_id) do nothing;
-  delete from futbeat_private.push_follows where entity_type='player' and entity_id=p_alias_id;
-  get diagnostics v_interests=row_count;
-
-  insert into futbeat_private.temporary_interests(user_id,entity_type,entity_id,touched_at,expires_at)
-  select user_id,'player',v_target,touched_at,expires_at from futbeat_private.temporary_interests
-  where entity_type='player' and entity_id=p_alias_id
-  on conflict(user_id,entity_type,entity_id) do update
-    set touched_at=greatest(futbeat_private.temporary_interests.touched_at,excluded.touched_at),
-        expires_at=greatest(futbeat_private.temporary_interests.expires_at,excluded.expires_at);
-  delete from futbeat_private.temporary_interests where entity_type='player' and entity_id=p_alias_id;
-  if found then v_interests:=v_interests+1; end if;
-  if v_interests>0 then perform futbeat_private.refresh_interest_aggregates(); end if;
-
-  perform futbeat_private.bump_metric('player_identity_merged');
-  return jsonb_build_object('status','merged','aliasId',p_alias_id,'canonicalId',v_target);
-end $$;
-
--- ---------------------------------------------------------------------------
--- Ingestion: one row per person; the duplicate identity merges onto it.
--- ---------------------------------------------------------------------------
-
-alter function futbeat_private.futbeat_store_team_squad(text,text,timestamptz,jsonb)
-  rename to store_team_squad_before_identity_dedup;
-create function futbeat_private.futbeat_store_team_squad(
-  p_team_id text,p_provider text,p_received_at timestamptz,p_players jsonb
-) returns jsonb language plpgsql security definer set search_path='' as $$
-declare
-  tid text:=futbeat_private.futbeat_resolve_entity_id('team',p_team_id);
-  kept jsonb; pairs jsonb; result jsonb; r record; merged integer:=0;
-begin
-  if jsonb_typeof(p_players) is distinct from 'array' then
-    return futbeat_private.store_team_squad_before_identity_dedup(p_team_id,p_provider,p_received_at,p_players);
-  end if;
-  with items as (
-    select x.ord,x.item,nullif(btrim(x.item#>>'{provenance,externalId}'),'') ext
-    from jsonb_array_elements(p_players) with ordinality x(item,ord)
-  ), resolved as (
-    select i.*,
-      coalesce(e.id,nullif(i.item->>'id',''),'#'||i.ord) pid,
-      e.payload old
-    from items i
-    left join futbeat_private.provider_entities pe
-      on pe.provider='goal_api' and pe.kind='player' and pe.external_id=i.ext
-    left join futbeat_private.entities e
-      on e.id=futbeat_private.futbeat_resolve_entity_id('player',pe.canonical_id) and e.kind='player'
-  ), scored as (
-    select rs.*,
-      futbeat_private.player_identity_richness(
-        coalesce(rs.old,'{}'::jsonb)||jsonb_strip_nulls(rs.item)) score,
-      coalesce(rs.old#>>'{provenance,externalId}'=rs.ext,false) est,
-      cardinality(futbeat_private.player_name_tokens(rs.item->>'name')) ntok
-    from resolved rs
-  ), per_player as (
-    -- Two provider rows of one canonical player: keep one.
-    select distinct on (s.pid) s.*
-    from scored s
-    order by s.pid,s.score desc,s.est desc,s.ntok desc,s.ext,s.ord
-  ), dups as (
-    select d.alias_key,d.keeper_key
-    from futbeat_private.squad_identity_duplicates((
-      select coalesce(jsonb_agg(jsonb_build_object(
-        'key',pid,'name',item->>'name','shirtNumber',item->'shirtNumber',
-        'score',score,'established',est)),'[]'::jsonb)
-      from per_player)) d
-  )
-  select
-    coalesce((select jsonb_agg(
-        -- A merged duplicate's row never renames the kept identity: while the
-        -- established provider id still maps here, its name stays.
-        case when not p.est and coalesce(btrim(p.old->>'name'),'')<>''
-          and exists(select 1 from futbeat_private.provider_entities pe
-            where pe.provider='goal_api' and pe.kind='player'
-              and pe.external_id=p.old#>>'{provenance,externalId}'
-              and futbeat_private.futbeat_resolve_entity_id('player',pe.canonical_id)=p.pid)
-        then p.item||jsonb_build_object('name',p.old->'name',
-          'shortName',coalesce(p.old->'shortName',p.item->'shortName','""'::jsonb))
-        else p.item end
-        order by p.ord) from per_player p
-      where not exists(select 1 from dups d where d.alias_key=p.pid)),'[]'::jsonb),
-    coalesce((select jsonb_agg(jsonb_build_object('alias',alias_key,'keeper',keeper_key))
-      from dups where alias_key not like '#%' and keeper_key not like '#%'),'[]'::jsonb)
-  into kept,pairs;
-
-  result:=futbeat_private.store_team_squad_before_identity_dedup(p_team_id,p_provider,p_received_at,kept);
-  if result->>'status' in ('ignored_older','ignored_older_players') then
-    return result;
-  end if;
-
-  for r in select x->>'alias' alias_id,x->>'keeper' keeper_id from jsonb_array_elements(pairs) x loop
-    if exists(select 1 from futbeat_private.entities where id=r.alias_id and kind='player')
-       and exists(select 1 from futbeat_private.entities where id=r.keeper_id and kind='player')
-       and not exists(select 1 from futbeat_private.entity_redirects where alias_id=r.alias_id)
-       and futbeat_private.futbeat_resolve_entity_id('player',r.keeper_id)<>r.alias_id then
-      perform futbeat_private.futbeat_merge_player_identity(r.alias_id,r.keeper_id,
-        'GOAL squad lists one person twice (same team; same shirt number or full name)');
-      merged:=merged+1;
-    end if;
-  end loop;
-
-  -- Counts describe the squad users see.
-  update futbeat_private.team_detail_coverage c set
-    player_count=(select count(*) from futbeat_private.team_squad_player_ids(tid)),
-    media_count=(select count(*) from futbeat_private.team_squad_player_ids(tid) s(id)
-      join futbeat_private.entities e on e.id=s.id
-      where futbeat_private.valid_player_media(e.payload->'media'))
-  where c.team_id=tid;
-
-  return result||jsonb_build_object(
-    'duplicateRows',jsonb_array_length(p_players)-jsonb_array_length(kept),
-    'identitiesMerged',merged);
-end $$;
 
 -- ---------------------------------------------------------------------------
 -- Read: the team profile squad and its state count each person once.
@@ -414,6 +256,224 @@ begin
     'reason',reason,
     'playerCount',players,
     'updatedAt',coalesce(cov.last_success_at,cov.fetched_at)));
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Ingestion: two rows of ONE canonical player are stored once; never merges.
+-- ---------------------------------------------------------------------------
+
+-- How much a row really knows (higher = richer).
+create function futbeat_private.player_identity_richness(p jsonb)
+returns integer language sql immutable set search_path='' as $$
+  select case when futbeat_private.valid_player_media(p->'media') then 32 else 0 end
+    + case when coalesce(btrim(p->>'dateOfBirth'),'')<>'' then 16 else 0 end
+    + case when jsonb_typeof(p->'age')='number' then 8 else 0 end
+    + case when jsonb_typeof(p->'matchesPlayed')='number' then 4 else 0 end
+    + case when coalesce(btrim(p->>'position'),'')<>'' then 2 else 0 end
+    + case when coalesce(btrim(p->>'country'),'')<>'' then 1 else 0 end
+    + case when jsonb_typeof(p->'height')='number' then 1 else 0 end
+$$;
+
+alter function futbeat_private.futbeat_store_team_squad(text,text,timestamptz,jsonb)
+  rename to store_team_squad_before_identity_dedup;
+create function futbeat_private.futbeat_store_team_squad(
+  p_team_id text,p_provider text,p_received_at timestamptz,p_players jsonb
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare
+  tid text:=futbeat_private.futbeat_resolve_entity_id('team',p_team_id);
+  kept jsonb; result jsonb;
+begin
+  if jsonb_typeof(p_players) is distinct from 'array' then
+    return futbeat_private.store_team_squad_before_identity_dedup(p_team_id,p_provider,p_received_at,p_players);
+  end if;
+  with items as (
+    select x.ord,x.item,nullif(btrim(x.item#>>'{provenance,externalId}'),'') ext
+    from jsonb_array_elements(p_players) with ordinality x(item,ord)
+  ), resolved as (
+    select i.*,coalesce(e.id,'#'||i.ord) pid,e.payload old
+    from items i
+    left join futbeat_private.provider_entities pe
+      on pe.provider='goal_api' and pe.kind='player' and pe.external_id=i.ext
+    left join futbeat_private.entities e
+      on e.id=futbeat_private.futbeat_resolve_entity_id('player',pe.canonical_id) and e.kind='player'
+  ), scored as (
+    select rs.*,
+      futbeat_private.player_identity_richness(
+        coalesce(rs.old,'{}'::jsonb)||jsonb_strip_nulls(rs.item)) score,
+      coalesce(rs.old#>>'{provenance,externalId}'=rs.ext,false) est
+    from resolved rs
+  ), per_player as (
+    select distinct on (s.pid) s.*
+    from scored s
+    order by s.pid,s.est desc,s.score desc,s.ext,s.ord
+  )
+  select coalesce(jsonb_agg(
+      -- A second provider row of an identity never renames it while the
+      -- established provider id still maps to it.
+      case when not p.est and coalesce(btrim(p.old->>'name'),'')<>''
+        and exists(select 1 from futbeat_private.provider_entities pe
+          where pe.provider='goal_api' and pe.kind='player'
+            and pe.external_id=p.old#>>'{provenance,externalId}'
+            and futbeat_private.futbeat_resolve_entity_id('player',pe.canonical_id)=p.pid)
+      then p.item||jsonb_build_object('name',p.old->'name',
+        'shortName',coalesce(p.old->'shortName',p.item->'shortName','""'::jsonb))
+      else p.item end
+      order by p.ord),'[]'::jsonb)
+  into kept
+  from per_player p;
+
+  result:=futbeat_private.store_team_squad_before_identity_dedup(p_team_id,p_provider,p_received_at,kept);
+  if result->>'status' in ('ignored_older','ignored_older_players') then
+    return result;
+  end if;
+
+  perform futbeat_private.refresh_team_squad_twins(tid);
+  -- Counts describe the squad users see.
+  update futbeat_private.team_detail_coverage c set
+    player_count=(select count(*) from futbeat_private.team_squad_player_ids(tid)),
+    media_count=(select count(*) from futbeat_private.team_squad_player_ids(tid) s(id)
+      join futbeat_private.entities e on e.id=s.id
+      where futbeat_private.valid_player_media(e.payload->'media'))
+  where c.team_id=tid;
+
+  return result||jsonb_build_object(
+    'duplicateRows',jsonb_array_length(p_players)-jsonb_array_length(kept));
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Operator merge tool (never called by ingestion or reads).
+-- ---------------------------------------------------------------------------
+
+-- Redirects p_alias_id to p_canonical_id. Never deletes an entity. Refuses
+-- conflicting birth dates. Every change is recorded in player_identity_merges.
+create function futbeat_private.futbeat_merge_player_identity(
+  p_alias_id text,p_canonical_id text,p_reason text
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare
+  v_target text; v_alias jsonb; v_canonical jsonb; v_next jsonb; v_key text;
+  v_aliases jsonb; v_name text; v_team text; v_interests integer:=0;
+  v_provider text[]; v_media text[]; v_members jsonb; v_follows jsonb;
+  v_temp jsonb; v_redirected text[];
+begin
+  if nullif(p_alias_id,'') is null or nullif(p_canonical_id,'') is null
+     or nullif(btrim(p_reason),'') is null then
+    raise exception 'Invalid player merge';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(hashtext('futbeat-player-merge'));
+  v_target:=futbeat_private.futbeat_resolve_entity_id('player',p_canonical_id);
+  if v_target=p_alias_id then raise exception 'Player merge cycle'; end if;
+  if futbeat_private.futbeat_resolve_entity_id('player',p_alias_id)=v_target then
+    return jsonb_build_object('status','already_merged','aliasId',p_alias_id,'canonicalId',v_target);
+  end if;
+  if exists(select 1 from futbeat_private.entity_redirects where alias_id=p_alias_id) then
+    raise exception 'Player alias is already redirected';
+  end if;
+  select payload into v_alias from futbeat_private.entities
+  where id=p_alias_id and kind='player' for update;
+  select payload into v_canonical from futbeat_private.entities
+  where id=v_target and kind='player' for update;
+  if v_alias is null or v_canonical is null then
+    raise exception 'Player merge entities must exist';
+  end if;
+  if coalesce(btrim(v_alias->>'dateOfBirth'),'')<>''
+     and coalesce(btrim(v_canonical->>'dateOfBirth'),'')<>''
+     and btrim(v_alias->>'dateOfBirth')<>btrim(v_canonical->>'dateOfBirth') then
+    raise exception 'Player merge refused: conflicting birth dates';
+  end if;
+
+  -- Capture what moves (audit / undo).
+  select coalesce(array_agg(external_id order by external_id),'{}') into v_provider
+  from futbeat_private.provider_entities where kind='player' and canonical_id=p_alias_id;
+  select coalesce(array_agg(provider||':'||external_id order by provider,external_id),'{}') into v_media
+  from futbeat_private.provider_media_cache where kind='player' and canonical_id=p_alias_id;
+  -- keptHad*: the kept player already had that row (undo must keep it).
+  select coalesce(jsonb_agg(to_jsonb(sm)||jsonb_build_object('keptHadMembership',exists(
+      select 1 from futbeat_private.team_squad_members k
+      where k.team_id=sm.team_id and k.player_id=v_target))),'[]') into v_members
+  from futbeat_private.team_squad_members sm where sm.player_id=p_alias_id;
+  select coalesce(jsonb_agg(to_jsonb(f)||jsonb_build_object('keptHadFollow',exists(
+      select 1 from futbeat_private.push_follows k
+      where k.user_id=f.user_id and k.entity_type='player' and k.entity_id=v_target))),'[]') into v_follows
+  from futbeat_private.push_follows f where f.entity_type='player' and f.entity_id=p_alias_id;
+  select coalesce(jsonb_agg(to_jsonb(t)||jsonb_build_object('keptHadInterest',exists(
+      select 1 from futbeat_private.temporary_interests k
+      where k.user_id=t.user_id and k.entity_type='player' and k.entity_id=v_target))),'[]') into v_temp
+  from futbeat_private.temporary_interests t where t.entity_type='player' and t.entity_id=p_alias_id;
+  select coalesce(array_agg(alias_id order by alias_id),'{}') into v_redirected
+  from futbeat_private.entity_redirects where kind='player' and canonical_id=p_alias_id;
+
+  insert into futbeat_private.player_identity_merges(
+    alias_id,canonical_id,reason,alias_payload,canonical_payload_before,
+    moved_provider_ids,moved_media_cache,moved_memberships,moved_follows,moved_interests,
+    redirected_aliases)
+  values(p_alias_id,v_target,left(btrim(p_reason),500),v_alias,v_canonical,
+    v_provider,v_media,v_members,v_follows,v_temp,v_redirected);
+
+  insert into futbeat_private.entity_redirects(alias_id,canonical_id,kind,reason,created_at)
+  values(p_alias_id,v_target,'player',left(btrim(p_reason),500),now());
+  update futbeat_private.entity_redirects set canonical_id=v_target
+  where kind='player' and canonical_id=p_alias_id;
+
+  -- The kept identity only gains facts it lacks; its name stays.
+  v_next:=v_canonical;
+  foreach v_key in array array['shortName','country','dateOfBirth','age','height','preferredFoot','position'] loop
+    if coalesce(btrim(v_next->>v_key),'')='' and coalesce(btrim(v_alias->>v_key),'')<>'' then
+      v_next:=v_next||jsonb_build_object(v_key,v_alias->v_key);
+    end if;
+  end loop;
+  if futbeat_private.squad_shirt_number(v_next->'shirtNumber') is null
+     and futbeat_private.squad_shirt_number(v_alias->'shirtNumber') is not null then
+    v_next:=v_next||jsonb_build_object('shirtNumber',v_alias->'shirtNumber');
+  end if;
+  if not futbeat_private.valid_player_media(v_next->'media')
+     and futbeat_private.valid_player_media(v_alias->'media') then
+    v_next:=jsonb_set(v_next,'{media}',v_alias->'media',true);
+  end if;
+  v_aliases:=case when jsonb_typeof(v_next->'aliases')='array' then v_next->'aliases' else '[]'::jsonb end;
+  v_name:=nullif(btrim(v_alias->>'name'),'');
+  if v_name is not null and lower(v_name)<>lower(coalesce(v_next->>'name',''))
+     and not exists(select 1 from jsonb_array_elements_text(v_aliases) a where lower(a)=lower(v_name)) then
+    v_next:=v_next||jsonb_build_object('aliases',v_aliases||jsonb_build_array(v_name));
+  end if;
+  if v_next is distinct from v_canonical then
+    update futbeat_private.entities set payload=v_next where id=v_target and kind='player';
+  end if;
+
+  update futbeat_private.provider_entities set canonical_id=v_target
+  where kind='player' and canonical_id=p_alias_id;
+  update futbeat_private.provider_media_cache set canonical_id=v_target
+  where kind='player' and canonical_id=p_alias_id;
+
+  -- Membership: only the kept player's current team gains it.
+  v_team:=futbeat_private.futbeat_resolve_entity_id('team',nullif(v_next->>'teamId',''));
+  insert into futbeat_private.team_squad_members(team_id,player_id,provider,updated_at)
+  select team_id,v_target,provider,updated_at
+  from futbeat_private.team_squad_members
+  where player_id=p_alias_id and team_id=v_team
+  on conflict(team_id,player_id) do update
+    set updated_at=greatest(futbeat_private.team_squad_members.updated_at,excluded.updated_at);
+  delete from futbeat_private.team_squad_members where player_id=p_alias_id;
+  delete from futbeat_private.team_squad_twins where alias_id=p_alias_id;
+
+  insert into futbeat_private.push_follows(user_id,entity_type,entity_id,created_at)
+  select user_id,'player',v_target,created_at from futbeat_private.push_follows
+  where entity_type='player' and entity_id=p_alias_id
+  on conflict(user_id,entity_type,entity_id) do nothing;
+  delete from futbeat_private.push_follows where entity_type='player' and entity_id=p_alias_id;
+  get diagnostics v_interests=row_count;
+
+  insert into futbeat_private.temporary_interests(user_id,entity_type,entity_id,touched_at,expires_at)
+  select user_id,'player',v_target,touched_at,expires_at from futbeat_private.temporary_interests
+  where entity_type='player' and entity_id=p_alias_id
+  on conflict(user_id,entity_type,entity_id) do update
+    set touched_at=greatest(futbeat_private.temporary_interests.touched_at,excluded.touched_at),
+        expires_at=greatest(futbeat_private.temporary_interests.expires_at,excluded.expires_at);
+  delete from futbeat_private.temporary_interests where entity_type='player' and entity_id=p_alias_id;
+  if found then v_interests:=v_interests+1; end if;
+  if v_interests>0 then perform futbeat_private.refresh_interest_aggregates(); end if;
+
+  perform futbeat_private.bump_metric('player_identity_merged');
+  return jsonb_build_object('status','merged','aliasId',p_alias_id,'canonicalId',v_target);
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -481,13 +541,14 @@ $$;
 -- ---------------------------------------------------------------------------
 
 revoke all on function
-  futbeat_private.player_name_tokens(text),
+  futbeat_private.squad_name_key(text),
   futbeat_private.squad_shirt_number(jsonb),
-  futbeat_private.same_squad_player(text[],integer,text[],integer),
-  futbeat_private.player_identity_richness(jsonb),
-  futbeat_private.squad_identity_duplicates(jsonb),
-  futbeat_private.team_squad_duplicate_pairs(text),
+  futbeat_private.squad_player_sparse(jsonb),
+  futbeat_private.squad_player_rich(jsonb),
+  futbeat_private.team_squad_twin_aliases(text),
+  futbeat_private.refresh_team_squad_twins(text),
   futbeat_private.team_squad_player_ids(text),
+  futbeat_private.player_identity_richness(jsonb),
   futbeat_private.futbeat_merge_player_identity(text,text,text),
   futbeat_private.store_team_squad_before_identity_dedup(text,text,timestamptz,jsonb),
   futbeat_private.read_entity_detail_before_squad_dedup(text,text),
