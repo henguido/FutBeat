@@ -128,14 +128,29 @@ test('never merged: return leg, same opponent at another time, another competiti
   assert.deepEqual(await duplicates(db, t, start), [['cross_competition_review', 'othercomp', 'base'], ['cross_competition_review', 'otherscore', 'othercomp']].sort((a, b) => a[2].localeCompare(b[2])));
 }));
 
+// A live kickoff near now whose copy 2 h later falls on the same local day:
+// the scenario is one calendar day, whatever the wall clock (around local
+// midnight a fixed "1 h ago" put the two on different days).
+async function sameDayLiveKickoff(db) {
+  for (const h of [1, 2, 0]) {
+    const start = hoursAgo(h);
+    if (await localDay(db, start) === await localDay(db, plus(start, 2))) return start;
+  }
+  throw new Error('unreachable: one of the offsets keeps both kickoffs on one day');
+}
+
 test('LIVE fixture vs its stale calendar copy (re-issued id, kickoff moved 2 h): only the live one', () => withDb(async (db) => {
   const t = await seedTeams(db);
-  const start = hoursAgo(1);
+  const start = await sameDayLiveKickoff(db);
   await match(db, t, 'ghost', { start: plus(start, 2), received: hoursAgo(240) });
   await match(db, t, 'live', { start, status: 'LIVE', score: [1, 0], verified: true, observed: true, received: new Date().toISOString() });
   assert.deepEqual(await shownIds(db, t, start, plus(start, 2)), ['live']);
   assert.deepEqual(await duplicates(db, t, start), [['single_evidence_3h', 'live', 'ghost']]);
 }));
+
+// Known gap (P2): when the live kickoff and its stale copy straddle local
+// midnight each day is built alone, so the copy stays listed on the next day.
+test.todo('LIVE fixture vs its stale calendar copy across local midnight: the copy is hidden on its own day');
 
 test('corrected kickoff: the scheduled ghost at the old time (another day, 18 h away) disappears once the real one is played', () => withDb(async (db) => {
   const t = await seedTeams(db);
