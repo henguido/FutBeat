@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/entity_media.dart';
+import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:go_router/go_router.dart';
@@ -59,6 +61,7 @@ Map<String, dynamic> _player(
   int? age,
   bool captain = false,
   int lineupPosition = 1,
+  Map<String, dynamic>? stats,
 }) => {
   'id': id,
   'canonicalId': canonicalId,
@@ -70,6 +73,7 @@ Map<String, dynamic> _player(
   'image': null,
   'rating': rating,
   'captain': captain,
+  'stats': ?stats,
 };
 
 // A goal (p9, assisted by p10), a yellow for p9, then p9 -> p12.
@@ -190,6 +194,7 @@ Future<_Server> _open(
   WidgetTester tester, {
   Map<String, dynamic>? detail,
   double width = 390,
+  EntityMediaMemory? media,
 }) async {
   final server = _Server(detail ?? _detail());
   tester.view.physicalSize = Size(width, 844);
@@ -226,7 +231,13 @@ Future<_Server> _open(
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: MaterialApp.router(routerConfig: router),
+      child: MaterialApp.router(
+        routerConfig: router,
+        builder: (_, child) => EntityMediaScope(
+          memory: media ?? EntityMediaMemory(),
+          child: child ?? const SizedBox.shrink(),
+        ),
+      ),
     ),
   );
   await _settle(tester);
@@ -319,7 +330,12 @@ void main() {
     // No photo: the initials fallback, never a broken image or a spinner.
     expect(_inSheet(find.byType(Image)), findsNothing);
     expect(_inSheet(find.byType(CircularProgressIndicator)), findsNothing);
-    // Real events of this player.
+    // Real events of this player (the summary grew: expand the sheet).
+    await tester.drag(
+      find.byKey(const ValueKey('player-sheet-name')),
+      const Offset(0, -500),
+    );
+    await _settle(tester);
     for (final key in [
       'player-sheet-event-GOAL-23',
       'player-sheet-event-YELLOW_CARD-40',
@@ -506,6 +522,257 @@ void main() {
     await _tapPlayer(tester, find.text('Trinidad').first);
     expect(_sheet, findsOneWidget);
     expect(tester.takeException(), isNull);
+    await _close(tester);
+  });
+
+  group('playerMinutesPlayed (only event-anchored stints)', () {
+    MatchDetail detail(List<Map<String, dynamic>> incidents) =>
+        MatchDetail(_detail()..['incidents'] = incidents);
+    final starter = {'id': 'p9'};
+    final bench = {'id': 'p12'};
+    Map<String, dynamic> sub(int minute, String out, String into) => {
+      'type': 'SUBSTITUTION',
+      'minute': minute,
+      'side': 'home',
+      'outPlayerId': out,
+      'inPlayerId': into,
+    };
+    Map<String, dynamic> red(int minute, String id) => {
+      'type': 'RED_CARD',
+      'minute': minute,
+      'side': 'home',
+      'playerId': id,
+    };
+
+    test('starter taken off: entry 0, exit at the substitution', () {
+      expect(
+        playerMinutesPlayed(starter, detail([sub(70, 'p9', 'p12')]), 'home'),
+        70,
+      );
+    });
+
+    test('sub who stayed on, or starter never off: unknown end, null', () {
+      final d = detail([sub(70, 'p9', 'p12')]);
+      expect(playerMinutesPlayed(bench, d, 'home'), isNull);
+      expect(playerMinutesPlayed({'id': 'p10'}, d, 'home'), isNull);
+    });
+
+    test('substitute on and off again: exit minus entry', () {
+      expect(
+        playerMinutesPlayed(
+          bench,
+          detail([sub(60, 'p9', 'p12'), sub(85, 'p12', 'p10')]),
+          'home',
+        ),
+        25,
+      );
+    });
+
+    test('red card ends the stint', () {
+      expect(playerMinutesPlayed(starter, detail([red(40, 'p9')]), 'home'), 40);
+    });
+
+    test('re-issued substitution (same minute) counts once; conflicting '
+        'minutes are ambiguous', () {
+      expect(
+        playerMinutesPlayed(
+          starter,
+          detail([sub(70, 'p9', 'p12'), sub(70, 'p9', 'p12')]),
+          'home',
+        ),
+        70,
+      );
+      expect(
+        playerMinutesPlayed(
+          starter,
+          detail([sub(70, 'p9', 'p12'), sub(75, 'p9', 'p12')]),
+          'home',
+        ),
+        isNull,
+      );
+    });
+
+    test('other side, unknown id, unlisted player, stoppage-time stint', () {
+      final d = detail([sub(70, 'p9', 'p12')]);
+      expect(playerMinutesPlayed(starter, d, 'away'), isNull);
+      expect(playerMinutesPlayed({'id': ''}, d, 'home'), isNull);
+      expect(playerMinutesPlayed({'id': 'ghost'}, d, 'home'), isNull);
+      // On at 90 and sent off at 90: on the pitch, never "0".
+      expect(
+        playerMinutesPlayed(
+          bench,
+          detail([sub(90, 'p9', 'p12'), red(90, 'p12')]),
+          'home',
+        ),
+        1,
+      );
+    });
+  });
+
+  group('playerMatchStatSections (provider stats contract)', () {
+    test('no stats map: no sections', () {
+      expect(playerMatchStatSections({'name': 'X'}), isEmpty);
+      expect(playerMatchStatSections({'stats': 'nope'}), isEmpty);
+    });
+
+    test('only present keys, grouped; empty groups hidden', () {
+      final sections = playerMatchStatSections({
+        'stats': {
+          'touches': 54,
+          'accuratePasses': '21/25',
+          'tackles': 3,
+          'crosses': null,
+          'longBalls': '',
+          'blocks': '-',
+          'unknownKey': 9,
+        },
+      });
+      expect(
+        sections.map((s) => (s.$1, [...s.$2])).toList().toString(),
+        [
+          ('Con balón', [('Toques', '54')]),
+          ('Pases', [('Pases precisos', '21/25')]),
+          ('Defensa', [('Entradas', '3')]),
+        ].toString(),
+      );
+    });
+
+    test('an all-zero block is no coverage, never a wall of zeros', () {
+      expect(
+        playerMatchStatSections({
+          'stats': {'touches': 0, 'tackles': 0, 'accuratePasses': '0/0'},
+        }),
+        isEmpty,
+      );
+    });
+  });
+
+  testWidgets('minutes: a starter taken off shows real minutes; a sub who '
+      'stayed on shows none', (tester) async {
+    await _open(tester);
+    await _tab(tester, 'Alineación');
+    await _tapPlayer(tester, find.text('Nasibov').first);
+    final summary = _inSheet(
+      find.byKey(const ValueKey('player-sheet-summary')),
+    );
+    expect(
+      find.descendant(of: summary, matching: find.text('Minutos')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: summary, matching: find.text('70′')),
+      findsOneWidget,
+    );
+    await _closeSheet(tester);
+
+    await _tapPlayer(tester, find.text('Suplente Panel'));
+    expect(_sheet, findsOneWidget);
+    expect(_inSheet(find.text('Minutos')), findsNothing);
+    expect(_inSheet(find.text('0′')), findsNothing);
+    await _close(tester);
+  });
+
+  testWidgets('team crest beside the team name; single-letter position is '
+      'readable', (tester) async {
+    await _open(
+      tester,
+      detail: _detail(
+        starters: [_player('p1', 'Arquero Panel', position: 'G')],
+        substitutes: const [],
+      ),
+    );
+    await _tab(tester, 'Alineación');
+    await _tapPlayer(tester, find.text('Panel').first);
+    final team = _inSheet(find.byKey(const ValueKey('player-sheet-team')));
+    expect(team, findsOneWidget);
+    expect(
+      find.descendant(
+        of: team,
+        matching: find.byKey(const ValueKey('player-sheet-team-crest')),
+      ),
+      findsOneWidget,
+    );
+    expect(_inSheet(find.text('Portero')), findsOneWidget);
+    await _close(tester);
+  });
+
+  testWidgets('photo comes from the shared resolver for the canonical '
+      'identity (same photo as the profile)', (tester) async {
+    final media = EntityMediaMemory()
+      ..absorb(
+        Snapshot({
+          'schemaVersion': 1,
+          'demo': false,
+          'updatedAt': DateTime.now().toUtc().toIso8601String(),
+          'teams': const <dynamic>[],
+          'competitions': const <dynamic>[],
+          'matches': const <dynamic>[],
+          'standings': const <dynamic>[],
+          'players': [
+            {
+              'id': 'fb_player_9',
+              'name': 'Nasibov',
+              'media': {
+                'url': 'https://media.example.com/p9.png',
+                'verificationStatus': 'VERIFIED',
+              },
+            },
+          ],
+        }),
+      );
+    await _open(tester, media: media);
+    await _tab(tester, 'Alineación');
+    await _tapPlayer(tester, find.text('Nasibov').first);
+    final images = tester.widgetList<Image>(_inSheet(find.byType(Image)));
+    expect(
+      images.map((image) {
+        final provider = image.image;
+        final network = provider is ResizeImage
+            ? provider.imageProvider
+            : provider;
+        return (network as NetworkImage).url;
+      }),
+      contains('https://media.example.com/p9.png'),
+    );
+    await _close(tester);
+  });
+
+  testWidgets('provider stats render in groups only when present; absent '
+      'groups are hidden', (tester) async {
+    await _open(
+      tester,
+      detail: _detail(
+        starters: [
+          _player(
+            'p9',
+            'Nasibov',
+            canonicalId: 'fb_player_9',
+            stats: {'touches': 54, 'accuratePasses': '21/25'},
+          ),
+        ],
+        substitutes: const [],
+      ),
+    );
+    await _tab(tester, 'Alineación');
+    await _tapPlayer(tester, find.text('Nasibov').first);
+    expect(
+      _inSheet(find.byKey(const ValueKey('player-sheet-stats-Con balón'))),
+      findsOneWidget,
+    );
+    expect(
+      _inSheet(find.byKey(const ValueKey('player-sheet-stats-Pases'))),
+      findsOneWidget,
+    );
+    for (final hidden in ['Defensa', 'Disciplina']) {
+      expect(
+        _inSheet(find.byKey(ValueKey('player-sheet-stats-$hidden'))),
+        findsNothing,
+        reason: hidden,
+      );
+    }
+    expect(_inSheet(find.text('54')), findsOneWidget);
+    expect(_inSheet(find.text('21/25')), findsOneWidget);
+    expect(_inSheet(find.text('Entradas')), findsNothing);
     await _close(tester);
   });
 }
