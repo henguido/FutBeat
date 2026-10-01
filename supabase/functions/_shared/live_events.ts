@@ -39,6 +39,23 @@ function goalScorePair(fixture: Record<string, unknown>, suffix: string) {
   return home == null || away == null ? null : { home, away };
 }
 
+/**
+ * AFTER_PEN: the running total exceeds FT + ET by (k,0) or (0,k), k in
+ * {1,2}, and the complete, non-tied penalty score is won by that side.
+ */
+function isShootoutBonus(
+  fixture: Record<string, unknown>,
+  live: { home: number; away: number },
+  total: { home: number; away: number },
+) {
+  const pens = goalScorePair(fixture, "PenaltyScore");
+  if (!pens) return false;
+  const dh = live.home - total.home;
+  const da = live.away - total.away;
+  return (dh >= 1 && dh <= 2 && da === 0 && pens.home > pens.away) ||
+    (dh === 0 && da >= 1 && da <= 2 && pens.away > pens.home);
+}
+
 const GOAL_TERMINAL = new Set(["FINISHED", "AFTER_ET", "AFTER_PEN", "AWARDED"]);
 
 /**
@@ -57,7 +74,12 @@ const GOAL_TERMINAL = new Set(["FINISHED", "AFTER_ET", "AFTER_PEN", "AWARDED"]);
  *     required after extra time (AFTER_ET / AFTER_PEN) and taken as 0
  *     otherwise. A running total equal to it, absent, or reset to 0-0
  *     agrees; any other running total is incoherent -> no score;
- *   * without FtScore the running total is used;
+ *   * without FtScore the running total is used (AFTER_PEN: unknown);
+ *   * AFTER_PEN: GOAL adds a +1/+2 bonus for the shoot-out WINNER to the
+ *     running total (production audit, 117 answers). A running total of
+ *     FT + ET plus (k,0) / (0,k), k in {1,2}, agrees when the penalty
+ *     score is complete, not tied and won by that same side; any other
+ *     excess is incoherent -> no score;
  *   * a result below the half-time score is impossible -> no score.
  * Not terminal: the running total. Unknown or incoherent: {null, null},
  * never a guess (an absent score never replaces a stored one).
@@ -68,6 +90,9 @@ export function goalFixtureScore(fixture: Record<string, unknown>) {
   const status = String(fixture.matchStatus ?? "").trim().toUpperCase();
   if (!GOAL_TERMINAL.has(status)) return live ?? none;
   const regulation = goalScorePair(fixture, "FtScore");
+  // After penalties the running total carries a shoot-out bonus: without
+  // the regulation score the result is unknown.
+  if (status === "AFTER_PEN" && !regulation) return none;
   let result = live;
   if (regulation) {
     const extra = goalScorePair(fixture, "ExtraScore") ??
@@ -82,7 +107,8 @@ export function goalFixtureScore(fixture: Record<string, unknown>) {
     const reset = live != null && live.home === 0 && live.away === 0;
     if (
       live != null && !reset &&
-      (live.home !== total.home || live.away !== total.away)
+      (live.home !== total.home || live.away !== total.away) &&
+      !(status === "AFTER_PEN" && isShootoutBonus(fixture, live, total))
     ) {
       return none;
     }

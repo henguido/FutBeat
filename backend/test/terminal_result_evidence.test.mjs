@@ -112,8 +112,11 @@ test('3. terminal observation older than a canonical rewrite is final', () => wi
 
 test('3b. terminal match detail cache and live state are final evidence', () => withDb(async (db) => {
   await seed(db);
+  // A real AFTER_PEN answer: the running total carries the shoot-out
+  // winner's bonus (2-1); the result is FT + ET (1-1). Without FtScore an
+  // AFTER_PEN answer has no known result (20260930150000).
   await db.query(`insert into futbeat_private.match_detail_cache values($1,'goal_api','final',
-    '2026-08-20T20:05:00Z','{"matchStatus":"AFTER_PEN","homeTeamScore":1,"awayTeamScore":1}')`, [MATCH]);
+    '2026-08-20T20:05:00Z','{"matchStatus":"AFTER_PEN","homeTeamScore":2,"awayTeamScore":1,"homeTeamFtScore":1,"awayTeamFtScore":1,"homeTeamExtraScore":0,"awayTeamExtraScore":0,"homeTeamPenaltyScore":4,"awayTeamPenaltyScore":3}')`, [MATCH]);
   let match = await both(db);
   assert.equal(match.status, FINISHED);
   assert.deepEqual(match.score, { home: 1, away: 1 });
