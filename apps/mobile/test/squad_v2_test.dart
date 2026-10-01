@@ -139,4 +139,41 @@ void main() {
     expect(find.text('8'), findsOneWidget);
     expect(find.text('–'), findsOneWidget);
   });
+
+  testWidgets('no player with a position: one plain list, no "Otros"', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      TeamSquad(
+        [
+          _player('c', position: ''),
+          _player('a', position: ''),
+          _player('b', position: ''),
+        ],
+        state: 'STALE',
+        updatedAt: DateTime.utc(2026, 9, 12, 18),
+      ),
+    );
+    expect(find.text('Otros'), findsNothing);
+    expect(find.text('3 jugadores · Actualizada el 12 sep'), findsOneWidget);
+    final names = tester
+        .widgetList<SquadPlayerRow>(find.byType(SquadPlayerRow))
+        .map((row) => row.player.name);
+    expect(names, ['Jugador a', 'Jugador b', 'Jugador c']);
+  });
+
+  testWidgets('mixed positions keep the grouping, "Otros" included', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      TeamSquad([
+        _player('p1', position: 'Goalkeeper'),
+        _player('p2', position: ''),
+      ], state: 'AVAILABLE'),
+    );
+    expect(find.text('Porteros'), findsOneWidget);
+    expect(find.text('Otros'), findsOneWidget);
+  });
 }

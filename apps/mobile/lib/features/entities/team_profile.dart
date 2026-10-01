@@ -490,6 +490,9 @@ class TeamSquad extends StatelessWidget {
     }
     final groups = squadGroups(players);
     final count = groups.fold<int>(0, (sum, g) => sum + g.$2.length);
+    // No player classified by position: a lone "Otros" header says nothing,
+    // so the squad is one plain list (still number-then-name order).
+    final plain = groups.length == 1 && groups.single.$1 == 'Otros';
     final stale = state == 'STALE';
     // Costa Rica day, like the rest of the profile; a future date (clock
     // skew) is never shown.
@@ -521,25 +524,28 @@ class TeamSquad extends StatelessWidget {
           ),
         ),
         for (final (label, group) in groups) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(2, 14, 2, 8),
-            child: Row(
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
+          if (plain)
+            const SizedBox(height: 12)
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(2, 14, 2, 8),
+              child: Row(
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '${group.length}',
-                  style: const TextStyle(color: muted, fontSize: 13),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  Text(
+                    '${group.length}',
+                    style: const TextStyle(color: muted, fontSize: 13),
+                  ),
+                ],
+              ),
             ),
-          ),
           Card(
             clipBehavior: Clip.antiAlias,
             child: Column(
