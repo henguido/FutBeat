@@ -334,25 +334,54 @@ test('a stage-tagged failure names the failing stage and never leaks the GOAL ke
   assert.equal(completion.body.p_metadata.stage, 'provider_fetch');
 }));
 
-test('pagination: an inflated total followed by an empty page cannot make progress -> tagged "provider_fetch"', () => withDb(async (db) => {
-  const { external } = await seedResultsDueMatch(db);
+const storedMatch = (db, id) => db.query("select payload->>'status' status,payload->'score' score from futbeat_private.entities where id=$1", [id]).then((r) => r.rows[0]);
+const attempt = (db, dateStr) => db.query("select last_outcome,last_result_count from futbeat_private.results_date_attempts where provider='goal_api' and provider_date=$1", [dateStr]).then((r) => r.rows[0]);
+
+// Pagination that stops before the provider's end never discards the results
+// already read: they are real terminal evidence (production: busy days with
+// >= 500 results repeated page 2 and the whole date failed three times).
+test('pagination: the provider repeats page 1 on page 2 (offset ignored) -> the 500 results read are applied, not discarded', () => withDb(async (db) => {
+  const { match, external, dateStr } = await seedResultsDueMatch(db);
+  let call = 0;
+  const page = () => [resultFixture(external), ...Array.from({ length: 499 }, (_, i) => resultFixture(`world-${i}`))];
+  const h = harness(db, {
+    provider: () => {
+      call++;
+      return Response.json({ success: true, data: page(), pagination: { hasMore: true } });
+    },
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.truncatedBy, 'pagination_stalled');
+  assert.equal(value.results.results, 500);
+  assert.equal(call, 2, 'one probe of the next page, then stop (no retry loop)');
+  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 2, away: 1 } }, 'the final reached the canonical match');
+  const completion = h.rpcCalls('futbeat_complete_provider_call').at(-1).body;
+  assert.equal(completion.p_status, 'SUCCEEDED');
+  assert.equal(completion.p_metadata.truncatedBy, 'pagination_stalled');
+  assert.equal(completion.p_metadata.providerRequests, 2);
+  assert.equal((await attempt(db, dateStr)).last_result_count, 500);
+}));
+
+test('pagination: an inflated total followed by an empty page -> keeps what was read (no failure)', () => withDb(async (db) => {
+  const { match, external } = await seedResultsDueMatch(db);
   let call = 0;
   const h = harness(db, {
     provider: () => {
       call++;
       if (call === 1) return Response.json({ success: true, data: [resultFixture(external)], pagination: { total: 600 } });
-      // GOAL claims 600 total but page 2 has nothing: rowCount=0 -> cannot advance.
+      // GOAL claims 600 total but page 2 has nothing: cannot advance.
       return Response.json({ success: true, data: [], pagination: { total: 600 } });
     },
   });
   const { value } = await h.invoke();
-  assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
-  assert.equal(value.results.stage, 'provider_fetch');
-  assert.match(value.results.detail, /cannot make progress/);
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.truncatedBy, 'pagination_stalled');
+  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
 }));
 
-test('pagination: hasMore:true followed by an empty page cannot make progress -> tagged "provider_fetch"', () => withDb(async (db) => {
-  const { external } = await seedResultsDueMatch(db);
+test('pagination: hasMore:true followed by an empty page -> keeps what was read (no failure)', () => withDb(async (db) => {
+  const { match, external } = await seedResultsDueMatch(db);
   let call = 0;
   const h = harness(db, {
     provider: () => {
@@ -362,27 +391,92 @@ test('pagination: hasMore:true followed by an empty page cannot make progress ->
     },
   });
   const { value } = await h.invoke();
-  assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
-  assert.equal(value.results.stage, 'provider_fetch');
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.truncatedBy, 'pagination_stalled');
+  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
 }));
 
-test('pagination: 5 full pages (a page limit below the real day volume) hits the safety cap -> tagged "provider_fetch"', () => withDb(async (db) => {
-  const { external } = await seedResultsDueMatch(db);
+test('pagination: nothing read at all (first page empty but "more" claimed) is still a real failure -> tagged "provider_fetch"', () => withDb(async (db) => {
+  const { match } = await seedResultsDueMatch(db);
+  const h = harness(db, {
+    provider: () => Response.json({ success: true, data: [], pagination: { hasMore: true } }),
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.stage, 'provider_fetch');
+  assert.match(value.results.detail, /cannot make progress/);
+  assert.equal((await storedMatch(db, match)).status, 'SCHEDULED');
+}));
+
+test('pagination: page 2 partly repeats page 1 -> its new rows are kept, nothing is counted twice, normal end', () => withDb(async (db) => {
+  const { match, external, dateStr } = await seedResultsDueMatch(db);
   let call = 0;
   const h = harness(db, {
     provider: () => {
       call++;
-      // Every page is a full 500 rows (the worker's own requested limit)
-      // and all distinct, so hasMore keeps inferring true (rowCount>=limit,
-      // no total/hasMore field to say otherwise) and the worker's 5-page
-      // safety cap throws rather than fetching forever.
-      const data = Array.from({ length: 500 }, (_, i) => resultFixture(`${external}-page${call}-${i}`));
-      return Response.json({ success: true, data, pagination: {} });
+      if (call === 1) {
+        return Response.json({ success: true, data: Array.from({ length: 500 }, (_, i) => resultFixture(`world-${i}`)),
+          pagination: { hasMore: true } });
+      }
+      // 200 rows already read, then 100 new ones (the tracked final among them).
+      const data = [...Array.from({ length: 200 }, (_, i) => resultFixture(`world-${300 + i}`)),
+        resultFixture(external), ...Array.from({ length: 99 }, (_, i) => resultFixture(`world-new-${i}`))];
+      return Response.json({ success: true, data, pagination: { hasMore: false } });
+    },
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.truncatedBy, undefined, 'the provider end was reached');
+  assert.equal(value.results.results, 600);
+  assert.equal(call, 2);
+  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 2, away: 1 } });
+  assert.equal((await attempt(db, dateStr)).last_result_count, 600);
+}));
+
+// Deliberate: an HTTP error is a provider failure (quota, auth, outage). The
+// call is recorded as FAILED with its status for the quota ledger and the
+// date is retried with backoff; the pages read before it are not applied.
+test('pagination: an HTTP error after a valid page fails the attempt (ledger FAILED, nothing half-applied)', () => withDb(async (db) => {
+  const { match, external, dateStr } = await seedResultsDueMatch(db);
+  let call = 0;
+  const h = harness(db, {
+    provider: () => {
+      call++;
+      if (call === 1) {
+        return Response.json({ success: true, data: [resultFixture(external), ...Array.from({ length: 499 }, (_, i) => resultFixture(`world-${i}`))],
+          pagination: { hasMore: true } });
+      }
+      return Response.json({ success: false }, { status: 503 });
     },
   });
   const { value } = await h.invoke();
   assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
   assert.equal(value.results.stage, 'provider_fetch');
-  assert.match(value.results.detail, /pagination exceeded safety limit/);
-  assert.equal(call, 5);
+  assert.equal(call, 2, 'no retry loop inside one run');
+  const completion = h.rpcCalls('futbeat_complete_provider_call').at(-1).body;
+  assert.equal(completion.p_status, 'FAILED');
+  assert.equal(completion.p_metadata.providerRequests, 2);
+  assert.equal((await storedMatch(db, match)).status, 'SCHEDULED');
+  assert.equal((await attempt(db, dateStr)).last_outcome, 'FAILED');
+  assert.equal(h.rpcCalls('futbeat_record_live_batch').length, 0);
+}));
+
+test('pagination: 5 full pages reach the page limit -> the 2500 results read are applied, the rest waits for the next attempt', () => withDb(async (db) => {
+  const { match, external } = await seedResultsDueMatch(db);
+  let call = 0;
+  const h = harness(db, {
+    provider: () => {
+      call++;
+      // Every page is a full 500 distinct rows with no total / hasMore, so
+      // "more" keeps being inferred; the worker stops at its 5-page limit.
+      const data = Array.from({ length: 500 }, (_, i) => resultFixture(call === 1 && i === 0 ? external : `${external}-page${call}-${i}`));
+      return Response.json({ success: true, data, pagination: {} });
+    },
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.truncatedBy, 'page_limit');
+  assert.equal(value.results.results, 2500);
+  assert.equal(call, 5, 'never more than five provider requests');
+  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
 }));

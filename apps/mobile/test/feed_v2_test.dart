@@ -169,6 +169,7 @@ Future<List<String>> _pump(
   Size size = const Size(390, 3000),
   Snapshot? data,
   AppDatabase? db,
+  String? country,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -203,9 +204,9 @@ Future<List<String>> _pump(
         ),
         preferenceProvider.overrideWith(
           (ref) => Stream.value(
-            const CountryPreference(
+            CountryPreference(
               detectedCountry: 'CR',
-              selectedCountry: null,
+              selectedCountry: country,
               bootstrapDismissed: true,
             ),
           ),
@@ -228,8 +229,7 @@ Future<List<String>> _pump(
   return opened;
 }
 
-Finder _row(String matchId) =>
-    find.byKey(ValueKey('match-card-$matchId'));
+Finder _row(String matchId) => find.byKey(ValueKey('match-card-$matchId'));
 
 void main() {
   testWidgets('every match of the day is a row, once, without follows', (
@@ -247,7 +247,7 @@ void main() {
     ]) {
       expect(_row(id), findsOneWidget, reason: id);
     }
-    expect(find.text('Favoritos'), findsNothing);
+    expect(find.text('FAVORITOS'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -264,17 +264,13 @@ void main() {
         )
         .tooltip!;
     expect(tooltip(), startsWith('Seguir '));
-    expect(find.text('Favoritos'), findsNothing);
+    expect(find.text('FAVORITOS'), findsNothing);
     await tester.tap(star);
     await tester.pumpAndSettle();
     expect(opened, isEmpty, reason: 'the star never opens the match');
     expect(db.toggles, ['match:m_es_long']);
-    expect(find.text('Favoritos'), findsNothing);
-    expect(
-      find.byType(MatchCard),
-      findsNWidgets(6),
-      reason: 'reorders only',
-    );
+    expect(find.text('FAVORITOS'), findsNothing);
+    expect(find.byType(MatchCard), findsNWidgets(6), reason: 'reorders only');
     expect(_row('m_es_long'), findsOneWidget, reason: 'never duplicated');
     // Still under its own competition.
     expect(
@@ -284,7 +280,7 @@ void main() {
     expect(tooltip(), startsWith('Dejar de seguir '));
     await tester.tap(star);
     await tester.pumpAndSettle();
-    expect(find.text('Favoritos'), findsNothing);
+    expect(find.text('FAVORITOS'), findsNothing);
     expect(find.byType(MatchCard), findsNWidgets(6));
     await tester.tap(find.text(_longHome).first);
     await tester.pumpAndSettle();
@@ -314,7 +310,7 @@ void main() {
     tester,
   ) async {
     await _pump(tester, follows: {'team:t_bet'});
-    expect(find.text('Favoritos'), findsOneWidget);
+    expect(find.text('FAVORITOS'), findsOneWidget);
     // Same total, followed matches appear once.
     expect(find.byType(MatchCard), findsNWidgets(6));
     expect(_row('m_es_1'), findsOneWidget);
@@ -439,7 +435,7 @@ void main() {
   testWidgets('a directly followed match (match:<id>) or league never makes '
       '"Favoritos": it stays in its competition, once', (tester) async {
     await _pump(tester, follows: {'match:m_es_1', 'competition:c_es'});
-    expect(find.text('Favoritos'), findsNothing);
+    expect(find.text('FAVORITOS'), findsNothing);
     expect(find.byType(MatchCard), findsNWidgets(6));
     expect(_row('m_es_1'), findsOneWidget);
     expect(
@@ -518,9 +514,7 @@ void main() {
       await _pump(tester, size: Size(width, 3000), follows: {'team:t_long1'});
       expect(find.byType(MatchCard), findsNWidgets(6));
       expect(tester.takeException(), isNull);
-      for (final row in tester.widgetList<MatchCard>(
-        find.byType(MatchCard),
-      )) {
+      for (final row in tester.widgetList<MatchCard>(find.byType(MatchCard))) {
         final size = tester.getSize(_row(row.match.id));
         expect(size.height, greaterThanOrEqualTo(48));
         expect(size.width, lessThanOrEqualTo(width));
@@ -533,9 +527,7 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await _pump(tester, size: const Size(320, 4000), follows: {'team:t_long1'});
     expect(tester.takeException(), isNull);
-    for (final row in tester.widgetList<MatchCard>(
-      find.byType(MatchCard),
-    )) {
+    for (final row in tester.widgetList<MatchCard>(find.byType(MatchCard))) {
       expect(
         tester.getSize(_row(row.match.id)).height,
         greaterThanOrEqualTo(48),
@@ -591,4 +583,427 @@ void main() {
     expect(live.label, contains('1 - 0'));
     handle.dispose();
   });
+
+  testWidgets('very long team names never stretch a card beyond three lines', (
+    tester,
+  ) async {
+    await _pump(tester);
+    final long = tester.getSize(_row('m_es_long')).height;
+    final normal = tester.getSize(_row('m_cr_live')).height;
+    // Same card layout (both live with a latest event): at most two extra
+    // text lines, never the seven a 55-character name used to take.
+    expect(long - normal, lessThan(60));
+    final name = tester.widget<Text>(
+      find.descendant(of: _row('m_es_long'), matching: find.text(_longHome)),
+    );
+    expect(name.maxLines, 3);
+    expect(name.overflow, TextOverflow.ellipsis);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('day swipe: the list slides in (no duplicate list, nothing '
+      'rebuilt under a new key) and settles in place', (tester) async {
+    await _pump(tester);
+    final swipe = find.byKey(const ValueKey('matches-date-swipe'));
+    final list = find.descendant(
+      of: swipe,
+      matching: find.byType(CustomScrollView),
+    );
+    final before = tester.element(list);
+    final restX = tester.getTopLeft(list).dx;
+
+    await tester.fling(swipe, const Offset(-300, 0), 1200);
+    await tester.pump(); // day changed, transition starts
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(list, findsOneWidget, reason: 'one list during the transition');
+    expect(
+      tester.getTopLeft(list).dx,
+      greaterThan(restX),
+      reason: 'the next day comes in from the right',
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(list).dx, restX);
+    expect(identical(tester.element(list), before), isTrue);
+
+    await tester.fling(swipe, const Offset(300, 0), 1200);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(
+      tester.getTopLeft(list).dx,
+      lessThan(restX),
+      reason: 'the previous day comes in from the left',
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(list).dx, restX);
+    // Back on today: the same matches, once.
+    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('#168: the "En vivo" filter is cleared when leaving today and '
+      'kept while staying on it', (tester) async {
+    await _pump(tester);
+    bool selected(String label) => tester
+        .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, label))
+        .selected;
+    await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+    await tester.pumpAndSettle();
+    expect(selected('En vivo'), isTrue);
+    expect(find.byType(MatchCard), findsNWidgets(2), reason: 'two live today');
+
+    final swipe = find.byKey(const ValueKey('matches-date-swipe'));
+    await tester.fling(swipe, const Offset(-300, 0), 1200); // tomorrow
+    await tester.pumpAndSettle();
+    expect(selected('En vivo'), isFalse);
+    expect(selected('Todos'), isTrue);
+
+    // Coming back does not silently re-apply the old filter.
+    await tester.fling(swipe, const Offset(300, 0), 1200);
+    await tester.pumpAndSettle();
+    expect(selected('Todos'), isTrue);
+    expect(find.byType(MatchCard), findsNWidgets(6));
+
+    // Other filters are the user's choice on any day.
+    // (The chip sits beyond the right edge of the chip row at 390 px.)
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
+    expect(selected('Finalizados'), isTrue);
+    await tester.fling(swipe, const Offset(300, 0), 1200); // yesterday
+    await tester.pumpAndSettle();
+    expect(selected('Finalizados'), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  // --- The selected country reorders, never hides -------------------------
+
+  for (final (country, first, second) in [
+    ('CR', 'Liga Promerica', 'LaLiga'),
+    ('ES', 'LaLiga', 'Liga Promerica'),
+    ('GB-ENG', 'LaLiga', 'Liga Promerica'),
+  ]) {
+    testWidgets('country $country: $first before $second, same matches once', (
+      tester,
+    ) async {
+      await _pump(tester, country: country);
+      expect(
+        tester.getTopLeft(find.text(first)).dy,
+        lessThan(tester.getTopLeft(find.text(second)).dy),
+      );
+      // Reordered only: every match of the day, exactly once.
+      expect(find.byType(MatchCard), findsNWidgets(6));
+      for (final id in [
+        'm_cr_live',
+        'm_cr_next',
+        'm_es_1',
+        'm_es_long',
+        'm_es_awaiting',
+        'm_es_partial',
+      ]) {
+        expect(_row(id), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('country $country: FAVORITOS stays on top and its matches '
+        'are not repeated', (tester) async {
+      await _pump(tester, country: country, follows: {'team:t_bet'});
+      final favourites = tester.getTopLeft(find.text('FAVORITOS')).dy;
+      expect(favourites, lessThan(tester.getTopLeft(find.text(first)).dy));
+      expect(favourites, lessThan(tester.getTopLeft(find.text(second)).dy));
+      expect(find.byType(MatchCard), findsNWidgets(6));
+      for (final id in ['m_es_1', 'm_es_awaiting', 'm_es_partial']) {
+        expect(_row(id), findsOneWidget);
+        expect(
+          tester.getTopLeft(_row(id)).dy,
+          lessThan(tester.getTopLeft(find.text(first)).dy),
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('a followed league stays above the primary of the selected '
+      'country', (tester) async {
+    await _pump(tester, country: 'CR', follows: {'competition:c_es'});
+    expect(find.text('FAVORITOS'), findsNothing);
+    expect(
+      tester.getTopLeft(find.text('LaLiga')).dy,
+      lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
+    );
+    expect(find.byType(MatchCard), findsNWidgets(6));
+  });
+
+  // --- One canonical fixture, exactly once -------------------------------
+
+  test('dedupeFixtures: evidence levels, canonical identity only', () {
+    List<String> ids(List<FootballMatch> list) =>
+        dedupeFixtures(list).map((m) => m.id).toList();
+    const final21 = {'home': 2, 'away': 1};
+    // Same canonical id twice.
+    expect(ids([_fixture('a', 'h', 'x'), _fixture('a', 'h', 'x')]), ['a']);
+    // Same competition, teams and kickoff: one fixture. The finished twin
+    // replaces the scheduled copy in place; the others keep their order.
+    expect(
+      ids([
+        _fixture('z_first', 'q', 'r'),
+        _fixture('sched', 'h', 'x'),
+        _fixture('done', 'h', 'x', status: 'VERIFIED', score: final21),
+        _fixture('z_last', 's', 't'),
+      ]),
+      ['z_first', 'done', 'z_last'],
+    );
+    // Live beats played evidence beats scheduled beats postponed.
+    expect(
+      ids([
+        _fixture('p', 'h', 'x', status: 'POSTPONED'),
+        _fixture('s', 'h', 'x'),
+        _fixture('e', 'h', 'x', played: true),
+        _fixture('l', 'h', 'x', status: 'LIVE'),
+      ]),
+      ['l'],
+    );
+    // Equal twins: deterministic (lower id), whatever the input order.
+    expect(ids([_fixture('b', 'h', 'x'), _fixture('a', 'h', 'x')]), ['a']);
+    expect(ids([_fixture('a', 'h', 'x'), _fixture('b', 'h', 'x')]), ['a']);
+    // Kickoff corrected by up to 3 hours while at most one has evidence.
+    expect(
+      ids([_fixture('a', 'h', 'x'), _fixture('b', 'h', 'x', minute: 30)]),
+      ['a'],
+    );
+    expect(
+      ids([
+        _fixture('ghost', 'h', 'x', hour: 20),
+        _fixture('live', 'h', 'x', status: 'LIVE'),
+      ]),
+      ['live'],
+    );
+    // Both really played two hours apart (double-header): two games.
+    expect(
+      ids([
+        _fixture('g1', 'h', 'x', status: 'VERIFIED', score: final21),
+        _fixture('g2', 'h', 'x', status: 'VERIFIED', score: final21, hour: 20),
+      ]),
+      ['g1', 'g2'],
+    );
+    // A scheduled ghost 18 hours from its played twin is hidden; two
+    // scheduled entities that far apart are two matches.
+    expect(
+      ids([
+        _fixture('old', 'h', 'x', hour: 0),
+        _fixture('real', 'h', 'x', status: 'VERIFIED', score: final21),
+      ]),
+      ['real'],
+    );
+    expect(ids([_fixture('a', 'h', 'x', hour: 0), _fixture('b', 'h', 'x')]), [
+      'a',
+      'b',
+    ]);
+    // A game scheduled LATER than a played game of the same pairing (beyond
+    // 3 hours) may be a real second game: never hidden, either input order.
+    expect(
+      ids([
+        _fixture(
+          'played',
+          'h',
+          'x',
+          hour: 12,
+          status: 'VERIFIED',
+          score: final21,
+        ),
+        _fixture('later', 'h', 'x', hour: 18),
+      ]),
+      ['played', 'later'],
+    );
+    expect(
+      ids([
+        _fixture('later', 'h', 'x', hour: 18),
+        _fixture('playing', 'h', 'x', hour: 12, status: 'LIVE'),
+      ]),
+      ['later', 'playing'],
+    );
+    // Another competition (other squad of the same clubs, a friendly):
+    // never merged, even at the same kickoff.
+    expect(
+      ids([_fixture('a', 'h', 'x'), _fixture('b', 'h', 'x', comp: 'other')]),
+      ['a', 'b'],
+    );
+    // Two finished matches with different final scores are two games; the
+    // same result twice at the same kickoff is one.
+    expect(
+      ids([
+        _fixture('x', 'h', 'x', status: 'VERIFIED', score: final21),
+        _fixture(
+          'y',
+          'h',
+          'x',
+          status: 'VERIFIED',
+          score: {'home': 0, 'away': 3},
+        ),
+        _fixture('z', 'h', 'x', status: 'VERIFIED', score: final21),
+      ]),
+      ['x', 'y'],
+    );
+    // Return leg, another opponent and a team "against itself" stay apart.
+    expect(
+      ids([
+        _fixture('a', 'h', 'x'),
+        _fixture('rev', 'x', 'h'),
+        _fixture('other', 'h', 'y'),
+        _fixture('self1', 'h', 'h'),
+        _fixture('self2', 'h', 'h'),
+      ]),
+      ['a', 'rev', 'other', 'self1', 'self2'],
+    );
+  });
+
+  testWidgets('a fixture stored as two match entities renders exactly once', (
+    tester,
+  ) async {
+    final data = _withMatches([
+      // Same real match as m_es_1 (same competition and kickoff), finished.
+      _twinOf(
+        'm_es_1',
+        twinId: 'm_es_1_twin',
+        status: 'VERIFIED',
+        score: {'home': 2, 'away': 1},
+      ),
+      // Same real match as m_cr_next, kickoff 20 minutes apart.
+      _twinOf(
+        'm_cr_next',
+        twinId: 'm_cr_next_twin',
+        shift: const Duration(minutes: 20),
+      ),
+    ]);
+    await _pump(tester, data: data);
+    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(_row('m_es_1'), findsNothing);
+    expect(_row('m_es_1_twin'), findsOneWidget);
+    expect(
+      _row('m_cr_next').evaluate().length +
+          _row('m_cr_next_twin').evaluate().length,
+      1,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the same clubs in ANOTHER competition at the same time are two '
+      'matches', (tester) async {
+    final data = _withMatches([
+      _twinOf('m_es_1', twinId: 'm_es_1_other', competitionId: 'c_cr'),
+    ]);
+    await _pump(tester, data: data);
+    expect(find.byType(MatchCard), findsNWidgets(7));
+    expect(_row('m_es_1'), findsOneWidget);
+    expect(_row('m_es_1_other'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('FAVORITOS: a followed league or match never creates the group', (
+    tester,
+  ) async {
+    final data = _withMatches([_twinOf('m_es_1', twinId: 'm_es_1_twin')]);
+    // A followed league and a followed match never create the group.
+    await _pump(
+      tester,
+      data: data,
+      follows: {'competition:c_es', 'match:m_cr_next'},
+    );
+    expect(find.text('FAVORITOS'), findsNothing);
+    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('FAVORITOS: favourite-team matches first, once, nothing hidden '
+      '(even with a duplicated entity)', (tester) async {
+    final data = _withMatches([_twinOf('m_es_1', twinId: 'm_es_1_twin')]);
+    await _pump(
+      tester,
+      data: data,
+      follows: {'team:t_bet', 'competition:c_cr'},
+    );
+    expect(find.text('FAVORITOS'), findsOneWidget);
+    expect(find.byType(MatchCard), findsNWidgets(6), reason: 'nothing hidden');
+    // The favourite team's fixture appears once (one of the two entities).
+    expect(
+      _row('m_es_1').evaluate().length + _row('m_es_1_twin').evaluate().length,
+      1,
+    );
+    final favouritesY = tester.getTopLeft(find.text('FAVORITOS')).dy;
+    final firstCompetitionY = tester.getTopLeft(find.text('Liga Promerica')).dy;
+    expect(favouritesY, lessThan(firstCompetitionY));
+    // Every favourite-team match sits in the group, above every competition.
+    for (final id in ['m_es_awaiting', 'm_es_partial']) {
+      expect(tester.getTopLeft(_row(id)).dy, lessThan(firstCompetitionY));
+    }
+    // Matches of the followed LEAGUE without a favourite team stay below.
+    expect(
+      tester.getTopLeft(_row('m_cr_live')).dy,
+      greaterThan(firstCompetitionY),
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
+
+/// [_snapshot] plus extra matches (same teams and competitions).
+Snapshot _withMatches(List<Map<String, dynamic>> extra) {
+  final base = _snapshot();
+  return Snapshot({
+    'schemaVersion': 1,
+    'demo': false,
+    'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    'coverage': {'partial': false},
+    'freshness': {'stale': false},
+    'competitions': base.competitions.map((e) => e.json).toList(),
+    'teams': base.teams.map((e) => e.json).toList(),
+    'players': <dynamic>[],
+    'matches': [...base.matches.map((m) => m.json), ...extra],
+    'standings': <dynamic>[],
+  });
+}
+
+/// A second match entity of the same real fixture as [id] in [_snapshot].
+Map<String, dynamic> _twinOf(
+  String id, {
+  required String twinId,
+  String? competitionId,
+  String? status,
+  Map<String, dynamic>? score,
+  Duration shift = Duration.zero,
+}) {
+  final source = _snapshot().matches.firstWhere((m) => m.id == id).json;
+  return {
+    ...source,
+    'id': twinId,
+    'competitionId': competitionId ?? source['competitionId'],
+    'status': status ?? source['status'],
+    'score': score ?? source['score'],
+    'startTime': DateTime.parse(source['startTime'] as String)
+        .add(shift)
+        .toIso8601String(),
+  };
+}
+
+FootballMatch _fixture(
+  String id,
+  String home,
+  String away, {
+  String status = 'SCHEDULED',
+  int hour = 18,
+  int minute = 0,
+  bool played = false,
+  Map<String, int>? score,
+  String comp = 'c',
+}) => FootballMatch({
+  'id': id,
+  'competitionId': comp,
+  'homeTeamId': home,
+  'awayTeamId': away,
+  'startTime': DateTime.utc(2026, 9, 20, hour, minute).toIso8601String(),
+  'status': status,
+  'score': score,
+  if (played) 'hasPlayedEvidence': true,
+  'events': <dynamic>[],
+  'statistics': <dynamic>[],
+});

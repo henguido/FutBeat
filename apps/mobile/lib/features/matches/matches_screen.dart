@@ -16,17 +16,92 @@ bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
     follows.contains('team:${match.homeId}') ||
     follows.contains('team:${match.awayId}');
 
-/// Defensive UI-level dedupe: the daily feed renders a canonical fixture once,
-/// even if an upstream overlay accidentally supplies the same canonical id
-/// more than once. Identity is the canonical match id, never display names.
-List<FootballMatch> _dedupeMatchesByCanonicalId(
-  Iterable<FootballMatch> matches,
-) {
-  final seen = <String>{};
-  return [
-    for (final match in matches)
-      if (seen.add(match.id)) match,
-  ];
+// Lower is better: finished, live, played evidence, scheduled, called off.
+int _fixtureRank(FootballMatch match) {
+  if (match.isFinished) return 0;
+  if (match.isLive) return 1;
+  if (const {
+    'POSTPONED',
+    'CANCELLED',
+    'ABANDONED',
+    'SUSPENDED',
+  }.contains(match.status)) {
+    return 4;
+  }
+  return match.hasPlayedEvidence ? 2 : 3;
+}
+
+bool _isGhostFixture(FootballMatch match) =>
+    match.isScheduled && !match.hasPlayedEvidence;
+
+bool _isPlayedOrPlaying(FootballMatch match) =>
+    match.isFinished || match.isLive;
+
+/// Whether two matches of the day are the same real fixture. Mirrors the
+/// backend calendar rule with the evidence a client has; canonical ids
+/// only, never display names.
+///
+/// Always required: same canonical competition, home team and away team.
+/// Then: kickoff within 5 minutes; or within 3 hours when at most one of
+/// the two shows played evidence (two games that were both really played
+/// are two games); or within 24 hours when one is a scheduled ghost that
+/// kicks off BEFORE the other, finished or live, one (its time passed with
+/// no evidence; a later scheduled game can be a real second game). Two
+/// finished matches with different final scores, and matches of different
+/// competitions, are never merged.
+bool _sameFixture(FootballMatch a, FootballMatch b) {
+  if (a.competitionId.isEmpty ||
+      a.competitionId != b.competitionId ||
+      a.homeId.isEmpty ||
+      a.homeId == a.awayId ||
+      a.homeId != b.homeId ||
+      a.awayId != b.awayId) {
+    return false;
+  }
+  if (a.isFinished &&
+      b.isFinished &&
+      a.json['score'] != null &&
+      b.json['score'] != null &&
+      a.score != b.score) {
+    return false;
+  }
+  final apart = a.startTime.difference(b.startTime).abs();
+  if (apart <= const Duration(minutes: 5)) return true;
+  bool evidence(FootballMatch m) =>
+      _isPlayedOrPlaying(m) || m.hasPlayedEvidence;
+  if (apart <= const Duration(hours: 3) && !(evidence(a) && evidence(b))) {
+    return true;
+  }
+  bool ghostBefore(FootballMatch ghost, FootballMatch played) =>
+      _isGhostFixture(ghost) &&
+      _isPlayedOrPlaying(played) &&
+      ghost.startTime.isBefore(played.startTime);
+  return apart <= const Duration(hours: 24) &&
+      (ghostBefore(a, b) || ghostBefore(b, a));
+}
+
+/// Defensive UI-level dedupe (the backend calendar is the authority): the
+/// daily feed renders one canonical fixture exactly once: the same canonical
+/// match id, or two match entities of one fixture (see [_sameFixture]). The
+/// best twin stays: finished > live > played evidence > scheduled > called
+/// off, then the lower id. The order of the surviving matches is preserved.
+List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
+  final kept = <FootballMatch>[];
+  final seenIds = <String>{};
+  for (final match in matches) {
+    if (!seenIds.add(match.id)) continue;
+    final twin = kept.indexWhere((other) => _sameFixture(match, other));
+    if (twin < 0) {
+      kept.add(match);
+      continue;
+    }
+    final other = kept[twin];
+    final byRank = _fixtureRank(match).compareTo(_fixtureRank(other));
+    if (byRank < 0 || (byRank == 0 && match.id.compareTo(other.id) < 0)) {
+      kept[twin] = match;
+    }
+  }
+  return kept;
 }
 
 String _feedEventLabel(String type) => switch (type) {
@@ -73,8 +148,19 @@ String _dateContextLabel(DateTime value, DateTime today) {
 
 /// Orders visible competitions without ever filtering the daily catalog.
 ///
-/// Explicit follows stay first. The remaining competitions are ranked by
-/// editorial relevance only. Legacy country preferences never affect this feed.
+/// The selected country (or the detected one) only REORDERS; every
+/// competition with a match stays. Order:
+///   1. pinned competitions, in the user's own order (personalized mode);
+///   2. followed competitions;
+///   3. the primary domestic competition of the user's country;
+///   4. globally relevant competitions;
+///   5. the other (secondary) competitions of the user's country;
+///   6. everything else.
+/// Inside a group, editorial relevance decides. A minor national competition
+/// therefore never outranks a big global one: only the PRIMARY domestic one
+/// does. Categories come from [competitionFeedCategory]. The stored "global
+/// first" preference has no UI and is not applied ([orderPreference] is kept
+/// only for source compatibility).
 List<Entity> orderMatchCompetitions({
   required Snapshot data,
   required List<FootballMatch> matches,
@@ -92,27 +178,51 @@ List<Entity> orderMatchCompetitions({
       .where((competition) => visibleCompetitionIds.contains(competition.id))
       .toList();
 
-  // Legacy country/preference arguments are intentionally ignored.
+  final userCountry = selectedCountry ?? detectedCountry;
+  final custom = orderMode == CompetitionOrderMode.personalized;
+  // A stale pin (no longer followed) never reorders anything.
   final pins = {
     for (var i = 0; i < pinnedCompetitionIds.length; i++)
       if (follows.contains('competition:${pinnedCompetitionIds[i]}'))
         pinnedCompetitionIds[i]: i,
   };
-  final custom = orderMode == CompetitionOrderMode.personalized;
-  int group(Entity c) => custom && pins.containsKey(c.id)
-      ? 0
-      : follows.contains('competition:${c.id}')
-      ? 1
-      : 2;
-  return visible..sort((a, b) {
-    final category = group(a).compareTo(group(b));
-    if (category != 0) return category;
-    if (custom && group(a) == 0) return pins[a.id]!.compareTo(pins[b.id]!);
-    final score = competitionImportance(b).compareTo(competitionImportance(a));
-    if (score != 0) return score;
-    final name = a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    return name != 0 ? name : a.id.compareTo(b.id);
+  int rank(Entity competition) {
+    if (custom && pins.containsKey(competition.id)) return 0;
+    return switch (competitionFeedCategory(
+      competition,
+      follows: follows,
+      userCountry: userCountry,
+    )) {
+      CompetitionFeedCategory.pinned => 1,
+      CompetitionFeedCategory.domesticPrimary => 2,
+      CompetitionFeedCategory.globalRelevance => 3,
+      CompetitionFeedCategory.domesticSecondary => 4,
+      CompetitionFeedCategory.other => 5,
+    };
+  }
+
+  // Decorate once: the comparator never re-reads the editorial fields.
+  final decorated = [
+    for (final competition in visible)
+      (
+        competition: competition,
+        rank: rank(competition),
+        relevance: competitionImportance(competition),
+        name: competition.name.toLowerCase(),
+      ),
+  ];
+  decorated.sort((a, b) {
+    final byRank = a.rank.compareTo(b.rank);
+    if (byRank != 0) return byRank;
+    if (a.rank == 0) {
+      return pins[a.competition.id]!.compareTo(pins[b.competition.id]!);
+    }
+    final byRelevance = b.relevance.compareTo(a.relevance);
+    if (byRelevance != 0) return byRelevance;
+    final byName = a.name.compareTo(b.name);
+    return byName != 0 ? byName : a.competition.id.compareTo(b.competition.id);
   });
+  return [for (final item in decorated) item.competition];
 }
 
 class MatchesScreen extends ConsumerStatefulWidget {
@@ -122,16 +232,52 @@ class MatchesScreen extends ConsumerStatefulWidget {
   ConsumerState<MatchesScreen> createState() => _MatchesScreenState();
 }
 
-class _MatchesScreenState extends ConsumerState<MatchesScreen> {
+class _MatchesScreenState extends ConsumerState<MatchesScreen>
+    with SingleTickerProviderStateMixin {
   DateTime? date;
   String filter = 'Todos';
   // Competitions collapsed by the user in this session (headers stay).
   final Set<String> _collapsed = <String>{};
 
-  void _setDate(DateTime value) => setState(() {
-    date = value;
-    _collapsed.clear();
-  });
+  // Day change transition: the same list slides in from the side the new day
+  // comes from. The list is never rebuilt under a new key (scroll, refresh
+  // and in-flight reads are untouched) and nothing is shown twice.
+  late final AnimationController _dayTransition = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+    value: 1,
+  );
+  // +1: a later day comes from the right; -1: an earlier day from the left.
+  int _dayDirection = 1;
+  // "Today" of the feed being shown (the demo feed has its own).
+  DateTime? _today;
+
+  @override
+  void dispose() {
+    _dayTransition.dispose();
+    super.dispose();
+  }
+
+  void _setDate(DateTime value) {
+    final today = _today ?? DateUtils.dateOnly(costaRicaNow());
+    // With no date picked yet the feed shows its own "today" (the anchor).
+    final previous = DateUtils.dateOnly(date ?? today);
+    final next = DateUtils.dateOnly(value);
+    setState(() {
+      date = value;
+      _collapsed.clear();
+      if (next != previous) _dayDirection = next.isAfter(previous) ? 1 : -1;
+      // #168: "En vivo" only makes sense today. On any other day it would
+      // leave an empty screen although that day has matches.
+      if (filter == 'En vivo' && next != today) filter = 'Todos';
+    });
+    if (next == previous) return;
+    if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
+      _dayTransition.value = 1;
+    } else {
+      _dayTransition.forward(from: 0);
+    }
+  }
 
   void _toggleCollapsed(String competitionId) => setState(() {
     if (!_collapsed.remove(competitionId)) _collapsed.add(competitionId);
@@ -194,12 +340,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
               ? DateTime(2026, 9, 15)
               : DateUtils.dateOnly(costaRicaNow());
           final selected = DateUtils.dateOnly(date ?? anchor);
+          _today = anchor;
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
-          final games = _dedupeMatchesByCanonicalId(
-            data.onDate(selected, filter),
-          );
+          final games = dedupeFixtures(data.onDate(selected, filter));
 
           final followedGames =
               games
@@ -222,9 +367,14 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
             data: data,
             matches: remainingGames,
             follows: follows,
+            selectedCountry: preference?.selectedCountry,
+            detectedCountry: preference?.detectedCountry,
             orderMode:
                 preference?.competitionOrderMode ??
                 CompetitionOrderMode.automatic,
+            orderPreference:
+                preference?.competitionOrderPreference ??
+                CompetitionOrderPreference.countryFirst,
             pinnedCompetitionIds:
                 preference?.pinnedCompetitionIds ?? const <String>[],
           );
@@ -346,9 +496,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
           }
 
           if (followedGames.isNotEmpty) {
-            feedItems.add(
-              () => const _FeedHeading(title: 'Favoritos'),
-            );
+            feedItems.add(() => const _FeedHeading(title: 'FAVORITOS'));
             for (final match in followedGames) {
               feedItems.add(() => MatchCard(match, data));
             }
@@ -376,32 +524,47 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                 ),
               );
             },
-            child: RefreshIndicator(
-              onRefresh: () async {
-                final repository = ref.read(repositoryProvider);
-                if (repository is ApiRepository) {
-                  repository.refreshDate(selected);
-                }
-                ref.invalidate(calendarSnapshotProvider(selected));
-                try {
-                  await ref.read(calendarSnapshotProvider(selected).future);
-                } catch (_) {
-                  // CalendarDataView exposes the provider error and retry action.
-                }
+            child: AnimatedBuilder(
+              animation: _dayTransition,
+              builder: (context, child) {
+                // Always the same widget shape: the list keeps its element
+                // (scroll position, refresh state) while it slides.
+                final t = Curves.easeOutCubic.transform(_dayTransition.value);
+                return Opacity(
+                  opacity: 0.25 + 0.75 * t,
+                  child: Transform.translate(
+                    offset: Offset((1 - t) * 36 * _dayDirection, 0),
+                    child: child,
+                  ),
+                );
               },
-              child: CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) => feedItems[index](),
-                        childCount: feedItems.length,
+              child: RefreshIndicator(
+                onRefresh: () async {
+                  final repository = ref.read(repositoryProvider);
+                  if (repository is ApiRepository) {
+                    repository.refreshDate(selected);
+                  }
+                  ref.invalidate(calendarSnapshotProvider(selected));
+                  try {
+                    await ref.read(calendarSnapshotProvider(selected).future);
+                  } catch (_) {
+                    // CalendarDataView exposes the provider error and retry action.
+                  }
+                },
+                child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                      sliver: SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) => feedItems[index](),
+                          childCount: feedItems.length,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           );
@@ -485,14 +648,20 @@ class _FeedHeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(top: 6, bottom: 14),
-    child: Text(
-      title,
-      style: const TextStyle(
-        color: lime,
-        fontSize: 11,
-        fontWeight: FontWeight.w800,
-        letterSpacing: 1.8,
-      ),
+    child: Row(
+      children: [
+        const Icon(Icons.star_rounded, color: lime, size: 18),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: const TextStyle(
+            color: lime,
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.8,
+          ),
+        ),
+      ],
     ),
   );
 }
@@ -848,6 +1017,10 @@ class MatchCard extends StatelessWidget {
                           Text(
                             home.name,
                             textAlign: TextAlign.center,
+                            // Very long names never stretch the card; the
+                            // full name stays in the card's semantic label.
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -890,6 +1063,10 @@ class MatchCard extends StatelessWidget {
                           Text(
                             away.name,
                             textAlign: TextAlign.center,
+                            // Very long names never stretch the card; the
+                            // full name stays in the card's semantic label.
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,

@@ -15,7 +15,11 @@ test('#131 planner profiles the indexed time window once before ranking candidat
   assert.match(sql, /profiled as materialized/i);
   assert.match(sql, /calendar_matches cm[\s\S]*cm\.start_time between now\(\)-history and now\(\)\+upcoming/i);
   assert.match(sql, /left join public\.live_match_updates l on l\.match_id=cm\.match_id/i);
-  const candidate = sql.slice(sql.indexOf('with window_matches'), sql.indexOf('loop\n'));
+  // Newline-agnostic: .sql files are checked out with CRLF on Windows.
+  const from = sql.indexOf('with window_matches');
+  const to = sql.search(/loop\r?\n/);
+  assert.ok(from >= 0 && to > from, 'candidate ranking block found');
+  const candidate = sql.slice(from, to);
   assert.doesNotMatch(candidate, /match_detail_status\(/i, 'candidate ranking must not call a SQL function per match');
 });
 

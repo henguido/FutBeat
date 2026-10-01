@@ -257,9 +257,17 @@ test('calendar reconciliation expires stale LIVE and never reopens a terminal ma
       ]);
     }
 
+    // One team pair per match: the same two teams at the same kickoff are one
+    // fixture for the calendar (listed once).
     const addMatch = async (id, status, score = null, receivedAt = new Date().toISOString()) => {
+      const teams = [`${home}_${id}`, `${away}_${id}`];
+      for (const team of teams) {
+        await db.query("insert into futbeat_private.entities values($1,'team',$2)", [
+          team, JSON.stringify({ id: team, name: team, country: 'Spain', competitionId: competition }),
+        ]);
+      }
       const payload = {
-        id, competitionId: competition, homeTeamId: home, awayTeamId: away,
+        id, competitionId: competition, homeTeamId: teams[0], awayTeamId: teams[1],
         startTime: start, status, score, events: [], statistics: [],
         provenance: { source: 'GOAL API', receivedAt },
       };

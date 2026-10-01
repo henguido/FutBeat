@@ -593,6 +593,9 @@ async function syncOneResultsDate() {
   let providerTotal: number | null = null;
   let remaining: number | null = null;
   let httpStatus: number | null = null;
+  // Set when pagination stopped before the provider's end: the results
+  // already read are still real evidence and are processed as a partial day.
+  let truncatedBy: string | null = null;
   // Every step of the pipeline (fetch -> link -> normalize -> record ->
   // finalize -> attempt bookkeeping -> ledger completion) can fail
   // independently; tag which one so a failure is diagnosable from the
@@ -649,15 +652,30 @@ async function syncOneResultsDate() {
       // responses can omit or empty the envelope. A full page at the effective
       // limit probes the next offset. Stop if the provider ignores the offset
       // and repeats the same page; explicit end and the five-page cap win.
-      const nextOffset = nextResultsOffset({
-        pagination: pagination as Record<string, unknown> | null | undefined,
-        rowCount: data.length,
-        added,
-        currentOffset: offset,
-      });
+      let nextOffset: number | null;
+      try {
+        nextOffset = nextResultsOffset({
+          pagination: pagination as Record<string, unknown> | null | undefined,
+          rowCount: data.length,
+          added,
+          currentOffset: offset,
+        });
+      } catch (error) {
+        // A repeated / empty page after real results: STOP, never discard.
+        // Failing here threw away every final already read and the date was
+        // retried into the same wall (busy days with >= 500 results never
+        // got their results). With nothing read at all it is a real failure.
+        if (fixtures.length === 0) throw error;
+        truncatedBy = "pagination_stalled";
+        break;
+      }
       if (nextOffset == null) break;
       offset = nextOffset;
-      if (page === 4) throw new Error("GOAL results pagination exceeded safety limit");
+      if (page === 4) {
+        // Five full pages: keep them, the rest waits for the next attempt.
+        truncatedBy = "page_limit";
+        break;
+      }
     }
 
     stage = "link";
@@ -713,6 +731,7 @@ async function syncOneResultsDate() {
         duplicates: persistence?.duplicates ?? 0,
         resultsComplete: finalized?.resultsComplete ?? false,
         unresolved: finalized?.unresolved ?? null,
+        ...(truncatedBy ? { truncatedBy } : {}),
         transport: "supabase-cron",
         provider: "GOAL API",
       },
@@ -725,6 +744,7 @@ async function syncOneResultsDate() {
       providerTotal,
       remaining,
       finalized,
+      ...(truncatedBy ? { truncatedBy } : {}),
     };
   } catch (error) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(providerDate)) {
