@@ -174,8 +174,10 @@ test('both still scheduled, no evidence, 2 h apart: one fixture (production re-i
   // kept apart (see the double-header with observations above).
   const t = await seedTeams(db);
   const start = hoursAgo(-30);
-  await match(db, t, 'early', { start, received: hoursAgo(50) });
-  await match(db, t, 'late', { start: plus(start, 2), received: hoursAgo(50) });
+  // Same evidence time for both (one ingest): the tie is decided by id.
+  const received = hoursAgo(50);
+  await match(db, t, 'early', { start, received });
+  await match(db, t, 'late', { start: plus(start, 2), received });
   assert.deepEqual(await shownIds(db, t, start, plus(start, 2)), ['early']);
   assert.deepEqual(await duplicates(db, t, start), [['single_evidence_3h', 'early', 'late']]);
 }));
@@ -183,8 +185,10 @@ test('both still scheduled, no evidence, 2 h apart: one fixture (production re-i
 test('the survivor is deterministic: verified evidence beats a newer provisional copy; equal twins by id', () => withDb(async (db) => {
   const t = await seedTeams(db);
   const start = hoursAgo(-20); // tomorrow: both scheduled
-  await match(db, t, 'b', { start, received: hoursAgo(50) });
-  await match(db, t, 'a', { start, received: hoursAgo(50) });
+  // Same evidence time (one ingest): only the id can decide.
+  const received = hoursAgo(50);
+  await match(db, t, 'a', { start, received });
+  await match(db, t, 'b', { start, received });
   assert.deepEqual(await shownIds(db, t, start), ['a']);
   assert.deepEqual(await shownIds(db, t, start), ['a'], 'stable across builds');
   const v = await seedTeams(db);
@@ -436,7 +440,9 @@ test('an incomplete observation never erases a complete score; a scheduled answe
   await record(db, observation(s, { home: 1, away: 0, minute: 20, events: [goal(s, '901', '19')] }));
   // The provider answers without a score (partial payload).
   const partial = observation(s, { minute: 25, events: [goal(s, '901', '19')] });
+  // The raw answer itself has no score (GOAL answers are re-read from raw).
   partial.score = { home: null, away: null };
+  partial.rawPayload = { ...partial.rawPayload, homeTeamScore: null, awayTeamScore: null };
   await record(db, partial);
   assert.deepEqual((await shown(db, s)).score, { home: 1, away: 0 }, 'the last complete score stays');
 
