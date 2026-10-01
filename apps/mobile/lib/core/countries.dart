@@ -263,6 +263,43 @@ const Map<String, String> _countryNames = {
   'GB-NIR': 'Irlanda del Norte',
 };
 
+/// Supranational buckets of the competition catalog (`country_catalog` rows
+/// flagged `is_supranational`). Display-only: never a selectable country.
+const Map<String, String> _regionNames = {
+  'EUROPE': 'Europa',
+  'SAMERICA': 'Sudamérica',
+  'NAMERICA': 'Norteamérica',
+  'CAMERICA': 'Centroamérica',
+  'ASIA': 'Asia',
+  'AFRICA': 'África',
+  'OCEANIA': 'Oceanía',
+  'WORLD': 'Internacional',
+};
+
+/// Provider region tokens that reach raw `country` fields (lowercase), mapped
+/// to the catalog's region codes. Mirrors the server catalog aliases plus the
+/// provider buckets it leaves unresolved (`intl`, `Worldcup`).
+const Map<String, String> _providerRegionCodes = {
+  'europe': 'EUROPE',
+  'eurocups': 'EUROPE',
+  'uefa': 'EUROPE',
+  'south america': 'SAMERICA',
+  'conmebol': 'SAMERICA',
+  'north america': 'NAMERICA',
+  'central america': 'CAMERICA',
+  'concacaf': 'CAMERICA',
+  'asia': 'ASIA',
+  'afc': 'ASIA',
+  'africa': 'AFRICA',
+  'caf': 'AFRICA',
+  'oceania': 'OCEANIA',
+  'ofc': 'OCEANIA',
+  'world': 'WORLD',
+  'worldcup': 'WORLD',
+  'international': 'WORLD',
+  'intl': 'WORLD',
+};
+
 String? _canonical(String? code) {
   final value = code?.trim().toUpperCase();
   return value == null || value.isEmpty ? null : value;
@@ -270,6 +307,31 @@ String? _canonical(String? code) {
 
 /// Visible, localized name for a country code, or null when unknown.
 String? countryDisplayName(String? code) => _countryNames[_canonical(code)];
+
+/// Visible label for an entity's country or region (Spanish).
+///
+/// The canonical [countryCode] wins (ISO country, UK football nation or a
+/// catalog region). Otherwise the provider's [rawCountry] is used when it is a
+/// known region token or reads as a human name. Codes and unknown tokens
+/// (`intl`, `XYZ`, `world_cup`) yield null: callers hide the label instead of
+/// ever showing a raw code.
+String? countryLabel(String? countryCode, [String? rawCountry]) {
+  final code = _canonical(countryCode);
+  final known = _countryNames[code] ?? _regionNames[code];
+  if (known != null) return known;
+  final raw = rawCountry?.trim() ?? '';
+  if (raw.isEmpty) return null;
+  final region = _regionNames[_providerRegionCodes[raw.toLowerCase()]];
+  if (region != null) return region;
+  final asCode = _countryNames[_canonical(raw)];
+  if (asCode != null) return asCode;
+  // A display name starts with a capital, has a lowercase letter and only
+  // letters, spaces and name punctuation. Codes and tokens never do.
+  final looksLikeName =
+      RegExp(r"^[A-ZÀ-Ý][\p{L} .'’()-]*$", unicode: true).hasMatch(raw) &&
+      RegExp(r'\p{Ll}', unicode: true).hasMatch(raw);
+  return looksLikeName ? raw : null;
+}
 
 /// Every selectable preference country (ISO 3166-1 alpha-2 only; the UK
 /// football nations are display-only).

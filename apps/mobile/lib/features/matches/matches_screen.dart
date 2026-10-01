@@ -182,47 +182,17 @@ List<Entity> orderMatchCompetitions({
   final custom = orderMode == CompetitionOrderMode.personalized;
   // A stale pin (no longer followed) never reorders anything.
   final pins = {
-    for (var i = 0; i < pinnedCompetitionIds.length; i++)
-      if (follows.contains('competition:${pinnedCompetitionIds[i]}'))
-        pinnedCompetitionIds[i]: i,
+    if (custom)
+      for (var i = 0; i < pinnedCompetitionIds.length; i++)
+        if (follows.contains('competition:${pinnedCompetitionIds[i]}'))
+          pinnedCompetitionIds[i]: i,
   };
-  int rank(Entity competition) {
-    if (custom && pins.containsKey(competition.id)) return 0;
-    return switch (competitionFeedCategory(
-      competition,
-      follows: follows,
-      userCountry: userCountry,
-    )) {
-      CompetitionFeedCategory.pinned => 1,
-      CompetitionFeedCategory.domesticPrimary => 2,
-      CompetitionFeedCategory.globalRelevance => 3,
-      CompetitionFeedCategory.domesticSecondary => 4,
-      CompetitionFeedCategory.other => 5,
-    };
-  }
-
-  // Decorate once: the comparator never re-reads the editorial fields.
-  final decorated = [
-    for (final competition in visible)
-      (
-        competition: competition,
-        rank: rank(competition),
-        relevance: competitionImportance(competition),
-        name: competition.name.toLowerCase(),
-      ),
-  ];
-  decorated.sort((a, b) {
-    final byRank = a.rank.compareTo(b.rank);
-    if (byRank != 0) return byRank;
-    if (a.rank == 0) {
-      return pins[a.competition.id]!.compareTo(pins[b.competition.id]!);
-    }
-    final byRelevance = b.relevance.compareTo(a.relevance);
-    if (byRelevance != 0) return byRelevance;
-    final byName = a.name.compareTo(b.name);
-    return byName != 0 ? byName : a.competition.id.compareTo(b.competition.id);
-  });
-  return [for (final item in decorated) item.competition];
+  return sortCompetitionsByFeedPriority(
+    visible,
+    follows: follows,
+    userCountry: userCountry,
+    pins: pins,
+  );
 }
 
 class MatchesScreen extends ConsumerStatefulWidget {
@@ -685,6 +655,10 @@ class _CompetitionHeader extends StatelessWidget {
   final VoidCallback onToggle;
   final bool canToggle;
 
+  // Same visibility rule as before (a provider country), localized text only.
+  String? get region =>
+      competition.country.isEmpty ? null : entityCountryLabel(competition);
+
   @override
   Widget build(BuildContext context) => Container(
     margin: const EdgeInsets.only(top: 4, bottom: 8),
@@ -723,9 +697,9 @@ class _CompetitionHeader extends StatelessWidget {
                               fontSize: 14,
                             ),
                           ),
-                          if (competition.country.isNotEmpty)
+                          if (region case final label?)
                             Text(
-                              competition.country,
+                              label,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(

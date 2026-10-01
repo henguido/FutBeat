@@ -32,6 +32,8 @@ Snapshot catalog() => Snapshot({
       'country': 'Costa Rica',
       'countryCode': 'CR',
       'relevanceScore': 100,
+      'domesticTier': 1,
+      'isPrimaryDomestic': true,
     },
     {
       'id': 'competition_es',
@@ -242,13 +244,17 @@ void main() {
   test(
     'country ranking prioritizes local but preserves the global catalog',
     () {
-      final ranked = rankOnboardingEntities(catalog().teams, 'CR');
+      final ranked = rankOnboardingEntities('team', catalog().teams, 'CR');
       expect(ranked.map((entity) => entity.id), ['team_cr', 'team_es']);
     },
   );
 
   test('competition ranking keeps local, global and remaining entries', () {
-    final ranked = rankOnboardingEntities(catalog().competitions, 'CR');
+    final ranked = rankOnboardingEntities(
+      'competition',
+      catalog().competitions,
+      'CR',
+    );
     expect(ranked.first.id, 'competition_cr');
     expect(ranked.map((entity) => entity.id).toSet(), {
       'competition_cr',
@@ -259,6 +265,7 @@ void main() {
 
   test('searched entities preserve backend match-quality order', () {
     final searched = onboardingEntitiesForQuery(
+      'team',
       catalog().teams,
       'CR',
       'equipo',
