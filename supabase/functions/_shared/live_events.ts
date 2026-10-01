@@ -194,6 +194,31 @@ export function isOwnGoalRow(row: Record<string, unknown>) {
 }
 
 /**
+ * Penalty shoot-out kick. Measured on stored GOAL answers (live list and
+ * match detail alike, 2026-10-01): after AFTER_PEN GOAL lists every scored
+ * shoot-out kick in events[] as a plain "goal" row with
+ * scoreInfoTime "Penalty", the kick round as time (1, 2, ...) and the
+ * shoot-out tally as score. A penalty scored during the match is
+ * info "Penalty" with scoreInfoTime "1st Half" / "2nd Half" / "Extra Time":
+ * only the phase (scoreInfoTime) decides, never info. A kick is not a goal
+ * of the match (the shoot-out score is PenaltyScore, never part of the
+ * result): it never becomes a canonical event.
+ *
+ * Exact phase values only (case, spaces, "-" and "_" ignored): "Penalty",
+ * "Penalties", "Penalty Shootout", "Penalties shoot-out", "Shootout". Any
+ * other value ("Penalty (Extra Time)", a translation, a regular phase) is
+ * kept as a goal: losing a real goal is worse than showing a kick. Mirrored
+ * by futbeat_private.is_shootout_kick_row (20261001110000).
+ */
+const SHOOTOUT_PHASE = /^(?:(?:PENALTY|PENALTIES)(?:SHOOTOUT)?|SHOOTOUT)$/;
+
+export function isShootoutKickRow(row: Record<string, unknown>) {
+  return SHOOTOUT_PHASE.test(
+    clean(row.scoreInfoTime).toUpperCase().replace(/[\s_-]+/g, ""),
+  );
+}
+
+/**
  * Stable text of the normalized event content (never the raw row, which may
  * carry volatile fields): part of the observation payload hash, so a
  * content correction with the same ids and the same score is a new
@@ -235,6 +260,8 @@ export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
   const seen = new Map<string, number>();
 
   for (const row of asRows(fixture.events)) {
+    // Shoot-out kicks are not match events (see isShootoutKickRow).
+    if (isShootoutKickRow(row)) continue;
     const providerType = clean(row.type).toUpperCase();
     const type = providerType.includes("MISSED") && providerType.includes("PENAL")
       ? "MISSED_PENALTY"
