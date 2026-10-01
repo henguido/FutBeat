@@ -123,6 +123,22 @@ test('a correction that also lists an earlier goal of the other team keeps its p
   { home: 1, away: 1, minute: 13, events: [G(s, { time: '12', score: '1 - 1' }), G(s, { time: '6', side: 'away', player: 'P3', score: '0 - 1' })] },
 ], ["10'a", "6'c"], ["6'c", "12'a"]));
 
+// The score-after of the same occurrence may legitimately rise: an earlier
+// goal listed late (or reinstated by VAR) rewrites the later goals upward.
+test('an earlier goal listed late rewrites a later goal upward: the later goal is not pushed twice', () => scenario((s) => [
+  { minute: 5 },
+  { home: 1, minute: 19, events: [G(s, { time: '18', player: 'P2', score: '1 - 0' })] },
+  { home: 2, minute: 20, events: [G(s, { time: '10', score: '1 - 0' }), G(s, { time: '18', player: 'P2', score: '2 - 0' })] },
+], ["10'a", "18'b"], ["10'a", "18'b"]));
+
+test('VAR reinstates an annulled goal after a later one was scored (later goal rewritten 1-0 -> 2-0)', () => scenario((s) => [
+  { minute: 5 },
+  { home: 1, minute: 11, events: [G(s, { time: '10', score: '1 - 0' })] },
+  { home: 0, minute: 13, events: [] },
+  { home: 1, minute: 19, events: [G(s, { time: '18', player: 'P2', score: '1 - 0' })] },
+  { home: 2, minute: 21, events: [G(s, { time: '10', score: '1 - 0' }), G(s, { time: '18', player: 'P2', score: '2 - 0' })] },
+], ["10'a", "18'b"], ["10'a", "18'b"]));
+
 test('event_correction_twin: a goal raising its team tally is never a twin; the same score-after is preferred', async () => {
   const db = await getDb();
   const s = await seed(db);
@@ -142,6 +158,8 @@ test('event_correction_twin: a goal raising its team tally is never a twin; the 
   assert.equal(await twin({ minute: 18, teamId: s.home, playerId: s.p3, score: { home: 1, away: 0 } }), 'fb_event_t_old1',
     'same score-after preferred over the closer minute');
   assert.equal(await twin({ minute: 12, teamId: s.home, playerId: s.p3 }), 'fb_event_t_old1', 'no score-after: as before (closest minute)');
+  assert.equal(await twin({ minute: 10, teamId: s.home, playerId: s.p1, score: { home: 3, away: 0 } }), 'fb_event_t_old1',
+    'same team, player and minute: the same occurrence even with a higher tally');
 });
 
 test('migration is generic (no fixture, team, player or match literals)', async () => {

@@ -107,6 +107,41 @@ test('normalizers: shoot-out kicks are skipped, in-game penalties stay goals (li
   assert.deepEqual([await side('home'), await side('away')], [1, 1]);
 }));
 
+test('classifier: exact shoot-out phases only, identical in the worker and the database', () => withDb(async (db) => {
+  // Anything not exactly a shoot-out phase stays a goal (losing a real goal
+  // is worse than showing a kick): translations, qualified phases.
+  const cases = {
+    Penalty: true, penalty: true, ' PENALTY ': true, Penalties: true, 'Penalty Shootout': true,
+    'Penalties shoot-out': true, 'penalty_shootout': true, Shootout: true, 'Shoot-out': true,
+    '1st Half': false, '2nd Half': false, 'Extra Time': false, 'Extra Time 1st Half': false, '': false,
+    'Penalty (Extra Time)': false, 'Penalty Extra Time': false, 'Penalties ET': false, Penales: false,
+    'Tanda de penaltis': false, 'Penalty kick': false, 'Shootout pending': false,
+  };
+  const ts = Object.fromEntries(Object.keys(cases).map((k) => [k, isShootoutKickRow({ scoreInfoTime: k })]));
+  assert.deepEqual(ts, cases);
+  const sql = (await db.query('select k, futbeat_private.is_shootout_kick_row(jsonb_build_object(\'scoreInfoTime\',k)) v from unnest($1::text[]) k',
+    [Object.keys(cases)])).rows;
+  assert.deepEqual(Object.fromEntries(sql.map((r) => [r.k, r.v])), cases);
+  for (const odd of [{}, { scoreInfoTime: null }, { scoreInfoTime: 5 }]) {
+    assert.equal(isShootoutKickRow(odd), false);
+    assert.equal((await db.query('select futbeat_private.is_shootout_kick_row($1::jsonb) v', [JSON.stringify(odd)])).rows[0].v, false);
+  }
+  assert.equal((await db.query("select futbeat_private.is_shootout_kick_row('null'::jsonb) v")).rows[0].v, false);
+}));
+
+test('kick rows stored by an older worker never count as goals: a transient omission keeps the real goal', () => withDb(async (db) => {
+  const s = await seed(db);
+  await record(db, fixture(s, { home: 0, away: 0, minute: 5 }));
+  await record(db, fixture(s, { minute: 60, events: inGame(s) }));
+  // Older worker: kicks normalized as goals, complete answer, score 1-1.
+  await record(db, fixture(s, { minute: 121, events: [...inGame(s), ...shootout(s)], kicksAsGoals: true }));
+  // Current worker: the real 30' goal transiently missing, kicks filtered.
+  await record(db, fixture(s, { minute: 122, events: [inGame(s)[1]] }));
+  assert.deepEqual(await goalsShown(db, s), [`30' ${s.p1}`, `70' ${s.p3}`], 'the score still needs the 30\' goal');
+  const live = (await db.query("select minute, payload#>>'{payload,scoreInfoTime}' phase from futbeat_private.live_events where external_match_id=$1 and retracted_at is null and event_type='GOAL' order by minute", [s.ext])).rows;
+  assert.deepEqual(live.map((r) => r.minute), [30, 70], 'unlisted kicks retracted, the real goal kept');
+}));
+
 test('current worker: a shoot-out never adds canonical goals, timeline or pushes', () => withDb(async (db) => {
   const s = await seed(db);
   await record(db, fixture(s, { home: 0, away: 0, minute: 5 }));

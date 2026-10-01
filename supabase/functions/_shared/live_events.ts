@@ -203,9 +203,19 @@ export function isOwnGoalRow(row: Record<string, unknown>) {
  * only the phase (scoreInfoTime) decides, never info. A kick is not a goal
  * of the match (the shoot-out score is PenaltyScore, never part of the
  * result): it never becomes a canonical event.
+ *
+ * Exact phase values only (case, spaces, "-" and "_" ignored): "Penalty",
+ * "Penalties", "Penalty Shootout", "Penalties shoot-out", "Shootout". Any
+ * other value ("Penalty (Extra Time)", a translation, a regular phase) is
+ * kept as a goal: losing a real goal is worse than showing a kick. Mirrored
+ * by futbeat_private.is_shootout_kick_row (20261001110000).
  */
+const SHOOTOUT_PHASE = /^(?:(?:PENALTY|PENALTIES)(?:SHOOTOUT)?|SHOOTOUT)$/;
+
 export function isShootoutKickRow(row: Record<string, unknown>) {
-  return /PENALT|SHOOT/.test(clean(row.scoreInfoTime).toUpperCase());
+  return SHOOTOUT_PHASE.test(
+    clean(row.scoreInfoTime).toUpperCase().replace(/[\s_-]+/g, ""),
+  );
 }
 
 /**

@@ -3,7 +3,8 @@
 -- Active canonical GOAL rows of provider goal_api derived from a penalty
 -- shoot-out kick: a live_events GOAL row whose raw provider row is of the
 -- shoot-out phase (scoreInfoTime 'Penalty', see
--- futbeat_private.is_shootout_kick_row) produced the row, by its upstream
+-- futbeat_private.is_shootout_kick_row, inlined so the dry run also works
+-- before the migration is applied) produced the row, by its upstream
 -- key (providerEventKey) or by the record_live_events id formula (the
 -- historical content id, or content id + key). A row that an in-game live row
 -- of the same match produces as well is ambiguous and never selected.
@@ -12,14 +13,14 @@
 with lm as (
   select le.event_key, le.event_type, le.minute, le.team_external_id, le.player_external_id, le.payload,
     pe.canonical_id mid,
-    coalesce(upper(le.payload#>>'{payload,scoreInfoTime}'),'') ~ '(PENALT|SHOOT)' is_kick
+    regexp_replace(upper(btrim(coalesce(le.payload#>>'{payload,scoreInfoTime}',''))),'[[:space:]_-]+','','g') ~ '^((PENALTY|PENALTIES)(SHOOTOUT)?|SHOOTOUT)$' is_kick
   from futbeat_private.live_events le
   join futbeat_private.provider_entities pe
     on pe.provider='goal_api' and pe.kind='match' and pe.external_id=le.external_match_id
   where le.provider='goal_api' and le.event_type='GOAL'
     and le.external_match_id in (select x.external_match_id from futbeat_private.live_events x
       where x.provider='goal_api' and x.event_type='GOAL'
-        and coalesce(upper(x.payload#>>'{payload,scoreInfoTime}'),'') ~ '(PENALT|SHOOT)')
+        and regexp_replace(upper(btrim(coalesce(x.payload#>>'{payload,scoreInfoTime}',''))),'[[:space:]_-]+','','g') ~ '^((PENALTY|PENALTIES)(SHOOTOUT)?|SHOOTOUT)$')
 ), ids as (
   select lm.mid, lm.is_kick, lm.event_key,
     'fb_event_'||md5(concat_ws('|',lm.mid,'goal_api',lm.event_type,lm.minute,

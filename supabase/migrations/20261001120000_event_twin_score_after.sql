@@ -16,8 +16,11 @@
 -- an annulment, lowers) its team's tally; a new goal raises it. Changed here:
 --   * event_correction_twin: a GOAL whose team tally after it is above the
 --     retracted row's (same team, both scores known) is a new goal, never a
---     correction; among candidates the same score-after is preferred right
---     after the same player;
+--     correction, unless it is the same occurrence (same team, same player,
+--     compatible minute: an earlier goal listed late or reinstated by VAR
+--     legitimately raises the score-after of the later ones); among
+--     candidates the same score-after is preferred right after the same
+--     player;
 --   * record_live_events pass 2: rows first seen in this observation are
 --     ordered by their best ELIGIBLE twin, an equal score-after weighing
 --     more than the minute distance (but less than the same player), so a
@@ -66,9 +69,14 @@ returns text language sql stable security invoker set search_path='' as $$
       or (futbeat_private.event_score_after(c.payload) is not null
         and futbeat_private.event_score_after(c.payload)=futbeat_private.event_score_after(ev)))
     -- CHANGED (20261001120000): a goal that raises its team tally above the retracted row's
-    -- is a new goal, not its correction.
-    and not futbeat_private.event_raises_team_tally(ev->'score',ev->>'teamId',c.payload,
-      mt.payload->>'homeTeamId',mt.payload->>'awayTeamId')
+    -- is a new goal, not its correction; unless it is the same occurrence
+    -- (same team, same player, compatible minute: an earlier goal listed
+    -- late or reinstated rewrote its score-after upward).
+    and (not futbeat_private.event_raises_team_tally(ev->'score',ev->>'teamId',c.payload,
+        mt.payload->>'homeTeamId',mt.payload->>'awayTeamId')
+      or (nullif(c.payload->>'playerId','') is not null and c.payload->>'playerId'=ev->>'playerId'
+        and c.payload->>'teamId' is not distinct from ev->>'teamId'
+        and futbeat_private.event_minutes_compatible(c.payload,ev)))
   order by (c.payload->>'playerId' is not distinct from ev->>'playerId') desc,
     -- CHANGED (20261001120000): a correction keeps its score-after.
     coalesce(futbeat_private.event_score_after(c.payload)=futbeat_private.event_score_after(ev),false) desc,
@@ -87,6 +95,7 @@ declare result jsonb; c jsonb; m jsonb; mid text; e record; tid text; pid text; 
  obs jsonb; kept jsonb:='[]'; suppressed jsonb:='[]'; v_ext text; v_status text; v_claimed text;
  v_hit text; v_obs jsonb; v_sections text[]; v_backed text[]; r record; v_key text; v_dup text; v_content text;
  v_team_goals integer; v_team_score integer; v_dups jsonb;
+ v_goal_counts jsonb; -- CHANGED: active goals per team, counted once per match
 begin
  -- Ignore delayed observations instead of regressing a live match.
  if exists(select 1 from jsonb_array_elements(p_observations) o
@@ -146,6 +155,15 @@ begin
     then array(select jsonb_array_elements_text(v_obs->'completeSections')) end;
   v_backed:='{}';
   v_dups:='{}';
+  -- CHANGED: active live goals per team, shoot-out kicks excluded. Counted
+  -- once per match (pass 2 never changes live_events) instead of once per
+  -- re-keyed copy.
+  select coalesce(jsonb_object_agg(x.t,x.n),'{}') into v_goal_counts
+    from (select o.team_external_id t,count(*) n from futbeat_private.live_events o
+      where o.provider=p_provider and o.external_match_id=c->>'externalMatchId'
+        and o.event_type='GOAL' and o.retracted_at is null and o.team_external_id is not null
+        and not futbeat_private.is_shootout_kick_row(o.payload->'payload')
+      group by o.team_external_id) x;
   select * into state from futbeat_private.live_match_state where provider=p_provider and external_match_id=c->>'externalMatchId';
   -- P0-A pass 1: upstream rows the provider no longer lists.
   for e in select * from futbeat_private.live_events
@@ -186,9 +204,14 @@ begin
           and (x.payload->>'teamId' is not distinct from pt.canonical_id
             or (nullif(x.payload->>'playerId','') is not null and x.payload->>'playerId'=pp.canonical_id))
           -- CHANGED (20261001120000): only rows it may correct (the same rule
-          -- as event_correction_twin): a new goal sorts with the new rows.
-          and not futbeat_private.event_raises_team_tally(le.payload->'scoreAfter',pt.canonical_id,x.payload,
-            m->>'homeTeamId',m->>'awayTeamId')) end nulls last,
+          -- as event_correction_twin): a new goal sorts with the new rows;
+          -- the same occurrence (team, player, minute) always may.
+          and (not futbeat_private.event_raises_team_tally(le.payload->'scoreAfter',pt.canonical_id,x.payload,
+              m->>'homeTeamId',m->>'awayTeamId')
+            or (nullif(x.payload->>'playerId','') is not null and x.payload->>'playerId'=pp.canonical_id
+              and x.payload->>'teamId' is not distinct from pt.canonical_id
+              and futbeat_private.event_minutes_compatible(x.payload,jsonb_build_object('minute',le.minute,
+                'extraMinute',coalesce(le.payload->'extraMinute',le.payload#>'{payload,time,extra}')))))) end nulls last,
       le.first_seen_at,le.event_key loop
    if e.event_type not in ('GOAL','YELLOW_CARD','RED_CARD','SUBSTITUTION','VAR','MISSED_PENALTY') then continue; end if;
    -- CHANGED: a shoot-out kick (sent by a worker older than the
@@ -244,11 +267,8 @@ begin
     -- current score (two ids, same content, score 2-0: two goals).
     if e.event_type='GOAL' then
      v_team_score:=case tid when m->>'homeTeamId' then state.home_score when m->>'awayTeamId' then state.away_score end;
-     select count(*) into v_team_goals from futbeat_private.live_events o
-      where o.provider=p_provider and o.external_match_id=c->>'externalMatchId'
-        and o.event_type='GOAL' and o.retracted_at is null and o.team_external_id=e.team_external_id
-        -- CHANGED: a shoot-out kick is not a goal of its team.
-        and not futbeat_private.is_shootout_kick_row(o.payload->'payload');
+     -- CHANGED: the per-match count (kicks excluded, see v_goal_counts).
+     v_team_goals:=coalesce((v_goal_counts->>e.team_external_id)::integer,0);
      if v_team_score is null
         or v_team_goals-coalesce((v_dups->>coalesce(tid,''))::integer,0)-1<v_team_score then
       v_dup:=null;
