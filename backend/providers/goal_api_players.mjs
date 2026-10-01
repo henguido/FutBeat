@@ -126,6 +126,13 @@ function booleanOrNull(value) {
   return null;
 }
 
+// Same weights as futbeat_private.player_identity_richness.
+function rowRichness(row) {
+  return (row.media ? 32 : 0) + (row.dateOfBirth ? 16 : 0) + (row.age != null ? 8 : 0) +
+    (row.matchesPlayed != null ? 4 : 0) + (row.position ? 2 : 0) + (row.country ? 1 : 0) +
+    (row.height != null ? 1 : 0);
+}
+
 export async function normalizeGoalApiSquad(
   payload,
   teamId,
@@ -190,7 +197,7 @@ export async function normalizeGoalApiSquad(
       player?.starts ?? player?.gamesStarted ?? row?.starts ?? row?.gamesStarted,
     );
 
-    players.set(id, {
+    const candidate = {
       id,
       name: identity.name,
       shortName: identity.shortName,
@@ -221,7 +228,12 @@ export async function normalizeGoalApiSquad(
         mediaSource: 'squad',
         mediaStatus: photo ? 'AVAILABLE' : clean(photoValue) ? 'FETCH_FAILED' : 'NO_PHOTO',
       },
-    });
+    };
+    // GOAL can list one person twice under two catalog ids that resolve to
+    // the same canonical player: keep the richer row, never the later one.
+    const previous = players.get(id);
+    if (previous && rowRichness(previous) >= rowRichness(candidate)) continue;
+    players.set(id, candidate);
   }
 
   if (rows.length > 0 && players.size === 0) throw new Error('Squad contains no valid identities');
