@@ -272,6 +272,19 @@ void main() {
     expect(find.text('Goles'), findsNothing);
   });
 
+  testWidgets('an unknown dorsal (0, "0", empty) shows no badge or card', (
+    tester,
+  ) async {
+    for (final unknown in <Object>[0, '0', '', ' ']) {
+      await _pumpPlayer(
+        tester,
+        _payload(player: {'shirtNumber': unknown, 'country': 'Chile'}),
+      );
+      expect(find.text('#0'), findsNothing, reason: '$unknown');
+      expect(find.text('Dorsal'), findsNothing, reason: '$unknown');
+    }
+  });
+
   testWidgets('missing fields are hidden, not filled with placeholders', (
     tester,
   ) async {

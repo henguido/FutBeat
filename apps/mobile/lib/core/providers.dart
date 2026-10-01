@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'database.dart';
+import 'entity_media.dart';
+import 'interests.dart';
 import 'live_realtime.dart';
 import 'models.dart';
 import 'profile_context.dart';
@@ -122,10 +124,15 @@ class ApiRepository implements FootballRepository {
     this.dio, [
     this.database,
     this.calendarPolicy = const CalendarCachePolicy(),
+    this.media,
   ]);
   final Dio dio;
   final AppDatabase? database;
   final CalendarCachePolicy calendarPolicy;
+
+  /// Receives every snapshot read, so lazily hydrated media reaches every
+  /// screen showing the same entity.
+  final EntityMediaMemory? media;
 
   final Map<String, DateTime> _calendarFetchedAt = {};
   final Map<String, int> _calendarFailures = {};
@@ -150,6 +157,7 @@ class ApiRepository implements FootballRepository {
     if (snapshot.demo) {
       throw StateError('Cloud endpoint returned demo data');
     }
+    media?.absorb(snapshot);
     return snapshot;
   }
 
@@ -611,8 +619,19 @@ class ApiRepository implements FootballRepository {
     ),
   );
 
-  Future<Snapshot> loadExplore({CancelToken? cancelToken}) =>
-      _loadCatalog('explore', '/v1/explore', cancelToken: cancelToken);
+  /// Suggestions. A selectable [country] adds that country's primary league,
+  /// national team and league clubs ahead of the same global list (servers
+  /// without the country lens ignore the parameter).
+  Future<Snapshot> loadExplore({String? country, CancelToken? cancelToken}) {
+    final code = country?.trim().toUpperCase();
+    final local = code != null && RegExp(r'^[A-Z]{2}$').hasMatch(code);
+    return _loadCatalog(
+      local ? 'explore:$code' : 'explore',
+      '/v1/explore',
+      queryParameters: local ? {'country': code} : null,
+      cancelToken: cancelToken,
+    );
+  }
 
   Future<Snapshot> _loadCatalog(
     String key,
@@ -653,7 +672,7 @@ class ApiRepository implements FootballRepository {
     final normalizedQuery = query.trim().toLowerCase();
     final normalizedCountry = country?.trim().toUpperCase();
     if (normalizedQuery.length < 2) {
-      return loadExplore(cancelToken: cancelToken);
+      return loadExplore(country: normalizedCountry, cancelToken: cancelToken);
     }
     return _loadCatalog(
       'search:$normalizedQuery:${normalizedCountry ?? ''}',
@@ -763,7 +782,19 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
   );
 
   ref.onDispose(() => dio.close(force: true));
-  return ApiRepository(dio, ref.watch(databaseProvider));
+  return ApiRepository(
+    dio,
+    ref.watch(databaseProvider),
+    const CalendarCachePolicy(),
+    ref.watch(entityMediaProvider),
+  );
+});
+
+/// Session memory of verified entity media (see [EntityMediaMemory]).
+final entityMediaProvider = Provider<EntityMediaMemory>((ref) {
+  final memory = EntityMediaMemory();
+  ref.onDispose(memory.dispose);
+  return memory;
 });
 
 final snapshotProvider = FutureProvider<Snapshot>(
@@ -830,8 +861,20 @@ final exploreSnapshotProvider = FutureProvider.autoDispose<Snapshot>((
   final repository = ref.watch(repositoryProvider);
   final token = CancelToken();
   ref.onDispose(() => token.cancel('Explore closed'));
+  String? country;
+  if (repository is ApiRepository) {
+    // Country only lifts local suggestions; without one (or if the local
+    // preference is unavailable) the global list is still served.
+    try {
+      country = await ref
+          .watch(preferenceProvider.selectAsync((p) => p.effectiveCountry))
+          .timeout(const Duration(seconds: 2));
+    } catch (_) {
+      country = null;
+    }
+  }
   final value = await (repository is ApiRepository
-      ? repository.loadExplore(cancelToken: token)
+      ? repository.loadExplore(country: country, cancelToken: token)
       : repository.load());
   if (ref.mounted) {
     final link = ref.keepAlive();

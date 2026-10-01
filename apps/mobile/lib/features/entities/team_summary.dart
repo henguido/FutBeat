@@ -498,12 +498,13 @@ class SummaryTable extends StatelessWidget {
                   Expanded(
                     child: Row(
                       children: [
-                        if (data.team('${row['teamId']}') case final team?)
+                        if (standingsTeam(data, '${row['teamId']}')
+                            case final team?)
                           EntityAvatar(team, size: 18),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            data.team('${row['teamId']}')?.name ?? '',
+                            standingsTeam(data, '${row['teamId']}')?.name ?? '',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(

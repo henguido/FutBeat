@@ -257,7 +257,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             leading: const Icon(Icons.star_outline),
             title: const Text('Mis favoritos'),
             subtitle: Text(
-              '$teamCount equipos · $competitionCount ligas · $playerCount jugadores',
+              favoritesSummary(
+                teams: teamCount,
+                competitions: competitionCount,
+                players: playerCount,
+              ),
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => context.go('/favorites'),
@@ -529,4 +533,18 @@ class _GuestCard extends StatelessWidget {
       subtitle: Text('Tus favoritos se guardan en este dispositivo.'),
     ),
   );
+}
+
+/// "1 equipo · 2 ligas · 0 jugadores": Spanish singular only for exactly one.
+String favoritesSummary({
+  required int teams,
+  required int competitions,
+  required int players,
+}) {
+  String count(int n, String one, String many) => '$n ${n == 1 ? one : many}';
+  return [
+    count(teams, 'equipo', 'equipos'),
+    count(competitions, 'liga', 'ligas'),
+    count(players, 'jugador', 'jugadores'),
+  ].join(' · ');
 }

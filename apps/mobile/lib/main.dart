@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/database.dart';
+import 'core/entity_media.dart';
 import 'core/models.dart';
 import 'core/providers.dart';
 import 'core/theme.dart';
@@ -188,6 +189,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   Widget build(BuildContext context) {
     final hourFormat =
         ref.watch(profileSettingsProvider).asData?.value.hourFormat ?? 'system';
+    final media = ref.watch(entityMediaProvider);
 
     return MaterialApp.router(
       locale: const Locale('es'),
@@ -197,15 +199,18 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
       debugShowCheckedModeBanner: false,
       theme: futbeatTheme(),
       builder: (context, child) {
-        final media = MediaQuery.of(context);
+        final query = MediaQuery.of(context);
         final use24HourClock = switch (hourFormat) {
           '24h' => true,
           '12h' => false,
-          _ => media.alwaysUse24HourFormat,
+          _ => query.alwaysUse24HourFormat,
         };
         return MediaQuery(
-          data: media.copyWith(alwaysUse24HourFormat: use24HourClock),
-          child: child ?? const SizedBox.shrink(),
+          data: query.copyWith(alwaysUse24HourFormat: use24HourClock),
+          child: EntityMediaScope(
+            memory: media,
+            child: child ?? const SizedBox.shrink(),
+          ),
         );
       },
       routerConfig: router,
@@ -213,7 +218,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   }
 }
 
-class AppShell extends ConsumerWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.location, required this.child});
   final String location;
   final Widget child;
@@ -224,14 +229,42 @@ class AppShell extends ConsumerWidget {
     '/favorites',
     '/profile',
   ];
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> {
+  /// The tab the user is in. A detail screen pushed from a tab (team,
+  /// player, match, ...) has no tab of its own and keeps this one
+  /// highlighted; opened directly (deep link) it falls back to Partidos.
+  int tab = 0;
+
+  void _track() {
+    final index = AppShell.paths.indexOf(widget.location);
+    if (index >= 0) tab = index;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _track();
+  }
+
+  @override
+  void didUpdateWidget(AppShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _track();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     if (PushService.configured) ref.watch(pushServiceProvider);
     return Scaffold(
-      body: child,
+      body: widget.child,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: paths.contains(location) ? paths.indexOf(location) : 0,
-        onDestinationSelected: (index) => context.go(paths[index]),
+        selectedIndex: tab,
+        onDestinationSelected: (index) => context.go(AppShell.paths[index]),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.sports_soccer),

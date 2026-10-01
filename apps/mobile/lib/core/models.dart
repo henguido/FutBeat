@@ -19,6 +19,15 @@ String? playerImage(Json player) {
   return canonical ?? safePlayerImage(player['image']);
 }
 
+/// A real shirt number, or null. Providers send `0`, `""` or garbage when the
+/// number is unknown; none of those is a dorsal anyone wears.
+int? shirtNumberOf(Object? value) {
+  final number = value is num
+      ? (value == value.roundToDouble() ? value.toInt() : null)
+      : int.tryParse(value?.toString().trim() ?? '');
+  return number != null && number > 0 && number < 100 ? number : null;
+}
+
 // Costa Rica uses UTC-06:00 year-round and does not observe daylight saving.
 DateTime costaRicaTime(DateTime instant) =>
     instant.toUtc().subtract(const Duration(hours: 6));
@@ -267,6 +276,10 @@ class Entity {
   String get id => json['id'] as String;
   String get name => json['name'] as String;
   String get country => json['country'] as String? ?? '';
+
+  /// Player dorsal (`shirtNumber`, legacy `number`); null when unknown.
+  int? get shirtNumber => shirtNumberOf(json['shirtNumber'] ?? json['number']);
+
   String? get imageUrl {
     final media = json['media'] as Json?;
     if (media == null || media['verificationStatus'] != 'VERIFIED') return null;

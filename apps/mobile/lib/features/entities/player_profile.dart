@@ -16,11 +16,7 @@ const _singularPosition = {
   'Delanteros': 'Delantero',
 };
 
-int? playerShirtNumber(Entity player) {
-  final value = player.json['shirtNumber'] ?? player.json['number'];
-  if (value is int) return value;
-  return int.tryParse(value?.toString() ?? '');
-}
+int? playerShirtNumber(Entity player) => player.shirtNumber;
 
 /// First present, non-empty value among [keys] of [json].
 Object? _pick(Json json, List<String> keys) {
