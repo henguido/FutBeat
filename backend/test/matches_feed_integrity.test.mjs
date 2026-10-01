@@ -128,14 +128,29 @@ test('never merged: return leg, same opponent at another time, another competiti
   assert.deepEqual(await duplicates(db, t, start), [['cross_competition_review', 'othercomp', 'base'], ['cross_competition_review', 'otherscore', 'othercomp']].sort((a, b) => a[2].localeCompare(b[2])));
 }));
 
+// A live kickoff near now whose copy 2 h later falls on the same local day:
+// the scenario is one calendar day, whatever the wall clock (around local
+// midnight a fixed "1 h ago" put the two on different days).
+async function sameDayLiveKickoff(db) {
+  for (const h of [1, 2, 0]) {
+    const start = hoursAgo(h);
+    if (await localDay(db, start) === await localDay(db, plus(start, 2))) return start;
+  }
+  throw new Error('unreachable: one of the offsets keeps both kickoffs on one day');
+}
+
 test('LIVE fixture vs its stale calendar copy (re-issued id, kickoff moved 2 h): only the live one', () => withDb(async (db) => {
   const t = await seedTeams(db);
-  const start = hoursAgo(1);
+  const start = await sameDayLiveKickoff(db);
   await match(db, t, 'ghost', { start: plus(start, 2), received: hoursAgo(240) });
   await match(db, t, 'live', { start, status: 'LIVE', score: [1, 0], verified: true, observed: true, received: new Date().toISOString() });
   assert.deepEqual(await shownIds(db, t, start, plus(start, 2)), ['live']);
   assert.deepEqual(await duplicates(db, t, start), [['single_evidence_3h', 'live', 'ghost']]);
 }));
+
+// Known gap (P2): when the live kickoff and its stale copy straddle local
+// midnight each day is built alone, so the copy stays listed on the next day.
+test.todo('LIVE fixture vs its stale calendar copy across local midnight: the copy is hidden on its own day');
 
 test('corrected kickoff: the scheduled ghost at the old time (another day, 18 h away) disappears once the real one is played', () => withDb(async (db) => {
   const t = await seedTeams(db);
@@ -174,8 +189,10 @@ test('both still scheduled, no evidence, 2 h apart: one fixture (production re-i
   // kept apart (see the double-header with observations above).
   const t = await seedTeams(db);
   const start = hoursAgo(-30);
-  await match(db, t, 'early', { start, received: hoursAgo(50) });
-  await match(db, t, 'late', { start: plus(start, 2), received: hoursAgo(50) });
+  // Same evidence time for both (one ingest): the tie is decided by id.
+  const received = hoursAgo(50);
+  await match(db, t, 'early', { start, received });
+  await match(db, t, 'late', { start: plus(start, 2), received });
   assert.deepEqual(await shownIds(db, t, start, plus(start, 2)), ['early']);
   assert.deepEqual(await duplicates(db, t, start), [['single_evidence_3h', 'early', 'late']]);
 }));
@@ -183,8 +200,10 @@ test('both still scheduled, no evidence, 2 h apart: one fixture (production re-i
 test('the survivor is deterministic: verified evidence beats a newer provisional copy; equal twins by id', () => withDb(async (db) => {
   const t = await seedTeams(db);
   const start = hoursAgo(-20); // tomorrow: both scheduled
-  await match(db, t, 'b', { start, received: hoursAgo(50) });
-  await match(db, t, 'a', { start, received: hoursAgo(50) });
+  // Same evidence time (one ingest): only the id can decide.
+  const received = hoursAgo(50);
+  await match(db, t, 'a', { start, received });
+  await match(db, t, 'b', { start, received });
   assert.deepEqual(await shownIds(db, t, start), ['a']);
   assert.deepEqual(await shownIds(db, t, start), ['a'], 'stable across builds');
   const v = await seedTeams(db);
@@ -436,7 +455,9 @@ test('an incomplete observation never erases a complete score; a scheduled answe
   await record(db, observation(s, { home: 1, away: 0, minute: 20, events: [goal(s, '901', '19')] }));
   // The provider answers without a score (partial payload).
   const partial = observation(s, { minute: 25, events: [goal(s, '901', '19')] });
+  // The raw answer itself has no score (GOAL answers are re-read from raw).
   partial.score = { home: null, away: null };
+  partial.rawPayload = { ...partial.rawPayload, homeTeamScore: null, awayTeamScore: null };
   await record(db, partial);
   assert.deepEqual((await shown(db, s)).score, { home: 1, away: 0 }, 'the last complete score stays');
 

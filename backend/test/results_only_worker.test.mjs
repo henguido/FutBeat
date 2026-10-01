@@ -433,6 +433,23 @@ test('pagination: page 2 partly repeats page 1 -> its new rows are kept, nothing
   assert.equal((await attempt(db, dateStr)).last_result_count, 600);
 }));
 
+// Incident 2026-10-01: after the match GOAL reset the running total to 0-0
+// and kept the result in homeTeamFtScore / awayTeamFtScore.
+test('a finished answer with a reset running total is recorded with its full-time result (worker normalizer)', () => withDb(async (db) => {
+  const { match, external } = await seedResultsDueMatch(db);
+  const h = harness(db, {
+    provider: () => Response.json({ success: true, pagination: { hasMore: false }, data: [{
+      ...resultFixture(external, { home: '0', away: '0' }),
+      homeTeamFtScore: '6', awayTeamFtScore: '3', homeTeamHalftimeScore: '2', awayTeamHalftimeScore: '1',
+    }] }),
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 6, away: 3 } });
+  const recorded = h.rpcCalls('futbeat_record_live_batch')[0].body.p_observations[0];
+  assert.deepEqual(recorded.score, { home: 6, away: 3 }, 'the observation itself carries the real result');
+}));
+
 // Deliberate: an HTTP error is a provider failure (quota, auth, outage). The
 // call is recorded as FAILED with its status for the quota ledger and the
 // date is retried with backoff; the pages read before it are not applied.

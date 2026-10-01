@@ -24,6 +24,78 @@ export function parseScoreAfter(value: unknown) {
   return match ? { home: Number(match[1]), away: Number(match[2]) } : null;
 }
 
+/** A provider score value: a non-negative integer (number or digit text). */
+function goalScoreValue(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value >= 0 && value <= 999 ? value : null;
+  }
+  if (typeof value !== "string" || !/^\s*\d{1,3}\s*$/.test(value)) return null;
+  return Number(value);
+}
+
+function goalScorePair(fixture: Record<string, unknown>, suffix: string) {
+  const home = goalScoreValue(fixture[`homeTeam${suffix}`]);
+  const away = goalScoreValue(fixture[`awayTeam${suffix}`]);
+  return home == null || away == null ? null : { home, away };
+}
+
+const GOAL_TERMINAL = new Set(["FINISHED", "AFTER_ET", "AFTER_PEN", "AWARDED"]);
+
+/**
+ * THE score of a GOAL fixture, for every FutBeat writer (live list, match
+ * detail, results, calendar ingest; the database mirrors it in
+ * futbeat_private.goal_fixture_score). Measured on stored GOAL answers:
+ *   * homeTeamScore / awayTeamScore: the running total, extra time included,
+ *     penalties excluded. The only score while the match is not over.
+ *   * homeTeamFtScore / awayTeamFtScore: regulation (90') score, filled at
+ *     the end of regulation; ExtraScore: goals in extra time only;
+ *     PenaltyScore: the shoot-out, never part of the score.
+ *   * After the match GOAL sometimes RESETS the running total to 0-0 while
+ *     FtScore / HalftimeScore keep the real result.
+ * Terminal answers (FINISHED, AFTER_ET, AFTER_PEN, AWARDED):
+ *   * with a complete FtScore the result is FT + ExtraScore. ExtraScore is
+ *     required after extra time (AFTER_ET / AFTER_PEN) and taken as 0
+ *     otherwise. A running total equal to it, absent, or reset to 0-0
+ *     agrees; any other running total is incoherent -> no score;
+ *   * without FtScore the running total is used;
+ *   * a result below the half-time score is impossible -> no score.
+ * Not terminal: the running total. Unknown or incoherent: {null, null},
+ * never a guess (an absent score never replaces a stored one).
+ */
+export function goalFixtureScore(fixture: Record<string, unknown>) {
+  const none = { home: null as number | null, away: null as number | null };
+  const live = goalScorePair(fixture, "Score");
+  const status = String(fixture.matchStatus ?? "").trim().toUpperCase();
+  if (!GOAL_TERMINAL.has(status)) return live ?? none;
+  const regulation = goalScorePair(fixture, "FtScore");
+  let result = live;
+  if (regulation) {
+    const extra = goalScorePair(fixture, "ExtraScore") ??
+      (status === "AFTER_ET" || status === "AFTER_PEN"
+        ? null
+        : { home: 0, away: 0 });
+    if (!extra) return none;
+    const total = {
+      home: regulation.home + extra.home,
+      away: regulation.away + extra.away,
+    };
+    const reset = live != null && live.home === 0 && live.away === 0;
+    if (
+      live != null && !reset &&
+      (live.home !== total.home || live.away !== total.away)
+    ) {
+      return none;
+    }
+    result = total;
+  }
+  if (!result) return none;
+  const halftime = goalScorePair(fixture, "HalftimeScore");
+  if (halftime && (result.home < halftime.home || result.away < halftime.away)) {
+    return none;
+  }
+  return result;
+}
+
 const FNV64_OFFSET = 0xcbf29ce484222325n;
 const FNV64_PRIME = 0x100000001b3n;
 const FNV64_MASK = 0xffffffffffffffffn;
