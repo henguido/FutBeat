@@ -131,13 +131,14 @@ test('never merged: return leg, same opponent at another time, another competiti
 // A live kickoff near now whose copy 2 h later falls on the same local day:
 // the scenario is one calendar day, whatever the wall clock (around local
 // midnight a fixed "1 h ago" put the two on different days).
-async function sameDayLiveKickoff(db) {
-  for (const h of [1, 2, 0]) {
+async function sameDayKickoff(db, offsets) {
+  for (const h of offsets) {
     const start = hoursAgo(h);
     if (await localDay(db, start) === await localDay(db, plus(start, 2))) return start;
   }
   throw new Error('unreachable: one of the offsets keeps both kickoffs on one day');
 }
+const sameDayLiveKickoff = (db) => sameDayKickoff(db, [1, 2, 0]);
 
 test('LIVE fixture vs its stale calendar copy (re-issued id, kickoff moved 2 h): only the live one', () => withDb(async (db) => {
   const t = await seedTeams(db);
@@ -188,7 +189,9 @@ test('both still scheduled, no evidence, 2 h apart: one fixture (production re-i
   // days was a GOAL re-issue. Once both games are really observed they are
   // kept apart (see the double-header with observations above).
   const t = await seedTeams(db);
-  const start = hoursAgo(-30);
+  // About a day ahead, with both kickoffs on one local day (a fixed +30 h
+  // put the later one past local midnight between 16:00 and 18:00).
+  const start = await sameDayKickoff(db, [-30, -27, -33]);
   // Same evidence time for both (one ingest): the tie is decided by id.
   const received = hoursAgo(50);
   await match(db, t, 'early', { start, received });
