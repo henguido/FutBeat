@@ -1,4 +1,5 @@
 import { validateSnapshot } from './core/snapshot.mjs';
+import { goalFixtureScore } from '../../supabase/functions/_shared/live_events.ts';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -103,12 +104,6 @@ function statusOf(fixture) {
   }
 
   return 'SCHEDULED';
-}
-
-function integerScore(value) {
-  if (value == null || value === '') return null;
-  const score = Number(value);
-  return Number.isInteger(score) && score >= 0 ? score : null;
 }
 
 const fixtureKey = (home, away, startTime) =>
@@ -218,8 +213,9 @@ export async function normalizeGoalApiFixtures(
       });
 
     const status = statusOf(fixture);
-    const homeScore = integerScore(fixture?.homeTeamScore);
-    const awayScore = integerScore(fixture?.awayTeamScore);
+    // Same rule as every other GOAL writer (reset running totals after the
+    // match keep their full-time result).
+    const { home: homeScore, away: awayScore } = goalFixtureScore(fixture ?? {});
     const score = [
       'LIVE',
       'HALFTIME',

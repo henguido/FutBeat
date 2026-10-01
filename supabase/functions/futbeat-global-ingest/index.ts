@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.1.0";
 import { normalizeSofaScoreFixtures } from "../../../backend/providers/sofascore.mjs";
 import { normalizeEspnFixtures } from "../../../backend/providers/espn.mjs";
+import { goalFixtureScore } from "../_shared/live_events.ts";
 import {
   collectGoalApiBaseIdentities,
   normalizeGoalApiFixtures,
@@ -120,12 +121,6 @@ function goalLiveStatus(fixture: Record<string, unknown>) {
   return "SCHEDULED";
 }
 
-function goalLiveScore(value: unknown) {
-  if (value == null || value === "") return null;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
-}
-
 async function sha256Hex(value: string) {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -143,8 +138,7 @@ async function normalizeGoalLiveFixture(fixture: Record<string, unknown>) {
   const status = goalLiveStatus(fixture);
   const elapsed = Number(fixture.matchElapsed);
   const minute = Number.isInteger(elapsed) && elapsed >= 0 ? elapsed : null;
-  const home = goalLiveScore(fixture.homeTeamScore);
-  const away = goalLiveScore(fixture.awayTeamScore);
+  const { home, away } = goalFixtureScore(fixture);
   const payloadHash = await sha256Hex(JSON.stringify([
     externalMatchId,
     status,

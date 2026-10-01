@@ -8,6 +8,7 @@ import {
 } from "../_shared/goal_players.ts";
 import {
   fixtureEventSections,
+  goalFixtureScore,
   liveEventsContentSignature,
   normalizeFixtureEvents,
 } from "../_shared/live_events.ts";
@@ -132,8 +133,10 @@ async function normalizeLiveFixture(
 
   const status = goalLiveStatus(fixture);
   const minute = nonNegativeInteger(fixture.matchElapsed);
-  const home = nonNegativeInteger(fixture.homeTeamScore);
-  const away = nonNegativeInteger(fixture.awayTeamScore);
+  // One rule for every path (live list, detail, results): see
+  // goalFixtureScore (a terminal answer with a reset running total keeps
+  // its full-time result).
+  const { home, away } = goalFixtureScore(fixture);
   const events = normalizeFixtureEvents(fixture);
   const completeSections = authoritativeEvents
     ? fixtureEventSections(fixture)
