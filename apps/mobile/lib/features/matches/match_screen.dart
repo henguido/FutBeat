@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/entity_media.dart';
 import '../../core/interests.dart';
 import '../../core/models.dart';
 import '../../core/profile_context.dart';
@@ -3011,6 +3012,17 @@ String? _positionLabel(dynamic raw) {
   final value = raw?.toString().trim() ?? '';
   if (value.isEmpty) return null;
   final lower = value.toLowerCase();
+  // GOAL also sends single-letter positions (G / D / M / F).
+  switch (lower) {
+    case 'g':
+      return 'Portero';
+    case 'd':
+      return 'Defensa';
+    case 'm':
+      return 'Centrocampista';
+    case 'f':
+      return 'Delantero';
+  }
   if (lower.contains('goal') || lower == 'gk') return 'Portero';
   if (lower.contains('def')) return 'Defensa';
   if (lower.contains('mid')) return 'Centrocampista';
@@ -3116,7 +3128,7 @@ class _PlayerAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final image = playerImage(player);
+    final image = lineupPlayerImageOf(context, player);
     final initials = _playerInitials(player['name']);
     final fallback = Container(
       width: size,
@@ -3165,6 +3177,18 @@ class _PlayerAvatar extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Photo of a lineup player through the shared entity resolver: a canonical
+/// player shows the latest verified photo seen this session for that identity
+/// (the same one the profile shows), else the photo the lineup carries.
+String? lineupPlayerImageOf(BuildContext context, Json player) {
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  final name = player['name']?.toString() ?? '';
+  final shared = canonicalId.isEmpty
+      ? null
+      : entityImageOf(context, Entity({'id': canonicalId, 'name': name}));
+  return shared ?? playerImage(player);
 }
 
 String _playerInitials(dynamic name) {
@@ -3379,6 +3403,7 @@ class MatchPlayerScope extends InheritedWidget {
 class PlayerMatchSummary {
   const PlayerMatchSummary({
     this.rating,
+    this.minutes,
     this.goals = 0,
     this.assists = 0,
     this.yellowCards = 0,
@@ -3386,11 +3411,16 @@ class PlayerMatchSummary {
   });
 
   final num? rating;
+
+  /// Minutes on the pitch; null unless both ends are anchored by real events
+  /// (see [playerMinutesPlayed]).
+  final int? minutes;
   final int goals, assists, yellowCards, redCards;
 
   /// Label/value pairs to show, in order; empty when there is nothing real.
   List<(String, String)> get entries => [
     if (rating != null) ('Rating', rating!.toDouble().toStringAsFixed(1)),
+    if (minutes != null) ('Minutos', '$minutes′'),
     if (goals > 0) (goals == 1 ? 'Gol' : 'Goles', '$goals'),
     if (assists > 0) (assists == 1 ? 'Asistencia' : 'Asistencias', '$assists'),
     if (yellowCards > 0) ('Amarillas', '$yellowCards'),
@@ -3400,17 +3430,158 @@ class PlayerMatchSummary {
 
 PlayerMatchSummary playerMatchSummary(
   Json player,
-  List<LineupPlayerEvent> events,
-) {
+  List<LineupPlayerEvent> events, {
+  int? minutes,
+}) {
   final rating = player['rating'];
   int count(String type) => events.where((e) => e.type == type).length;
   return PlayerMatchSummary(
     rating: rating is num && rating > 0 ? rating : null,
+    minutes: minutes,
     goals: count('GOAL'),
     assists: count('ASSIST'),
     yellowCards: count('YELLOW_CARD'),
     redCards: count('RED_CARD'),
   );
+}
+
+/// Minutes a player was on the pitch, ONLY when both ends of the stint are
+/// anchored by real, unambiguous match data:
+/// - entry: kick-off for a listed starter, or the minute of the single
+///   substitution that brought a listed substitute on;
+/// - exit: the minute of the single substitution that took them off, or of
+///   their red card (whichever came first).
+///
+/// A player who stayed until the final whistle returns null: the app does not
+/// know whether the match went to extra time, so "90" would be a guess. Any
+/// ambiguity (unknown id, player in both lists, several distinct sub-in or
+/// sub-out minutes, exit before entry) also returns null.
+int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
+  final id = player['id']?.toString().trim() ?? '';
+  if (id.isEmpty) return null;
+  bool listed(List<Json> players) =>
+      players.any((p) => p['id']?.toString().trim() == id);
+  final starter = listed(
+    side == 'home' ? detail.homeStarters : detail.awayStarters,
+  );
+  final substitute = listed(
+    side == 'home' ? detail.homeSubstitutes : detail.awaySubstitutes,
+  );
+  if (starter == substitute) return null;
+
+  final subIn = <int>{}, subOut = <int>{}, red = <int>{};
+  for (final incident in detail.incidents) {
+    final incidentSide =
+        incident['side']?.toString() ?? incident['team']?.toString() ?? '';
+    if (incidentSide != side) continue;
+    final minute = incident['minute'];
+    if (minute is! int || minute < 0) continue;
+    final type = incident['type']?.toString();
+    if (type == 'SUBSTITUTION') {
+      if (incident['inPlayerId']?.toString() == id) subIn.add(minute);
+      if (incident['outPlayerId']?.toString() == id) subOut.add(minute);
+    } else if (type == 'RED_CARD' && incident['playerId']?.toString() == id) {
+      red.add(minute);
+    }
+  }
+  // The same occurrence re-issued by the provider collapses into one minute;
+  // two different minutes cannot both be true.
+  if (subIn.length > 1 || subOut.length > 1) return null;
+
+  final int entry;
+  if (starter) {
+    if (subIn.isNotEmpty) return null;
+    entry = 0;
+  } else {
+    if (subIn.isEmpty) return null;
+    entry = subIn.single;
+  }
+  final exits = [...subOut, ...red.where((minute) => minute >= entry)];
+  if (exits.isEmpty) return null;
+  final exit = exits.reduce((a, b) => a < b ? a : b);
+  if (exit < entry) return null;
+  // On the pitch, even if only for stoppage time.
+  return exit - entry < 1 ? 1 : exit - entry;
+}
+
+/// Per-player provider statistics for this match, grouped for the sheet.
+///
+/// Contract: the lineup player may carry `stats`, a map of the keys below to
+/// provider values (a number, or text such as "21/25"). The API does not send
+/// it yet; until it does every section is hidden. Absent, null, empty or
+/// non-numeric values are skipped, and a block whose numbers are all zero is
+/// treated as "no coverage" (providers zero-fill), never shown as zeros.
+const playerMatchStatGroups = <(String, List<(String, String)>)>[
+  (
+    'Con balón',
+    [
+      ('touches', 'Toques'),
+      ('touchesInOppositionBox', 'Toques en área rival'),
+      ('dribbles', 'Regates'),
+    ],
+  ),
+  (
+    'Pases',
+    [
+      ('accuratePasses', 'Pases precisos'),
+      ('chancesCreated', 'Ocasiones creadas'),
+      ('crosses', 'Centros'),
+      ('longBalls', 'Balones largos'),
+    ],
+  ),
+  (
+    'Defensa',
+    [
+      ('recoveries', 'Recuperaciones'),
+      ('tackles', 'Entradas'),
+      ('blocks', 'Bloqueos'),
+      ('duels', 'Duelos'),
+    ],
+  ),
+  ('Disciplina', [('fouls', 'Faltas'), ('offsides', 'Fueras de juego')]),
+];
+
+List<(String, List<(String, String)>)> playerMatchStatSections(Json player) {
+  final raw = player['stats'];
+  if (raw is! Map) return const [];
+
+  String? valueOf(Object? value) {
+    if (value is num) {
+      if (!value.isFinite || value < 0) return null;
+      return value == value.roundToDouble()
+          ? '${value.toInt()}'
+          : value.toStringAsFixed(1);
+    }
+    if (value is String) {
+      final text = value.trim();
+      return RegExp(r'\d').hasMatch(text) ? text : null;
+    }
+    return null;
+  }
+
+  final known = {
+    for (final (_, rows) in playerMatchStatGroups)
+      for (final (key, _) in rows) key,
+  };
+  final present = <String, String>{
+    for (final key in known) key: ?valueOf(raw[key]),
+  };
+  final allZero = present.values.every(
+    (value) => RegExp(r'^[0\s/.%()]*$').hasMatch(value),
+  );
+  if (present.isEmpty || allZero) return const [];
+
+  return [
+    for (final (title, rows) in playerMatchStatGroups)
+      if (rows.any((row) => present.containsKey(row.$1)))
+        (
+          title,
+          [
+            for (final (key, label) in rows)
+              if (present[key] case final value?) (label, value),
+          ],
+        ),
+  ];
 }
 
 /// The single way to open the player sheet (pitch, bench, top rated, best by
@@ -3427,6 +3598,9 @@ Future<void> showMatchPlayerSheet(
   final events = scope == null
       ? const <LineupPlayerEvent>[]
       : lineupEventsForPlayer(player, scope.detail.incidents, side);
+  final minutes = scope == null
+      ? null
+      : playerMinutesPlayed(player, scope.detail, side);
   final canonicalId = player['canonicalId']?.toString().trim() ?? '';
   return showModalBottomSheet<void>(
     context: context,
@@ -3441,6 +3615,7 @@ Future<void> showMatchPlayerSheet(
       side: side,
       team: team,
       events: events,
+      minutes: minutes,
       onOpenProfile: canonicalId.isEmpty
           ? null
           : () {
@@ -3458,6 +3633,7 @@ class MatchPlayerSheet extends StatelessWidget {
     required this.team,
     required this.events,
     required this.onOpenProfile,
+    this.minutes,
     super.key,
   });
 
@@ -3466,6 +3642,7 @@ class MatchPlayerSheet extends StatelessWidget {
   final Entity? team;
   final List<LineupPlayerEvent> events;
   final VoidCallback? onOpenProfile;
+  final int? minutes;
 
   @override
   Widget build(BuildContext context) {
@@ -3473,7 +3650,8 @@ class MatchPlayerSheet extends StatelessWidget {
     final number = shirtNumberOf(player['number'])?.toString() ?? '';
     final position = _positionLabel(player['position']);
     final age = player['age'];
-    final summary = playerMatchSummary(player, events);
+    final summary = playerMatchSummary(player, events, minutes: minutes);
+    final statSections = playerMatchStatSections(player);
     final sideColor = side == 'home' ? lime : awaySideColor;
     final details = <Widget>[
       if (number.isNotEmpty)
@@ -3484,6 +3662,11 @@ class MatchPlayerSheet extends StatelessWidget {
         _SheetChip(
           team!.name,
           color: sideColor,
+          leading: EntityAvatar(
+            team!,
+            key: const ValueKey('player-sheet-team-crest'),
+            size: 16,
+          ),
           key: const ValueKey('player-sheet-team'),
         ),
       if (player['captain'] == true)
@@ -3501,88 +3684,99 @@ class MatchPlayerSheet extends StatelessWidget {
       initialChildSize: .62,
       minChildSize: .35,
       maxChildSize: .92,
-      builder: (context, controller) => ListView(
-        controller: controller,
-        padding: const EdgeInsets.fromLTRB(18, 10, 18, 22),
+      builder: (context, controller) => Column(
         children: [
-          Center(
-            child: Container(
-              width: 38,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _PlayerAvatar(player, size: 64),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  name == null || name.isEmpty ? 'Jugador' : name,
-                  key: const ValueKey('player-sheet-name'),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              if (summary.rating != null) ...[
-                const SizedBox(width: 10),
-                _SheetRating(summary.rating!),
-              ],
-            ],
-          ),
-          if (details.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Wrap(spacing: 6, runSpacing: 6, children: details),
-          ],
-          if (summary.entries.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            const _SheetTitle('Resumen del partido'),
-            Row(
-              key: const ValueKey('player-sheet-summary'),
+          Expanded(
+            child: ListView(
+              controller: controller,
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 16),
               children: [
-                for (final (label, value) in summary.entries)
-                  Expanded(
-                    child: _SheetStat(label: label, value: value),
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    _PlayerAvatar(player, size: 64),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        name == null || name.isEmpty ? 'Jugador' : name,
+                        key: const ValueKey('player-sheet-name'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    if (summary.rating != null) ...[
+                      const SizedBox(width: 10),
+                      _SheetRating(summary.rating!),
+                    ],
+                  ],
+                ),
+                if (details.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Wrap(spacing: 6, runSpacing: 6, children: details),
+                ],
+                if (summary.entries.isNotEmpty) ...[
+                  const SizedBox(height: 18),
+                  const _SheetTitle('Resumen del partido'),
+                  _SheetStatGrid(
+                    summary.entries,
+                    key: const ValueKey('player-sheet-summary'),
+                  ),
+                ],
+                for (final (title, rows) in statSections) ...[
+                  const SizedBox(height: 18),
+                  _SheetTitle(title),
+                  _SheetStatList(
+                    rows,
+                    key: ValueKey('player-sheet-stats-$title'),
+                  ),
+                ],
+                if (events.isNotEmpty) ...[
+                  const SizedBox(height: 18),
+                  const _SheetTitle('En el partido'),
+                  for (final event in events)
+                    _SheetEventRow(
+                      event,
+                      key: ValueKey(
+                        'player-sheet-event-${event.type}-${event.minute}',
+                      ),
+                    ),
+                ],
               ],
             ),
-          ],
-          if (events.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            const _SheetTitle('En el partido'),
-            for (final event in events)
-              _SheetEventRow(
-                event,
-                key: ValueKey(
-                  'player-sheet-event-${event.type}-${event.minute}',
+          ),
+          // Pinned: the way to the full profile is always one tap away.
+          if (onOpenProfile != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+              child: FilledButton.icon(
+                key: const ValueKey('player-sheet-profile'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: lime,
+                  foregroundColor: Colors.black,
+                  minimumSize: const Size.fromHeight(46),
+                ),
+                onPressed: onOpenProfile,
+                icon: const Icon(Icons.person_rounded, size: 18),
+                label: const Text(
+                  'Ver perfil',
+                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
-          ],
-          if (onOpenProfile != null) ...[
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              key: const ValueKey('player-sheet-profile'),
-              style: FilledButton.styleFrom(
-                backgroundColor: lime,
-                foregroundColor: Colors.black,
-                minimumSize: const Size.fromHeight(46),
-              ),
-              onPressed: onOpenProfile,
-              icon: const Icon(Icons.person_rounded, size: 18),
-              label: const Text(
-                'Ver perfil',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
             ),
-          ],
         ],
       ),
     );
@@ -3590,19 +3784,14 @@ class MatchPlayerSheet extends StatelessWidget {
 }
 
 class _SheetChip extends StatelessWidget {
-  const _SheetChip(this.label, {this.color, super.key});
+  const _SheetChip(this.label, {this.color, this.leading, super.key});
   final String label;
   final Color? color;
+  final Widget? leading;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: .06),
-      borderRadius: BorderRadius.circular(999),
-      border: Border.all(color: (color ?? Colors.white).withValues(alpha: .18)),
-    ),
-    child: Text(
+  Widget build(BuildContext context) {
+    final text = Text(
       label,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -3611,6 +3800,97 @@ class _SheetChip extends StatelessWidget {
         fontSize: 12,
         fontWeight: FontWeight.w700,
       ),
+    );
+    return Container(
+      padding: EdgeInsets.fromLTRB(leading == null ? 10 : 6, 5, 10, 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .06),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: (color ?? Colors.white).withValues(alpha: .18),
+        ),
+      ),
+      child: leading == null
+          ? text
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                leading!,
+                const SizedBox(width: 6),
+                Flexible(child: text),
+              ],
+            ),
+    );
+  }
+}
+
+/// Summary tiles, three per row, so any number of real entries fits at 360 px.
+class _SheetStatGrid extends StatelessWidget {
+  const _SheetStatGrid(this.entries, {super.key});
+  final List<(String, String)> entries;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      const gap = 6.0;
+      final width = (constraints.maxWidth - gap * 2) / 3;
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [
+          for (final (label, value) in entries)
+            SizedBox(
+              width: width,
+              child: _SheetStat(label: label, value: value),
+            ),
+        ],
+      );
+    },
+  );
+}
+
+/// One provider stat group (label left, value right) inside a dark card.
+class _SheetStatList extends StatelessWidget {
+  const _SheetStatList(this.rows, {super.key});
+  final List<(String, String)> rows;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .04),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: _cardBorder),
+    ),
+    child: Column(
+      children: [
+        for (final (index, (label, value)) in rows.indexed) ...[
+          if (index > 0) const Divider(height: 1, color: _cardBorder),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, color: Colors.white70),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
     ),
   );
 }
@@ -3666,7 +3946,6 @@ class _SheetStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(right: 6),
     padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
     decoration: BoxDecoration(
       color: Colors.white.withValues(alpha: .04),
