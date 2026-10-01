@@ -146,9 +146,8 @@ void main() {
     expect(find.text('6'), findsOneWidget);
   });
 
-  testWidgets('full mode groups and shows every known and unknown row', (
-    tester,
-  ) async {
+  testWidgets('full mode groups every known row; a type FutBeat cannot '
+      'name is hidden, never shown as a raw provider key', (tester) async {
     await _pump(tester, match: _match(statistics: wideStats));
     for (final group in [
       'Resumen',
@@ -156,14 +155,81 @@ void main() {
       'Pases',
       'Defensa',
       'Disciplina',
-      'Otras estadísticas',
     ]) {
       expect(find.text(group), findsOneWidget, reason: group);
     }
     expect(find.text('Goles esperados (xG)'), findsOneWidget);
     expect(find.text('Tiros totales'), findsOneWidget);
-    expect(find.text('Unknown Alpha'), findsOneWidget);
-    expect(find.text('Unknown Beta'), findsOneWidget);
+    // Only unknown rows would have filled "Otras estadísticas".
+    expect(find.text('Otras estadísticas'), findsNothing);
+    expect(find.text('Unknown Alpha'), findsNothing);
+    expect(find.text('Unknown Beta'), findsNothing);
+  });
+
+  testWidgets('provider spellings of known types are translated', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      match: _match(
+        statistics: const [
+          {'label': 'Throw In', 'home': 21, 'away': 18},
+          {'label': 'goal_kick', 'home': 7, 'away': 9},
+          {'label': 'YellowCard', 'home': 2, 'away': 1},
+          {'label': 'Corner', 'home': 4, 'away': 3},
+          {'label': 'Shot On Goal', 'home': 5, 'away': 2},
+          {'label': 'Free-Kicks', 'home': 11, 'away': 12},
+        ],
+      ),
+    );
+    for (final label in [
+      'Saques de banda',
+      'Saques de meta',
+      'Tarjetas amarillas',
+      'Córners',
+      'Tiros a puerta',
+      'Tiros libres',
+    ]) {
+      expect(find.text(label), findsOneWidget, reason: label);
+    }
+    for (final raw in ['Throw In', 'goal_kick', 'YellowCard', 'Corner']) {
+      expect(find.text(raw), findsNothing, reason: raw);
+    }
+  });
+
+  testWidgets('key statistics skip data-less 0-0 rows, keep real zeros', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      match: _match(
+        statistics: const [
+          {'label': 'Throw In', 'home': 0, 'away': 0},
+          {'label': 'Passes', 'home': 0, 'away': 0},
+          {'label': 'Ball Possession', 'home': '50%', 'away': '50%'},
+          {'label': 'Shots on Goal', 'home': 0, 'away': 0},
+          {'label': 'Red Cards', 'home': 0, 'away': 0},
+          {'label': 'Fouls', 'home': 9, 'away': 11},
+        ],
+      ),
+      mode: StatisticsDisplayMode.compact,
+    );
+    expect(find.text('Saques de banda'), findsNothing);
+    expect(find.text('Pases'), findsNothing);
+    expect(find.text('Posesión'), findsOneWidget);
+    expect(find.text('Tiros a puerta'), findsOneWidget);
+    expect(find.text('Faltas'), findsOneWidget);
+    expect(find.text('Tarjetas rojas'), findsOneWidget);
+    // The full tab still lists every known row.
+    await _pump(
+      tester,
+      match: _match(
+        statistics: const [
+          {'label': 'Throw In', 'home': 0, 'away': 0},
+        ],
+      ),
+    );
+    expect(find.text('Saques de banda'), findsOneWidget);
   });
 
   testWidgets('compact mode stays flat and limits the summary to four rows', (

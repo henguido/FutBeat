@@ -298,8 +298,11 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final venue = detail.stadium ?? match.json['venue']?.toString() ?? '';
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
-    final hasStats =
-        detail.statistics.isNotEmpty || match.statistics.isNotEmpty;
+    // Key statistics only when one row is worth showing (see Statistics).
+    final hasStats = displayableStatistics(
+      detail.statistics.isNotEmpty ? detail.statistics : match.statistics,
+      compact: true,
+    ).isNotEmpty;
     // Recent form + head-to-head: a separate read, never blocking the header
     // or the tabs, failing on its own, read once per open.
     final preview = ref.watch(matchPreviewProvider(widget.id));
@@ -1469,10 +1472,14 @@ class Statistics extends StatelessWidget {
       }
       return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
     }
-    final ordered = orderedStatistics(stats);
-    final visible = mode == StatisticsDisplayMode.compact
-        ? ordered.take(4).toList()
-        : ordered;
+    final compact = mode == StatisticsDisplayMode.compact;
+    final ordered = orderedStatistics(
+      displayableStatistics(stats, compact: compact),
+    );
+    if (ordered.isEmpty) {
+      return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
+    }
+    final visible = compact ? ordered.take(4).toList() : ordered;
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
@@ -1683,7 +1690,7 @@ class _StatisticComparison extends StatelessWidget {
     final higherIsBetter = statisticHigherIsBetter(statisticName(stat));
     final homeLeads = higherIsBetter && comparable && home > away;
     final awayLeads = higherIsBetter && comparable && away > home;
-    final label = _statLabel(statisticName(stat));
+    final label = _statLabel(statisticName(stat)) ?? 'Estadística';
     final homeText = _statValue(stat['home'], stat['unit']);
     final awayText = _statValue(stat['away'], stat['unit']);
 
@@ -1840,12 +1847,32 @@ String _statValue(dynamic value, dynamic unit) {
   return '$text$suffix';
 }
 
-String _statKey(String value) => value
-    .replaceAll('_', ' ')
-    .trim()
-    .toLowerCase()
-    .split(RegExp(r'\s+'))
-    .join(' ');
+/// Canonical key of a provider statistic name: case, `_`/`-`, camelCase and
+/// a singular/plural last word ("Throw In", "throw_ins", "YellowCard") all
+/// map to the same key of [_statLabels] when one exists.
+String _statKey(String value) {
+  final key = value
+      .replaceAllMapped(
+        RegExp(r'([a-z])([A-Z])'),
+        (match) => '${match[1]} ${match[2]}',
+      )
+      .replaceAll(RegExp(r'[_-]'), ' ')
+      .trim()
+      .toLowerCase()
+      .split(RegExp(r'\s+'))
+      .join(' ');
+  if (_statLabels.containsKey(key)) return key;
+  final words = key.split(' ');
+  final last = words.removeLast();
+  for (final variant in [
+    '${last}s',
+    if (last.endsWith('s')) last.substring(0, last.length - 1),
+  ]) {
+    final candidate = [...words, variant].join(' ');
+    if (_statLabels.containsKey(candidate)) return candidate;
+  }
+  return key;
+}
 
 const _statLabels = {
   'possession': 'Posesión',
@@ -1892,17 +1919,65 @@ const _statLabels = {
   'tackles': 'Entradas',
   'crosses': 'Centros',
   'substitutions': 'Cambios',
+  'shot on goal': 'Tiros a puerta',
+  'shot off goal': 'Tiros desviados',
+  'goal attempts': 'Intentos de gol',
+  'penalties': 'Penales',
+  'successful passes': 'Pases precisos',
+  'successful passes percentage': 'Precisión de pases',
+  'passes percentage': 'Precisión de pases',
+  'key passes': 'Pases clave',
+  'long balls': 'Pases largos',
+  'interceptions': 'Intercepciones',
+  'clearances': 'Despejes',
+  'duels won': 'Duelos ganados',
+  'aerials won': 'Duelos aéreos ganados',
+  'dribbles': 'Regates',
+  'big chances': 'Ocasiones claras',
+  'hit woodwork': 'Tiros al palo',
+  'yellow red cards': 'Doble amarilla',
+  'yellowred cards': 'Doble amarilla',
+  // Rows a Spanish source already labels.
+  'posesión': 'Posesión',
+  'tiros': 'Tiros',
+  'tiros a puerta': 'Tiros a puerta',
+  'pases': 'Pases',
+  'córners': 'Córners',
+  'saques de esquina': 'Córners',
+  'faltas': 'Faltas',
+  'tarjetas amarillas': 'Tarjetas amarillas',
+  'tarjetas rojas': 'Tarjetas rojas',
+  'centros': 'Centros',
 };
 
-String _statLabel(String value) {
-  final key = _statKey(value);
-  if (key.isEmpty) return 'Estadística';
-  final known = _statLabels[key];
-  if (known != null) return known;
-  final clean = value.replaceAll('_', ' ').trim().split(RegExp(r'\s+'));
-  final text = clean.join(' ');
-  return '${text[0].toUpperCase()}${text.substring(1)}';
+/// Spanish label of a statistic; null for a type FutBeat cannot name (its
+/// row is not shown: never a raw provider key such as "Throw In").
+String? _statLabel(String value) => _statLabels[_statKey(value)];
+
+/// Counts where 0-0 is a real result (no shots, no cards...). Any other
+/// statistic at 0-0 (throw-ins, passes, xG...) means the provider sent no
+/// data, so it never takes a place among the key statistics.
+bool _meaningfulAtZero(String name) {
+  final key = _statKey(name);
+  return _possessionKeys.contains(key) ||
+      _totalShotKeys.contains(key) ||
+      _onTargetKeys.contains(key) ||
+      _cornerKeys.contains(key) ||
+      _disciplineKeys.contains(key) ||
+      const {'offsides', 'saves', 'goalkeeper saves'}.contains(key);
 }
+
+/// Rows FutBeat can show: a known Spanish label and, for the compact key
+/// statistics, no data-less 0-0 row.
+List<Json> displayableStatistics(List<Json> stats, {bool compact = false}) => [
+  for (final stat in stats)
+    if (_statLabel(statisticName(stat)) != null &&
+        !(compact &&
+            statNumericValue(stat['home']) == 0 &&
+            statNumericValue(stat['away']) == 0 &&
+            !_meaningfulAtZero(statisticName(stat))))
+      stat,
+];
 
 /// Resolves which side an event belongs to using only data already present.
 /// Returns null when the side is genuinely unknown (never guessed).
