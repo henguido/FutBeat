@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'database.dart';
+import 'entity_media.dart';
 import 'live_realtime.dart';
 import 'models.dart';
 import 'profile_context.dart';
@@ -122,10 +123,15 @@ class ApiRepository implements FootballRepository {
     this.dio, [
     this.database,
     this.calendarPolicy = const CalendarCachePolicy(),
+    this.media,
   ]);
   final Dio dio;
   final AppDatabase? database;
   final CalendarCachePolicy calendarPolicy;
+
+  /// Receives every snapshot read, so lazily hydrated media reaches every
+  /// screen showing the same entity.
+  final EntityMediaMemory? media;
 
   final Map<String, DateTime> _calendarFetchedAt = {};
   final Map<String, int> _calendarFailures = {};
@@ -150,6 +156,7 @@ class ApiRepository implements FootballRepository {
     if (snapshot.demo) {
       throw StateError('Cloud endpoint returned demo data');
     }
+    media?.absorb(snapshot);
     return snapshot;
   }
 
@@ -763,7 +770,19 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
   );
 
   ref.onDispose(() => dio.close(force: true));
-  return ApiRepository(dio, ref.watch(databaseProvider));
+  return ApiRepository(
+    dio,
+    ref.watch(databaseProvider),
+    const CalendarCachePolicy(),
+    ref.watch(entityMediaProvider),
+  );
+});
+
+/// Session memory of verified entity media (see [EntityMediaMemory]).
+final entityMediaProvider = Provider<EntityMediaMemory>((ref) {
+  final memory = EntityMediaMemory();
+  ref.onDispose(memory.dispose);
+  return memory;
 });
 
 final snapshotProvider = FutureProvider<Snapshot>(

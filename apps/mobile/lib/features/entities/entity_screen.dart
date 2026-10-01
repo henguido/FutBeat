@@ -156,12 +156,24 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     );
   }
 
+  /// Opening a team asks the server for its squad, which also brings its
+  /// crest: while either is still missing, the same bounded refreshes pick
+  /// them up (the team endpoint never says enrichmentPending).
+  bool _teamHydrating(Snapshot data, String id) {
+    if (widget.type != 'team') return false;
+    final team = data.team(data.resolveEntityId(id));
+    return team != null &&
+        (data.squadState == 'PENDING' || team.imageUrl == null);
+  }
+
   @override
   Widget build(BuildContext context) {
     final type = widget.type, id = widget.id;
     ref.listen(entitySnapshotProvider((type: type, id: id)), (_, next) {
       // Ignore the refresh-in-progress state (it still carries old data).
-      if (!next.isLoading && next.asData?.value.enrichmentPending == true) {
+      final value = next.isLoading ? null : next.asData?.value;
+      if (value != null &&
+          (value.enrichmentPending || _teamHydrating(value, id))) {
         _scheduleEnrichmentRefresh();
       }
     });

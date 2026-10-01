@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/entity_media.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
 import '../core/theme.dart';
@@ -17,6 +18,7 @@ class EntityAvatar extends StatelessWidget {
     final color = hex == null
         ? lime
         : Color(int.parse(hex.replaceFirst('#', 'FF'), radix: 16));
+    final image = entityImageOf(context, entity);
     final fallback = Container(
       width: size,
       height: size,
@@ -38,10 +40,10 @@ class EntityAvatar extends StatelessWidget {
     return Semantics(
       label: entity.name,
       image: true,
-      child: entity.imageUrl == null
+      child: image == null
           ? fallback
           : Image.network(
-              entity.imageUrl!,
+              image,
               width: size,
               height: size,
               fit: BoxFit.contain,
