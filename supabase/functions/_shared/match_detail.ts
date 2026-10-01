@@ -1,7 +1,7 @@
 // Pure normalizers for stored GOAL match detail (lineups, statistics). Shared
 // by the futbeat-api edge function and node tests; no I/O here.
 
-import { isOwnGoalRow, parseEventMinute } from './live_events.ts';
+import { isOwnGoalRow, isShootoutKickRow, parseEventMinute } from './live_events.ts';
 
 export type PlayerMedia = Record<string, { canonicalId?: unknown; image?: unknown }>;
 
@@ -270,7 +270,9 @@ export function normalizeMatchDetail(
   const fullTime = normalizeStatistics(payload.statistics);
 
   const incidents = [
-    ...asList(payload.events).map((value) => {
+    // Shoot-out kicks are not match incidents (same rule as the LIVE
+    // normalizer, see isShootoutKickRow).
+    ...asList(payload.events).filter((value) => !isShootoutKickRow(asRecord(value))).map((value) => {
       const row = asRecord(value);
       const providerType = cleanText(row.type).toUpperCase();
       const type = providerType.includes('MISSED') &&
