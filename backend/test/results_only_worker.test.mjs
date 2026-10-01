@@ -408,6 +408,59 @@ test('pagination: nothing read at all (first page empty but "more" claimed) is s
   assert.equal((await storedMatch(db, match)).status, 'SCHEDULED');
 }));
 
+test('pagination: page 2 partly repeats page 1 -> its new rows are kept, nothing is counted twice, normal end', () => withDb(async (db) => {
+  const { match, external, dateStr } = await seedResultsDueMatch(db);
+  let call = 0;
+  const h = harness(db, {
+    provider: () => {
+      call++;
+      if (call === 1) {
+        return Response.json({ success: true, data: Array.from({ length: 500 }, (_, i) => resultFixture(`world-${i}`)),
+          pagination: { hasMore: true } });
+      }
+      // 200 rows already read, then 100 new ones (the tracked final among them).
+      const data = [...Array.from({ length: 200 }, (_, i) => resultFixture(`world-${300 + i}`)),
+        resultFixture(external), ...Array.from({ length: 99 }, (_, i) => resultFixture(`world-new-${i}`))];
+      return Response.json({ success: true, data, pagination: { hasMore: false } });
+    },
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.truncatedBy, undefined, 'the provider end was reached');
+  assert.equal(value.results.results, 600);
+  assert.equal(call, 2);
+  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 2, away: 1 } });
+  assert.equal((await attempt(db, dateStr)).last_result_count, 600);
+}));
+
+// Deliberate: an HTTP error is a provider failure (quota, auth, outage). The
+// call is recorded as FAILED with its status for the quota ledger and the
+// date is retried with backoff; the pages read before it are not applied.
+test('pagination: an HTTP error after a valid page fails the attempt (ledger FAILED, nothing half-applied)', () => withDb(async (db) => {
+  const { match, external, dateStr } = await seedResultsDueMatch(db);
+  let call = 0;
+  const h = harness(db, {
+    provider: () => {
+      call++;
+      if (call === 1) {
+        return Response.json({ success: true, data: [resultFixture(external), ...Array.from({ length: 499 }, (_, i) => resultFixture(`world-${i}`))],
+          pagination: { hasMore: true } });
+      }
+      return Response.json({ success: false }, { status: 503 });
+    },
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'failed', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(value.results.stage, 'provider_fetch');
+  assert.equal(call, 2, 'no retry loop inside one run');
+  const completion = h.rpcCalls('futbeat_complete_provider_call').at(-1).body;
+  assert.equal(completion.p_status, 'FAILED');
+  assert.equal(completion.p_metadata.providerRequests, 2);
+  assert.equal((await storedMatch(db, match)).status, 'SCHEDULED');
+  assert.equal((await attempt(db, dateStr)).last_outcome, 'FAILED');
+  assert.equal(h.rpcCalls('futbeat_record_live_batch').length, 0);
+}));
+
 test('pagination: 5 full pages reach the page limit -> the 2500 results read are applied, the rest waits for the next attempt', () => withDb(async (db) => {
   const { match, external } = await seedResultsDueMatch(db);
   let call = 0;

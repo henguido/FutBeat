@@ -159,6 +159,27 @@ test('corrected kickoff: the scheduled ghost at the old time (another day, 18 h 
   assert.deepEqual(await shownIds(db, r, old, real), ['abandoned', 'replay']);
 }));
 
+test('double-header: a game scheduled AFTER a played game of the same pairing is a second game, never hidden', () => withDb(async (db) => {
+  const t = await seedTeams(db);
+  const first = hoursAgo(6);
+  await match(db, t, 'first', { start: first, status: 'VERIFIED', score: [2, 0], verified: true, observed: true });
+  await match(db, t, 'second', { start: plus(first, 5), received: hoursAgo(300) });
+  assert.deepEqual(await shownIds(db, t, first, plus(first, 5)), ['first', 'second']);
+  assert.deepEqual(await duplicates(db, t, first), []);
+}));
+
+test('both still scheduled, no evidence, 2 h apart: one fixture (production re-issues look exactly like this)', () => withDb(async (db) => {
+  // Accepted limitation, measured in production: every such pair seen in 134
+  // days was a GOAL re-issue. Once both games are really observed they are
+  // kept apart (see the double-header with observations above).
+  const t = await seedTeams(db);
+  const start = hoursAgo(-30);
+  await match(db, t, 'early', { start, received: hoursAgo(50) });
+  await match(db, t, 'late', { start: plus(start, 2), received: hoursAgo(50) });
+  assert.deepEqual(await shownIds(db, t, start, plus(start, 2)), ['early']);
+  assert.deepEqual(await duplicates(db, t, start), [['single_evidence_3h', 'early', 'late']]);
+}));
+
 test('the survivor is deterministic: verified evidence beats a newer provisional copy; equal twins by id', () => withDb(async (db) => {
   const t = await seedTeams(db);
   const start = hoursAgo(-20); // tomorrow: both scheduled
@@ -370,6 +391,43 @@ test('final correction safety: audited, never from before kickoff, and a confirm
   for (const key of ['id', 'competitionId', 'homeTeamId', 'awayTeamId', 'startTime', 'events']) {
     assert.deepEqual(after[key], before[key], key);
   }
+}));
+
+test('final correction order: two consecutive corrections, replays, a late older observation and called-off answers', () => withDb(async (db) => {
+  const s = await seedLive(db, { started: 5 });
+  const hash = () => createHash('sha256').update(`order-${++seq}`).digest('hex');
+  const insert = (status, home, away, receivedAt, { linked = true, payloadHash = hash() } = {}) => db.query(`insert into futbeat_private.provider_observations(
+      provider,external_match_id,canonical_match_id,received_at,status,home_score,away_score,payload_hash,raw_payload)
+    values('goal_api',$1,$2,$3,$4,$5,$6,$7,'{}') on conflict do nothing`, [s.ext, linked ? s.match : null, receivedAt, status, home, away, payloadHash]);
+  const payload = () => db.query('select payload from futbeat_private.entities where id=$1', [s.match]).then((r) => r.rows[0].payload);
+  await db.query('update futbeat_private.entities set payload=payload||$2::jsonb where id=$1', [s.match,
+    JSON.stringify({ status: 'FINISHED_PENDING_VERIFICATION', score: { home: 2, away: 1 }, provenance: { source: 'GOAL API', receivedAt: hoursAgo(3) } })]);
+
+  // An older terminal answer reaches the store late and unlinked...
+  await insert('FINISHED_PENDING_VERIFICATION', 3, 3, hoursAgo(2.5), { linked: false });
+  // ...then two real corrections in a row.
+  await insert('FINISHED_PENDING_VERIFICATION', 1, 1, hoursAgo(2));
+  await insert('FINISHED_PENDING_VERIFICATION', 1, 2, hoursAgo(1));
+  let p = await payload();
+  assert.deepEqual([p.status, p.score, p.provenance.scoreCorrectedFrom], ['FINISHED_PENDING_VERIFICATION', { home: 1, away: 2 }, { home: 1, away: 1 }]);
+  const latest = JSON.stringify(p);
+
+  // The same observation delivered twice (same hash): stored once, no write.
+  const replay = hash();
+  await insert('FINISHED_PENDING_VERIFICATION', 1, 2, hoursAgo(0.5), { payloadHash: replay });
+  await insert('FINISHED_PENDING_VERIFICATION', 1, 2, hoursAgo(0.5), { payloadHash: replay });
+  assert.equal(JSON.stringify(await payload()), latest, 'a repeated final with the same score rewrites nothing');
+
+  // The late, older answer is linked now (UPDATE OF canonical_match_id fires
+  // the trigger again): it is older than the canonical evidence, ignored.
+  await db.query('update futbeat_private.provider_observations set canonical_match_id=$1 where external_match_id=$2 and canonical_match_id is null', [s.match, s.ext]);
+  assert.deepEqual((await payload()).score, { home: 1, away: 2 });
+  // Called-off / non-terminal answers never touch a final.
+  for (const status of ['POSTPONED', 'CANCELLED', 'ABANDONED', 'SCHEDULED']) {
+    await insert(status, 0, 0, new Date().toISOString());
+  }
+  p = await payload();
+  assert.deepEqual([p.status, p.score], ['FINISHED_PENDING_VERIFICATION', { home: 1, away: 2 }]);
 }));
 
 test('an incomplete observation never erases a complete score; a scheduled answer never replaces a final', () => withDb(async (db) => {

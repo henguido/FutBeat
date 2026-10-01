@@ -44,9 +44,11 @@ bool _isPlayedOrPlaying(FootballMatch match) =>
 /// Always required: same canonical competition, home team and away team.
 /// Then: kickoff within 5 minutes; or within 3 hours when at most one of
 /// the two shows played evidence (two games that were both really played
-/// are two games); or within 24 hours when one is a scheduled ghost and the
-/// other is finished or live. Two finished matches with different final
-/// scores, and matches of different competitions, are never merged.
+/// are two games); or within 24 hours when one is a scheduled ghost that
+/// kicks off BEFORE the other, finished or live, one (its time passed with
+/// no evidence; a later scheduled game can be a real second game). Two
+/// finished matches with different final scores, and matches of different
+/// competitions, are never merged.
 bool _sameFixture(FootballMatch a, FootballMatch b) {
   if (a.competitionId.isEmpty ||
       a.competitionId != b.competitionId ||
@@ -70,9 +72,12 @@ bool _sameFixture(FootballMatch a, FootballMatch b) {
   if (apart <= const Duration(hours: 3) && !(evidence(a) && evidence(b))) {
     return true;
   }
+  bool ghostBefore(FootballMatch ghost, FootballMatch played) =>
+      _isGhostFixture(ghost) &&
+      _isPlayedOrPlaying(played) &&
+      ghost.startTime.isBefore(played.startTime);
   return apart <= const Duration(hours: 24) &&
-      ((_isGhostFixture(a) && _isPlayedOrPlaying(b)) ||
-          (_isGhostFixture(b) && _isPlayedOrPlaying(a)));
+      (ghostBefore(a, b) || ghostBefore(b, a));
 }
 
 /// Defensive UI-level dedupe (the backend calendar is the authority): the
@@ -254,9 +259,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   }
 
   void _setDate(DateTime value) {
-    final previous = DateUtils.dateOnly(date ?? costaRicaNow());
-    final next = DateUtils.dateOnly(value);
     final today = _today ?? DateUtils.dateOnly(costaRicaNow());
+    // With no date picked yet the feed shows its own "today" (the anchor).
+    final previous = DateUtils.dateOnly(date ?? today);
+    final next = DateUtils.dateOnly(value);
     setState(() {
       date = value;
       _collapsed.clear();

@@ -800,6 +800,29 @@ void main() {
       'a',
       'b',
     ]);
+    // A game scheduled LATER than a played game of the same pairing (beyond
+    // 3 hours) may be a real second game: never hidden, either input order.
+    expect(
+      ids([
+        _fixture(
+          'played',
+          'h',
+          'x',
+          hour: 12,
+          status: 'VERIFIED',
+          score: final21,
+        ),
+        _fixture('later', 'h', 'x', hour: 18),
+      ]),
+      ['played', 'later'],
+    );
+    expect(
+      ids([
+        _fixture('later', 'h', 'x', hour: 18),
+        _fixture('playing', 'h', 'x', hour: 12, status: 'LIVE'),
+      ]),
+      ['later', 'playing'],
+    );
     // Another competition (other squad of the same clubs, a friendly):
     // never merged, even at the same kickoff.
     expect(

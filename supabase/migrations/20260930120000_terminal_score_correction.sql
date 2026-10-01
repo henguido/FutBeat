@@ -70,10 +70,11 @@ begin
   if v_kickoff is null or coalesce(new.provider_observed_at,new.received_at)<v_kickoff then
     return new;
   end if;
-  -- Never let an older observation rewrite newer canonical evidence.
+  -- Never let an older observation rewrite newer canonical evidence. Both
+  -- sides are FutBeat receive times (the provider clock is only used against
+  -- the kickoff above).
   v_canonical_at:=futbeat_private.try_timestamptz(v_payload#>>'{provenance,receivedAt}');
-  if v_canonical_at is not null
-     and coalesce(new.provider_observed_at,new.received_at)<v_canonical_at then
+  if v_canonical_at is not null and new.received_at<v_canonical_at then
     return new;
   end if;
   -- ...nor an observation older than a newer terminal one already stored.
@@ -85,8 +86,16 @@ begin
       and (o.received_at,o.id)>(new.received_at,new.id)) then
     return new;
   end if;
-  -- One guarded UPDATE: it only takes the row when the payload is still the
-  -- terminal one that was read (a concurrent writer simply wins).
+  -- One guarded UPDATE. Its WHERE is re-evaluated by PostgreSQL on the row
+  -- version actually written (READ COMMITTED re-check after a concurrent
+  -- writer commits), so the guards hold against whatever committed last:
+  --   * still terminal;
+  --   * the canonical evidence on that row is not newer than this
+  --     observation (monotonic: a newer concurrent correction is never
+  --     overwritten by an older one; an older one is overwritten by this);
+  --   * something still changes (no write, no lock, when it is a no-op).
+  -- Observations of one provider fixture are already serialized by the
+  -- per-fixture advisory lock of futbeat_record_live_batch.
   update futbeat_private.entities e set payload=e.payload
     ||jsonb_build_object(
       'status',case when e.payload->>'status'='VERIFIED' or new.status='VERIFIED'
@@ -100,8 +109,10 @@ begin
         then jsonb_build_object('scoreCorrectedFrom',e.payload->'score') else '{}'::jsonb end)
    where e.id=new.canonical_match_id and e.kind='match'
      and e.payload->>'status' in ('FINISHED_PENDING_VERIFICATION','VERIFIED')
-     and e.payload->'score' is not distinct from v_payload->'score'
-     and e.payload#>>'{provenance,receivedAt}' is not distinct from v_payload#>>'{provenance,receivedAt}';
+     and coalesce(futbeat_private.try_timestamptz(e.payload#>>'{provenance,receivedAt}'),
+       '-infinity'::timestamptz)<=new.received_at
+     and (e.payload->'score' is distinct from v_score
+       or (new.status='VERIFIED' and e.payload->>'status'<>'VERIFIED'));
   return new;
 end $$;
 

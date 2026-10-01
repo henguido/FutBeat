@@ -172,14 +172,135 @@ test('discovery never adds a second entity next to a played twin nor guesses bet
   let { link } = await poll(db, [feedFixture(p, 'twin-ext', { kickoff })]);
   assert.deepEqual([link.created, link.relinked, link.unmapped[0].discovery], [0, 0, 'played_twin_exists']);
   assert.equal(await matchCount(db, p), 1);
-  // Two scheduled ghosts within 24 hours: ambiguous, left alone.
+  // Two scheduled ghosts that could each be this fixture: ambiguous, left alone.
   const g = await seedKnown(db);
   await calendarMatch(db, g, 'g1', { start: new Date(Date.parse(kickoff) - 10 * 3600e3).toISOString(), ext: 'g1-ext' });
-  await calendarMatch(db, g, 'g2', { start: new Date(Date.parse(kickoff) + 10 * 3600e3).toISOString(), ext: 'g2-ext' });
+  await calendarMatch(db, g, 'g2', { start: new Date(Date.parse(kickoff) - 5 * 3600e3).toISOString(), ext: 'g2-ext' });
   ({ link } = await poll(db, [feedFixture(g, 'g-new', { kickoff })]));
   assert.deepEqual([link.created, link.relinked, link.unmapped[0].discovery], [0, 0, 'ambiguous_ghosts']);
   assert.equal(await matchCount(db, g), 2);
   assert.equal(await mapped(db, 'g1-ext') !== null && await mapped(db, 'g2-ext') !== null, true, 'mappings untouched');
+}));
+
+const at = (iso, hours) => new Date(Date.parse(iso) + hours * 3600e3).toISOString();
+const payloadOf = (db, id) => db.query('select payload from futbeat_private.entities where id=$1', [id]).then((r) => r.rows[0].payload);
+
+test('a later scheduled game of the same pairing is never hijacked: the live fixture gets its own match', () => withDb(async (db) => {
+  // Double-header: game 1 is live now (new to the calendar), game 2 is
+  // scheduled 6 h later under its own provider id.
+  const k = await seedKnown(db);
+  const kickoff = hoursAgo(0.5);
+  const later = await calendarMatch(db, k, 'later', { start: at(kickoff, 6), ext: 'dh-2' });
+  const { link } = await poll(db, [feedFixture(k, 'dh-1', { kickoff, home: 1, minute: 30 })]);
+  assert.deepEqual([link.relinked, link.created], [0, 1]);
+  const live = await mapped(db, 'dh-1');
+  assert.notEqual(live, later);
+  assert.equal(await mapped(db, 'dh-2'), later, 'the later game keeps its provider id');
+  assert.equal(new Date((await payloadOf(db, later)).startTime).toISOString(), at(kickoff, 6), 'and its kickoff');
+  // Both are listed; the scheduled later game is not taken for a ghost.
+  const listed = [...await feedIds(db, kickoff), ...await feedIds(db, at(kickoff, 6))].filter((m) => m.homeTeamId === k.home);
+  assert.deepEqual([...new Set(listed.map((m) => m.id))].sort(), [later, live].sort());
+  assert.deepEqual((await db.query('select hidden_match_id from futbeat_private.duplicate_calendar_fixtures(current_date-2,current_date+2) where hidden_match_id=any($1)', [[later, live]])).rows, []);
+}));
+
+test('a ghost whose own provider id is reported in the same batch is alive: never relinked', () => withDb(async (db) => {
+  const k = await seedKnown(db);
+  const kickoff = hoursAgo(1);
+  const ghost = await calendarMatch(db, k, 'alive', { start: at(kickoff, -10), ext: 'alive-old' });
+  const { link } = await poll(db, [
+    feedFixture(k, 'alive-new', { kickoff, minute: 40 }),
+    feedFixture(k, 'alive-old', { kickoff: at(kickoff, -10), status: 'NOT_STARTED', minute: 0 }),
+  ]);
+  assert.deepEqual([link.relinked, link.created], [0, 0]);
+  assert.equal(link.unmapped.find((u) => u.externalMatchId === 'alive-new').discovery, 'ghost_still_reported');
+  assert.equal(await mapped(db, 'alive-old'), ghost);
+  assert.equal(await mapped(db, 'alive-new'), null);
+  assert.equal(new Date((await payloadOf(db, ghost)).startTime).toISOString(), at(kickoff, -10));
+}));
+
+test('wrong competition or an old ghost (> 24 h) is never relinked; the live fixture gets its own match', () => withDb(async (db) => {
+  const k = await seedKnown(db);
+  const kickoff = hoursAgo(0.5);
+  // Same clubs, another competition, 10 h earlier.
+  const otherComp = `fb_comp_ll${k.n}_other`;
+  await put(db, otherComp, 'competition', { name: `Copa ${k.n}` });
+  const cup = `fb_match_ll${k.n}_cup`;
+  await put(db, cup, 'match', { competitionId: otherComp, homeTeamId: k.home, awayTeamId: k.away, startTime: at(kickoff, -10),
+    status: 'SCHEDULED', events: [], statistics: [], provenance: { source: 'GOAL API', receivedAt: hoursAgo(300), verificationStatus: 'PROVISIONAL' } });
+  await map(db, 'match', 'cup-ext', cup);
+  // The same pairing three days ago, never played.
+  const old = await calendarMatch(db, k, 'old', { start: at(kickoff, -72), ext: 'old-ext' });
+  const { link } = await poll(db, [feedFixture(k, 'fresh-1', { kickoff, minute: 12 })]);
+  assert.deepEqual([link.relinked, link.created], [0, 1]);
+  assert.equal(await mapped(db, 'cup-ext'), cup);
+  assert.equal(await mapped(db, 'old-ext'), old);
+  assert.equal(new Date((await payloadOf(db, cup)).startTime).toISOString(), at(kickoff, -10));
+  assert.equal(new Date((await payloadOf(db, old)).startTime).toISOString(), at(kickoff, -72));
+  assert.notEqual(await mapped(db, 'fresh-1'), null);
+}));
+
+test('retries are idempotent: the same fixture polled again after a relink or a creation changes nothing', () => withDb(async (db) => {
+  const k = await seedKnown(db);
+  const kickoff = hoursAgo(1);
+  const ghost = await calendarMatch(db, k, 'retry', { start: at(kickoff, -18), ext: 'retry-old' });
+  const fixture = feedFixture(k, 'retry-new', { kickoff, minute: 50 });
+  assert.equal((await poll(db, [fixture])).link.relinked, 1);
+  const first = await payloadOf(db, ghost);
+  // The same answer replayed twice (worker retry, duplicate cron).
+  for (let i = 0; i < 2; i++) {
+    const { link } = await poll(db, [fixture]);
+    assert.deepEqual([link.relinked, link.created, link.alreadyLinked], [0, 0, 1]);
+  }
+  const again = await payloadOf(db, ghost);
+  assert.deepEqual(again.provenance.previousExternalIds, ['retry-old'], 'audited once');
+  assert.equal(again.provenance.relinkedAt, first.provenance.relinkedAt);
+  assert.equal(await matchCount(db, k), 1);
+  // Direct replay of the discovery itself (no linker in front).
+  const direct = (await db.query('select futbeat_private.discover_goal_live_match($1) v', [JSON.stringify(fixture)])).rows[0].v;
+  assert.deepEqual(direct, { outcome: 'already_linked', matchId: ghost });
+}));
+
+test('two creators of one provider id never leave two matches (writer outside the lock wins the mapping)', () => withDb(async (db) => {
+  const k = await seedKnown(db);
+  const kickoff = hoursAgo(0.5);
+  // A match some other writer created for the same provider id...
+  const theirs = await calendarMatch(db, k, 'theirs', { start: kickoff, ext: null });
+  // ...and maps right between discovery's lookup and its insert. PGlite has
+  // one connection, so the interleaving is reproduced deterministically: the
+  // concurrent writer's mapping lands when discovery inserts its entity.
+  await db.exec(`create function futbeat_private.test_concurrent_mapper() returns trigger language plpgsql as $$
+    begin
+      if new.payload#>>'{provenance,discoveredVia}'='live-feed' then
+        insert into futbeat_private.provider_entities values('goal_api','match',new.payload#>>'{provenance,externalId}','${theirs}');
+      end if;
+      return new;
+    end $$;
+    create trigger test_concurrent_mapper after insert on futbeat_private.entities
+      for each row execute function futbeat_private.test_concurrent_mapper();`);
+  // Linker sees nothing within 3 h? It would link "theirs": take it out of
+  // reach of the linker so only discovery runs (kickoff moved 5 h).
+  await db.query('update futbeat_private.entities set payload=payload||$2::jsonb where id=$1', [theirs, JSON.stringify({ startTime: at(kickoff, 5) })]);
+  const out = (await db.query('select futbeat_private.discover_goal_live_match($1) v', [JSON.stringify(feedFixture(k, 'race-1', { kickoff }))])).rows[0].v;
+  assert.deepEqual(out, { outcome: 'already_linked', matchId: theirs });
+  assert.equal(await mapped(db, 'race-1'), theirs);
+  assert.equal(await matchCount(db, k), 1, 'the entity discovery created was removed, not orphaned');
+  await db.exec('drop trigger test_concurrent_mapper on futbeat_private.entities; drop function futbeat_private.test_concurrent_mapper();');
+}));
+
+test('the catalogue resolver and discovery share one identity per provider id (either order)', () => withDb(async (db) => {
+  const k = await seedKnown(db);
+  const kickoff = hoursAgo(0.5);
+  await poll(db, [feedFixture(k, 'shared-1', { kickoff })]);
+  const discovered = await mapped(db, 'shared-1');
+  const resolve = (ext) => db.query("select futbeat_private.futbeat_resolve_global_entity('goal_api','match',$1,'') v", [ext]).then((r) => r.rows[0].v);
+  assert.equal(await resolve('shared-1'), discovered, 'the ingest reuses the discovered match');
+  // Ingest first: discovery then finds the mapping and creates nothing.
+  const created = await resolve('shared-2');
+  const { link } = await poll(db, [feedFixture(k, 'shared-2', { kickoff: at(kickoff, 6) })]);
+  assert.deepEqual([link.created, link.relinked, link.alreadyLinked], [0, 0, 1]);
+  assert.equal(await mapped(db, 'shared-2'), created);
+  // Players keep their own lock path.
+  assert.match(await db.query("select futbeat_private.futbeat_resolve_global_entity('goal_api','player','pl-1','Jugador') v").then((r) => r.rows[0].v), /^fb_player_/);
 }));
 
 test('evidence stored while a fixture was unmapped is attached once it becomes identifiable', () => withDb(async (db) => {

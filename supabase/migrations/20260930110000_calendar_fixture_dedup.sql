@@ -12,7 +12,10 @@
 -- competition; 2 were cross-provider copies (same score, kickoff equal or
 -- 1 h apart), 2 were re-issued fixtures 2 h apart, 1 was a re-issued
 -- fixture 18 h apart (played twin + scheduled ghost). The ghost always had
--- PROVISIONAL provenance and no provider observation.
+-- PROVISIONAL provenance and no provider observation. Re-checked over 134
+-- days (27 420 matches): 6 same-competition pairs within 24 h, all real
+-- duplicates (3 cross-provider copies, 3 GOAL re-issues 0.5-3 h apart, two
+-- of them both still scheduled); no legitimate double-header.
 --
 -- Rule (generic; canonical ids only, never names, providers or fixtures).
 -- Base, always required: same canonical competition, same canonical home
@@ -24,8 +27,12 @@
 --                      that were both really played, e.g. a friendly
 --                      double-header, each have one and are never merged).
 --   ghost_24h          kickoff within 24 hours AND one is a scheduled
---                      ghost (scheduled status, no played evidence) while
---                      the other is finished or live.
+--                      ghost (scheduled status, no played evidence) whose
+--                      kickoff is EARLIER than the other one, which is
+--                      finished or live (a postponed / re-issued fixture:
+--                      the old time passed without any evidence). A ghost
+--                      LATER than a played twin may be a second real game
+--                      (double-header) and is never hidden by this level.
 -- Never: two FINISHED matches with different final scores (two results
 -- are two games). Different competitions are NEVER merged (other squads of
 -- the same clubs, friendlies); such pairs are only reported for review by
@@ -108,14 +115,17 @@ begin
 end $$;
 
 -- For a scheduled ghost: the id of a finished / live match of the same
--- competition and teams within 24 hours (any calendar day), or null.
+-- competition and teams kicking off AFTER it, within 24 hours (any calendar
+-- day), or null. Never a twin before the ghost: a later scheduled game of
+-- the same pairing can be a real second game.
 create or replace function futbeat_private.fixture_played_twin(
   p_id text,p_comp text,p_home text,p_away text,p_kickoff timestamptz
 ) returns text language sql stable security definer set search_path='' as $$
   select x.id from futbeat_private.entities x
   where x.kind='match' and x.id<>p_id and p_home<>p_away and p_comp is not null
     and x.payload->>'homeTeamId'=p_home and x.payload->>'awayTeamId'=p_away
-    and abs(extract(epoch from (futbeat_private.try_timestamptz(x.payload->>'startTime')-p_kickoff)))<=86400
+    and futbeat_private.try_timestamptz(x.payload->>'startTime')>p_kickoff
+    and futbeat_private.try_timestamptz(x.payload->>'startTime')<=p_kickoff+interval '24 hours'
     and futbeat_private.futbeat_resolve_entity_id('competition',x.payload->>'competitionId')=p_comp
     and futbeat_private.match_read_model_core(x.payload,false)->>'status'
       in ('VERIFIED','FINISHED_PENDING_VERIFICATION','LIVE','HALFTIME','EXTRA_TIME','PENALTIES')
@@ -148,7 +158,7 @@ language sql stable security definer set search_path='' as $$
   )
   select futbeat_private.same_fixture_level(a.id,a.comp,a.home,a.away,a.kickoff,a.final_score,
       b.id,b.comp,b.home,b.away,b.kickoff,b.final_score),b.id,a.id,a.home,a.away,b.kickoff,a.kickoff
-  from ranked a join ranked b on b.home=a.home and b.away=a.away and b.id<>a.id
+  from ranked a join ranked b on b.comp=a.comp and b.home=a.home and b.away=a.away and b.id<>a.id
     and (b.rank,b.id)<(a.rank,a.id)
     and futbeat_private.same_fixture_level(a.id,a.comp,a.home,a.away,a.kickoff,a.final_score,
       b.id,b.comp,b.home,b.away,b.kickoff,b.final_score) is not null
@@ -158,7 +168,8 @@ language sql stable security definer set search_path='' as $$
   from ranked a cross join lateral (
     select futbeat_private.fixture_played_twin(a.id,a.comp,a.home,a.away,a.kickoff) id) t
   where a.ghost and t.id is not null
-    and not exists(select 1 from ranked b where b.id<>a.id and (b.rank,b.id)<(a.rank,a.id)
+    and not exists(select 1 from ranked b where b.comp=a.comp and b.home=a.home and b.away=a.away
+      and b.id<>a.id and (b.rank,b.id)<(a.rank,a.id)
       and futbeat_private.same_fixture_level(a.id,a.comp,a.home,a.away,a.kickoff,a.final_score,
         b.id,b.comp,b.home,b.away,b.kickoff,b.final_score) is not null)
   union all
@@ -196,12 +207,16 @@ create or replace function futbeat_private.build_compact_calendar(
     -- levels). Nothing is deleted; the hidden twin stays reachable by id.
     select a.item,a.updated_at from ranked a
     where not exists(
+        -- The equalities are restated outside same_fixture_level so the
+        -- planner hashes on them (a day is one pass, not a pairwise scan).
         select 1 from ranked b
-        where b.id<>a.id and (b.rank,b.id)<(a.rank,a.id)
+        where b.comp=a.comp and b.home=a.home and b.away=a.away
+          and b.id<>a.id and (b.rank,b.id)<(a.rank,a.id)
           and futbeat_private.same_fixture_level(a.id,a.comp,a.home,a.away,a.kickoff,a.final_score,
             b.id,b.comp,b.home,b.away,b.kickoff,b.final_score) is not null)
-      -- A scheduled ghost whose real twin (played or playing) is on another
-      -- calendar day. Far-future days never have such a twin.
+      -- A scheduled ghost whose real twin (played or playing, kicking off
+      -- after it) may be on another calendar day. Far-future days never
+      -- have such a twin.
       and not (a.ghost and a.kickoff<now()+interval '24 hours'
         and futbeat_private.fixture_played_twin(a.id,a.comp,a.home,a.away,a.kickoff) is not null)
   ), source as (
@@ -277,6 +292,13 @@ create or replace function futbeat_private.build_compact_calendar(
     'matches',compact_matches.value,'players','[]'::jsonb,'standings','[]'::jsonb)
   from source,compact_teams,compact_competitions,compact_matches
 $$;
+
+-- Stored day snapshots were built with the previous selection, and their
+-- version only follows the data: a complete past day would keep a duplicate
+-- for up to calendarHistoryCompleteDays. Expire them (nothing is deleted):
+-- the next read rebuilds a small day inline and serves a big one stale while
+-- the snapshot worker rebuilds it.
+update futbeat_private.compact_calendar_cache set expires_at=now() where expires_at>now();
 
 revoke all on function
   futbeat_private.fixture_display_rank(jsonb),
