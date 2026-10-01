@@ -218,7 +218,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   }
 }
 
-class AppShell extends ConsumerWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.location, required this.child});
   final String location;
   final Widget child;
@@ -229,14 +229,42 @@ class AppShell extends ConsumerWidget {
     '/favorites',
     '/profile',
   ];
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> {
+  /// The tab the user is in. A detail screen pushed from a tab (team,
+  /// player, match, ...) has no tab of its own and keeps this one
+  /// highlighted; opened directly (deep link) it falls back to Partidos.
+  int tab = 0;
+
+  void _track() {
+    final index = AppShell.paths.indexOf(widget.location);
+    if (index >= 0) tab = index;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _track();
+  }
+
+  @override
+  void didUpdateWidget(AppShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _track();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     if (PushService.configured) ref.watch(pushServiceProvider);
     return Scaffold(
-      body: child,
+      body: widget.child,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: paths.contains(location) ? paths.indexOf(location) : 0,
-        onDestinationSelected: (index) => context.go(paths[index]),
+        selectedIndex: tab,
+        onDestinationSelected: (index) => context.go(AppShell.paths[index]),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.sports_soccer),
