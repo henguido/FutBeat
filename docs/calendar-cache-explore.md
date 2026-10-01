@@ -31,7 +31,8 @@ Future scheduled cards continue to show kickoff time. Stored historical non-term
 - `/v1/explore` calls a dedicated five-minute server cache; it never downloads the global snapshot.
 - Up to 12 competitions ranked by authoritative editorial score, then global flag/name/id. High-scoring domestic leagues are not excluded.
 - Up to 16 real teams selected using ±7-day match activity and the competition's editorial score, then distance to kickoff. No invented popularity or player section.
-- Existing logos/country labels and follow controls are shown. No fixed Costa Rica hero or country preference dependency.
+- Existing logos/country labels and follow controls are shown. No fixed Costa Rica hero.
+- `/v1/explore?country=XX` (ISO alpha-2, `futbeat_read_country_explore`, migration `20261001100000`) puts the country's own competitions (primary domestic league first), its national team (`isNationalTeam`) and the clubs of its primary league (`isPrimaryDomesticClub`) ahead of the same global list, cached per country for five minutes. Unknown or supranational codes answer the global list. Everything is derived from `country_catalog`, editorial metadata and match activity; no team, league or country is named. Catalog competitions now also carry `isPrimaryDomestic`/`domesticTier`, so onboarding applies the same country-aware order as Partidos (`sortCompetitionsByFeedPriority`).
 - `entity_search_index` stores normalized name, short name and aliases, maintained on entity writes. GIN `pg_trgm` supports substring/similarity; a prefix B-tree handles short queries.
 - Search ranks exact, prefix, substring/similarity, canonical competition relevance, name/id; no league-name hardcoding or country bonus. Aliases resolve to canonical IDs.
 - Minimum two characters, 275 ms debounce, cancellation when switching query, previous results retained during loading, one-minute bounded memory cache. Empty/one-character UI uses suggestions, not a broad search.

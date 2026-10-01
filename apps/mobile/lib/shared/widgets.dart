@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../core/entity_media.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
+import '../core/relevance.dart';
 import '../core/theme.dart';
 
 class EntityAvatar extends StatelessWidget {
@@ -322,7 +323,7 @@ class EntityTile extends StatelessWidget {
   final bool showFollow;
 
   String get _subtitle {
-    if (type != 'player') return entity.country;
+    if (type != 'player') return entityCountryLabel(entity) ?? '';
 
     final parts = <String>[];
     final number = entity.shirtNumber;

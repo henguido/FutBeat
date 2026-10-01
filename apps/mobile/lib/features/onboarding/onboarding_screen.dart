@@ -10,6 +10,7 @@ import '../../core/interests.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../core/push.dart';
+import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
@@ -32,43 +33,64 @@ bool isCurrentOnboardingRequest(
   required String? currentCountry,
 }) => request.query == currentQuery && request.country == currentCountry;
 
+/// Unsearched suggestions, in the Partidos country-aware order: competitions
+/// use [sortCompetitionsByFeedPriority] (primary domestic league, then big
+/// global competitions, then secondary national ones, then the rest) and
+/// teams [rankCountryTeams]. Follows are deliberately not lifted here, so a
+/// row never jumps while the user is selecting it. [competition] resolves a
+/// team's competition from the same catalog.
 List<Entity> rankOnboardingEntities(
+  String type,
   Iterable<Entity> entities,
-  String? country,
-) {
-  final normalized = country?.trim().toUpperCase();
-  final result = entities.toList();
-  result.sort((a, b) {
-    int score(Entity entity) {
-      final code = entity.json['countryCode']?.toString().toUpperCase();
-      final value = entity.country.toUpperCase();
-      final local =
-          normalized != null &&
-          (code == normalized ||
-              value == normalized ||
-              code?.startsWith('$normalized-') == true);
-      final relevance = (entity.json['relevanceScore'] as num?)?.toInt() ?? 0;
-      final global =
-          entity.json['globalRelevant'] == true ||
-          entity.json['isGlobalRelevant'] == true;
-      return (local ? 100000 : 0) + (global ? 10000 : 0) + relevance;
-    }
-
-    final byScore = score(b).compareTo(score(a));
-    return byScore != 0 ? byScore : a.name.compareTo(b.name);
-  });
-  return result;
-}
+  String? country, {
+  Entity? Function(String id)? competition,
+}) => type == 'team'
+    ? rankCountryTeams(
+        entities,
+        userCountry: country,
+        competitions: competition,
+      )
+    : sortCompetitionsByFeedPriority(
+        entities,
+        follows: const <String>{},
+        userCountry: country,
+      );
 
 List<Entity> onboardingEntitiesForQuery(
+  String type,
   Iterable<Entity> entities,
   String? country,
-  String query,
-) {
+  String query, {
+  Entity? Function(String id)? competition,
+}) {
   final ordered = query.trim().length >= 2
       ? entities.toList()
-      : rankOnboardingEntities(entities, country);
+      : rankOnboardingEntities(
+          type,
+          entities,
+          country,
+          competition: competition,
+        );
   return ordered.take(30).toList();
+}
+
+/// Visible name of a suggestion. A national team flagged by the catalog uses
+/// the localized name of its country code; everything else keeps its name.
+String onboardingEntityName(Entity entity) {
+  if (entity.json['isNationalTeam'] == true) {
+    final localized = countryDisplayName(
+      entity.json['countryCode']?.toString(),
+    );
+    if (localized != null) return localized;
+  }
+  return entity.name;
+}
+
+/// Spanish country/region subtitle; never a raw provider code, and omitted
+/// when it would only repeat the title.
+String? onboardingEntitySubtitle(Entity entity) {
+  final label = entityCountryLabel(entity);
+  return label == null || label == onboardingEntityName(entity) ? null : label;
 }
 
 Future<bool> saveOnboardingSettings({
@@ -476,7 +498,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final country = ref.read(preferenceProvider).asData?.value.effectiveCountry;
     // Search is already ordered by match quality, country and relevance on the
     // backend. Only the unsearched Explore suggestions need local reranking.
-    final entities = onboardingEntitiesForQuery(source, country, query);
+    final entities = onboardingEntitiesForQuery(
+      type,
+      source,
+      country,
+      query,
+      competition: (id) => data?.competition(id),
+    );
     return Column(
       children: [
         TextField(
@@ -579,29 +607,29 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
-  Widget _selectableEntity(
-    Entity entity,
-    String type,
-    bool selected,
-  ) => Semantics(
-    button: true,
-    selected: selected,
-    label: '${entity.name}, ${selected ? 'seleccionado' : 'no seleccionado'}',
-    excludeSemantics: true,
-    child: Card(
-      child: ListTile(
-        minVerticalPadding: 10,
-        leading: EntityAvatar(entity),
-        title: Text(entity.name, maxLines: 2, overflow: TextOverflow.ellipsis),
-        subtitle: entity.country.isEmpty ? null : Text(entity.country),
-        trailing: Icon(
-          selected ? Icons.check_circle : Icons.add_circle_outline,
-          color: selected ? lime : muted,
+  Widget _selectableEntity(Entity entity, String type, bool selected) {
+    final name = onboardingEntityName(entity);
+    final subtitle = onboardingEntitySubtitle(entity);
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$name, ${selected ? 'seleccionado' : 'no seleccionado'}',
+      excludeSemantics: true,
+      child: Card(
+        child: ListTile(
+          minVerticalPadding: 10,
+          leading: EntityAvatar(entity),
+          title: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
+          subtitle: subtitle == null ? null : Text(subtitle),
+          trailing: Icon(
+            selected ? Icons.check_circle : Icons.add_circle_outline,
+            color: selected ? lime : muted,
+          ),
+          onTap: () => _toggle(type, entity.id),
         ),
-        onTap: () => _toggle(type, entity.id),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _catalogError(VoidCallback retry) => Card(
     child: ListTile(
