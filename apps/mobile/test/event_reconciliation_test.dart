@@ -322,6 +322,37 @@ void main() {
       ]);
     });
 
+    test('two occurrences (:1, :2) of one content key are two goals', () {
+      // Same player, same minute, no score-after: the provider listed two
+      // indistinguishable rows in one answer (content keys :1 and :2).
+      FootballMatch build(String secondKey) => Snapshot(
+        _snapshotJson(
+          score: {'home': 2, 'away': 0},
+          events: [
+            _canonicalGoal(
+              'fb_event_k1',
+              30,
+              key: 'fallback:00000000000000aa:1',
+              playerId: 'fb_p1',
+            ),
+            _canonicalGoal(
+              'fb_event_k2',
+              30,
+              key: secondKey,
+              playerId: 'fb_p1',
+            ),
+          ],
+        ),
+      ).match(_match)!;
+      int goals(FootballMatch match) => mergedMatchTimeline(
+        match,
+        MatchDetail.empty(_match),
+      ).where((e) => e['type'] == 'GOAL').length;
+      expect(goals(build('fallback:00000000000000aa:2')), 2);
+      // Another signature (a weak composed key) still folds as before.
+      expect(goals(build('fallback:00000000000000bb:1')), 1);
+    });
+
     test(
       'synthetic goals: folded by ordinal (any minute), capped by score',
       () {

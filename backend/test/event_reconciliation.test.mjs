@@ -52,14 +52,20 @@ async function seed(db, { follow = true } = {}) {
   return { ...ids, n };
 }
 
-// A GOAL fixture exactly as the worker normalizes it: completeSections are
-// the sections present as arrays; the payload hash covers the event content
+// A GOAL fixture as the worker normalizes it: completeSections are the
+// sections present as arrays; the payload hash covers the event content
 // (same inputs as futbeat-goal-live-sync normalizeLiveFixture).
+// The database contract is per upstream key, whatever its origin. GOAL row
+// ids are not stable (20260930140000: the worker keys by content), so rows
+// given an `id` here model an upstream with STABLE row ids: that id is the
+// key. Rows without an id keep the worker's content key. Re-issued GOAL ids
+// as the worker sees them: event_key_duplicates.test.mjs.
+const stableUpstreamKeys = (events) => events.map((event) => (event.providerEventId ? { ...event, eventKey: event.providerEventId } : event));
 function fixture(s, { home = 0, away = 0, minute = 10, status = 'LIVE', events = [], cards = [], substitutions = [], omit = [], source, extra = {} } = {}) {
   const raw = { id: s.ext, matchStatus: status, matchElapsed: minute, homeTeamScore: home, awayTeamScore: away,
     homeTeam: { id: s.homeExt }, awayTeam: { id: s.awayExt }, events, cards, substitutions, ...extra };
   for (const key of omit) delete raw[key];
-  const normalized = normalizeFixtureEvents(raw);
+  const normalized = stableUpstreamKeys(normalizeFixtureEvents(raw));
   const completeSections = fixtureEventSections(raw);
   const obs = { externalMatchId: s.ext, status, minute, score: { home, away }, events: normalized, completeSections, rawPayload: raw,
     ...(source ? { source } : {}) };
@@ -107,7 +113,9 @@ test('payload hash input changes with the event content, not only with keys', ()
   const one = normalizeFixtureEvents({ homeTeam: { id: 'H' }, events: [goalRow(s, { id: '9001', time: '19' })] });
   const two = normalizeFixtureEvents({ homeTeam: { id: 'H' }, events: [goalRow(s, { id: '9001', time: '19', player: 'P2' })] });
   const late = normalizeFixtureEvents({ homeTeam: { id: 'H' }, events: [goalRow(s, { id: '9001', time: '25' })] });
-  assert.deepEqual(one.map((e) => e.eventKey), two.map((e) => e.eventKey), 'same upstream id');
+  assert.deepEqual(one.map((e) => e.providerEventId), two.map((e) => e.providerEventId), 'same upstream id (audit only)');
+  // GOAL ids are re-issued on every answer: the key is the content.
+  assert.notDeepEqual(one.map((e) => e.eventKey), two.map((e) => e.eventKey), 'scorer correction: another content key');
   assert.notEqual(liveEventsContentSignature(one), liveEventsContentSignature(two), 'scorer correction');
   assert.notEqual(liveEventsContentSignature(one), liveEventsContentSignature(late), 'minute correction');
   assert.equal(liveEventsContentSignature(one), liveEventsContentSignature(normalizeFixtureEvents({ homeTeam: { id: 'H' }, events: [goalRow(s, { id: '9001', time: '19' })] })));
@@ -306,7 +314,7 @@ test('provider re-issues a new id for the same goal: one visible, one push', () 
   assert.equal(await goalPushes(db, s.match), 1);
 }));
 
-test('a re-keyed copy in a non-authoritative answer: its own row (no ping-pong), shown once, never a second push', () => withDb(async (db) => {
+test('a re-keyed copy in a non-authoritative answer: no row of its own (no ping-pong), shown once, never a second push', () => withDb(async (db) => {
   const s = await seed(db);
   await record(db, fixture(s));
   await record(db, fixture(s, { home: 1, minute: 20, events: [goalRow(s, { id: '9001', time: '19' })] }));
@@ -315,9 +323,11 @@ test('a re-keyed copy in a non-authoritative answer: its own row (no ping-pong),
     delete partial.completeSections;
     await record(db, partial);
   }
-  // One canonical row per provider id (no shared row, nothing rewritten);
-  // the exact copy is shown once and never pushed.
-  assert.equal((await canonical(db, s.match)).length, 2, 'one row per provider id');
+  // 20260930140000: a copy of a still-listed row is that occurrence; it is
+  // not stored as a row of its own (GOAL re-issues ids on every answer: one
+  // row per id was one more row per event and per answer). Nothing is
+  // rewritten; the occurrence is shown once and never pushed again.
+  assert.equal((await canonical(db, s.match)).length, 1, 'the copy backs the existing row');
   assert.equal((await revisions(db, s.match)).length, 0, 'no key ping-pong');
   assert.equal((await goals(db, s.match)).length, 1);
   assert.equal(await goalPushes(db, s.match), 1);
@@ -539,15 +549,16 @@ test('P2-1: annul one goal and a different player scores in the same poll: the n
   assert.deepEqual(reasons, ['provider_retracted', null], 'the annulled goal is not a correction twin');
 }));
 
-test('P2-2: two provider ids with the same content are two rows; re-polls never ping-pong', () => withDb(async (db) => {
+test('P2-2: two provider ids with the same content: the surplus copy backs the first row; re-polls never ping-pong', () => withDb(async (db) => {
   const s = await seed(db);
   await record(db, fixture(s));
   const rows = [goalRow(s, { id: '7001', time: '12' }), goalRow(s, { id: '7002', time: '12' })];
-  // Score 1-0: the second id is a surplus copy (shown once, never pushed).
+  // Score 1-0: the second id is a surplus copy (shown once, never pushed;
+  // since 20260930140000 not stored as a row of its own).
   for (const minute of [13, 14, 15]) await record(db, fixture(s, { home: 1, minute, events: rows }));
   const stored = await canonical(db, s.match);
-  assert.equal(stored.length, 2);
-  assert.deepEqual(stored.map((r) => r.payload.providerEventKey).sort(), ['7001', '7002']);
+  assert.equal(stored.length, 1);
+  assert.deepEqual(stored.map((r) => r.payload.providerEventKey), ['7001']);
   assert.equal((await revisions(db, s.match)).length, 0, 'no audit churn');
   assert.equal((await goals(db, s.match)).length, 1);
   assert.equal(await goalPushes(db, s.match), 1);
