@@ -111,4 +111,69 @@ void main() {
     await _pump(tester, const TeamSquad([], state: 'CONFIRMED_EMPTY'));
     expect(find.text('Plantilla no disponible'), findsOneWidget);
   });
+
+  test('shirt number: only a real dorsal, never 0 or garbage', () {
+    expect(_player('a', number: 7).shirtNumber, 7);
+    expect(_player('b', number: '23').shirtNumber, 23);
+    expect(_player('c', number: 9.0).shirtNumber, 9);
+    for (final unknown in <Object>[0, '0', '', '  ', 'n/a', -1, 7.5]) {
+      expect(
+        _player('x', number: unknown).shirtNumber,
+        isNull,
+        reason: '$unknown',
+      );
+    }
+    expect(_player('y').shirtNumber, isNull);
+    expect(shirtNumberOf(null), isNull);
+  });
+
+  testWidgets('squad rows never print a 0 dorsal', (tester) async {
+    await _pump(
+      tester,
+      TeamSquad([
+        _player('p1', number: 0),
+        _player('p2', number: 8),
+      ], state: 'AVAILABLE'),
+    );
+    expect(find.text('0'), findsNothing);
+    expect(find.text('8'), findsOneWidget);
+    expect(find.text('–'), findsOneWidget);
+  });
+
+  testWidgets('no player with a position: one plain list, no "Otros"', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      TeamSquad(
+        [
+          _player('c', position: ''),
+          _player('a', position: ''),
+          _player('b', position: ''),
+        ],
+        state: 'STALE',
+        updatedAt: DateTime.utc(2026, 9, 12, 18),
+      ),
+    );
+    expect(find.text('Otros'), findsNothing);
+    expect(find.text('3 jugadores · Actualizada el 12 sep'), findsOneWidget);
+    final names = tester
+        .widgetList<SquadPlayerRow>(find.byType(SquadPlayerRow))
+        .map((row) => row.player.name);
+    expect(names, ['Jugador a', 'Jugador b', 'Jugador c']);
+  });
+
+  testWidgets('mixed positions keep the grouping, "Otros" included', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      TeamSquad([
+        _player('p1', position: 'Goalkeeper'),
+        _player('p2', position: ''),
+      ], state: 'AVAILABLE'),
+    );
+    expect(find.text('Porteros'), findsOneWidget);
+    expect(find.text('Otros'), findsOneWidget);
+  });
 }

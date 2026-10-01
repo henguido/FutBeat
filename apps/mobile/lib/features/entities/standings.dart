@@ -44,8 +44,11 @@ typedef StandingsGroup = ({String? label, List<Json> rows});
 /// With [focusTeamIds] and several groups:
 ///  * one group holds every focus team: only that group (a team profile
 ///    shows the team's group, a Match Center the match's group);
-///  * several groups hold them all (e.g. "Grupo A" plus a ranking of
-///    third-placed teams): null, the right one cannot be told;
+///  * several groups hold them all and exactly one of them is unlabelled:
+///    that one, the competition's overall table (a league table sent
+///    together with labelled stage groups, e.g. playoff groups);
+///  * otherwise several groups hold them all (e.g. "Grupo A" plus a ranking
+///    of third-placed teams): null, the right one cannot be told;
 ///  * no group holds them all (a knockout between teams of different
 ///    groups): each focus team's own group, as separate labelled tables,
 ///    never merged. Null when a focus team is in no group or in more than
@@ -62,7 +65,7 @@ List<StandingsGroup>? standingsGroups(
   final groups = <String, List<Json>>{};
   for (final row in rows) {
     final teamId = row['teamId']?.toString() ?? '';
-    if (teamId.isEmpty || data.team(teamId) == null) return null;
+    if (standingsTeam(data, teamId) == null) return null;
     groups.putIfAbsent(row['group']?.toString() ?? '', () => []).add(row);
   }
   for (final group in groups.values) {
@@ -83,7 +86,14 @@ List<StandingsGroup>? standingsGroups(
     for (final group in all)
       if (focusTeamIds.every((id) => holds(group, id))) group,
   ];
-  if (whole.isNotEmpty) return whole.length == 1 ? whole : null;
+  if (whole.length > 1) {
+    final overall = [
+      for (final group in whole)
+        if (group.label == null) group,
+    ];
+    return overall.length == 1 ? overall : null;
+  }
+  if (whole.isNotEmpty) return whole;
   final picked = <int>{};
   for (final id in focusTeamIds) {
     final candidates = [
@@ -96,6 +106,12 @@ List<StandingsGroup>? standingsGroups(
   final own = [for (final i in picked.toList()..sort()) all[i]];
   return own.any((group) => group.label == null) ? null : own;
 }
+
+/// The team entity of a standings row, also when the row was stored under
+/// an alias id the snapshot redirects to its canonical team.
+Entity? standingsTeam(Snapshot data, String teamId) => teamId.isEmpty
+    ? null
+    : data.team(teamId) ?? data.team(data.resolveEntityId(teamId));
 
 /// Season of [table] for the Forma read: its exact key (`seasonKey`, set
 /// when the table was filed) or its own label. Null when the table carries
@@ -455,7 +471,7 @@ class _Entry {
       teamId: teamId,
       formTeamId: data.resolveEntityId(teamId),
       // standingsGroups only lets through rows whose team is known.
-      team: data.team(teamId)!,
+      team: standingsTeam(data, teamId)!,
       position: (row['position'] as num?)?.toInt() ?? index + 1,
       values: {
         'played': value('played'),

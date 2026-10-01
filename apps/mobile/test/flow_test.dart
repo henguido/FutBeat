@@ -12,6 +12,7 @@ import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
 import 'package:futbeat/main.dart';
+import 'package:go_router/go_router.dart';
 
 class TestRepository implements FootballRepository {
   TestRepository({this.fail = false, this.real = false});
@@ -422,5 +423,44 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a detail pushed from a tab keeps that tab highlighted', (
+    tester,
+  ) async {
+    int selected() =>
+        tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex;
+    await openApp(tester, route: '/explore');
+    expect(selected(), 2);
+    final router = GoRouter.of(tester.element(find.byType(NavigationBar)));
+    router.push('/team/fb_team_sap');
+    await tester.pumpAndSettle();
+    expect(find.byType(EntityScreen), findsOneWidget);
+    expect(selected(), 2, reason: 'Explorar, not Partidos');
+    // Deeper: another detail opened from that team stays in Explorar too.
+    router.push('/player/fb_player_missing');
+    await tester.pumpAndSettle();
+    expect(selected(), 2);
+    router.pop();
+    router.pop();
+    await tester.pumpAndSettle();
+    expect(selected(), 2);
+    // Switching tabs still moves the highlight.
+    await tester.tap(find.text('Favoritos'));
+    await tester.pumpAndSettle();
+    expect(selected(), 3);
+    router.push('/team/fb_team_sap');
+    await tester.pumpAndSettle();
+    expect(selected(), 3);
+  });
+
+  testWidgets('a detail opened directly (deep link) highlights Partidos', (
+    tester,
+  ) async {
+    await openApp(tester, route: '/team/fb_team_sap');
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      0,
+    );
   });
 }

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/entity_media.dart';
 import '../core/models.dart';
 import '../core/providers.dart';
 import '../core/relevance.dart';
@@ -18,6 +19,7 @@ class EntityAvatar extends StatelessWidget {
     final color = hex == null
         ? lime
         : Color(int.parse(hex.replaceFirst('#', 'FF'), radix: 16));
+    final image = entityImageOf(context, entity);
     final fallback = Container(
       width: size,
       height: size,
@@ -39,10 +41,10 @@ class EntityAvatar extends StatelessWidget {
     return Semantics(
       label: entity.name,
       image: true,
-      child: entity.imageUrl == null
+      child: image == null
           ? fallback
           : Image.network(
-              entity.imageUrl!,
+              image,
               width: size,
               height: size,
               fit: BoxFit.contain,
@@ -324,11 +326,11 @@ class EntityTile extends StatelessWidget {
     if (type != 'player') return entityCountryLabel(entity) ?? '';
 
     final parts = <String>[];
-    final number = entity.json['shirtNumber'];
+    final number = entity.shirtNumber;
     final position = playerPositionLabel(
       entity.json['position']?.toString() ?? '',
     );
-    if (number is int) parts.add('#$number');
+    if (number != null) parts.add('#$number');
     if (position.isNotEmpty) parts.add(position);
     if (entity.country.isNotEmpty) parts.add(entity.country);
     return parts.join(' · ');
