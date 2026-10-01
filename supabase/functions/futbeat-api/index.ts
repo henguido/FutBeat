@@ -238,7 +238,11 @@ export default {
     }
 
     if (path.endsWith('/futbeat-api/v1/explore')) {
-      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc('futbeat_read_explore');
+      // Country only reorders/adds local suggestions; the global list stays.
+      const country = (requestUrl.searchParams.get('country') ?? '').trim().toUpperCase();
+      const { data: snapshot, error } = /^[A-Z]{2}$/.test(country)
+        ? await ctx.supabaseAdmin.rpc('futbeat_read_country_explore', { p_country: country })
+        : await ctx.supabaseAdmin.rpc('futbeat_read_explore');
       if (error || !snapshot || snapshot.schemaVersion !== 1 || snapshot.demo !== false) {
         return reply(503, { error: 'Sugerencias temporalmente no disponibles' });
       }

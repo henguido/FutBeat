@@ -7,6 +7,7 @@ import '../../core/interests.dart';
 import '../../core/models.dart';
 import '../../core/profile_context.dart';
 import '../../core/providers.dart';
+import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
@@ -293,7 +294,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                         const SizedBox(height: 8),
                         Center(
                           child: Text(
-                            entity.country,
+                            entityCountryLabel(entity) ?? '',
                             style: const TextStyle(color: muted),
                           ),
                         ),

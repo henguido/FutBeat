@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models.dart';
+import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import 'match_screen.dart' show matchDateLabel;
@@ -38,7 +39,10 @@ List<MatchInfoItem> matchInfoItems({
   required String venue,
   required String localKickoffTime,
 }) {
-  final country = _present(competition.country);
+  // Localized label; a provider code (`intl`, `eurocups`) is never shown.
+  final country = _present(competition.country) == null
+      ? null
+      : entityCountryLabel(competition);
   final round = _present(detail.round);
   // The match's own season only: the competition entity carries its
   // *current* season, which around a rollover is not this match's season.
