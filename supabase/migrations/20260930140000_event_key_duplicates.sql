@@ -59,6 +59,11 @@ begin
  if nullif(a->>'duplicateOf','') is not null and a->>'duplicateOf'=b->>'duplicateOf' then return true; end if;
  if ka is not null and kb is not null and coalesce(a->>'provider','')=coalesce(b->>'provider','') then
    if ka=kb then return true; end if;
+   -- CHANGED: two occurrences (:1, :2) of one content signature listed in
+   -- the same answer are two events by construction (content keys, see
+   -- _shared/live_events.ts), never a weak match.
+   if ka like 'fallback:%' and kb like 'fallback:%'
+     and regexp_replace(ka,':\d+$','')=regexp_replace(kb,':\d+$','') then return false; end if;
    -- Two upstream row ids of one provider are two occurrences; composed
    -- fallback keys (type:minute:...) are weak and fall through.
    if position(':' in ka)=0 and position(':' in kb)=0 then return false; end if;
@@ -168,9 +173,29 @@ begin
   end loop;
   -- Pass 2: active rows. Deterministic order: the first occurrence always
   -- keeps the historical id.
-  for e in select * from futbeat_private.live_events where provider=p_provider and external_match_id=c->>'externalMatchId'
-    and retracted_at is null
-    order by first_seen_at,event_key loop
+  -- CHANGED: rows first seen in this observation are ordered by how well
+  -- they match a row this observation retracted (same player first, then the
+  -- closest minute), so each correction claims its own twin before a
+  -- genuinely new event of the same team can (store_canonical_event pairs
+  -- greedily). With content keys a correction (assist, minute) is a new key:
+  -- by key order alone a new goal could take the twin and lose its push
+  -- while the corrected goal pushed again.
+  for e in select le.* from futbeat_private.live_events le where le.provider=p_provider and le.external_match_id=c->>'externalMatchId'
+    and le.retracted_at is null
+    order by le.first_seen_at=p_received_at,
+      case when le.first_seen_at=p_received_at then (
+        select min(case when nullif(x.payload->>'playerId','') is not null and x.payload->>'playerId'=pp.canonical_id then 0 else 1000 end
+            +abs(coalesce(futbeat_private.event_minute_value(x.payload),999)-coalesce(le.minute,0)))
+        from futbeat_private.canonical_events x
+        left join futbeat_private.provider_entities pp
+          on pp.provider=p_provider and pp.kind='player' and pp.external_id=le.player_external_id
+        left join futbeat_private.provider_entities pt
+          on pt.provider=p_provider and pt.kind='team' and pt.external_id=le.team_external_id
+        where x.match_id=mid and x.event_type=le.event_type and x.retracted_at=p_received_at
+          and coalesce(x.retraction_reason,'') in ('provider_retracted','absent_from_snapshot','superseded')
+          and (x.payload->>'teamId' is not distinct from pt.canonical_id
+            or (nullif(x.payload->>'playerId','') is not null and x.payload->>'playerId'=pp.canonical_id))) end nulls last,
+      le.first_seen_at,le.event_key loop
    if e.event_type not in ('GOAL','YELLOW_CARD','RED_CARD','SUBSTITUTION','VAR','MISSED_PENALTY') then continue; end if;
    tid:=null; pid:=null; aid:=null;
    select canonical_id into tid from futbeat_private.provider_entities where provider=p_provider and kind='team' and external_id=e.team_external_id;

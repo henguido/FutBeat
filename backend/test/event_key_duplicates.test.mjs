@@ -209,7 +209,8 @@ test('manual cleanup: dry run counts, retracts copies only, keeps what users see
   const dryRun = await readFile(new URL('../../supabase/manual/20260930140000_event_key_duplicates_dry_run.sql', import.meta.url), 'utf8');
   const [row] = (await db.query(dryRun)).rows;
   assert.deepEqual([row.match_id, Number(row.candidates), Number(row.goal_candidates), Number(row.occurrences)], [s.match, 4, 3, 2]);
-  assert.equal(row.visible_before, row.visible_after, 'never changes what users see');
+  assert.equal(row.visible_before, row.visible_after);
+  assert.equal(row.visible_same, true, 'never changes what users see');
 
   const cleanup = await readFile(new URL('../../supabase/manual/20260930140000_event_key_duplicates_cleanup.sql', import.meta.url), 'utf8');
   await db.exec(cleanup);
@@ -236,6 +237,57 @@ test('two goals with the same content and no score-after under two ids stay two 
   await record(db, fixture(s, { legacy: true, home: 2, minute: 31, events: [twin('x1'), twin('x2')] }));
   assert.equal((await ofType(db, s.match, 'GOAL')).length, 2);
   assert.equal(await active(db, s.match, 'GOAL'), 2);
+}));
+
+// Correction (new content key) and a new goal of the same team in ONE
+// answer: each correction claims its own twin whatever the key order.
+const pushedGoals = (db, id) => db.query(`select e.payload->>'minute' m, e.payload->>'playerId' p from futbeat_private.notification_outbox o
+  join futbeat_private.canonical_events e on e.id=o.event_id where e.match_id=$1 and e.event_type='GOAL' order by o.id`, [id])
+  .then((r) => r.rows.map((x) => `${x.m}' ${x.p}`).sort());
+for (const variant of [
+  { name: 'assist added to 10\' + another player scores 12\'', fix: { time: '10', assist: 'P3' }, next: { time: '12', player: 'P2' } },
+  { name: 'minute corrected 10\' -> 11\' + the same player scores again 40\'', fix: { time: '11' }, next: { time: '40', player: 'P1' } },
+]) {
+  test(`correction + new same-team goal in one answer, both key orders: ${variant.name}`, () => withDb(async (db) => {
+    const orders = new Set();
+    for (let i = 0; i < 24 && orders.size < 2; i++) {
+      const s = await seed(db);
+      const row = ({ time, player = 'P1', assist, score }) => ({ id: `x${i}-${time}-${player}`, type: 'goal', time, score,
+        homeScorerId: `${player}-${s.n}`, homeScorer: 'Nombre', ...(assist ? { homeAssistId: `${assist}-${s.n}` } : {}) });
+      const evs = [row({ ...variant.fix, score: '1 - 0' }), row({ ...variant.next, score: '2 - 0' })];
+      const [kFix, kNew] = normalizeFixtureEvents({ homeTeam: { id: s.homeExt }, events: evs }).map((e) => e.eventKey);
+      const order = kNew < kFix ? 'new-first' : 'correction-first';
+      if (orders.has(order)) continue;
+      orders.add(order);
+      await record(db, fixture(s, { minute: 5 }));
+      await record(db, fixture(s, { home: 1, minute: 11, events: [row({ time: '10', score: '1 - 0' })] }));
+      await record(db, fixture(s, { home: 2, minute: 41, events: evs }));
+      const nextPlayer = variant.next.player === 'P2' ? s.p2 : s.p1;
+      assert.deepEqual(minutes(await ofType(db, s.match, 'GOAL')), [`${variant.fix.time}' ${s.p1}`, `${variant.next.time}' ${nextPlayer}`], order);
+      assert.deepEqual(await pushedGoals(db, s.match), [`10' ${s.p1}`, `${variant.next.time}' ${nextPlayer}`].sort(), `${order}: one push per goal`);
+      assert.equal(await active(db, s.match, 'GOAL'), 2, order);
+    }
+    assert.equal(orders.size, 2, 'both key orders exercised');
+  }));
+}
+
+test('two real goals by the same player in the same minute without score-after (:1, :2) stay two; one annulled leaves one', () => withDb(async (db) => {
+  const s = await seed(db);
+  const row = (id) => ({ id, type: 'goal', time: '30', homeScorerId: `P1-${s.n}`, homeScorer: 'Nombre' });
+  await record(db, fixture(s, { minute: 5 }));
+  await record(db, fixture(s, { home: 1, minute: 30, events: [row('a1')] }));
+  await record(db, fixture(s, { home: 2, minute: 31, events: [row('b1'), row('b2')] }));
+  assert.equal((await ofType(db, s.match, 'GOAL')).length, 2);
+  assert.equal(await pushes(db, s.match, 'GOAL'), 2);
+  await record(db, fixture(s, { home: 1, minute: 33, events: [row('c1')] }));
+  assert.equal((await ofType(db, s.match, 'GOAL')).length, 1);
+  assert.equal(await pushes(db, s.match, 'GOAL'), 2);
+  // The projection rule on its own: :1 and :2 of one signature never merge.
+  const base = { type: 'GOAL', matchId: 'm', minute: 30, teamId: 'h', playerId: 'p', provider: 'goal_api' };
+  const v = (await db.query("select futbeat_private.visible_match_events($1::jsonb,'h','a',null::jsonb) v", [JSON.stringify([
+    { ...base, id: 'fb_event_1', providerEventKey: 'fallback:00000000000000aa:1' },
+    { ...base, id: 'fb_event_2', providerEventKey: 'fallback:00000000000000aa:2' }])])).rows[0].v;
+  assert.equal(v.length, 2);
 }));
 
 test('migration and cleanup are generic (no fixture, team, player or match literals)', async () => {

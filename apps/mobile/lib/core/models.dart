@@ -132,6 +132,17 @@ bool _minutesCompatible(Json a, Json b) {
   return ea is! int || eb is! int || ea == eb;
 }
 
+final _fallbackOccurrence = RegExp(r':\d+$');
+
+/// `fallback:<signature>:1` vs `fallback:<signature>:2`: the provider listed
+/// two indistinguishable rows in one answer, i.e. two real events.
+bool _distinctFallbackOccurrences(String ka, String kb) =>
+    ka.startsWith('fallback:') &&
+    kb.startsWith('fallback:') &&
+    ka != kb &&
+    ka.replaceFirst(_fallbackOccurrence, '') ==
+        kb.replaceFirst(_fallbackOccurrence, '');
+
 /// Same logical occurrence between two rich (non-synthetic) events.
 /// [sameIdSpace] is false when comparing detail rows (provider ids) with
 /// canonical events (canonical ids): player ids are then not comparable.
@@ -149,6 +160,9 @@ bool _sameRichEvent(
     if (ka == kb) return true;
     // Two upstream row ids are two occurrences; composed keys are weak.
     if (!ka.contains(':') && !kb.contains(':')) return false;
+    // Two occurrences (:1, :2) of one content signature in the same answer
+    // are two events by construction (same rule as the backend).
+    if (_distinctFallbackOccurrences(ka, kb)) return false;
   }
   final sideA = _eventSide(a, match), sideB = _eventSide(b, match);
   if (sideA != null && sideB != null && sideA != sideB) return false;

@@ -16,7 +16,8 @@
 --     and the read model would not collapse the remaining ones);
 --   * aborts when more rows than v_max would be touched (bounded: run the dry
 --     run first; raise v_max deliberately if the count is expected);
---   * one statement, one transaction: all or nothing;
+--   * one statement, one transaction: all or nothing; holds the per-match
+--     ingestion advisory locks of the affected matches while it runs;
 --   * idempotent: retracted rows are never selected again (a second run
 --     retracts 0).
 do $$
@@ -34,6 +35,21 @@ begin
       'futbeat_private.record_live_events(text,timestamptz,jsonb)'::regprocedure)) = 0 then
     raise exception 'event key cleanup: apply migration 20260930140000_event_key_duplicates first';
   end if;
+
+  -- Serialize with live ingestion: the same per-match advisory lock as
+  -- record_live_batch_core (hashtext(provider||':'||external_match_id)),
+  -- taken in a stable order for every match that has copies, then the
+  -- candidates are selected under those locks.
+  for r in
+    select distinct s.provider, s.external_match_id
+    from futbeat_private.live_match_state s
+    where s.canonical_match_id in (
+      select c.match_id from futbeat_private.canonical_events c
+      where c.retracted_at is null and nullif(c.payload->>'duplicateOf','') is not null)
+    order by s.provider, s.external_match_id
+  loop
+    perform pg_advisory_xact_lock(hashtext(r.provider || ':' || r.external_match_id));
+  end loop;
 
   with copies as (
     select c.id, c.match_id, c.first_seen_at, c.payload->>'duplicateOf' root,
