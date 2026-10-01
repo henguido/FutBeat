@@ -75,44 +75,54 @@ export default {
         return reply(400, { error: 'Entidad inválida' });
       }
 
+      // The demands below and the stored read are independent (the read is a
+      // stable snapshot of what is stored; a demand only queues work for the
+      // workers), so they run concurrently: the profile answers in the time
+      // of its slowest RPC instead of the sum of all of them.
+      //
       // Opening a player records a deduplicated hydration demand (server-side
       // only). A failure here never blocks the cached profile.
-      let enrichmentPending = false;
-      if (type === 'player') {
-        const { data: demand, error: demandError } = await ctx.supabaseAdmin.rpc(
-          'futbeat_request_player_profile',
-          { p_player_id: id },
-        );
-        if (demandError) {
-          console.warn('player profile demand unavailable');
-        } else {
-          enrichmentPending = asRecord(demand).enrichmentPending === true;
-        }
-      }
+      const playerDemand = type === 'player'
+        ? ctx.supabaseAdmin.rpc('futbeat_request_player_profile', { p_player_id: id })
+          .then(({ data: demand, error: demandError }) => {
+            if (demandError) {
+              console.warn('player profile demand unavailable');
+              return false;
+            }
+            return asRecord(demand).enrichmentPending === true;
+          }, () => {
+            console.warn('player profile demand unavailable');
+            return false;
+          })
+        : Promise.resolve(false);
       // Opening a team whose squad is missing or stale records ONE central
       // deduplicated demand (#111); the squad planner fetches it later.
-      if (type === 'team') {
-        const { error: squadError } = await ctx.supabaseAdmin.rpc(
-          'futbeat_request_team_squad',
-          { p_team_id: id },
-        );
-        if (squadError) console.warn('team squad demand unavailable');
-        // Missing/stale match coverage records ONE central deduplicated
-        // demand (#150); the worker fetches it later. Never blocks the read.
-        const { error: matchesError } = await ctx.supabaseAdmin.rpc(
-          'futbeat_request_team_matches',
-          { p_team_id: id },
-        );
-        if (matchesError) console.warn('team matches demand unavailable');
-      }
+      // Missing/stale match coverage records ONE central deduplicated demand
+      // (#150); the worker fetches it later. Neither blocks the read.
+      const teamDemands = type === 'team'
+        ? Promise.all([
+          ctx.supabaseAdmin.rpc('futbeat_request_team_squad', { p_team_id: id })
+            .then(({ error: squadError }) => {
+              if (squadError) console.warn('team squad demand unavailable');
+            }, () => console.warn('team squad demand unavailable')),
+          ctx.supabaseAdmin.rpc('futbeat_request_team_matches', { p_team_id: id })
+            .then(({ error: matchesError }) => {
+              if (matchesError) console.warn('team matches demand unavailable');
+            }, () => console.warn('team matches demand unavailable')),
+        ])
+        : Promise.resolve();
 
-      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
-        'futbeat_read_entity_detail',
-        {
-          p_type: type,
-          p_id: id,
-        },
-      );
+      const [enrichmentPending, , { data: snapshot, error }] = await Promise.all([
+        playerDemand,
+        teamDemands,
+        ctx.supabaseAdmin.rpc(
+          'futbeat_read_entity_detail',
+          {
+            p_type: type,
+            p_id: id,
+          },
+        ),
+      ]);
 
       if (error) {
         return reply(503, { error: 'Datos temporalmente no disponibles' });
