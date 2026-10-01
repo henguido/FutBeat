@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { openDatabase } from '../storage/database.mjs';
 import { goalFixtureScore } from '../../supabase/functions/_shared/live_events.ts';
 import { normalizeGoalApiFixtures } from '../providers/goal_api.mjs';
@@ -25,6 +26,12 @@ const realB = { matchStatus: 'FINISHED', matchPeriod: 'FINISHED', homeTeamScore:
   homeTeamExtraScore: null, awayTeamExtraScore: null };
 const fin = (live, ft, extra = {}) => ({ matchStatus: 'FINISHED', homeTeamScore: live?.[0], awayTeamScore: live?.[1],
   homeTeamFtScore: ft?.[0], awayTeamFtScore: ft?.[1], ...extra });
+const txt = (v) => (v == null ? v : String(v));
+const pen = (live, ft, et, pens, extra = {}, as = txt) => ({ matchStatus: 'AFTER_PEN', matchPeriod: 'FINISHED',
+  homeTeamScore: as(live[0]) ?? null, awayTeamScore: as(live[1]) ?? null,
+  homeTeamFtScore: as(ft[0]) ?? null, awayTeamFtScore: as(ft[1]) ?? null,
+  homeTeamExtraScore: as(et[0]) ?? null, awayTeamExtraScore: as(et[1]) ?? null,
+  homeTeamPenaltyScore: pens[0] == null ? null : txt(pens[0]), awayTeamPenaltyScore: pens[1] == null ? null : txt(pens[1]), ...extra });
 const S = (h, a) => ({ home: h, away: a });
 const NONE = S(null, null);
 
@@ -67,6 +74,32 @@ const cases = [
   ['digit text with spaces, lowercase status', { matchStatus: 'finished', homeTeamScore: ' 2 ', awayTeamScore: '1', homeTeamFtScore: '2', awayTeamFtScore: ' 1' }, S(2, 1)],
   ['empty strings are not scores', fin(['', ''], ['', '']), NONE],
   ['missing status: the running total', { homeTeamScore: '1', awayTeamScore: '1' }, S(1, 1)],
+  // AFTER_PEN (production audit, 117 answers): the running total carries a
+  // +1/+2 bonus for the shoot-out winner; the result is FT + ET.
+  ['after pens: +1 bonus to the home shoot-out winner', pen([3, 2], [2, 2], [0, 0], [4, 3]), S(2, 2)],
+  ['after pens: two-legged tie, FT+ET not tied, bonus to the away winner', pen([0, 2], [0, 1], [0, 0], [2, 4]), S(0, 1)],
+  ['after pens: two-legged tie, no extra time played (ET 0-0 in answer)', pen([2, 0], [1, 0], [0, 0], [4, 3]), S(1, 0)],
+  ['after pens: extra-time goals, +1 bonus', pen([5, 4], [2, 2], [2, 2], [4, 3]), S(4, 4)],
+  ['after pens: extra-time goals, +2 bonus', pen([6, 4], [2, 2], [2, 2], [4, 3]), S(4, 4)],
+  ['after pens: +2 bonus to the away winner', pen([1, 3], [1, 1], [0, 0], [2, 3]), S(1, 1)],
+  ['after pens: no bonus, totals agree', pen([1, 1], [1, 1], [0, 0], [5, 4]), S(1, 1)],
+  ['after pens: running total absent', pen([null, null], [1, 1], [0, 0], [5, 4]), S(1, 1)],
+  ['after pens: running total reset 0-0', pen([0, 0], [2, 2], [1, 0], [5, 4]), S(3, 2)],
+  ['after pens: excess without a penalty score: unknown', pen([3, 2], [2, 2], [0, 0], [null, null]), NONE],
+  ['after pens: excess with a tied penalty score: unknown', pen([3, 2], [2, 2], [0, 0], [3, 3]), NONE],
+  ['after pens: bonus to the shoot-out loser: unknown', pen([3, 2], [2, 2], [0, 0], [3, 4]), NONE],
+  ['after pens: excess on both sides: unknown', pen([3, 3], [2, 2], [0, 0], [4, 3]), NONE],
+  ['after pens: excess of 3: unknown', pen([5, 2], [2, 2], [0, 0], [4, 3]), NONE],
+  ['after pens: negative excess: unknown', pen([1, 2], [2, 2], [0, 0], [3, 4]), NONE],
+  ['after pens: incomplete penalty score: unknown', pen([3, 2], [2, 2], [0, 0], ['4', null]), NONE],
+  ['after pens without FT: unknown, never the running total', pen([3, 2], [null, null], [0, 0], [4, 3]), NONE],
+  ['after pens without FT and no bonus: still unknown', pen([2, 2], [null, null], [null, null], [4, 3]), NONE],
+  ['after pens without the extra-time score but a bonus: unknown', pen([3, 2], [2, 2], [null, null], [4, 3]), NONE],
+  ['after pens: FT+ET below half-time: unknown', pen([3, 2], [2, 2], [0, 0], [4, 3], { homeTeamHalftimeScore: '3', awayTeamHalftimeScore: '0' }), NONE],
+  ['after pens: JSON numbers', pen([3, 2], [2, 2], [0, 0], [4, 3], {}, Number), S(2, 2)],
+  ['finished never takes a shoot-out bonus', fin(['3', '2'], ['2', '2'], { homeTeamPenaltyScore: '4', awayTeamPenaltyScore: '3' }), NONE],
+  ['after extra time never takes a shoot-out bonus', { matchStatus: 'AFTER_ET', homeTeamScore: '3', awayTeamScore: '2', homeTeamFtScore: '2', awayTeamFtScore: '2',
+    homeTeamExtraScore: '0', awayTeamExtraScore: '0', homeTeamPenaltyScore: '4', awayTeamPenaltyScore: '3' }, NONE],
 ];
 
 test('goalFixtureScore: provider semantics, cases A/B and edge cases', () => {
@@ -207,4 +240,89 @@ test('read model: reset observation and reset match-detail cache show the real r
   await observe(db, live, { matchStatus: 'LIVE', matchPeriod: 'SECOND_HALF', homeTeamScore: '2', awayTeamScore: '0' },
     { status: 'LIVE', received: new Date().toISOString() });
   assert.deepEqual((await shown(db, live)).score, S(2, 0));
+}));
+
+test('AFTER_PEN: terminal correction and results reconciliation adopt FT + ET over an inflated stored final', () => withDb(async (db) => {
+  const reconcile = async (m) => db.query('select futbeat_private.finalize_goal_results_date($1::date,now())', [await providerDate(db, m)]);
+  // Terminal correction trigger: stored 3-2 (running total with the bonus).
+  const a = await seedMatch(db, { score: [3, 2] });
+  await observe(db, a, pen([3, 2], [2, 2], [0, 0], [4, 3]));
+  assert.deepEqual(await stored(db, a), { status: 'FINISHED_PENDING_VERIFICATION', score: S(2, 2), corrected: 'true' });
+  // A later answer with the bonus drifting to +2 confirms the same result.
+  await observe(db, a, pen([4, 2], [2, 2], [0, 0], [4, 3]), { received: new Date().toISOString() });
+  assert.deepEqual((await stored(db, a)).score, S(2, 2));
+  // An answer giving the bonus to the shoot-out loser is unknown: no change.
+  const b = await seedMatch(db, { score: [3, 2] });
+  await observe(db, b, pen([3, 2], [2, 2], [0, 0], [3, 4]));
+  assert.deepEqual((await stored(db, b)).score, S(3, 2));
+  // AFTER_PEN without FT never writes the running total.
+  const c = await seedMatch(db, { score: [2, 2] });
+  await observe(db, c, pen([3, 2], [null, null], [null, null], [4, 3]));
+  assert.deepEqual((await stored(db, c)).score, S(2, 2));
+  // Results reconciliation (trigger bypassed: observation stored before the
+  // canonical final, as the pre-fix worker left it).
+  const d = await seedMatch(db, { status: 'SCHEDULED', score: null, received: hoursAgo(40) });
+  await observe(db, d, pen([0, 2], [0, 1], [0, 0], [2, 4]), { received: hoursAgo(2) });
+  await reconcile(d);
+  assert.deepEqual((await stored(db, d)).score, S(0, 1));
+  await db.query("update futbeat_private.entities set payload=jsonb_set(payload,'{score}',$2::jsonb) where id=$1", [d.match, JSON.stringify(S(0, 2))]);
+  await observe(db, d, pen([0, 3], [0, 1], [0, 0], [2, 4]), { received: new Date().toISOString() });
+  await db.query("update futbeat_private.entities set payload=jsonb_set(payload,'{score}',$2::jsonb) where id=$1", [d.match, JSON.stringify(S(0, 2))]);
+  await reconcile(d);
+  assert.deepEqual((await stored(db, d)).score, S(0, 1), 'reconciliation adopts FT + ET');
+  // Read model: a non-terminal payload shows FT + ET from the AFTER_PEN answer.
+  const e = await seedMatch(db, { status: 'SCHEDULED', score: null, received: hoursAgo(40) });
+  await db.query(`insert into futbeat_private.match_detail_cache(match_id,provider,external_match_id,fetched_at,payload)
+    values($1,'goal_api',$2,now(),$3)`, [e.match, e.ext, JSON.stringify(pen([5, 4], [2, 2], [2, 2], [4, 3]))]);
+  assert.deepEqual((await shown(db, e)).score, S(4, 4));
+}));
+
+test('manual AFTER_PEN repair: dry-run lists only unambiguous inflated finals; apply is guarded by the expected count', () => withDb(async (db) => {
+  const script = readFileSync(new URL('../../supabase/manual/2026-10-01_after_pen_repair.sql', import.meta.url), 'utf8');
+  const dryRun = script.slice(script.indexOf('-- [dry-run]'), script.indexOf('-- [apply]'));
+  const apply = script.slice(script.indexOf('-- [apply]'));
+  // Store the inflated running total as the final (as the pre-fix rule did).
+  const inflate = (m, score) => db.query("update futbeat_private.entities set payload=jsonb_set(payload,'{score}',$2::jsonb) where id=$1", [m.match, JSON.stringify(score)]);
+  // a: candidate (bonus +2 in an older answer, +1 in the latest).
+  const a = await seedMatch(db, { score: [3, 2] });
+  await observe(db, a, pen([4, 2], [2, 2], [0, 0], [4, 3]), { received: hoursAgo(3) });
+  await observe(db, a, pen([3, 2], [2, 2], [0, 0], [4, 3]), { received: hoursAgo(2) });
+  await inflate(a, S(3, 2));
+  // b: AFTER_PEN answers disagree on the result -> not a candidate.
+  const b = await seedMatch(db, { score: [3, 2] });
+  await observe(db, b, pen([3, 2], [2, 2], [0, 0], [4, 3]), { received: hoursAgo(3) });
+  await observe(db, b, pen([3, 1], [2, 1], [0, 0], [4, 3]), { received: hoursAgo(2) });
+  await inflate(b, S(3, 2));
+  // c: the stored score is no running total (independent value) -> untouched.
+  const c = await seedMatch(db, { score: [3, 2] });
+  await observe(db, c, pen([3, 2], [2, 2], [0, 0], [4, 3]));
+  await inflate(c, S(5, 5));
+  // d: the latest terminal answer is FINISHED, not AFTER_PEN -> untouched.
+  const d = await seedMatch(db, { score: [3, 2] });
+  await observe(db, d, pen([3, 2], [2, 2], [0, 0], [4, 3]), { received: hoursAgo(3) });
+  await observe(db, d, fin(['2', '2'], ['2', '2']), { received: hoursAgo(2) });
+  await inflate(d, S(3, 2));
+  const results = await db.exec(dryRun);
+  assert.equal(results[0].rows[0].after_pen_semantics_installed, true);
+  assert.deepEqual(results.at(-1).rows.map((r) => [r.id, r.old, r.new, Number(r.candidate_count)]), [[a.match, S(3, 2), S(2, 2), 1]]);
+  // A wrong expected count raises and writes nothing.
+  await assert.rejects(db.exec(apply.replace('__EXPECTED_COUNT__', '2')), /expected 2/);
+  assert.deepEqual((await stored(db, a)).score, S(3, 2));
+  // The right count applies, with the audit trail; status/receivedAt unchanged.
+  const payload = async (m) => (await db.query('select payload from futbeat_private.entities where id=$1', [m.match])).rows[0].payload;
+  const before = await payload(a);
+  await db.exec(apply.replace('__EXPECTED_COUNT__', '1'));
+  const after = await payload(a);
+  assert.deepEqual(after.score, S(2, 2));
+  assert.equal(after.status, before.status);
+  assert.equal(after.provenance.receivedAt, before.provenance.receivedAt);
+  assert.equal(after.provenance.scoreCorrected, true);
+  assert.deepEqual(after.provenance.scoreCorrectedFrom, S(3, 2));
+  assert.equal(after.provenance.scoreCorrectionReason, 'goal_after_pen_shootout_bonus');
+  assert.ok(after.provenance.scoreCorrectionObservation != null && after.provenance.scoreCorrectedAt && after.provenance.scoreCorrectionEvidence);
+  assert.deepEqual((await stored(db, b)).score, S(3, 2));
+  assert.deepEqual((await stored(db, c)).score, S(5, 5));
+  assert.deepEqual((await stored(db, d)).score, S(3, 2));
+  // Idempotent: nothing left to repair.
+  assert.equal((await db.exec(dryRun)).at(-1).rows.length, 0);
 }));

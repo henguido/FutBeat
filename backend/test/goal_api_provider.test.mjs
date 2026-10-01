@@ -169,8 +169,22 @@ test('GOAL API final lifecycle maps extra time and penalties to verified', async
     );
 
     assert.equal(snapshot.matches[0].status, 'VERIFIED');
-    assert.deepEqual(snapshot.matches[0].score, { home: 1, away: 0 });
+    // AFTER_PEN: the running total carries the shoot-out winner's bonus, so
+    // without FtScore the result is unknown (status is still final).
+    assert.deepEqual(snapshot.matches[0].score, matchStatus === 'AFTER_PEN' ? null : { home: 1, away: 0 });
   }
+  // AFTER_PEN with FT + ET: the +1 bonus for the shoot-out winner is dropped.
+  const snapshot = await normalizeGoalApiFixtures(
+    [fixture({
+      matchStatus: 'AFTER_PEN', matchPeriod: 'FINISHED',
+      homeTeamScore: '1', awayTeamScore: '0', homeTeamFtScore: '0', awayTeamFtScore: '0',
+      homeTeamExtraScore: '0', awayTeamExtraScore: '0', homeTeamPenaltyScore: '4', awayTeamPenaltyScore: '3',
+    })],
+    resolver(),
+    '2026-09-18T04:40:00Z',
+  );
+  assert.equal(snapshot.matches[0].status, 'VERIFIED');
+  assert.deepEqual(snapshot.matches[0].score, { home: 0, away: 0 });
 });
 
 test('GOAL API media outside its delivery host is rejected', async () => {
