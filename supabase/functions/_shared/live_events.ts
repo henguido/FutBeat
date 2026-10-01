@@ -113,11 +113,20 @@ export function fallbackSignatureHash(value: string) {
 }
 
 /**
- * Identity for a row without a provider id: every stable piece of evidence
- * (never timestamps or the raw row) plus the occurrence of that signature in
- * the payload, in payload order. Two genuinely indistinguishable rows are
- * two keys (:1, :2); the same payload always yields the same keys, and a
- * later extra occurrence only adds :n without renaming earlier ones.
+ * Identity of every GOAL event row: every stable piece of evidence (never
+ * timestamps or the raw row) plus the occurrence of that signature in the
+ * payload, in payload order. Two genuinely indistinguishable rows are two
+ * keys (:1, :2); the same payload always yields the same keys, and a later
+ * extra occurrence only adds :n without renaming earlier ones.
+ *
+ * GOAL row ids are NOT identities: measured on production live_events
+ * (2026-10-01), GOAL re-issues a fresh events[] / cards[] / substitutions[]
+ * id for every row on every answer (the same goal was seen under 28 ids in
+ * one match). Keying by that id made every answer a "new" event (one more
+ * row per event and per poll, duplicated scorers). The id is kept as
+ * providerEventId for audit only. Consequence: a content correction (scorer,
+ * minute, team) is retract + add, never an in-place update (the database
+ * pairs both as a correction: one push).
  */
 function fallbackKey(parts: unknown[], seen: Map<string, number>) {
   const signature = JSON.stringify(parts.map((part) => part ?? null));
@@ -228,7 +237,7 @@ export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
     const assistExternalId = clean(row.homeAssistId ?? row.awayAssistId);
     const { minute, extraMinute } = parseEventMinute(row.time);
     const scoreAfter = parseScoreAfter(row.score);
-    const eventKey = clean(row.id) || fallbackKey([
+    const eventKey = fallbackKey([
       type, minute, extraMinute, teamExternalId, playerExternalId,
       assistExternalId, scoreAfter && `${scoreAfter.home}-${scoreAfter.away}`,
       providerType,
@@ -236,6 +245,7 @@ export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
 
     events.push({
       eventKey,
+      providerEventId: clean(row.id) || null,
       type,
       minute,
       extraMinute,
@@ -259,12 +269,13 @@ export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
     const teamExternalId = homePlayer ? homeTeamId : awayPlayer ? awayTeamId : "";
     const playerExternalId = homePlayer || awayPlayer;
     const { minute, extraMinute } = parseEventMinute(row.time);
-    const eventKey = clean(row.id) || fallbackKey([
+    const eventKey = fallbackKey([
       type, minute, extraMinute, teamExternalId, playerExternalId, card,
     ], seen);
 
     events.push({
       eventKey,
+      providerEventId: clean(row.id) || null,
       type,
       minute,
       extraMinute,
@@ -287,13 +298,14 @@ export function normalizeFixtureEvents(fixture: Record<string, unknown>) {
       ? awayTeamId
       : "";
     const { minute, extraMinute } = parseEventMinute(row.time);
-    const eventKey = clean(row.id) || fallbackKey([
+    const eventKey = fallbackKey([
       "SUBSTITUTION", minute, extraMinute, teamExternalId, ids[0], ids[1],
       clean(row.substitution),
     ], seen);
 
     events.push({
       eventKey,
+      providerEventId: clean(row.id) || null,
       type: "SUBSTITUTION",
       minute,
       extraMinute,

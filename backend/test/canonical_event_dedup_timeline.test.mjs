@@ -43,11 +43,15 @@ async function seed(db, { follow = true } = {}) {
   return { ...ids, n };
 }
 
-// A GOAL LIVE fixture exactly as the worker normalizes it.
+// A GOAL LIVE fixture as the worker normalizes it. Rows given an `id` model
+// an upstream with STABLE row ids (that id is the key; the database contract
+// is per upstream key). GOAL itself re-issues ids, so the worker keys by
+// content (20260930140000, see event_key_duplicates.test.mjs).
+const stableUpstreamKeys = (events) => events.map((event) => (event.providerEventId ? { ...event, eventKey: event.providerEventId } : event));
 function fixture(s, { home = 0, away = 0, minute = 10, status = 'LIVE', events = [], cards = [], substitutions = [] } = {}) {
   const raw = { id: s.ext, matchStatus: status, matchElapsed: minute, homeTeamScore: home, awayTeamScore: away,
     homeTeam: { id: s.homeExt }, awayTeam: { id: s.awayExt }, events, cards, substitutions };
-  const obs = { externalMatchId: s.ext, status, minute, score: { home, away }, events: normalizeFixtureEvents(raw), rawPayload: raw };
+  const obs = { externalMatchId: s.ext, status, minute, score: { home, away }, events: stableUpstreamKeys(normalizeFixtureEvents(raw)), rawPayload: raw };
   obs.payloadHash = createHash('sha256').update(JSON.stringify([obs, ++seq])).digest('hex');
   return obs;
 }
@@ -292,10 +296,17 @@ test('fallback identity E/F: anonymous cards/subs/VAR are kept; rows with a prov
   assert.equal(await canonicalCount(db, s, 'YELLOW_CARD'), 2);
   assert.equal((await visible(db, s.match)).filter((e) => e.type === 'YELLOW_CARD').length, 2);
 
-  // F. provider row ids stay the identity and the canonical id formula is unchanged.
+  // F. GOAL row ids are re-issued on every answer (20260930140000): the
+  // worker keys by content and keeps the id for audit; an upstream with
+  // stable ids (fixture) keeps the canonical id formula unchanged.
   const t = await seed(db);
   const withId = [goalRow(t, { id: '7001', time: '12' }), goalRow(t, { id: '7002', time: '12' })];
-  assert.deepEqual(normalizeFixtureEvents({ homeTeam: { id: t.homeExt }, events: withId }).map((e) => e.eventKey), ['7001', '7002']);
+  const keyed = normalizeFixtureEvents({ homeTeam: { id: t.homeExt }, events: withId });
+  assert.deepEqual(keyed.map((e) => e.providerEventId), ['7001', '7002']);
+  assert.deepEqual(keyed.map((e) => e.eventKey.replace(/:\d+$/, '')), Array(2).fill(keyed[0].eventKey.replace(/:\d+$/, '')));
+  assert.deepEqual(keyed.map((e) => e.eventKey.slice(-2)), [':1', ':2']);
+  const reissued = normalizeFixtureEvents({ homeTeam: { id: t.homeExt }, events: withId.map((r, i) => ({ ...r, id: `re-${i}` })) });
+  assert.deepEqual(reissued.map((e) => e.eventKey), keyed.map((e) => e.eventKey), 're-issued ids: same keys');
   await record(db, fixture(t, { minute: 11 }));
   await record(db, fixture(t, { minute: 13, events: [withId[0]] }));
   const expected = (await db.query("select 'fb_event_'||md5(concat_ws('|',$1::text,'goal_api','GOAL',12,null,$2::text,$3::text,'')) v", [t.match, t.homeExt, `P1-${t.n}`])).rows[0].v;
@@ -313,7 +324,7 @@ test('F/G. added time survives LIVE and detail: 90+5 is minute 90 + extraMinute 
   const sub = { id: '9502', team: 'away', time: '90+3', substitutionPlayerId: `P2-${s.n}|P1-${s.n}` };
   const [liveGoal, liveCard, liveSub] = normalizeFixtureEvents({ homeTeam: { id: s.homeExt }, awayTeam: { id: s.awayExt },
     events: [row], cards: [card], substitutions: [sub] });
-  assert.deepEqual([liveGoal.minute, liveGoal.extraMinute, liveGoal.eventKey], [90, 5, '9500']);
+  assert.deepEqual([liveGoal.minute, liveGoal.extraMinute, liveGoal.providerEventId], [90, 5, '9500']);
   assert.deepEqual([liveCard.minute, liveCard.extraMinute], [45, 2]);
   assert.deepEqual([liveSub.minute, liveSub.extraMinute], [90, 3]);
   // Fallback identity (no upstream id) keeps added time apart.
@@ -323,7 +334,7 @@ test('F/G. added time survives LIVE and detail: 90+5 is minute 90 + extraMinute 
 
   const detail = normalizeMatchDetail({ payload: { events: [row], cards: [card], substitutions: [sub] } });
   const detailGoal = detail.incidents.find((e) => e.type === 'GOAL');
-  assert.deepEqual([detailGoal.minute, detailGoal.extraMinute, detailGoal.providerEventId], [90, 5, liveGoal.eventKey]);
+  assert.deepEqual([detailGoal.minute, detailGoal.extraMinute, detailGoal.providerEventId], [90, 5, liveGoal.providerEventId]);
   assert.deepEqual(detail.incidents.map((e) => e.providerEventId).sort(), ['9500', '9501', '9502']);
 
   await record(db, fixture(s, { home: 0, minute: 88 }));
