@@ -11,12 +11,23 @@ import 'models.dart';
 class EntityMediaMemory extends ChangeNotifier {
   Map<String, String> _images = const {};
 
+  /// Alias -> canonical ids seen in every snapshot read this session. A
+  /// separate notifier: only a new redirect (not a new image) notifies.
+  final EntityRedirectMemory redirects = EntityRedirectMemory();
+
   /// Immutable; replaced (never mutated) on every change.
   Map<String, String> get images => _images;
 
   String? imageFor(String id) => _images[id];
 
+  @override
+  void dispose() {
+    redirects.dispose();
+    super.dispose();
+  }
+
   void absorb(Snapshot snapshot) {
+    redirects.absorb(snapshot.entityRedirects);
     final next = {..._images};
     for (final entity in [
       ...snapshot.teams,
@@ -40,6 +51,52 @@ class EntityMediaMemory extends ChangeNotifier {
     }
     _images = Map.unmodifiable(next);
     notifyListeners();
+  }
+}
+
+/// Session memory of entity redirects (alias id -> canonical id) from every
+/// snapshot read. Lets ids stored before a merge (e.g. a follow of the legacy
+/// `fb_comp_cr`) resolve to the canonical entity on read, without rewriting
+/// what is stored.
+class EntityRedirectMemory extends ChangeNotifier {
+  Map<String, String> _redirects = const {};
+
+  /// Immutable; replaced (never mutated) on every change.
+  Map<String, String> get redirects => _redirects;
+
+  void absorb(Map<String, String> redirects) {
+    if (redirects.isEmpty) return;
+    if (redirects.entries.every(
+      (entry) => _redirects[entry.key] == entry.value,
+    )) {
+      return;
+    }
+    _redirects = Map.unmodifiable({..._redirects, ...redirects});
+    notifyListeners();
+  }
+
+  /// Follows the redirect chain (bounded, cycle-safe) like
+  /// [Snapshot.resolveEntityId].
+  String resolve(String id) {
+    var current = id;
+    final seen = <String>{};
+    for (var i = 0; i < 8 && seen.add(current); i++) {
+      final next = _redirects[current];
+      if (next == null || next.isEmpty || next == current) break;
+      current = next;
+    }
+    return current;
+  }
+
+  /// `type:id` follow key with its id resolved ('match' ids never redirect).
+  String resolveFollowKey(String key) {
+    final separator = key.indexOf(':');
+    if (separator <= 0 || separator == key.length - 1) return key;
+    final type = key.substring(0, separator);
+    if (type == 'match') return key;
+    final id = key.substring(separator + 1);
+    final resolved = resolve(id);
+    return resolved == id ? key : '$type:$resolved';
   }
 }
 

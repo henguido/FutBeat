@@ -78,8 +78,12 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(followsProvider);
-    final followed =
-        state.asData?.value.contains('${widget.type}:${widget.id}') ?? false;
+    // Follows are canonical (see followsProvider); so is the key asked here.
+    final key = ref
+        .watch(entityMediaProvider)
+        .redirects
+        .resolveFollowKey('${widget.type}:${widget.id}');
+    final followed = state.asData?.value.contains(key) ?? false;
     final what = widget.label == null ? '' : ' ${widget.label}';
     return IconButton(
       tooltip: state.hasError
@@ -104,9 +108,12 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
                 if (state.hasError) {
                   ref.invalidate(followsProvider);
                 } else {
-                  await ref
-                      .read(databaseProvider)
-                      .toggle(widget.type, widget.id);
+                  await toggleFollow(
+                    ref.read(databaseProvider),
+                    ref.read(entityMediaProvider).redirects,
+                    widget.type,
+                    widget.id,
+                  );
                 }
               } catch (_) {
                 if (context.mounted) {

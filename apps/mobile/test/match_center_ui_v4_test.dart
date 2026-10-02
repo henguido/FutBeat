@@ -285,6 +285,72 @@ void main() {
       expect(find.text('Sin alineaciones'), findsNothing);
       expect(find.text('Equipo Visitante'), findsNothing);
       expect(tester.takeException(), isNull);
+
+      // Coaches without any player (GOAL sent only `type: coach` rows) is
+      // not a lineup: a clear empty state, coaches kept as secondary info.
+      final coachesOnly = MatchDetail({
+        'matchId': 'fb_match',
+        'available': true,
+        'pending': false,
+        'detailLevel': 'partial',
+        'home': {
+          'starters': <dynamic>[],
+          'substitutes': <dynamic>[],
+          'coach': {'name': 'Entrenador Local'},
+        },
+        'away': {
+          'starters': <dynamic>[],
+          'substitutes': <dynamic>[],
+          'coach': {'name': 'Entrenador Visitante'},
+        },
+        'statistics': <dynamic>[],
+        'incidents': <dynamic>[],
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Lineups(snapshot, snapshot.matches.single, coachesOnly),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Alineación no publicada'), findsOneWidget);
+      expect(find.text('Entrenador'), findsNothing);
+      expect(find.text('Entrenadores'), findsOneWidget);
+      expect(find.text('Entrenador Local'), findsOneWidget);
+      expect(find.text('Entrenador Visitante'), findsOneWidget);
+      expect(find.text('Titulares'), findsNothing);
+      expect(find.text('Sin alineaciones'), findsNothing);
+      expect(tester.takeException(), isNull);
+
+      // One side with players, the other coach-only: the coach-only card
+      // states that its lineup is not published.
+      final oneSide = MatchDetail({
+        ...coachesOnly.json,
+        'home': {
+          'starters': <dynamic>[],
+          'substitutes': [
+            {'id': 'home-12', 'name': 'Suplente Local', 'number': '12'},
+          ],
+          'coach': {'name': 'Entrenador Local'},
+        },
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Lineups(snapshot, snapshot.matches.single, oneSide),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Suplente Local'), findsOneWidget);
+      expect(find.text('Alineación no publicada'), findsOneWidget);
+      expect(find.text('Entrenador Visitante'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     },
   );
 }
