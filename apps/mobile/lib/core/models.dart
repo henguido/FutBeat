@@ -1,3 +1,5 @@
+import 'countries.dart';
+
 typedef Json = Map<String, dynamic>;
 
 String? safePlayerImage(dynamic value) {
@@ -270,11 +272,84 @@ List<Json> _foldSyntheticGoals(
   return remaining;
 }
 
+/// Spanish label of a national-team category from the API's
+/// `nationalTeamSuffix` ("U19" → "Sub-19", "W" → "Femenino",
+/// "U20 W" → "Sub-20 Femenino"). Empty for the senior men's team; null when
+/// a token is not understood (the caller then keeps the provider name).
+String? nationalTeamCategoryLabel(String? suffix) {
+  final parts = <String>[];
+  for (final token in (suffix ?? '').trim().toUpperCase().split(
+    RegExp(r'\s+'),
+  )) {
+    if (token.isEmpty) continue;
+    final age = RegExp(r'^U(\d{2})$').firstMatch(token);
+    if (age != null) {
+      parts.add('Sub-${age.group(1)}');
+    } else if (token == 'W') {
+      parts.add('Femenino');
+    } else {
+      return null;
+    }
+  }
+  return parts.join(' ');
+}
+
+final _providerSuffix = RegExp(
+  r'^(.+?)(?:\s+(u\d{2}))?(?:\s+(w|women))?$',
+  caseSensitive: false,
+);
+
+/// Age/gender suffix of a provider team name in the API's form ("U19",
+/// "W", "U20 W"; "" for none), parsed like the server does.
+String providerNationalTeamSuffix(String name) {
+  final match = _providerSuffix.firstMatch(name.trim());
+  if (match == null) return '';
+  return [
+    if (match.group(2) != null) match.group(2)!.toUpperCase(),
+    if (match.group(3) != null) 'W',
+  ].join(' ');
+}
+
+/// Visible name of a team (single resolver for every screen).
+///
+/// A national team identified by the server (`nationalTeamCode` +
+/// `nationalTeamSuffix`, or the Explore contract `isNationalTeam` +
+/// `countryCode`) shows its localized country name plus category ("Polonia
+/// Sub-19", "Países Bajos"). Anything else, or a code/category the app does
+/// not know, keeps the provider name.
+String teamDisplayName(Entity entity) {
+  final json = entity.json;
+  final String? code;
+  final String? suffix;
+  if (json['nationalTeamCode'] is String) {
+    code = json['nationalTeamCode'] as String;
+    suffix = json['nationalTeamSuffix']?.toString();
+  } else if (json['isNationalTeam'] == true) {
+    // The Explore contract carries no category: read it from the provider
+    // name with the server's grammar, so "Poland U19" never shows as the
+    // senior team.
+    code = json['countryCode']?.toString();
+    suffix = providerNationalTeamSuffix(entity.name);
+  } else {
+    return entity.name;
+  }
+  final country = countryDisplayName(code);
+  if (country == null) return entity.name;
+  final category = nationalTeamCategoryLabel(suffix);
+  if (category == null) return entity.name;
+  return category.isEmpty ? country : '$country $category';
+}
+
 class Entity {
   Entity(this.json);
   final Json json;
   String get id => json['id'] as String;
+
+  /// Provider name, as stored. Screens show [displayName].
   String get name => json['name'] as String;
+
+  /// What users see: the localized national-team name or [name].
+  String get displayName => teamDisplayName(this);
   String get country => json['country'] as String? ?? '';
 
   /// Player dorsal (`shirtNumber`, legacy `number`); null when unknown.
@@ -289,7 +364,7 @@ class Entity {
   String get initials {
     final short = (json['shortName'] as String?)?.trim();
     if (short != null && short.isNotEmpty) return short;
-    final result = name
+    final result = displayName
         .split(RegExp(r'\s+'))
         .where((s) => s.isNotEmpty)
         .take(2)
@@ -300,6 +375,7 @@ class Entity {
 
   bool matches(String query) => [
     name,
+    displayName,
     json['shortName'] ?? '',
     country,
     ...?json['aliases'] as List?,

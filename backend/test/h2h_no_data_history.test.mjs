@@ -226,7 +226,7 @@ test('7. quota/planner: central team-fixtures lane only; reads and extend make z
       return { data: (await db.query(`select public.${name}(${keys.map((k, i) => `${k}=>$${i + 1}`).join(',')}) v`, keys.map((k) => args[k]))).rows[0]?.v ?? null, error: null };
     } catch (error) { return { data: null, error: { message: error.message } }; }
   } } };
-  const context = vm.createContext({ Request, Response, URL, JSON, console: { warn() {}, error() {}, log() {} },
+  const context = vm.createContext({ Request, Response, URL, JSON, setTimeout, clearTimeout, console: { warn() {}, error() {}, log() {} },
     withSupabase: (_o, h) => (req) => h(req, ctx), ...matchDetail, ...calendarCache });
   vm.runInContext(stripTypeScriptTypes(source.replace(/^import\s[\s\S]*?;\r?\n/gm, '')).replace('export default {', 'globalThis.__api = {'), context);
   const res = await context.__api.fetch(new Request(`https://api.test/functions/v1/futbeat-api/v1/match-h2h?id=${target}&extend=1`));

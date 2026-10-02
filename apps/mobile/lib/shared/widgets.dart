@@ -39,7 +39,7 @@ class EntityAvatar extends StatelessWidget {
       ),
     );
     return Semantics(
-      label: entity.name,
+      label: entity.displayName,
       image: true,
       child: image == null
           ? fallback
@@ -347,7 +347,7 @@ class EntityTile extends StatelessWidget {
   Widget build(BuildContext context) => Card(
     child: ListTile(
       leading: EntityAvatar(entity),
-      title: Text(entity.name),
+      title: Text(entity.displayName),
       subtitle: _subtitle.isEmpty
           ? null
           : Text(_subtitle, style: const TextStyle(color: muted)),

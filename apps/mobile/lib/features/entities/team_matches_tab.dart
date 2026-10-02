@@ -287,7 +287,7 @@ class ProfileMatchRow extends StatelessWidget {
           if (!end) ...[EntityAvatar(team, size: 20), const SizedBox(width: 6)],
           Flexible(
             child: Text(
-              team.name,
+              team.displayName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: end ? TextAlign.end : TextAlign.start,
@@ -309,7 +309,7 @@ class ProfileMatchRow extends StatelessWidget {
         '${matchDayLabel(match.startTime)} ${match.startTime.year}',
         if (match.isAwaitingUpdate) 'Por confirmar',
         if (match.isLive) match.statusLabel,
-        '${home.name} $center ${away.name}',
+        '${home.displayName} $center ${away.displayName}',
         if (competition != null) competition.name,
         if (result != null) {'G': 'Ganó', 'E': 'Empató', 'P': 'Perdió'}[result],
       ].whereType<String>().join(', '),

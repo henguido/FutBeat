@@ -572,7 +572,7 @@ class PlayerHeader extends StatelessWidget {
                     if (team != null)
                       ProfileHeaderChip(
                         icon: Icons.shield_outlined,
-                        label: team!.name,
+                        label: team!.displayName,
                         onTap: () => context.push('/team/${team!.id}'),
                       )
                     else
@@ -623,8 +623,8 @@ class PlayerEventRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final type = assist ? 'ASSIST' : event['type']?.toString() ?? '';
-    final home = data.team(match.homeId)?.name ?? '';
-    final away = data.team(match.awayId)?.name ?? '';
+    final home = data.team(match.homeId)?.displayName ?? '';
+    final away = data.team(match.awayId)?.displayName ?? '';
     final opponent = [home, away].where((name) => name.isNotEmpty).join(' vs ');
     final color = assist ? lime : eventColor(type);
     return InkWell(

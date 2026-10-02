@@ -176,10 +176,15 @@ int _queryScore(Entity entity, String query) {
 
   final name = _fold(entity.name);
   final shortName = _fold(entity.json['shortName']?.toString() ?? '');
-  final aliases = (entity.json['aliases'] as List? ?? const <dynamic>[])
-      .map((value) => _fold(value.toString()))
-      .where((value) => value.isNotEmpty)
-      .toList();
+  final aliases =
+      [
+            ...(entity.json['aliases'] as List? ?? const <dynamic>[]),
+            // A national team is also found by its visible (Spanish) name.
+            if (entity.displayName != entity.name) entity.displayName,
+          ]
+          .map((value) => _fold(value.toString()))
+          .where((value) => value.isNotEmpty)
+          .toList();
 
   if (name == q || shortName == q || aliases.contains(q)) return 1000;
   if (name.startsWith(q) || shortName.startsWith(q)) return 820;
@@ -239,8 +244,8 @@ List<Entity> rankSearchEntities({
   scored.sort((left, right) {
     final byScore = right.$2.compareTo(left.$2);
     if (byScore != 0) return byScore;
-    final byName = left.$1.name.toLowerCase().compareTo(
-      right.$1.name.toLowerCase(),
+    final byName = left.$1.displayName.toLowerCase().compareTo(
+      right.$1.displayName.toLowerCase(),
     );
     return byName != 0 ? byName : left.$1.id.compareTo(right.$1.id);
   });

@@ -233,7 +233,7 @@ class NextMatchCard extends StatelessWidget {
       label: [
         if (competition != null) competition.name,
         if (match.isLive) 'En vivo ${match.score}' else day,
-        '${home.name} contra ${away.name}',
+        '${home.displayName} contra ${away.displayName}',
         if (!match.isLive) localTime(context, match.startTime),
       ].join(', '),
       button: true,
@@ -332,7 +332,7 @@ class _Side extends StatelessWidget {
       EntityAvatar(team, size: 40),
       const SizedBox(height: 6),
       Text(
-        team.name,
+        team.displayName,
         maxLines: 2,
         textAlign: TextAlign.center,
         overflow: TextOverflow.ellipsis,
@@ -368,8 +368,8 @@ class TeamFormStrip extends StatelessWidget {
           child: Semantics(
             label:
                 '${_resultWords[item.result]} ${item.match.score}, '
-                '${data.team(item.match.homeId)?.name ?? ''} contra '
-                '${data.team(item.match.awayId)?.name ?? ''}',
+                '${data.team(item.match.homeId)?.displayName ?? ''} contra '
+                '${data.team(item.match.awayId)?.displayName ?? ''}',
             button: true,
             excludeSemantics: true,
             onTap: () => context.push(
@@ -504,7 +504,11 @@ class SummaryTable extends StatelessWidget {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            standingsTeam(data, '${row['teamId']}')?.name ?? '',
+                            standingsTeam(
+                                  data,
+                                  '${row['teamId']}',
+                                )?.displayName ??
+                                '',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
