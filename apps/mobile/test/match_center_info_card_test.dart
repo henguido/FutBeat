@@ -75,6 +75,7 @@ Map<String, dynamic> _detail({
   String? round = '5',
   String? stadium = 'Estadio Info',
   String? referee = 'Árbitro Info',
+  String? stage,
 }) => {
   'matchId': _match,
   'available': true,
@@ -84,6 +85,7 @@ Map<String, dynamic> _detail({
   'round': round,
   'stadium': stadium,
   'referee': referee,
+  'stage': ?stage,
   'home': <String, dynamic>{},
   'away': <String, dynamic>{},
   'statistics': const <dynamic>[],
@@ -195,7 +197,116 @@ Future<void> _showCard(WidgetTester tester) async {
 Finder _inCard(Finder finder) => find.descendant(of: _card, matching: finder);
 
 void main() {
+  group('round, phase and referee labels', () {
+    test('a matchday number is a Jornada; a named round is localized', () {
+      expect(matchRoundHeadline('4'), 'Jornada 4');
+      expect(matchRoundHeadline('Quarter-finals'), 'Cuartos de final');
+      expect(matchRoundHeadline('Semi-finals'), 'Semifinales');
+      expect(matchRoundHeadline('Final'), 'Final');
+      expect(
+        matchRoundHeadline('Cuartos de final - Vuelta'),
+        'Cuartos de final - Vuelta',
+      );
+      expect(matchRoundHeadline(' '), isNull);
+      expect(matchRoundHeadline(null), isNull);
+    });
+
+    test('provider phases: generic labels translated, names kept', () {
+      expect(matchPhaseLabel('Group Stage'), 'Fase de grupos');
+      expect(matchPhaseLabel('Group 4'), 'Grupo 4');
+      expect(matchPhaseLabel('Group b'), 'Grupo B');
+      expect(matchPhaseLabel('Girone C'), 'Grupo C');
+      expect(matchPhaseLabel('1/8-finals'), 'Octavos de final');
+      expect(matchPhaseLabel('1/16-finals'), 'Dieciseisavos de final');
+      expect(matchPhaseLabel('1/64-finals'), '1/64 de final');
+      expect(
+        matchPhaseLabel('Qualification - First Stage'),
+        'Clasificación - Primera fase',
+      );
+      expect(matchPhaseLabel('Clausura'), 'Clausura');
+      expect(
+        matchPhaseLabel('Southern League Premier Central'),
+        'Southern League Premier Central',
+      );
+    });
+
+    test('a phase is hidden when it tells nothing new', () {
+      expect(
+        matchStageLabel(stage: 'Current', competitionName: 'Liga'),
+        isNull,
+      );
+      expect(
+        matchStageLabel(
+          stage: 'premier league',
+          competitionName: 'Premier League',
+        ),
+        isNull,
+      );
+      expect(
+        matchStageLabel(
+          stage: 'Quarter-finals',
+          competitionName: 'Copa',
+          round: 'Quarter-finals',
+        ),
+        isNull,
+      );
+      expect(matchStageLabel(stage: null, competitionName: 'Liga'), isNull);
+      expect(
+        matchStageLabel(stage: 'Clausura', competitionName: 'Liga', round: '5'),
+        'Clausura',
+      );
+    });
+
+    test('referee country moves to the secondary line', () {
+      final split = splitReferee('Jesus Gil Manzano, Spain');
+      expect(split.name, 'Jesus Gil Manzano');
+      expect(split.country, 'Spain');
+      expect(splitReferee('W. Lopez').country, isNull);
+      expect(splitReferee('W. Lopez').name, 'W. Lopez');
+      expect(splitReferee('Ana, 12').name, 'Ana, 12');
+    });
+  });
+
   group('matchInfoItems', () {
+    test('phase item after the round; named round labelled Ronda', () {
+      final items = _items(
+        _snapshot(),
+        _detail(round: 'Semi-finals', stage: 'Group Stage'),
+        venue: 'Estadio Info',
+      );
+      expect(items.map((item) => item.id), [
+        'competition',
+        'date',
+        'round',
+        'stage',
+        'venue',
+        'referee',
+      ]);
+      final round = items.singleWhere((item) => item.id == 'round');
+      expect(round.label, 'Ronda');
+      expect(round.value, 'Semifinales');
+      final stage = items.singleWhere((item) => item.id == 'stage');
+      expect(stage.label, 'Fase');
+      expect(stage.value, 'Fase de grupos');
+    });
+
+    test('"Current" phase and plain referee: no phase, no secondary', () {
+      final items = _items(_snapshot(), _detail(stage: 'Current'));
+      expect(items.any((item) => item.id == 'stage'), isFalse);
+      final referee = items.singleWhere((item) => item.id == 'referee');
+      expect(referee.secondary, isNull);
+    });
+
+    test('referee with nationality', () {
+      final items = _items(
+        _snapshot(),
+        _detail(referee: 'Srdan Jovanovic, Serbia'),
+      );
+      final referee = items.singleWhere((item) => item.id == 'referee');
+      expect(referee.value, 'Srdan Jovanovic');
+      expect(referee.secondary, 'Serbia');
+    });
+
     test('1-5. every real fact, in order, with secondary lines', () {
       final items = _items(_snapshot(), _detail(), venue: 'Estadio Info');
       expect(items.map((item) => item.id), [
@@ -324,6 +435,43 @@ void main() {
         expect(_inCard(find.text(placeholder)), findsNothing);
       }
       expect(tester.takeException(), isNull);
+      await _close(tester);
+    });
+
+    testWidgets('phase and referee country shown when present', (tester) async {
+      await _open(
+        tester,
+        detail: _detail(
+          round: 'Final',
+          stage: '1/8-finals',
+          referee: 'Jesus Gil Manzano, Spain',
+        ),
+      );
+      expect(find.text('Liga Info · Final'), findsOneWidget);
+      expect(find.textContaining('Jornada'), findsNothing);
+      await _showCard(tester);
+      expect(
+        _inCard(find.byKey(const ValueKey('match-info-stage'))),
+        findsOneWidget,
+      );
+      expect(_inCard(find.text('Octavos de final')), findsOneWidget);
+      expect(_inCard(find.text('Ronda')), findsOneWidget);
+      expect(_inCard(find.text('Jesus Gil Manzano')), findsOneWidget);
+      expect(_inCard(find.text('Spain')), findsOneWidget);
+      await _close(tester);
+    });
+
+    testWidgets('no phase tile when the stage is absent or a placeholder', (
+      tester,
+    ) async {
+      await _open(tester, detail: _detail(stage: 'Current'));
+      await _showCard(tester);
+      expect(
+        _inCard(find.byKey(const ValueKey('match-info-stage'))),
+        findsNothing,
+      );
+      expect(_inCard(find.text('Current')), findsNothing);
+      expect(_inCard(find.text('Fase')), findsNothing);
       await _close(tester);
     });
 
