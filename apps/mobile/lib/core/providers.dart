@@ -881,17 +881,55 @@ final calendarSnapshotProvider = StreamProvider.autoDispose
       // automatic error retry would restart a failed date forever.
     }, retry: (_, _) => null);
 
+/// Device clock, injectable for tests.
+final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
+
+/// A profile re-opened at least this long after its last answer revalidates
+/// (see [revalidateEntitySnapshot]).
+const entityRevalidateAfter = Duration(seconds: 30);
+
+/// When each `/v1/entity` answer of this session was received (device
+/// clock). Session memory, written only by [entitySnapshotProvider].
+final entitySnapshotReceivedAtProvider =
+    Provider<Map<({String type, String id}), DateTime>>((ref) => {});
+
+/// Kept for the session (not autoDispose) so a re-opened profile paints its
+/// last answer at once; [revalidateEntitySnapshot] refreshes it on re-entry.
 final entitySnapshotProvider =
     FutureProvider.family<Snapshot, ({String type, String id})>((
       ref,
       request,
     ) async {
       final repository = ref.watch(repositoryProvider);
-      if (repository is ApiRepository) {
-        return repository.loadEntity(request.type, request.id);
+      final snapshot = repository is ApiRepository
+          ? await repository.loadEntity(request.type, request.id)
+          : await repository.load();
+      if (ref.mounted) {
+        ref.read(entitySnapshotReceivedAtProvider)[request] = ref.read(
+          clockProvider,
+        )();
       }
-      return repository.load();
+      return snapshot;
     });
+
+/// Called when a profile screen is (re-)entered: an answer already held for
+/// [request] that is at least [entityRevalidateAfter] old is refreshed in
+/// the background. The old answer stays on screen meanwhile (instant paint;
+/// a failed refresh keeps it, see `_loadSnapshot`), so server changes (e.g. a
+/// deduplicated squad) appear without restarting the app. Returns whether a
+/// refresh started.
+bool revalidateEntitySnapshot(
+  WidgetRef ref,
+  ({String type, String id}) request,
+) {
+  if (!ref.exists(entitySnapshotProvider(request))) return false;
+  final received = ref.read(entitySnapshotReceivedAtProvider)[request];
+  if (received == null) return false;
+  final age = ref.read(clockProvider)().difference(received);
+  if (age < entityRevalidateAfter) return false;
+  ref.invalidate(entitySnapshotProvider(request));
+  return true;
+}
 
 final exploreSnapshotProvider = FutureProvider.autoDispose<Snapshot>((
   ref,
@@ -1250,6 +1288,7 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
     'stadium': _latestNonEmpty(current.json['stadium'], next.json['stadium']),
     'referee': _latestNonEmpty(current.json['referee'], next.json['referee']),
     'round': _latestNonEmpty(current.json['round'], next.json['round']),
+    'stage': _latestNonEmpty(current.json['stage'], next.json['stage']),
     'home': home,
     'away': away,
     'statistics': statistics,
@@ -1404,6 +1443,54 @@ final databaseProvider = Provider<AppDatabase>((ref) {
   ref.onDispose(db.close);
   return db;
 });
-final followsProvider = StreamProvider<Set<String>>(
-  (ref) => ref.watch(databaseProvider).watchFollows(),
-);
+
+/// Followed `type:id` keys, each resolved to its canonical entity through the
+/// redirects seen this session (see [EntityRedirectMemory]): a follow stored
+/// under an alias id (e.g. the legacy `fb_comp_cr`) reads as the canonical
+/// entity everywhere follows are shown or used (Siguiendo, the Favoritos feed
+/// group, star buttons, relevance). Read-time only: what is stored and synced
+/// is never rewritten. Re-emits when a new redirect is learned.
+final followsProvider = StreamProvider<Set<String>>((ref) {
+  final redirects = ref.watch(entityMediaProvider).redirects;
+  final controller = StreamController<Set<String>>();
+  Set<String>? stored;
+  void emit() {
+    final value = stored;
+    if (value == null || controller.isClosed) return;
+    controller.add({for (final key in value) redirects.resolveFollowKey(key)});
+  }
+
+  final subscription = ref.watch(databaseProvider).watchFollows().listen((
+    value,
+  ) {
+    stored = value;
+    emit();
+  }, onError: controller.addError);
+  redirects.addListener(emit);
+  ref.onDispose(() {
+    redirects.removeListener(emit);
+    subscription.cancel();
+    controller.close();
+  });
+  return controller.stream;
+});
+
+/// Follows or unfollows [type]:[id]. Unfollowing also removes every stored
+/// key that resolves to the same canonical entity (an alias follow), so the
+/// star never stays on after the user turned it off.
+Future<void> toggleFollow(
+  AppDatabase database,
+  EntityRedirectMemory redirects,
+  String type,
+  String id,
+) async {
+  if (type == 'match') return database.toggle(type, id);
+  final canonical = redirects.resolve(id);
+  final aliases = {
+    for (final alias in redirects.redirects.keys)
+      if (redirects.resolve(alias) == canonical) alias,
+  };
+  // No alias known for this entity: the plain toggle.
+  if (canonical == id && aliases.isEmpty) return database.toggle(type, id);
+  await database.toggleAny(type, canonical, {id, ...aliases});
+}

@@ -302,7 +302,6 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     // Key statistics only when one row is worth showing (see Statistics).
     final hasStats = displayableStatistics(
       detail.statistics.isNotEmpty ? detail.statistics : match.statistics,
-      compact: true,
     ).isNotEmpty;
     // Recent form + head-to-head: a separate read, never blocking the header
     // or the tabs, failing on its own, read once per open.
@@ -317,7 +316,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final previewSections = [
       const _SectionTitle('Forma reciente'),
       RecentFormSection(preview: preview, data: data, match: match),
-      StandingsSnapshotCard(data: data, match: match),
+      StandingsSnapshotCard(data: data, match: match, stage: detail.stage),
     ];
 
     // Bounded: once the retries are spent a pending table settles into a
@@ -497,6 +496,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                 match.competitionId,
                 homeTeamId: match.homeId,
                 awayTeamId: match.awayId,
+                stage: detail.stage,
                 refreshing: standingsRefreshing || _standingsManualRetry,
                 onRetry: _retryStandings,
               ),
@@ -1310,6 +1310,7 @@ class MatchStandingsTab extends StatelessWidget {
     this.homeTeamId,
     this.awayTeamId,
     this.onRetry,
+    this.stage,
   });
 
   final Snapshot data;
@@ -1318,6 +1319,10 @@ class MatchStandingsTab extends StatelessWidget {
   /// The selected match's sides, highlighted in the table.
   final String? homeTeamId;
   final String? awayTeamId;
+
+  /// The match's provider stage (match detail), when known: the table of
+  /// that phase is shown (see standingsGroups).
+  final String? stage;
 
   /// A visible refresh for this table is running (bounded or manual).
   final bool refreshing;
@@ -1355,6 +1360,7 @@ class MatchStandingsTab extends StatelessWidget {
             // The match's own group; teams from different groups each get
             // their own labelled group, never one mixed table.
             focusTeamIds: {?homeTeamId, ?awayTeamId},
+            stage: stage,
             highlightedTeams: {?homeTeamId: lime, ?awayTeamId: awaySideColor},
             // In-play evidence from the snapshot itself (never the clock).
             liveTeamIds: liveTeamIds(data, competitionId),
@@ -1475,9 +1481,7 @@ class Statistics extends StatelessWidget {
       return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
     }
     final compact = mode == StatisticsDisplayMode.compact;
-    final ordered = orderedStatistics(
-      displayableStatistics(stats, compact: compact),
-    );
+    final ordered = orderedStatistics(displayableStatistics(stats));
     if (ordered.isEmpty) {
       return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
     }
@@ -1524,6 +1528,7 @@ const _onTargetKeys = {
   'shots on target',
   'shots on goal',
   'on target',
+  'shot on goal',
   'tiros a puerta',
 };
 const _passKeys = {
@@ -1579,6 +1584,7 @@ _StatisticGroup _statisticGroup(String name) {
         'shots off target',
         'shots off goal',
         'off target',
+        'shot off goal',
         'blocked shots',
         'shots blocked',
         'shots inside box',
@@ -1624,6 +1630,7 @@ bool statisticHigherIsBetter(String name) {
         'shots off target',
         'shots off goal',
         'off target',
+        'shot off goal',
         'blocked shots',
         'shots blocked',
         'shots inside box',
@@ -1969,17 +1976,60 @@ bool _meaningfulAtZero(String name) {
       const {'offsides', 'saves', 'goalkeeper saves'}.contains(key);
 }
 
-/// Rows FutBeat can show: a known Spanish label and, for the compact key
-/// statistics, no data-less 0-0 row.
-List<Json> displayableStatistics(List<Json> stats, {bool compact = false}) => [
-  for (final stat in stats)
-    if (_statLabel(statisticName(stat)) != null &&
-        !(compact &&
-            statNumericValue(stat['home']) == 0 &&
-            statNumericValue(stat['away']) == 0 &&
-            !_meaningfulAtZero(statisticName(stat))))
-      stat,
-];
+/// Precedence of provider keys that share one Spanish label: declaration
+/// order of [_statLabels] (e.g. "Shots on Target" before "Shots on Goal"
+/// before "On Target" before "Shot On Goal").
+final _statKeyPrecedence = {
+  for (final (index, key) in _statLabels.keys.indexed) key: index,
+};
+
+/// A row carrying data: a numeric value on a side, and not a 0-0 of a count
+/// that is not meaningful at zero (see [_meaningfulAtZero]).
+bool _hasStatValue(Json stat) {
+  final home = statNumericValue(stat['home']);
+  final away = statNumericValue(stat['away']);
+  if (home == null && away == null) return false;
+  return !(home == 0 && away == 0 && !_meaningfulAtZero(statisticName(stat)));
+}
+
+/// Rows FutBeat can show, in input order:
+/// - a known Spanish label (never a raw provider key);
+/// - one row per Spanish label: a provider can send synonyms of one metric
+///   ("Shots on Goal" and "Shot On Goal") with different values, and two
+///   rows must never read "Tiros a puerta" twice. The kept row is the one
+///   with a value, then the first key of [_statLabels] (see
+///   [_statKeyPrecedence]), then the first in the input;
+/// - no data-less 0-0 row: a count that is not meaningful at zero (throw-ins,
+///   free kicks, goal kicks, passes...) at 0-0 means the provider sent no
+///   data, in the key statistics and in the full list alike.
+List<Json> displayableStatistics(List<Json> stats) {
+  final winners = <String, Json>{};
+  for (final stat in stats) {
+    final name = statisticName(stat);
+    final label = _statLabel(name);
+    if (label == null) continue;
+    final current = winners[label];
+    if (current == null) {
+      winners[label] = stat;
+      continue;
+    }
+    int rank(Json row) =>
+        (_hasStatValue(row) ? 0 : 1 << 20) +
+        (_statKeyPrecedence[_statKey(statisticName(row))] ?? 1 << 19);
+    if (rank(stat) < rank(current)) winners[label] = stat;
+  }
+  final kept = Set<Json>.identity()..addAll(winners.values);
+  final result = <Json>[];
+  for (final stat in stats) {
+    if (!kept.remove(stat)) continue;
+    final dataLessZero =
+        statNumericValue(stat['home']) == 0 &&
+        statNumericValue(stat['away']) == 0 &&
+        !_hasStatValue(stat);
+    if (!dataLessZero) result.add(stat);
+  }
+  return result;
+}
 
 /// Resolves which side an event belongs to using only data already present.
 /// Returns null when the side is genuinely unknown (never guessed).
@@ -2493,20 +2543,40 @@ class Lineups extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final homeHasLineup =
-        detail.homeStarters.isNotEmpty ||
-        detail.homeSubstitutes.isNotEmpty ||
-        detail.homeCoach != null;
-    final awayHasLineup =
-        detail.awayStarters.isNotEmpty ||
-        detail.awaySubstitutes.isNotEmpty ||
-        detail.awayCoach != null;
-    if (!homeHasLineup && !awayHasLineup) {
+    // Players define a lineup. Some providers publish only the coaches (no
+    // starters, no bench); that is not a lineup and must not render as two
+    // lone "Entrenador" cards.
+    final homeHasPlayers =
+        detail.homeStarters.isNotEmpty || detail.homeSubstitutes.isNotEmpty;
+    final awayHasPlayers =
+        detail.awayStarters.isNotEmpty || detail.awaySubstitutes.isNotEmpty;
+    if (!homeHasPlayers && !awayHasPlayers) {
       if (detail.lineupPending) {
         return const _PendingSection('Cargando alineaciones…');
       }
-      return const _EmptySection(Icons.groups_outlined, 'Sin alineaciones');
+      final homeCoach = detail.homeCoach;
+      final awayCoach = detail.awayCoach;
+      if (homeCoach == null && awayCoach == null) {
+        return const _EmptySection(Icons.groups_outlined, 'Sin alineaciones');
+      }
+      return Column(
+        children: [
+          const _EmptySection(Icons.groups_outlined, 'Alineación no publicada'),
+          _CoachesOnly(
+            home: homeCoach == null
+                ? null
+                : (data.team(match.homeId), homeCoach),
+            away: awayCoach == null
+                ? null
+                : (data.team(match.awayId), awayCoach),
+          ),
+        ],
+      );
     }
+    // Once one side has players, a coach-only side still gets its card (with
+    // an explicit "not published" note) so the coach is not lost.
+    final homeHasLineup = homeHasPlayers || detail.homeCoach != null;
+    final awayHasLineup = awayHasPlayers || detail.awayCoach != null;
 
     return Column(
       children: [
@@ -2638,12 +2708,55 @@ class _TeamLineup extends StatelessWidget {
                 },
               ),
             ],
+            if (starters.isEmpty && substitutes.isEmpty)
+              const Text(
+                'Alineación no publicada',
+                style: TextStyle(color: muted),
+              ),
             if (coach != null) ...[
               const SizedBox(height: 16),
               const _LineupLabel('Entrenador'),
               const SizedBox(height: 8),
               _CoachTile(coach!),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Secondary info shown under "Alineación no publicada" when the provider
+/// sent only the coaches.
+class _CoachesOnly extends StatelessWidget {
+  const _CoachesOnly({required this.home, required this.away});
+
+  final (Entity?, Json)? home;
+  final (Entity?, Json)? away;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget row((Entity?, Json) entry) => Row(
+      children: [
+        if (entry.$1 != null) ...[
+          EntityAvatar(entry.$1!, size: 26),
+          const SizedBox(width: 10),
+        ],
+        Expanded(child: _CoachTile(entry.$2)),
+      ],
+    );
+    return Card(
+      key: const ValueKey('lineup-coaches-only'),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _LineupLabel('Entrenadores'),
+            const SizedBox(height: 8),
+            if (home != null) row(home!),
+            if (home != null && away != null) const SizedBox(height: 8),
+            if (away != null) row(away!),
           ],
         ),
       ),

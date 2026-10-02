@@ -90,6 +90,29 @@ class AppDatabase extends _$AppDatabase {
     }
   });
 
+  /// Toggle of one identity stored under several ids (canonical + aliases):
+  /// when any of [canonicalId] / [aliasIds] is followed, all of them are
+  /// removed; otherwise [canonicalId] is followed.
+  Future<void> toggleAny(
+    String type,
+    String canonicalId,
+    Set<String> aliasIds,
+  ) => transaction(() async {
+    final ids = {canonicalId, ...aliasIds};
+    final existing = await (select(
+      follows,
+    )..where((f) => f.entityType.equals(type) & f.entityId.isIn(ids))).get();
+    if (existing.isEmpty) {
+      await into(follows).insert(
+        FollowsCompanion.insert(entityId: canonicalId, entityType: type),
+      );
+    } else {
+      await (delete(
+        follows,
+      )..where((f) => f.entityType.equals(type) & f.entityId.isIn(ids))).go();
+    }
+  });
+
   /// Inserts `type:id` follow keys, ignoring ones already present. Unlike
   /// [toggle] it never removes anything, so it is safe for merges.
   Future<void> addFollows(Iterable<String> keys) async {

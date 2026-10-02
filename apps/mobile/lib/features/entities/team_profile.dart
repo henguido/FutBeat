@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
 import '../../core/profile_context.dart';
+import '../../core/entity_media.dart';
+import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import 'profile_context_bar.dart';
@@ -130,6 +132,26 @@ String? teamTableCompetitionId(Snapshot data, Entity team) {
   return candidates.length == 1 ? candidates.single : null;
 }
 
+/// Name of the canonical competition an alias [competitionId] redirects to
+/// (snapshot redirects first, then the session's), when that competition is
+/// known; null when [competitionId] is not an alias or nothing better is
+/// known.
+String? canonicalCompetitionName(
+  Snapshot data,
+  EntityRedirectMemory redirects,
+  String competitionId,
+) {
+  for (final resolved in {
+    data.resolveEntityId(competitionId),
+    redirects.resolve(competitionId),
+  }) {
+    if (resolved == competitionId) continue;
+    final name = data.competition(resolved)?.name;
+    if (name != null && name.isNotEmpty) return name;
+  }
+  return null;
+}
+
 class TeamProfileView extends ConsumerWidget {
   const TeamProfileView({
     required this.data,
@@ -183,7 +205,20 @@ class TeamProfileView extends ConsumerWidget {
         current.asData?.value ?? ref.watch(lastTeamContextProvider)[team.id];
     // The requested context failed: the last one stays, and says so.
     final switchFailed = current.hasError && teamContext != null;
-    final selected = teamContext?.selected;
+    // An option sent under an alias competition id (e.g. the legacy
+    // `fb_comp_cr`) shows its canonical competition's name.
+    final redirects = ref.watch(entityMediaProvider).redirects;
+    ProfileContextOption shown(ProfileContextOption option) {
+      final canonical = canonicalCompetitionName(
+        data,
+        redirects,
+        option.competitionId,
+      );
+      return canonical == null ? option : option.withCompetitionName(canonical);
+    }
+
+    final rawSelected = teamContext?.selected;
+    final selected = rawSelected == null ? null : shown(rawSelected);
     final tableId = teamTableCompetitionId(data, team);
     // The selected season's exact table; for the competition's current
     // season the profile's own cached table is the same table.
@@ -351,7 +386,7 @@ class TeamProfileView extends ConsumerWidget {
             if (teamContext != null && selected != null)
               SliverToBoxAdapter(
                 child: ProfileContextBar(
-                  options: teamContext.options,
+                  options: [for (final o in teamContext.options) shown(o)],
                   selected: selected,
                   failed: switchFailed,
                   onRetry: () => ref.invalidate(teamContextProvider(request)),

@@ -119,6 +119,9 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     Future.microtask(
       () => recordTemporaryInterest(ref, widget.type, widget.id),
     );
+    // Re-entering a profile shows its last answer at once and revalidates
+    // it when older than entityRevalidateAfter.
+    revalidateEntitySnapshot(ref, (type: widget.type, id: widget.id));
     // Fresh profile context on every open (#161): only this request, only
     // when an answer (or a failure) is already cached; one read per open.
     if (widget.type == 'team') {
