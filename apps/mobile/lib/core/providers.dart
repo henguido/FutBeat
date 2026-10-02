@@ -1404,6 +1404,54 @@ final databaseProvider = Provider<AppDatabase>((ref) {
   ref.onDispose(db.close);
   return db;
 });
-final followsProvider = StreamProvider<Set<String>>(
-  (ref) => ref.watch(databaseProvider).watchFollows(),
-);
+
+/// Followed `type:id` keys, each resolved to its canonical entity through the
+/// redirects seen this session (see [EntityRedirectMemory]): a follow stored
+/// under an alias id (e.g. the legacy `fb_comp_cr`) reads as the canonical
+/// entity everywhere follows are shown or used (Siguiendo, the Favoritos feed
+/// group, star buttons, relevance). Read-time only: what is stored and synced
+/// is never rewritten. Re-emits when a new redirect is learned.
+final followsProvider = StreamProvider<Set<String>>((ref) {
+  final redirects = ref.watch(entityMediaProvider).redirects;
+  final controller = StreamController<Set<String>>();
+  Set<String>? stored;
+  void emit() {
+    final value = stored;
+    if (value == null || controller.isClosed) return;
+    controller.add({for (final key in value) redirects.resolveFollowKey(key)});
+  }
+
+  final subscription = ref.watch(databaseProvider).watchFollows().listen((
+    value,
+  ) {
+    stored = value;
+    emit();
+  }, onError: controller.addError);
+  redirects.addListener(emit);
+  ref.onDispose(() {
+    redirects.removeListener(emit);
+    subscription.cancel();
+    controller.close();
+  });
+  return controller.stream;
+});
+
+/// Follows or unfollows [type]:[id]. Unfollowing also removes every stored
+/// key that resolves to the same canonical entity (an alias follow), so the
+/// star never stays on after the user turned it off.
+Future<void> toggleFollow(
+  AppDatabase database,
+  EntityRedirectMemory redirects,
+  String type,
+  String id,
+) async {
+  if (type == 'match') return database.toggle(type, id);
+  final canonical = redirects.resolve(id);
+  final aliases = {
+    for (final alias in redirects.redirects.keys)
+      if (redirects.resolve(alias) == canonical) alias,
+  };
+  // No alias known for this entity: the plain toggle.
+  if (canonical == id && aliases.isEmpty) return database.toggle(type, id);
+  await database.toggleAny(type, canonical, {id, ...aliases});
+}
