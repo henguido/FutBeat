@@ -38,6 +38,7 @@ async function seed(db) {
   team('fb_team_pl19', 'Poland U19', 'fb_comp_friendlies');
   team('fb_team_kz19', 'Kazakhstan U19', 'fb_comp_youth');
   team('fb_team_kp20', 'Korea DPR U20', 'fb_comp_youth');
+  team('fb_team_pf', 'Tahiti', 'fb_comp_nations');
   team('fb_team_nlw', 'Netherlands W', 'fb_comp_women');
   team('fb_team_es20w', 'Spain U20 Women', 'fb_comp_women');
   team('fb_team_unnamed_nation', 'Atlantis', 'fb_comp_friendlies');
@@ -114,6 +115,7 @@ test('national teams are identified by catalogued name plus national-team compet
     assert.equal(found.fb_team_kz19, 'KZ U19');
     // Provider spelling added to the catalog aliases.
     assert.equal(found.fb_team_kp20, 'KP U20');
+    assert.equal(found.fb_team_pf, 'PF');
     assert.equal(found.fb_team_nlw, 'NL W');
     assert.equal(found.fb_team_es20w, 'ES U20 W');
     // A redirected duplicate answers its canonical team's identity.
@@ -164,7 +166,7 @@ test('the national-team map is cached and recomputed after catalog changes', asy
   } finally { await db.close(); }
 });
 
-async function api(answers) {
+async function api(answers, clock = Date) {
   const source = await readFile(new URL('../../supabase/functions/futbeat-api/index.ts', import.meta.url), 'utf8');
   const rpcs = [];
   const ctx = { supabaseAdmin: { rpc: async (name, args) => {
@@ -172,7 +174,7 @@ async function api(answers) {
     return answers[name] ? answers[name](args) : { data: null, error: null };
   } } };
   const context = vm.createContext({
-    Request, Response, URL, JSON, Object, Promise, Date, console: { warn() {}, error() {}, log() {} },
+    Request, Response, URL, JSON, setTimeout, clearTimeout, Object, Promise, Date: clock, console: { warn() {}, error() {}, log() {} },
     withSupabase: (_opts, handler) => (request) => handler(request, ctx),
     ...matchDetail, ...calendarCache,
   });
@@ -250,4 +252,50 @@ test('the migration names no country, league or team in its derivation', async (
     .split('\n').filter((line) => !line.trim().startsWith('--')).join('\n');
   assert.doesNotMatch(derivation, /'[A-Z]{2}(?:-[A-Z]{3})?'/);
   assert.doesNotMatch(derivation, /fb_(team|comp|competition)_[0-9a-f]{8}/);
+});
+
+test('API: a refresh never delays answers; a stalled cold load is cut off at ~1 s', async () => {
+  let now = Date.now();
+  class Clock extends Date {}
+  Clock.now = () => now;
+  const map = { schemaVersion: 1, teams: { fb_team_pl19: { code: 'PL', suffix: 'U19' } } };
+  let mode = 'ok';
+  let reads = 0;
+  const { call } = await api({
+    futbeat_read_national_teams: () => {
+      reads++;
+      // A stalled RPC: never settles.
+      return mode === 'ok' ? { data: map, error: null } : new Promise(() => {});
+    },
+    futbeat_read_calendar_range: () => ({ data: calendar(), error: null }),
+  }, Clock);
+  const team = (body) => body.teams.find((t) => t.id === 'fb_team_pl19');
+
+  // Cold isolate: waits for the (fast) first load and decorates.
+  assert.equal(team((await call('calendar?date=2026-09-01')).body).nationalTeamCode, 'PL');
+  assert.equal(reads, 1);
+
+  // Expired map with a stalled refresh: answered at once with the old map.
+  now += 11 * 60 * 1000;
+  mode = 'stalled';
+  let started = performance.now();
+  const warm = await call('calendar?date=2026-09-01');
+  assert.ok(performance.now() - started < 500, 'a refresh in flight never delays a warm isolate');
+  assert.equal(team(warm.body).nationalTeamCode, 'PL');
+  assert.equal(reads, 2);
+  // Still in flight: no second refresh, still the old map.
+  assert.equal(team((await call('calendar?date=2026-09-01')).body).nationalTeamCode, 'PL');
+  assert.equal(reads, 2);
+
+  // A cold isolate whose first load stalls serves undecorated after ~1 s.
+  const cold = await api({
+    futbeat_read_national_teams: () => new Promise(() => {}),
+    futbeat_read_calendar_range: () => ({ data: calendar(), error: null }),
+  });
+  started = performance.now();
+  const answer = await cold.call('calendar?date=2026-09-01');
+  const waited = performance.now() - started;
+  assert.equal(answer.status, 200);
+  assert.ok(waited >= 900 && waited < 3000, `waited ${waited} ms`);
+  assert.deepEqual(answer.body, calendar());
 });

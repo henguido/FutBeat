@@ -213,7 +213,7 @@ async function api(db) {
     } catch (error) { return { data: null, error: { message: error.message } }; }
   } } };
   const context = vm.createContext({
-    Request, Response, URL, JSON, console: { warn: () => {}, error: () => {}, log: () => {} },
+    Request, Response, URL, JSON, setTimeout, clearTimeout, console: { warn: () => {}, error: () => {}, log: () => {} },
     withSupabase: (_opts, handler) => (request) => handler(request, ctx),
     ...matchDetail, ...calendarCache,
   });

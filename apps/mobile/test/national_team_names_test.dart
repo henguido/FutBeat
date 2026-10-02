@@ -95,6 +95,23 @@ void main() {
     },
   );
 
+  test('Explore national teams keep their category from the provider name', () {
+    expect(providerNationalTeamSuffix('Poland U19'), 'U19');
+    expect(providerNationalTeamSuffix('Netherlands W'), 'W');
+    expect(providerNationalTeamSuffix('Spain U20 Women'), 'U20 W');
+    expect(providerNationalTeamSuffix('Costa Rica'), '');
+    Entity explore(String name, String code) =>
+        _team('e', name, {'isNationalTeam': true, 'countryCode': code});
+    expect(explore('Poland U19', 'PL').displayName, 'Polonia Sub-19');
+    expect(explore('Netherlands W', 'NL').displayName, 'Países Bajos Femenino');
+    expect(explore('Poland', 'PL').displayName, 'Polonia');
+    // The server's suffix wins over the provider name.
+    expect(
+      _national('t', 'Poland U19', 'PL', 'U19').displayName,
+      'Polonia Sub-19',
+    );
+  });
+
   test('national teams are found by their Spanish name', () {
     final poland = _national('t1', 'Poland U19', 'PL', 'U19');
     final club = _team('c1', 'Polonia Warszawa U19');

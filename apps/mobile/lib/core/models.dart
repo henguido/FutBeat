@@ -294,6 +294,22 @@ String? nationalTeamCategoryLabel(String? suffix) {
   return parts.join(' ');
 }
 
+final _providerSuffix = RegExp(
+  r'^(.+?)(?:\s+(u\d{2}))?(?:\s+(w|women))?$',
+  caseSensitive: false,
+);
+
+/// Age/gender suffix of a provider team name in the API's form ("U19",
+/// "W", "U20 W"; "" for none), parsed like the server does.
+String providerNationalTeamSuffix(String name) {
+  final match = _providerSuffix.firstMatch(name.trim());
+  if (match == null) return '';
+  return [
+    if (match.group(2) != null) match.group(2)!.toUpperCase(),
+    if (match.group(3) != null) 'W',
+  ].join(' ');
+}
+
 /// Visible name of a team (single resolver for every screen).
 ///
 /// A national team identified by the server (`nationalTeamCode` +
@@ -303,16 +319,23 @@ String? nationalTeamCategoryLabel(String? suffix) {
 /// not know, keeps the provider name.
 String teamDisplayName(Entity entity) {
   final json = entity.json;
-  final code = json['nationalTeamCode'] is String
-      ? json['nationalTeamCode'] as String
-      : json['isNationalTeam'] == true
-      ? json['countryCode']?.toString()
-      : null;
+  final String? code;
+  final String? suffix;
+  if (json['nationalTeamCode'] is String) {
+    code = json['nationalTeamCode'] as String;
+    suffix = json['nationalTeamSuffix']?.toString();
+  } else if (json['isNationalTeam'] == true) {
+    // The Explore contract carries no category: read it from the provider
+    // name with the server's grammar, so "Poland U19" never shows as the
+    // senior team.
+    code = json['countryCode']?.toString();
+    suffix = providerNationalTeamSuffix(entity.name);
+  } else {
+    return entity.name;
+  }
   final country = countryDisplayName(code);
   if (country == null) return entity.name;
-  final category = nationalTeamCategoryLabel(
-    json['nationalTeamSuffix']?.toString(),
-  );
+  final category = nationalTeamCategoryLabel(suffix);
   if (category == null) return entity.name;
   return category.isEmpty ? country : '$country $category';
 }

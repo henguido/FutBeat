@@ -84,9 +84,23 @@ const nationalTeamFields = (_key: string, value: unknown) => {
     : { ...entity, nationalTeamCode: code };
 };
 
+// Only a cold isolate (no map yet) waits for the map, and never longer than
+// this; a refresh of an existing map runs in the background while answers
+// keep using the previous one.
+const nationalTeamsColdWaitMs = 1000;
+
 const jsonBody = async (status: number, data: unknown) => {
   if (status !== 200) return JSON.stringify(data);
-  if (nationalTeamsLoad) await nationalTeamsLoad;
+  if (!nationalTeams && nationalTeamsLoad) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      nationalTeamsLoad,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, nationalTeamsColdWaitMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
   return nationalTeams && Object.keys(nationalTeams.teams).length > 0
     ? JSON.stringify(data, nationalTeamFields)
     : JSON.stringify(data);

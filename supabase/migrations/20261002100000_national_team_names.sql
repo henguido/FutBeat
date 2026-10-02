@@ -34,6 +34,7 @@ with extra(country_code,aliases) as (values
  ('KN','["st. kitts and nevis"]'::jsonb),('KP','["korea dpr"]'::jsonb),
  ('MF','["saint martin"]'::jsonb),('MO','["macau","macao"]'::jsonb),
  ('MP','["n. mariana islands"]'::jsonb),('PS','["palestine"]'::jsonb),
+ ('PF','["tahiti"]'::jsonb),
  ('TC','["turks and caicos islands"]'::jsonb),('TT','["trinidad and tobago"]'::jsonb),
  ('VC','["st. vincent / grenadines"]'::jsonb),('VI','["us virgin islands"]'::jsonb)
 )

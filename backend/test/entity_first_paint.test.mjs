@@ -35,7 +35,7 @@ async function concurrentApi(expected, answers) {
     return allStarted.then(() => answers[name]?.() ?? { data: null, error: null });
   } } };
   const context = vm.createContext({
-    Request, Response, URL, JSON, Promise, console: { warn: () => {}, error: () => {}, log: () => {} },
+    Request, Response, URL, JSON, setTimeout, clearTimeout, Promise, console: { warn: () => {}, error: () => {}, log: () => {} },
     withSupabase: (_opts, handler) => (request) => handler(request, ctx),
     ...matchDetail, ...calendarCache,
   });
