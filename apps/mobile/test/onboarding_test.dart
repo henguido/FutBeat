@@ -687,7 +687,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
       }
       final goals = tester.widget<SwitchListTile>(
-        find.widgetWithText(SwitchListTile, 'Goles'),
+        find.widgetWithText(SwitchListTile, 'Gol'),
       );
       expect(goals.value, isFalse);
       expect(find.text('Alertas guardadas'), findsOneWidget);

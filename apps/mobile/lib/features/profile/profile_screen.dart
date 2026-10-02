@@ -7,7 +7,9 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth_errors.dart';
 import '../../core/providers.dart';
 import '../../core/push.dart';
+import '../../core/push_messages.dart';
 import 'competition_order_preferences.dart';
+import 'notification_options.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -92,6 +94,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       await service.signIn(email.text, password.text);
       password.clear();
     }, 'Sesión iniciada.');
+    await _offerNotifications(service);
+  }
+
+  /// After sign-in: offer push once (only when push is configured).
+  Future<void> _offerNotifications(PushService service) async {
+    if (!mounted || !service.authenticated) return;
+    await maybeOfferNotifications(context, service);
+    if (mounted) setState(() {});
   }
 
   Future<void> signUp(PushService service) async {
@@ -106,6 +116,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ? 'Cuenta creada.'
           : 'Cuenta creada. Revisa tu correo para confirmarla.',
     );
+    await _offerNotifications(service);
   }
 
   Future<void> saveSettings(UserProfileSettings value) async {
@@ -424,48 +435,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
           ),
           if (loaded) ...[
-            notificationSwitch(
-              title: 'Inicio de partido',
-              icon: Icons.play_circle_outline,
-              value: settings.notifyKickoff,
-              change: (value) => settings.copyWith(notifyKickoff: value),
-            ),
-            notificationSwitch(
-              title: 'Goles',
-              icon: Icons.sports_soccer,
-              value: settings.notifyGoals,
-              change: (value) => settings.copyWith(notifyGoals: value),
-            ),
-            notificationSwitch(
-              title: 'Resultado final',
-              icon: Icons.flag_outlined,
-              value: settings.notifyFinal,
-              change: (value) => settings.copyWith(notifyFinal: value),
-            ),
-            notificationSwitch(
-              title: 'Tarjetas',
-              icon: Icons.style_outlined,
-              value: settings.notifyCards,
-              change: (value) => settings.copyWith(notifyCards: value),
-            ),
-            notificationSwitch(
-              title: 'Alineaciones',
-              icon: Icons.groups_outlined,
-              value: settings.notifyLineups,
-              change: (value) => settings.copyWith(notifyLineups: value),
-            ),
-            notificationSwitch(
-              title: 'Noticias',
-              icon: Icons.article_outlined,
-              value: settings.notifyNews,
-              change: (value) => settings.copyWith(notifyNews: value),
-            ),
-            notificationSwitch(
-              title: 'Transferencias',
-              icon: Icons.swap_horiz,
-              value: settings.notifyTransfers,
-              change: (value) => settings.copyWith(notifyTransfers: value),
-            ),
+            for (final option in notificationOptions)
+              notificationSwitch(
+                title: option.title,
+                icon: option.icon,
+                value: option.value(settings),
+                change: (value) => option.update(settings, value),
+              ),
           ],
           if (service.authenticated && PushService.configured) ...[
             const SizedBox(height: 6),
