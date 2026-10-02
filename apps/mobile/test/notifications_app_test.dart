@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -245,23 +246,43 @@ void main() {
       await value.service.saveProfileSettings(
         const UserProfileSettings(displayName: 'Ana', notifyRedCards: false),
       );
-      final call = value.http.rpc('futbeat_update_profile_preferences').single;
-      final payload = (call.data as Map)['p_preferences'] as Map;
-      expect(payload['display_name'], 'Ana');
-      expect(payload['notify_red_cards'], isFalse);
-      expect(payload['notify_cards'], isTrue);
-      for (final key in [
-        ...legacyNotificationKeys,
-        ...extendedNotificationKeys,
-      ]) {
-        expect(payload.containsKey(key), isTrue, reason: key);
+      final call = value.http.rpc('futbeat_sync_user_profile_v3').single;
+      final payload = (call.data as Map)['p_profile'] as Map;
+      // Exactly the keys futbeat_sync_user_profile_v3 understands, all
+      // switches as booleans (the server rejects anything else).
+      expect(payload.keys.toSet(), {
+        'displayName',
+        'languageCode',
+        'timezone',
+        'hourFormat',
+        'notifyKickoff',
+        'notifyGoals',
+        'notifyFinal',
+        'notifyCards',
+        'notifyLineups',
+        'notifyNews',
+        'notifyTransfers',
+        'notifyRedCards',
+        'notifyGoalAnnulled',
+        'notifyPlayerStarter',
+        'notifyPlayerBench',
+        'notifyPlayerSubIn',
+        'notifyPlayerSubOut',
+      });
+      expect(payload['displayName'], 'Ana');
+      expect(payload['notifyRedCards'], isFalse);
+      expect(payload['notifyCards'], isTrue);
+      for (final entry in payload.entries) {
+        if ('${entry.key}'.startsWith('notify')) {
+          expect(entry.value, isA<bool>(), reason: '${entry.key}');
+        }
       }
       expect(value.http.rpc('futbeat_sync_user_profile_v2'), isEmpty);
     });
 
     test('falls back to the legacy RPC (old keys) on an old server', () async {
       final value = await _service(
-        status: {'futbeat_update_profile_preferences': 404},
+        status: {'futbeat_sync_user_profile_v3': 404},
       );
       addTearDown(() async {
         value.service.dispose();
@@ -275,10 +296,7 @@ void main() {
       await value.service.saveProfileSettings(settings);
 
       // The missing RPC is probed once, then skipped.
-      expect(
-        value.http.rpc('futbeat_update_profile_preferences'),
-        hasLength(1),
-      );
+      expect(value.http.rpc('futbeat_sync_user_profile_v3'), hasLength(1));
       final legacy = value.http.rpc('futbeat_sync_user_profile_v2');
       expect(legacy, hasLength(2));
       final data = legacy.first.data as Map;
@@ -294,7 +312,7 @@ void main() {
 
     test('other server errors are surfaced, not masked by fallback', () async {
       final value = await _service(
-        status: {'futbeat_update_profile_preferences': 500},
+        status: {'futbeat_sync_user_profile_v3': 500},
       );
       addTearDown(() async {
         value.service.dispose();
@@ -324,10 +342,7 @@ void main() {
 
         expect(value.http.rpc('futbeat_read_user_profile'), isNotEmpty);
         // No cloud preference row yet → the local profile is written.
-        expect(
-          value.http.rpc('futbeat_update_profile_preferences'),
-          isNotEmpty,
-        );
+        expect(value.http.rpc('futbeat_sync_user_profile_v3'), isNotEmpty);
         final follows = value.http.rpc('futbeat_sync_push_follows').single;
         expect(
           ((follows.data as Map)['p_follows'] as List)
@@ -341,7 +356,7 @@ void main() {
     test('a failing profile save no longer blocks the follows sync', () async {
       final value = await _service(
         status: {
-          'futbeat_update_profile_preferences': 404,
+          'futbeat_sync_user_profile_v3': 404,
           'futbeat_sync_user_profile_v2': 500,
         },
       );
@@ -569,6 +584,86 @@ void main() {
       expect(PushService.configured, isFalse);
       expect(container.read(pushMessageSourceProvider), isNull);
     });
+  });
+
+  group('android notification channel', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final calls = <MethodCall>[];
+    setUp(() {
+      calls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(notificationsMethodChannel, (call) async {
+            calls.add(call);
+            return true;
+          });
+    });
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(notificationsMethodChannel, null);
+    });
+
+    test('creates futbeat_match_alerts when push is configured', () async {
+      expect(
+        await ensureAndroidNotificationChannel(configured: true, android: true),
+        isTrue,
+      );
+      expect(calls.single.method, 'createNotificationChannel');
+      expect(calls.single.arguments, {
+        'id': 'futbeat_match_alerts',
+        'name': 'Partidos',
+        'description': 'Alertas de partidos y jugadores',
+      });
+    });
+
+    test('does nothing without push or off Android', () async {
+      expect(await ensureAndroidNotificationChannel(android: true), isFalse);
+      expect(
+        await ensureAndroidNotificationChannel(
+          configured: true,
+          android: false,
+        ),
+        isFalse,
+      );
+      expect(calls, isEmpty);
+    });
+
+    test('a missing native handler never throws', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(notificationsMethodChannel, null);
+      expect(
+        await ensureAndroidNotificationChannel(configured: true, android: true),
+        isFalse,
+      );
+    });
+  });
+
+  test('v3 camelCase profile keys are adopted from the server', () async {
+    final value = await _service();
+    addTearDown(() async {
+      value.service.dispose();
+      await value.db.close();
+    });
+    value.http.cloud = {
+      'preferences': {
+        'notifyCards': false,
+        'notifyRedCards': false,
+        'notifyGoalAnnulled': false,
+        'notifyPlayerStarter': true,
+        'notifyPlayerBench': false,
+        'notifyPlayerSubIn': false,
+        'notifyPlayerSubOut': true,
+      },
+      'follows': <dynamic>[],
+    };
+    await value.service.signIn('user@example.com', 'password-test');
+    final local = await value.service.loadProfileSettings();
+    expect(local.notifyRedCards, isFalse);
+    expect(local.notifyGoalAnnulled, isFalse);
+    expect(local.notifyPlayerStarter, isTrue);
+    expect(local.notifyPlayerBench, isFalse);
+    expect(local.notifyPlayerSubIn, isFalse);
+    expect(local.notifyPlayerSubOut, isTrue);
+    expect(value.http.rpc('futbeat_sync_user_profile_v3'), isEmpty);
   });
 
   testWidgets('Perfil shows the approved alert switches in order', (

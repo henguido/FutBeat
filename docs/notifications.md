@@ -76,28 +76,32 @@ Compatibilidad con servidores antiguos:
 
 ### Contrato del RPC
 
-El guardado llama primero a
-`futbeat_update_profile_preferences(p_preferences jsonb)` con:
+El guardado llama primero a `futbeat_sync_user_profile_v3(p_profile jsonb)`
+(migración `20261002130000_notifications_v2.sql`) con todas las claves en
+camelCase, los interruptores siempre booleanos (el servidor rechaza otros
+tipos):
 
 ```json
 {
-  "display_name": "…", "language_code": "es", "timezone": "device",
-  "hour_format": "system",
-  "notify_kickoff": true, "notify_goals": true, "notify_final": true,
-  "notify_cards": true, "notify_lineups": true, "notify_news": true,
-  "notify_transfers": true, "notify_red_cards": true,
-  "notify_goal_annulled": true, "notify_player_starter": true,
-  "notify_player_bench": true, "notify_player_sub_in": true,
-  "notify_player_sub_out": true
+  "displayName": "…", "languageCode": "es", "timezone": "device",
+  "hourFormat": "system",
+  "notifyKickoff": true, "notifyGoals": true, "notifyFinal": true,
+  "notifyCards": true, "notifyLineups": true, "notifyNews": true,
+  "notifyTransfers": true, "notifyRedCards": true,
+  "notifyGoalAnnulled": true, "notifyPlayerStarter": true,
+  "notifyPlayerBench": true, "notifyPlayerSubIn": true,
+  "notifyPlayerSubOut": true
 }
 ```
 
-Si PostgREST responde 404 / `PGRST202` (función inexistente) usa
+v3 es una actualización parcial (sólo cambian las claves presentes; las
+desconocidas se ignoran) y `notifyRedCards` también escribe `notify_cards`.
+Si PostgREST responde 404 / `PGRST202` (servidor sin v3) usa
 `futbeat_sync_user_profile_v2` con las siete claves antiguas y no vuelve a
-probar el RPC nuevo en esa sesión. Cualquier otro error se propaga (el perfil
-queda marcado como pendiente y se reintenta en la siguiente reconciliación).
-La lectura (`futbeat_read_user_profile`) acepta claves camelCase o
-snake_case.
+probar v3 en esa sesión. Cualquier otro error se propaga (el perfil queda
+marcado como pendiente y se reintenta en la siguiente reconciliación).
+`futbeat_read_user_profile` devuelve las claves nuevas en camelCase; el
+cliente también acepta snake_case.
 
 ## Mensajes
 
@@ -112,6 +116,20 @@ snake_case.
 
 Todo está en `lib/core/push_messages.dart` y sólo se crea cuando
 `PushService.configured`.
+
+## Canal de Android
+
+El servidor envía `android.notification.channel_id = futbeat_match_alerts`.
+Al arrancar, si `PushService.configured` y en Android, la app llama al
+`MethodChannel` `futbeat/notifications` (`createNotificationChannel`), que
+`MainActivity.kt` atiende creando en Android 8+ el canal
+`futbeat_match_alerts` ("Partidos", "Alertas de partidos y jugadores",
+importancia alta). Es idempotente. El manifiesto declara además
+`com.google.firebase.messaging.default_notification_channel_id` con el mismo
+id. Sin push no se invoca nada. La parte Dart tiene tests
+(`test/notifications_app_test.dart`); la creación nativa sólo puede
+verificarse en un dispositivo (Ajustes → Apps → FutBeat → Notificaciones
+debe mostrar "Partidos" tras abrir un build con push).
 
 ## Aviso para activar
 

@@ -22,7 +22,7 @@ String? reconcileSelectedCountry({
 
 /// Notification preference keys as the server stores them. The first seven
 /// are understood by every server (`futbeat_sync_user_profile_v2`); the rest
-/// only by servers with `futbeat_update_profile_preferences`.
+/// only by servers with `futbeat_sync_user_profile_v3`.
 const legacyNotificationKeys = [
   'notify_kickoff',
   'notify_goals',
@@ -317,7 +317,7 @@ class PushService {
   /// [configured] unless a test overrides it.
   final bool pushConfigured;
 
-  /// `futbeat_update_profile_preferences` answered "not found" on this
+  /// `futbeat_sync_user_profile_v3` answered "not found" on this
   /// server; later saves go straight to the legacy RPC.
   bool _preferencesRpcMissing = false;
   final storage = const FlutterSecureStorage();
@@ -953,7 +953,7 @@ class PushService {
   }
 
   /// Saves the profile and every notification preference. Uses the JSON
-  /// RPC `futbeat_update_profile_preferences` when the server has it and
+  /// RPC `futbeat_sync_user_profile_v3` when the server has it and
   /// falls back to `futbeat_sync_user_profile_v2` (legacy keys only) when
   /// it does not.
   Future<void> _syncProfileSettings(UserProfileSettings settings) async {
@@ -962,9 +962,9 @@ class PushService {
     if (!_preferencesRpcMissing) {
       try {
         await dio.post(
-          '${config.supabaseUrl}/rest/v1/rpc/futbeat_update_profile_preferences',
+          '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_profile_v3',
           options: authHeaders,
-          data: {'p_preferences': profilePreferencesPayload(settings)},
+          data: {'p_profile': profilePayload(settings)},
         );
         saved = true;
       } on DioException catch (error) {
@@ -989,17 +989,11 @@ class PushService {
     await storage.write(key: 'futbeat.profile.dirty', value: 'false');
   }
 
-  /// `p_preferences` of `futbeat_update_profile_preferences`: profile
-  /// fields plus every notification key (legacy and new, snake_case).
-  static Map<String, dynamic> profilePreferencesPayload(
-    UserProfileSettings settings,
-  ) => {
-    'display_name': settings.displayName,
-    'language_code': settings.languageCode,
-    'timezone': settings.timezone,
-    'hour_format': settings.hourFormat,
-    ...settings.notificationPreferences,
-  };
+  /// `p_profile` of `futbeat_sync_user_profile_v3`: every profile field
+  /// and switch under its camelCase key (the server applies only the keys
+  /// present; `notifyRedCards` also writes the legacy `notify_cards`).
+  static Map<String, dynamic> profilePayload(UserProfileSettings settings) =>
+      settings.toJson();
 
   /// PostgREST answers an unknown RPC with 404 / PGRST202.
   static bool isMissingRpc(DioException error) {

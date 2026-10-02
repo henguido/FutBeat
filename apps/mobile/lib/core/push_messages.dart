@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -72,6 +74,34 @@ class FirebasePushMessages implements PushMessageSource {
     await ensureFirebase();
     final message = await FirebaseMessaging.instance.getInitialMessage();
     return message == null ? null : PushMessage.fromRemote(message);
+  }
+}
+
+/// Android channel the server targets (`android.notification.channel_id`).
+const matchAlertsChannelId = 'futbeat_match_alerts';
+const notificationsMethodChannel = MethodChannel('futbeat/notifications');
+
+/// Creates the high-importance "Partidos" channel on Android 8+ (handled by
+/// MainActivity). Does nothing unless push is configured and on Android;
+/// never throws.
+Future<bool> ensureAndroidNotificationChannel({
+  bool configured = PushService.configured,
+  bool? android,
+  MethodChannel channel = notificationsMethodChannel,
+}) async {
+  if (!configured || !(android ?? Platform.isAndroid)) return false;
+  try {
+    final created = await channel.invokeMethod<bool>(
+      'createNotificationChannel',
+      {
+        'id': matchAlertsChannelId,
+        'name': 'Partidos',
+        'description': 'Alertas de partidos y jugadores',
+      },
+    );
+    return created ?? false;
+  } catch (_) {
+    return false;
   }
 }
 

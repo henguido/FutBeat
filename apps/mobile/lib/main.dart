@@ -149,6 +149,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     // Null unless the build has the push flags: nothing runs otherwise.
     final source = ref.read(pushMessageSourceProvider);
     if (source != null) {
+      unawaited(ensureAndroidNotificationChannel());
       pushMessages = PushMessageRouter(
         source: source,
         router: router,
