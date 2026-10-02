@@ -69,7 +69,7 @@ async function api(db) {
   const source = await readFile(new URL('../../supabase/functions/futbeat-api/index.ts', import.meta.url), 'utf8');
   const rpcs = [];
   const ctx = { supabaseAdmin: { rpc: async (name, args) => {
-    rpcs.push({ name, args });
+    if (name !== 'futbeat_read_national_teams') rpcs.push({ name, args });
     const keys = Object.keys(args ?? {});
     try {
       const v = (await db.query(`select public.${name}(${keys.map((k, i) => `${k}=>$${i + 1}`).join(',')}) v`, keys.map((k) => args[k]))).rows[0]?.v;

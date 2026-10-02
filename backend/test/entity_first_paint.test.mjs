@@ -28,6 +28,8 @@ async function concurrentApi(expected, answers) {
   let release;
   const allStarted = new Promise((resolve) => { release = resolve; });
   const ctx = { supabaseAdmin: { rpc: (name, args) => {
+    // The shared national-team map is not one of the request's own reads.
+    if (name === 'futbeat_read_national_teams') return Promise.resolve({ data: null, error: null });
     started.push({ name, args });
     if (started.length === expected) release();
     return allStarted.then(() => answers[name]?.() ?? { data: null, error: null });
