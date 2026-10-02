@@ -7,51 +7,130 @@ async function jwt(header, claims, pem, algorithm) {
  const signature = await crypto.subtle.sign(algorithm,key,new TextEncoder().encode(body));
  return body + '.' + Buffer.from(signature).toString('base64url');
 }
+
+// Android notification channel the app creates (one channel for match and
+// player alerts). Overridable per message (message.channelId) or by env.
+export const DEFAULT_ANDROID_CHANNEL = 'futbeat_match_alerts';
+const SEND_TIMEOUT_MS = 10000;
+
+// One notification slot per logical event: a GOAL_ANNULLED replaces its goal,
+// a lineup correction replaces the earlier lineup alert. FCM/APNs collapse ids
+// are at most 64 bytes.
+export function collapseKeyOf(row) {
+ const key = row.message?.collapseKey ?? row.message?.eventId ?? row.id;
+ return String(key).slice(0, 64);
+}
+
+// Data values must be strings for FCM.
+function dataOf(row) {
+ const m = row.message ?? {};
+ const data = { notificationId: String(row.id) };
+ for (const name of ['type','eventId','matchId','playerId','annulsEventId','articleId','transferId','url'])
+  if (m[name] !== undefined && m[name] !== null) data[name] = String(m[name]);
+ return data;
+}
+
+// Dead-token classification: the device must be disabled (receipt handled by
+// futbeat_finish_notification).
+async function fcmFailure(response) {
+ let code = null;
+ try {
+  const body = await response.json();
+  code = body?.error?.details?.find(d => d?.errorCode)?.errorCode ?? body?.error?.status ?? null;
+ } catch { /* no body */ }
+ if (response.status === 404 || code === 'UNREGISTERED') return { state:'failed', receipt:'FCM_UNREGISTERED' };
+ return { state: response.status >= 500 ? 'uncertain' : 'failed', receipt:'FCM_HTTP_' + response.status + (code ? ':' + code : '') };
+}
+async function apnsFailure(response) {
+ let reason = null;
+ try { reason = (await response.json())?.reason ?? null; } catch { /* no body */ }
+ if (response.status === 410 || reason === 'Unregistered') return { state:'failed', receipt:'APNS_UNREGISTERED' };
+ return { state: response.status >= 500 ? 'uncertain' : 'failed', receipt:'APNS_HTTP_' + response.status + (reason ? ':' + reason : '') };
+}
+
 export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, clock = () => Date.now() } = {}) {
  if (mode === 'dry_run') return { async send(row) {
   if (row.transport !== 'test') throw new Error('Dry run accepts test devices only');
   return { state:'simulated', receipt:'dry-run:' + row.id };
  }};
  if (mode !== 'live') throw new Error('Invalid push mode');
+
+ // FCM OAuth access token, cached for this transport (one dispatcher
+ // invocation): one token request however many messages are sent; concurrent
+ // sends share the same in-flight request.
+ let fcmAccount;
+ let fcmToken = null; // { value, expiresAt } or a pending promise
+ const fcmAccess = async () => {
+  if (fcmAccount === undefined) {
+   try { fcmAccount = JSON.parse(env.FCM_SERVICE_ACCOUNT_JSON ?? '{}'); } catch { fcmAccount = {}; }
+  }
+  const account = fcmAccount;
+  if (!account.private_key || !account.client_email || !account.project_id) return { error:'FCM_NOT_CONFIGURED' };
+  if (fcmToken && !(fcmToken instanceof Promise) && fcmToken.expiresAt - 60000 > clock()) return { account, token:fcmToken.value };
+  if (!(fcmToken instanceof Promise)) {
+   fcmToken = (async () => {
+    const now = Math.floor(clock()/1000);
+    const assertion = await jwt({alg:'RS256',typ:'JWT'},{
+     iss:account.client_email,scope:'https://www.googleapis.com/auth/firebase.messaging',
+     aud:'https://oauth2.googleapis.com/token',iat:now,exp:now+3600,
+    },account.private_key,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'});
+    const reply = await fetcher('https://oauth2.googleapis.com/token',{method:'POST',
+     headers:{'Content-Type':'application/x-www-form-urlencoded'},
+     body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion}),
+     signal:AbortSignal.timeout(SEND_TIMEOUT_MS)});
+    if (!reply.ok) return null;
+    const { access_token, expires_in } = await reply.json();
+    if (!access_token) return null;
+    return { value:access_token, expiresAt:clock() + Math.max(60, Number(expires_in) || 3600) * 1000 };
+   })().catch(() => null);
+  }
+  const pending = fcmToken;
+  const resolved = await pending;
+  if (fcmToken === pending) fcmToken = resolved; // null: the next send retries
+  return resolved ? { account, token:resolved.value } : { error:'FCM_AUTH_FAILED' };
+ };
+
+ let apnsJwt = null; // { value, issuedAt }; APNs accepts a provider token for up to 1 h
+ const apnsToken = async () => {
+  if (apnsJwt && clock() - apnsJwt.issuedAt < 50 * 60000) return apnsJwt.value;
+  const issuedAt = clock();
+  const value = await jwt({alg:'ES256',kid:env.APNS_KEY_ID},{iss:env.APNS_TEAM_ID,iat:Math.floor(issuedAt/1000)},
+   env.APNS_PRIVATE_KEY,{name:'ECDSA',namedCurve:'P-256',hash:'SHA-256'});
+  apnsJwt = { value, issuedAt };
+  return value;
+ };
+
  return { async send(row) {
-  const now = Math.floor(clock()/1000);
   let url,headers,body;
+  const title = row.message?.title;
+  const text = row.message?.body ?? undefined;
+  const collapse = collapseKeyOf(row);
   if (row.transport === 'fcm') {
-   const account = JSON.parse(env.FCM_SERVICE_ACCOUNT_JSON ?? '{}');
-   if (!account.private_key || !account.client_email || !account.project_id) return {state:'failed',receipt:'FCM_NOT_CONFIGURED'};
-   const assertion = await jwt({alg:'RS256',typ:'JWT'},{
-    iss:account.client_email,scope:'https://www.googleapis.com/auth/firebase.messaging',
-    aud:'https://oauth2.googleapis.com/token',iat:now,exp:now+3600,
-   },account.private_key,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'});
-   const tokenReply=await fetcher('https://oauth2.googleapis.com/token',{method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion}),
-    signal:AbortSignal.timeout(10000)});
-   if(!tokenReply.ok) return {state:'failed',receipt:'FCM_AUTH_FAILED'};
-   const {access_token}=await tokenReply.json();
-   if(!access_token) return {state:'failed',receipt:'FCM_AUTH_FAILED'};
-   url='https://fcm.googleapis.com/v1/projects/'+encodeURIComponent(account.project_id)+'/messages:send';
-   headers={Authorization:'Bearer '+access_token,'Content-Type':'application/json'};
-   body={message:{token:row.token,notification:{title:row.message.title},
-    data:{eventId:row.message.eventId,matchId:row.message.matchId,notificationId:row.id},
-    android:{collapse_key:row.id,notification:{tag:row.id}},apns:{headers:{'apns-collapse-id':row.id}}}};
+   const access = await fcmAccess();
+   if (access.error) return {state:'failed',receipt:access.error};
+   url='https://fcm.googleapis.com/v1/projects/'+encodeURIComponent(access.account.project_id)+'/messages:send';
+   headers={Authorization:'Bearer '+access.token,'Content-Type':'application/json'};
+   body={message:{token:row.token,notification:{title,...(text ? {body:text} : {})},
+    data:dataOf(row),
+    android:{priority:'high',collapse_key:collapse,notification:{tag:collapse,
+     channel_id:row.message?.channelId ?? env.FCM_ANDROID_CHANNEL_ID ?? DEFAULT_ANDROID_CHANNEL}},
+    apns:{headers:{'apns-collapse-id':collapse}}}};
   } else if(row.transport==='apns') {
    if(!env.APNS_PRIVATE_KEY || !env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_TOPIC)
     return {state:'failed',receipt:'APNS_NOT_CONFIGURED'};
-   const token=await jwt({alg:'ES256',kid:env.APNS_KEY_ID},{iss:env.APNS_TEAM_ID,iat:now},
-    env.APNS_PRIVATE_KEY,{name:'ECDSA',namedCurve:'P-256',hash:'SHA-256'});
+   const token=await apnsToken();
    const host=env.APNS_SANDBOX==='true'?'api.sandbox.push.apple.com':'api.push.apple.com';
    url='https://'+host+'/3/device/'+encodeURIComponent(row.token);
    headers={authorization:'bearer '+token,'apns-topic':env.APNS_TOPIC,'apns-push-type':'alert',
-    'apns-id':row.id,'apns-collapse-id':row.id,'Content-Type':'application/json'};
-   body={aps:{alert:{title:row.message.title},sound:'default'},eventId:row.message.eventId,
-    matchId:row.message.matchId,notificationId:row.id};
+    'apns-id':row.id,'apns-collapse-id':collapse,'Content-Type':'application/json'};
+   body={aps:{alert:{title,...(text ? {body:text} : {})},sound:'default','thread-id':row.message?.matchId ?? undefined},
+    ...dataOf(row)};
   } else return {state:'failed',receipt:'UNSUPPORTED_TRANSPORT'};
   // Once the send starts, an ambiguous failure is never automatically retried.
   try {
-   const response=await fetcher(url,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});
+   const response=await fetcher(url,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(SEND_TIMEOUT_MS)});
    if(response.ok) return {state:'sent',receipt:row.transport==='apns' ? response.headers.get('apns-id') : (await response.json()).name};
-   return {state:response.status>=500?'uncertain':'failed',receipt:row.transport.toUpperCase()+'_HTTP_'+response.status};
+   return row.transport==='apns' ? apnsFailure(response) : fcmFailure(response);
   } catch { return {state:'uncertain',receipt:'SEND_ACK_UNKNOWN'}; }
  }};
 }
