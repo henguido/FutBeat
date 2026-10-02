@@ -483,7 +483,7 @@ Future<void> _pumpOnboarding(WidgetTester tester, AppDatabase database) async {
             ),
           ),
         ),
-        exploreSnapshotProvider.overrideWith((ref) async => _catalog()),
+        exploreSnapshotProvider.overrideWith((ref) => Stream.value(_catalog())),
         profileSettingsProvider.overrideWith(
           (ref) async => const UserProfileSettings(),
         ),

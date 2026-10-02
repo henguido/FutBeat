@@ -130,6 +130,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     final fresh = result.asData?.value;
     if (fresh != null) previous = fresh;
     final data = fresh ?? previous;
+    // Suggestions paint from the stored answer while they revalidate; a
+    // failed refresh keeps them (marked stale) and offers Retry.
+    final refreshing =
+        result.isLoading || (!hasQuery && fresh?.revalidating == true);
+    final failed = result.hasError || (!hasQuery && fresh?.stale == true);
     final searchingRemote =
         hasQuery &&
         data?.pendingRemote == true &&
@@ -169,14 +174,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               onChanged: _onQueryChanged,
             ),
           ),
-          if (typing || result.isLoading)
-            const LinearProgressIndicator(minHeight: 2),
+          if (typing || refreshing) const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
               children: [
                 if (data?.demo == true) const DemoNotice(),
-                if (result.hasError) ...[
+                if (failed) ...[
                   Text(
                     data == null ? 'No pudimos cargar la búsqueda' : 'No pudimos actualizar. Conservamos los resultados disponibles.',
                   ),
@@ -193,8 +197,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                 ],
                 if (searchingRemote) const _RemoteSearchNotice(),
                 if (!searchingRemote &&
-                    !result.isLoading &&
-                    !result.hasError &&
+                    !refreshing &&
+                    !failed &&
                     data != null &&
                     competitions.isEmpty &&
                     teams.isEmpty &&

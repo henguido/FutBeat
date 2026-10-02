@@ -288,19 +288,22 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(requests.map((r) => r.path), ['/v1/explore']);
+      // Global and country suggestions are requested in parallel.
+      expect(requests.map((r) => r.path), ['/v1/explore', '/v1/explore']);
+      expect(requests.first.queryParameters, isEmpty);
+      expect(requests[1].queryParameters['country'], 'CR');
       expect(find.text('Competiciones destacadas'), findsOneWidget);
       expect(find.text('Equipos sugeridos'), findsOneWidget);
       expect(find.text('COSTA RICA'), findsNothing);
       await tester.enterText(find.byType(TextField), 'm');
       await tester.pump(const Duration(milliseconds: 300));
-      expect(requests.length, 1);
+      expect(requests.length, 2);
       await tester.enterText(find.byType(TextField), 'manchester');
       await tester.pump(const Duration(milliseconds: 200));
-      expect(requests.length, 1);
+      expect(requests.length, 2);
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 10));
-      expect(requests.length, 2);
+      expect(requests.length, 3);
       expect(requests.last.queryParameters['q'], 'manchester');
       expect(requests.last.queryParameters['country'], 'CR');
       expect(find.text('Home'), findsOneWidget);
@@ -308,7 +311,7 @@ void main() {
       await tester.enterText(find.byType(TextField), 'london');
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump(const Duration(milliseconds: 10));
-      expect(requests[1].cancelToken!.isCancelled, true);
+      expect(requests[2].cancelToken!.isCancelled, true);
       expect(requests.last.queryParameters['q'], 'london');
       countries.add(
         const CountryPreference(
@@ -319,7 +322,7 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 10));
-      expect(requests[2].cancelToken!.isCancelled, true);
+      expect(requests[3].cancelToken!.isCancelled, true);
       expect(requests.last.queryParameters['country'], 'ES');
       expect(find.text('Home'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());

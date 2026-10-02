@@ -6,7 +6,7 @@ import 'package:futbeat/core/database.dart';
 
 void main() {
   test(
-    'real v3 database upgrades to v4 without losing existing data',
+    'real v3 database upgrades to the current schema without losing data',
     () async {
       final directory = await Directory.systemTemp.createTemp('futbeat-v3-');
       final file = File('${directory.path}/v3.sqlite');
@@ -67,7 +67,7 @@ void main() {
           (await db.customSelect('PRAGMA user_version').getSingle()).read<int>(
             'user_version',
           ),
-          4,
+          5,
         );
         await db.close();
         db = AppDatabase(NativeDatabase(file));
@@ -76,6 +76,57 @@ void main() {
         expect(
           reopened.competitionOrderUpdatedAt,
           preference.competitionOrderUpdatedAt,
+        );
+      } finally {
+        await db.close();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'v4 database gains the catalog (Explorar) cache without losing data',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('futbeat-v4-');
+      final file = File('${directory.path}/v4.sqlite');
+      final db = AppDatabase(
+        NativeDatabase(
+          file,
+          setup: (sqlite) {
+            sqlite.execute('''
+        CREATE TABLE IF NOT EXISTS follows (entity_id TEXT NOT NULL,
+          entity_type TEXT NOT NULL, PRIMARY KEY(entity_id, entity_type));
+        CREATE TABLE IF NOT EXISTS preferences (id INTEGER NOT NULL DEFAULT 1 PRIMARY KEY,
+          detected_country TEXT, selected_country TEXT,
+          bootstrap_dismissed INTEGER NOT NULL DEFAULT 0
+            CHECK(bootstrap_dismissed IN (0, 1)),
+          competition_order_mode TEXT NOT NULL DEFAULT 'automatic',
+          competition_order_preference TEXT NOT NULL DEFAULT 'country_first',
+          pinned_competition_ids TEXT NOT NULL DEFAULT '[]',
+          competition_order_updated_at INTEGER NULL);
+        CREATE TABLE IF NOT EXISTS temporary_interests (entity_id TEXT NOT NULL,
+          entity_type TEXT NOT NULL, expires_at INTEGER NOT NULL,
+          PRIMARY KEY(entity_id, entity_type));
+        CREATE TABLE IF NOT EXISTS calendar_snapshots (calendar_date TEXT NOT NULL PRIMARY KEY,
+          payload TEXT NOT NULL, saved_at INTEGER NOT NULL);
+        INSERT OR IGNORE INTO follows VALUES ('league-old', 'competition');
+        INSERT OR IGNORE INTO calendar_snapshots VALUES ('2026-09-20', '{}', 1700000000);
+      ''');
+            if (sqlite.userVersion == 0) sqlite.userVersion = 4;
+          },
+        ),
+      );
+      try {
+        expect(await db.watchFollows().first, {'competition:league-old'});
+        expect(await db.readCalendarSnapshot('2026-09-20'), '{}');
+        expect(await db.readCatalogEntry('explore'), isNull);
+        await db.saveCatalogSnapshot('explore', '{"v":1}');
+        expect((await db.readCatalogEntry('explore'))!.payload, '{"v":1}');
+        expect(
+          (await db.customSelect('PRAGMA user_version').getSingle()).read<int>(
+            'user_version',
+          ),
+          5,
         );
       } finally {
         await db.close();
@@ -105,7 +156,7 @@ void main() {
           (await db.customSelect('PRAGMA user_version').getSingle()).read<int>(
             'user_version',
           ),
-          4,
+          5,
         );
       } finally {
         await db.close();
