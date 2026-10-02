@@ -72,9 +72,13 @@
 --      warm, ~2.8 s cold).
 --   4. Late pushes. Provider answers for old matches would create "first
 --      seen" GOAL / FULL_TIME events days later. Outbox rows for match events
---      whose kickoff is older than matchPushMaxAgeHours (8) are dropped at
---      insert (canonical events are still stored); metric
---      stale_match_push_skipped.
+--      more than matchPushMaxAgeHours (8) after the match's EFFECTIVE kickoff
+--      are dropped at insert (canonical events are still stored); metric
+--      stale_match_push_skipped. Effective kickoff: the newest of the stored
+--      startTime and the provider's kickoffUtc on the latest observation; a
+--      match the provider reported in play within the last 60 minutes always
+--      pushes (rescheduled / suspended-and-resumed games). Product behaviour
+--      change: every match push later than that is dropped.
 -- Worst case per UTC day (all limits at their defaults): detail recovery
 -- 40 requests x 2 calls = 80 match-detail units; reopens 2 dates per sweep,
 -- in practice bounded by the dates in the window (each date at most 2
@@ -663,19 +667,37 @@ $$;
 -- ---------------------------------------------------------------------------
 create or replace function futbeat_private.drop_stale_match_push()
 returns trigger language plpgsql security definer set search_path='' as $$
-declare v_kickoff timestamptz;
+declare v_kickoff timestamptz; v_match text; v_provider text;
+  v_max interval:=make_interval(hours=>futbeat_private.quota_setting('goal_api','matchPushMaxAgeHours',8)::integer);
 begin
   if new.event_id is null then return new; end if;
-  select futbeat_private.try_timestamptz(e.payload->>'startTime') into v_kickoff
+  select c.match_id,c.provider,futbeat_private.try_timestamptz(e.payload->>'startTime')
+    into v_match,v_provider,v_kickoff
     from futbeat_private.canonical_events c
     join futbeat_private.entities e on e.id=c.match_id and e.kind='match'
    where c.id=new.event_id;
-  if v_kickoff is not null and v_kickoff<now()-make_interval(
-      hours=>futbeat_private.quota_setting('goal_api','matchPushMaxAgeHours',8)::integer) then
-    perform futbeat_private.bump_metric('stale_match_push_skipped');
-    return null;
+  if v_kickoff is null or v_kickoff>=now()-v_max then return new; end if;
+  -- The stored kickoff can be stale (rescheduled, postponed then played,
+  -- suspended and resumed another day): the effective kickoff is the
+  -- newest the provider reported for this match...
+  if exists(select 1 from (
+      select futbeat_private.try_timestamptz(o.raw_payload->>'kickoffUtc') k
+      from futbeat_private.provider_observations o
+      where o.provider=v_provider and o.canonical_match_id=v_match
+      order by o.received_at desc,o.id desc limit 1) x where x.k>=now()-v_max) then
+    return new;
   end if;
-  return new;
+  -- ...and a match the provider reported in play within the last hour is
+  -- being played now (its live events and its final whistle push).
+  if exists(select 1 from futbeat_private.provider_observations o
+      where o.provider=v_provider and o.canonical_match_id=v_match
+        and o.status in ('LIVE','HALFTIME','EXTRA_TIME','PENALTIES')
+        and o.received_at>=now()-interval '60 minutes') then
+    return new;
+  end if;
+  -- A genuinely late answer (stuck recovery, an old results date).
+  perform futbeat_private.bump_metric('stale_match_push_skipped');
+  return null;
 end $$;
 drop trigger if exists futbeat_drop_stale_match_push on futbeat_private.notification_outbox;
 create trigger futbeat_drop_stale_match_push before insert on futbeat_private.notification_outbox

@@ -35,8 +35,9 @@ async function match(db, { kickoff, live = 'LIVE', liveAfterMinutes = 60 } = {})
   if (live) await observe(db, ids, live, kickoff + liveAfterMinutes * 60e3);
   return ids;
 }
-async function observe(db, ids, status, at, { home = 1, away = 1 } = {}) {
+async function observe(db, ids, status, at, { home = 1, away = 1, kickoffUtc } = {}) {
   const raw = { apiId: ids.ext, matchStatus: status, matchElapsed: 70, homeTeamScore: home, awayTeamScore: away,
+    kickoffUtc: kickoffUtc ?? iso(ids.kickoff),
     homeTeam: { id: `STH${ids.n}` }, awayTeam: { id: `STA${ids.n}` }, events: [], cards: [], substitutions: [] };
   const obs = { externalMatchId: ids.ext, status, minute: 70, score: { home, away }, events: [], rawPayload: raw, source: 'live-list',
     payloadHash: createHash('sha256').update(JSON.stringify([ids.ext, status, at, home, away])).digest('hex') };
@@ -182,20 +183,36 @@ test('a date whose last results answer was lost at the record stage gets exactly
   assert.deepEqual((await sweep(db)).reopenedDates, []);
 }));
 
-test('a provider answer for an old match never pushes; a recent one still does', () => withDb(async (db) => {
-  const old = await match(db, { kickoff: Date.now() - 2 * 86400e3, live: null });
-  const recent = await match(db, { kickoff: Date.now() - 3600e3, live: null });
+test('a late answer for an old match never pushes; recent, rescheduled and resumed games still do', () => withDb(async (db) => {
+  const now = Date.now();
+  // Stuck: kicked off 2 days ago, last seen in play then; the answer comes now.
+  const stuck = await match(db, { kickoff: now - 2 * 86400e3 });
+  await observe(db, stuck, 'FINISHED_PENDING_VERIFICATION', now - 60e3);
+  // Played today.
+  const recent = await match(db, { kickoff: now - 3600e3, live: null });
+  // Rescheduled: the stored kickoff is 3 days old, the provider now reports
+  // a kickoff 70 minutes ago and the game in play.
+  const moved = await match(db, { kickoff: now - 3 * 86400e3, live: null });
+  await observe(db, moved, 'LIVE', now - 5 * 60e3, { kickoffUtc: iso(now - 70 * 60e3) });
+  // Suspended and resumed the next day: same kickoff (30 h ago), in play again
+  // 20 minutes ago; its final whistle now.
+  const resumed = await match(db, { kickoff: now - 30 * 3600e3 });
+  await observe(db, resumed, 'LIVE', now - 20 * 60e3);
+  await observe(db, resumed, 'FINISHED_PENDING_VERIFICATION', now - 30e3);
+
   const device = (await db.query("insert into futbeat_private.push_devices(user_id,installation_id,platform,transport,token) values(gen_random_uuid(),gen_random_uuid(),'android','test','tok-stale') returning id,user_id")).rows[0];
-  for (const g of [old, recent]) {
-    await db.query("insert into futbeat_private.push_follows(user_id,entity_type,entity_id,created_at) values($1,'match',$2,now()-interval '3 days')", [device.user_id, g.match]);
+  await db.query('delete from futbeat_private.notification_outbox');
+  const games = { stuck, recent, moved, resumed };
+  for (const [name, g] of Object.entries(games)) {
+    await db.query("insert into futbeat_private.push_follows(user_id,entity_type,entity_id,created_at) values($1,'match',$2,now()-interval '4 days')", [device.user_id, g.match]);
     await db.query(`insert into futbeat_private.canonical_events(id,match_id,provider,event_type,payload,notify_candidate,first_seen_at)
-      values($1,$2,'goal_api','FULL_TIME',jsonb_build_object('id',$1::text,'matchId',$2::text,'type','FULL_TIME'),true,now())`, [`fb_event_stale_${g.n}`, g.match]);
+      values($1,$2,'goal_api','FULL_TIME',jsonb_build_object('id',$1::text,'matchId',$2::text,'type','FULL_TIME'),true,now())`, [`fb_event_push_${name}`, g.match]);
     await db.query(`insert into futbeat_private.notification_outbox(event_id,device_id,user_id,message)
-      values($1,$2,$3,'{"title":"t","body":"b"}')`, [`fb_event_stale_${g.n}`, device.id, device.user_id]);
+      values($1,$2,$3,'{"title":"t","body":"b"}')`, [`fb_event_push_${name}`, device.id, device.user_id]);
   }
-  const rows = (await db.query('select event_id from futbeat_private.notification_outbox where device_id=$1', [device.id])).rows.map((r) => r.event_id);
-  assert.deepEqual(rows, [`fb_event_stale_${recent.n}`]);
-  assert.equal((await db.query("select count(*)::int n from futbeat_private.canonical_events where id like 'fb_event_stale_%'")).rows[0].n, 2, 'events are still stored');
+  const rows = (await db.query('select event_id from futbeat_private.notification_outbox where device_id=$1 order by event_id', [device.id])).rows.map((r) => r.event_id);
+  assert.deepEqual(rows, ['fb_event_push_moved', 'fb_event_push_recent', 'fb_event_push_resumed']);
+  assert.equal((await db.query("select count(*)::int n from futbeat_private.canonical_events where id like 'fb_event_push_%'")).rows[0].n, 4, 'events are still stored');
 }));
 
 test('matches the results answer did not carry get one bounded detail request each, newest first, never when final or never seen in play', () => withDb(async (db) => {
