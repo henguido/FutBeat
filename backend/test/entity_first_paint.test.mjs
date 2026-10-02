@@ -28,12 +28,14 @@ async function concurrentApi(expected, answers) {
   let release;
   const allStarted = new Promise((resolve) => { release = resolve; });
   const ctx = { supabaseAdmin: { rpc: (name, args) => {
+    // The shared national-team map is not one of the request's own reads.
+    if (name === 'futbeat_read_national_teams') return Promise.resolve({ data: null, error: null });
     started.push({ name, args });
     if (started.length === expected) release();
     return allStarted.then(() => answers[name]?.() ?? { data: null, error: null });
   } } };
   const context = vm.createContext({
-    Request, Response, URL, JSON, Promise, console: { warn: () => {}, error: () => {}, log: () => {} },
+    Request, Response, URL, JSON, setTimeout, clearTimeout, Promise, console: { warn: () => {}, error: () => {}, log: () => {} },
     withSupabase: (_opts, handler) => (request) => handler(request, ctx),
     ...matchDetail, ...calendarCache,
   });

@@ -155,7 +155,7 @@ class _FormRow extends StatelessWidget {
         ],
         Expanded(
           child: Text(
-            team?.name ?? '',
+            team?.displayName ?? '',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.w700),
@@ -194,8 +194,10 @@ class _ResultChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color) = _resultLabel(teamMatchResult(item, teamId));
-    final home = preview.team(item['homeTeamId'] as String?)?.name ?? 'Local';
-    final away = preview.team(item['awayTeamId'] as String?)?.name ?? 'Visita';
+    final home =
+        preview.team(item['homeTeamId'] as String?)?.displayName ?? 'Local';
+    final away =
+        preview.team(item['awayTeamId'] as String?)?.displayName ?? 'Visita';
     final score = item['score'] is Map
         ? '${item['score']['home']} - ${item['score']['away']}'
         : '–';
@@ -326,7 +328,7 @@ class _PositionRow extends StatelessWidget {
       ],
       Expanded(
         child: Text(
-          team?.name ?? '',
+          team?.displayName ?? '',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontWeight: FontWeight.w700),
@@ -893,7 +895,7 @@ class _H2hSummary extends StatelessWidget {
           if (entity != null) EntityAvatar(entity, size: 36),
           const SizedBox(height: 6),
           Text(
-            entity?.name ?? '',
+            entity?.displayName ?? '',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -1091,7 +1093,7 @@ class _MeetingRow extends StatelessWidget {
           ],
           Flexible(
             child: Text(
-              entity?.name ?? '',
+              entity?.displayName ?? '',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: end ? TextAlign.end : TextAlign.start,

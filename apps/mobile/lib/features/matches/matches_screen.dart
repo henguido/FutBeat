@@ -808,7 +808,9 @@ class FeedMatchRow extends StatelessWidget {
           ),
         ),
     ];
-    final label = StringBuffer('${home.name} contra ${away.name}, $centre');
+    final label = StringBuffer(
+      '${home.displayName} contra ${away.displayName}, $centre',
+    );
     if (status.isNotEmpty) label.write(', $status');
     if (caption != null) label.write(', $caption');
     if (match.isLive && latestEvent != null) {
@@ -842,7 +844,7 @@ class FeedMatchRow extends StatelessWidget {
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              home.name,
+                              home.displayName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: nameStyle,
@@ -882,7 +884,7 @@ class FeedMatchRow extends StatelessWidget {
                           ),
                           Expanded(
                             child: Text(
-                              away.name,
+                              away.displayName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               textAlign: TextAlign.right,
@@ -909,7 +911,7 @@ class FeedMatchRow extends StatelessWidget {
           'match',
           match.id,
           key: ValueKey('feed-follow-${match.id}'),
-          label: '${home.name} contra ${away.name}',
+          label: '${home.displayName} contra ${away.displayName}',
           compact: true,
         ),
       ],
@@ -940,7 +942,7 @@ class MatchCard extends StatelessWidget {
     void open() =>
         context.push('/match/${match.id}', extra: data.forMatch(match.id));
     final semanticLabel = [
-      '${home.name} contra ${away.name}',
+      '${home.displayName} contra ${away.displayName}',
       centre,
       if (status.isNotEmpty) status,
     ].join(', ');
@@ -977,7 +979,7 @@ class MatchCard extends StatelessWidget {
                       'match',
                       match.id,
                       key: ValueKey('feed-follow-${match.id}'),
-                      label: '${home.name} contra ${away.name}',
+                      label: '${home.displayName} contra ${away.displayName}',
                     ),
                   ],
                 ),
@@ -989,7 +991,7 @@ class MatchCard extends StatelessWidget {
                           EntityAvatar(home),
                           const SizedBox(height: 9),
                           Text(
-                            home.name,
+                            home.displayName,
                             textAlign: TextAlign.center,
                             // Very long names never stretch the card; the
                             // full name stays in the card's semantic label.
@@ -1035,7 +1037,7 @@ class MatchCard extends StatelessWidget {
                           EntityAvatar(away),
                           const SizedBox(height: 9),
                           Text(
-                            away.name,
+                            away.displayName,
                             textAlign: TextAlign.center,
                             // Very long names never stretch the card; the
                             // full name stays in the card's semantic label.

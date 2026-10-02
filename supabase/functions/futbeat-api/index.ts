@@ -15,11 +15,102 @@ const jsonHeaders = {
   'Cache-Control': 'public, max-age=30, stale-while-revalidate=60',
 };
 
-const reply = (status: number, data: unknown) =>
-  new Response(JSON.stringify(data), { status, headers: jsonHeaders });
+// National teams: the provider names them in English with no country, so
+// every successful answer marks each team object ({id: fb_team_*, name}) the
+// catalog identifies as a national team with `nationalTeamCode` (+
+// `nationalTeamSuffix`, e.g. "U19", "W"); the app shows the localized
+// country name. The identity map is one cached server read
+// (futbeat_read_national_teams), kept per isolate for 10 minutes and loaded
+// concurrently with the request's own reads. Without it, answers go out as
+// before (provider names only).
+type NationalTeams = Record<string, unknown>;
+const nationalTeamsTtlMs = 10 * 60 * 1000;
+const nationalTeamsRetryMs = 30 * 1000;
+let nationalTeams: { teams: NationalTeams; at: number; ttl: number } | null = null;
+let nationalTeamsLoad: Promise<void> | null = null;
 
-const replyNoStore = (status: number, data: unknown) =>
-  new Response(JSON.stringify(data), {
+const loadNationalTeams = (
+  read: () => PromiseLike<{ data: unknown; error: unknown }>,
+) => {
+  if (nationalTeams && Date.now() - nationalTeams.at < nationalTeams.ttl) return;
+  if (nationalTeamsLoad) return;
+  const failed = () => {
+    console.warn('national teams unavailable');
+    // Keep the last good map; retry soon, never on every request.
+    nationalTeams = {
+      teams: nationalTeams?.teams ?? {},
+      at: Date.now(),
+      ttl: nationalTeamsRetryMs,
+    };
+  };
+  let started: PromiseLike<{ data: unknown; error: unknown }>;
+  try {
+    started = read();
+  } catch {
+    failed();
+    return;
+  }
+  nationalTeamsLoad = Promise.resolve(started)
+    .then(({ data, error }) => {
+      const teams = asRecord(data).teams;
+      if (error || !teams || typeof teams !== 'object' || Array.isArray(teams)) {
+        failed();
+        return;
+      }
+      nationalTeams = { teams: teams as NationalTeams, at: Date.now(), ttl: nationalTeamsTtlMs };
+    }, failed)
+    .finally(() => {
+      nationalTeamsLoad = null;
+    });
+};
+
+const nationalTeamFields = (_key: string, value: unknown) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const entity = value as Record<string, unknown>;
+  const id = entity.id;
+  if (
+    typeof id !== 'string' || !id.startsWith('fb_team_') ||
+    typeof entity.name !== 'string' || 'nationalTeamCode' in entity ||
+    !nationalTeams || !Object.hasOwn(nationalTeams.teams, id)
+  ) {
+    return value;
+  }
+  const national = asRecord(nationalTeams.teams[id]);
+  const code = cleanText(national.code);
+  if (!/^[A-Z]{2}(?:-[A-Z]{3})?$/.test(code)) return value;
+  const suffix = cleanText(national.suffix);
+  return suffix
+    ? { ...entity, nationalTeamCode: code, nationalTeamSuffix: suffix }
+    : { ...entity, nationalTeamCode: code };
+};
+
+// Only a cold isolate (no map yet) waits for the map, and never longer than
+// this; a refresh of an existing map runs in the background while answers
+// keep using the previous one.
+const nationalTeamsColdWaitMs = 1000;
+
+const jsonBody = async (status: number, data: unknown) => {
+  if (status !== 200) return JSON.stringify(data);
+  if (!nationalTeams && nationalTeamsLoad) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      nationalTeamsLoad,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, nationalTeamsColdWaitMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+  return nationalTeams && Object.keys(nationalTeams.teams).length > 0
+    ? JSON.stringify(data, nationalTeamFields)
+    : JSON.stringify(data);
+};
+
+const reply = async (status: number, data: unknown) =>
+  new Response(await jsonBody(status, data), { status, headers: jsonHeaders });
+
+const replyNoStore = async (status: number, data: unknown) =>
+  new Response(await jsonBody(status, data), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
@@ -48,11 +139,22 @@ export default {
       return reply(405, { error: 'Method not allowed' });
     }
 
+    // Every read goes through `db`: the national-team map loads concurrently
+    // with a validated request's first read (invalid requests never reach
+    // the database), and answers wait for it only while it is loading (a
+    // cold isolate or an expired map).
+    const db = {
+      rpc: (fn: string, args?: Record<string, unknown>) => {
+        loadNationalTeams(() => ctx.supabaseAdmin.rpc('futbeat_read_national_teams'));
+        return ctx.supabaseAdmin.rpc(fn, args);
+      },
+    };
+
     const requestUrl = new URL(request.url);
     const path = requestUrl.pathname;
 
     if (path.endsWith('/futbeat-api/v1/snapshot')) {
-      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
+      const { data: snapshot, error } = await db.rpc(
         'futbeat_read_snapshot',
       );
       if (
@@ -83,7 +185,7 @@ export default {
       // Opening a player records a deduplicated hydration demand (server-side
       // only). A failure here never blocks the cached profile.
       const playerDemand = type === 'player'
-        ? ctx.supabaseAdmin.rpc('futbeat_request_player_profile', { p_player_id: id })
+        ? db.rpc('futbeat_request_player_profile', { p_player_id: id })
           .then(({ data: demand, error: demandError }) => {
             if (demandError) {
               console.warn('player profile demand unavailable');
@@ -101,11 +203,11 @@ export default {
       // (#150); the worker fetches it later. Neither blocks the read.
       const teamDemands = type === 'team'
         ? Promise.all([
-          ctx.supabaseAdmin.rpc('futbeat_request_team_squad', { p_team_id: id })
+          db.rpc('futbeat_request_team_squad', { p_team_id: id })
             .then(({ error: squadError }) => {
               if (squadError) console.warn('team squad demand unavailable');
             }, () => console.warn('team squad demand unavailable')),
-          ctx.supabaseAdmin.rpc('futbeat_request_team_matches', { p_team_id: id })
+          db.rpc('futbeat_request_team_matches', { p_team_id: id })
             .then(({ error: matchesError }) => {
               if (matchesError) console.warn('team matches demand unavailable');
             }, () => console.warn('team matches demand unavailable')),
@@ -115,7 +217,7 @@ export default {
       const [enrichmentPending, , { data: snapshot, error }] = await Promise.all([
         playerDemand,
         teamDemands,
-        ctx.supabaseAdmin.rpc(
+        db.rpc(
           'futbeat_read_entity_detail',
           {
             p_type: type,
@@ -157,7 +259,7 @@ export default {
       ) {
         return reply(400, { error: 'Solicitud inválida' });
       }
-      const { data: context, error } = await ctx.supabaseAdmin.rpc(
+      const { data: context, error } = await db.rpc(
         'futbeat_read_team_context',
         { p_team_id: id, p_competition_id: competitionId, p_season_key: season },
       );
@@ -191,7 +293,7 @@ export default {
         return reply(400, { error: 'Solicitud inválida' });
       }
       const filtered = competitionId !== null;
-      const { data: page, error } = await ctx.supabaseAdmin.rpc(
+      const { data: page, error } = await db.rpc(
         'futbeat_read_team_matches',
         filtered
           ? {
@@ -228,7 +330,7 @@ export default {
           ? oldest.slice(0, 10)
           : null;
         if (before) {
-          const { data: history, error: historyError } = await ctx.supabaseAdmin.rpc(
+          const { data: history, error: historyError } = await db.rpc(
             'futbeat_request_team_matches',
             { p_team_id: id, p_before: before },
           );
@@ -251,8 +353,8 @@ export default {
       // Country only reorders/adds local suggestions; the global list stays.
       const country = (requestUrl.searchParams.get('country') ?? '').trim().toUpperCase();
       const { data: snapshot, error } = /^[A-Z]{2}$/.test(country)
-        ? await ctx.supabaseAdmin.rpc('futbeat_read_country_explore', { p_country: country })
-        : await ctx.supabaseAdmin.rpc('futbeat_read_explore');
+        ? await db.rpc('futbeat_read_country_explore', { p_country: country })
+        : await db.rpc('futbeat_read_explore');
       if (error || !snapshot || snapshot.schemaVersion !== 1 || snapshot.demo !== false) {
         return reply(503, { error: 'Sugerencias temporalmente no disponibles' });
       }
@@ -266,7 +368,7 @@ export default {
         return reply(400, { error: 'Búsqueda inválida' });
       }
 
-      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
+      const { data: snapshot, error } = await db.rpc(
         'futbeat_search_catalog',
         {
           p_query: query,
@@ -301,7 +403,7 @@ export default {
         return reply(400, { error: 'Favoritos inválidos' });
       }
 
-      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
+      const { data: snapshot, error } = await db.rpc(
         'futbeat_read_favorites',
         { p_keys: keys },
       );
@@ -331,11 +433,11 @@ export default {
       // (the read still runs after both, so it reports what they queued).
       const [{ error: demandError }, { error: standingsError }] = await Promise
         .all([
-          ctx.supabaseAdmin.rpc(
+          db.rpc(
             'futbeat_request_terminal_result',
             { p_match_id: id },
           ),
-          ctx.supabaseAdmin.rpc(
+          db.rpc(
             'futbeat_request_match_standings',
             { p_match_id: id },
           ),
@@ -343,7 +445,7 @@ export default {
       if (demandError) console.warn('terminal result demand unavailable');
       if (standingsError) console.warn('standings demand unavailable');
 
-      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
+      const { data: snapshot, error } = await db.rpc(
         'futbeat_read_match_context',
         { p_match_id: id },
       );
@@ -374,12 +476,12 @@ export default {
       if (!validEntityId(id) || !id?.startsWith('fb_match_')) {
         return reply(400, { error: 'Partido inválido' });
       }
-      const { error: h2hDemandError } = await ctx.supabaseAdmin.rpc(
+      const { error: h2hDemandError } = await db.rpc(
         'futbeat_request_match_h2h',
         { p_match_id: id },
       );
       if (h2hDemandError) console.warn('h2h coverage demand unavailable');
-      const { data: preview, error } = await ctx.supabaseAdmin.rpc(
+      const { data: preview, error } = await db.rpc(
         'futbeat_read_match_preview',
         { p_match_id: id },
       );
@@ -418,7 +520,7 @@ export default {
       ) {
         return reply(400, { error: 'Solicitud inválida' });
       }
-      const { data: form, error } = await ctx.supabaseAdmin.rpc(
+      const { data: form, error } = await db.rpc(
         'futbeat_read_standings_form',
         {
           p_competition_id: competitionId,
@@ -456,13 +558,13 @@ export default {
         return replyNoStore(400, { error: 'Solicitud inválida' });
       }
       if (extend) {
-        const { error: historyError } = await ctx.supabaseAdmin.rpc(
+        const { error: historyError } = await db.rpc(
           'futbeat_request_match_h2h_history',
           { p_match_id: id },
         );
         if (historyError) console.warn('h2h history demand unavailable');
       }
-      const { data: page, error } = await ctx.supabaseAdmin.rpc(
+      const { data: page, error } = await db.rpc(
         'futbeat_read_match_h2h',
         { p_match_id: id, p_scope: scope, p_cursor: cursor, p_limit: limit },
       );
@@ -494,13 +596,13 @@ export default {
         { data: detail, error },
         { data: videos, error: videosError },
       ] = await Promise.all([
-        ctx.supabaseAdmin.rpc(
+        db.rpc(
           shouldRequest
             ? 'futbeat_request_match_detail'
             : 'futbeat_read_match_detail',
           { p_match_id: id },
         ),
-        ctx.supabaseAdmin.rpc(
+        db.rpc(
           'futbeat_read_match_videos',
           { p_match_id: id },
         ),
@@ -525,7 +627,7 @@ export default {
       let playerMedia: PlayerMedia = {};
       const playerIds = lineupPlayerIds(detail);
       if (playerIds.length > 0) {
-        const { data: media, error: mediaError } = await ctx.supabaseAdmin.rpc(
+        const { data: media, error: mediaError } = await db.rpc(
           'futbeat_read_lineup_player_media',
           { p_provider: 'goal_api', p_external_ids: playerIds },
         );
@@ -546,7 +648,7 @@ export default {
       const starterIds = missingCanonicalIds(starters);
       const benchIds = missingCanonicalIds(substitutes);
       if (starterIds.length > 0 || benchIds.length > 0) {
-        const { data: hydration, error: hydrationError } = await ctx.supabaseAdmin.rpc(
+        const { data: hydration, error: hydrationError } = await db.rpc(
           'futbeat_request_lineup_hydration',
           { p_starter_ids: starterIds, p_bench_ids: benchIds },
         );
@@ -578,7 +680,7 @@ export default {
         return reply(400, { error: 'Fecha o zona horaria inválida' });
       }
 
-      const { data: snapshot, error } = await ctx.supabaseAdmin.rpc(
+      const { data: snapshot, error } = await db.rpc(
         'futbeat_read_calendar_range',
         {
           p_from_date: date,
@@ -597,7 +699,7 @@ export default {
       }
 
       if (snapshot.coverage?.partial === true) {
-        const { error: requestError } = await ctx.supabaseAdmin.rpc(
+        const { error: requestError } = await db.rpc(
           'futbeat_request_calendar_date',
           { p_local_date: date, p_timezone: timezone },
         );
@@ -606,7 +708,7 @@ export default {
         }
       }
 
-      return new Response(JSON.stringify(snapshot), {
+      return new Response(await jsonBody(200, snapshot), {
         status: 200,
         headers: { ...jsonHeaders, 'Cache-Control': calendarCacheControl(
           date!, timezone, snapshot.coverage?.partial === true) },
