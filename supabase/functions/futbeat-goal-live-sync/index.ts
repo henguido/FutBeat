@@ -166,6 +166,38 @@ async function normalizeLiveFixture(
   };
 }
 
+// A provider batch is recorded in bounded chunks, each its own RPC (and so
+// its own transaction under the API role's statement timeout, 8 s in
+// production). A full results day (up to 500 rows) in ONE call timed out as
+// soon as most rows were new observations (a normalizer change re-hashes
+// every fixture), rolled back, and every retry hit the same wall. Chunks are
+// independent fixtures (one row per provider id), share one receivedAt, and
+// what a failed run already stored is kept: the retry only pays for the rest.
+const RECORD_CHUNK_SIZE = 25;
+async function recordObservationsInChunks(
+  receivedAt: string,
+  observations: unknown[],
+  progress: { chunks: number; recorded: number } = { chunks: 0, recorded: 0 },
+) {
+  let insertedObservations = 0;
+  let duplicates = 0;
+  let start = 0;
+  do {
+    const chunk = observations.slice(start, start + RECORD_CHUNK_SIZE);
+    const result = await rpc("futbeat_record_live_batch", {
+      p_provider: "goal_api",
+      p_received_at: receivedAt,
+      p_observations: chunk,
+    }, 30000);
+    insertedObservations += Number(result?.insertedObservations ?? 0) || 0;
+    duplicates += Number(result?.duplicates ?? 0) || 0;
+    progress.chunks += 1;
+    progress.recorded += chunk.length;
+    start += RECORD_CHUNK_SIZE;
+  } while (start < observations.length);
+  return { insertedObservations, duplicates, chunks: progress.chunks };
+}
+
 async function readGoalKey() {
   const key = await rpc("futbeat_read_goal_live_secret");
   const value = clean(key);
@@ -484,11 +516,10 @@ async function syncLive() {
     // silently maps to SCHEDULED (never inferred as live or final).
     const unmappedStatuses = unmappedGoalStatuses(fixtures);
 
-    const persistence = await rpc("futbeat_record_live_batch", {
-      p_provider: "goal_api",
-      p_received_at: new Date().toISOString(),
-      p_observations: observations,
-    }, 30000);
+    const persistence = await recordObservationsInChunks(
+      new Date().toISOString(),
+      observations,
+    );
 
     // #120: absence from the feed is evidence only once a whole sweep (offset
     // 0 to the last page, possibly across resumed polls) was read; it only
@@ -599,6 +630,8 @@ async function syncOneResultsDate() {
   // Set when pagination stopped before the provider's end: the results
   // already read are still real evidence and are processed as a partial day.
   let truncatedBy: string | null = null;
+  // Record chunks already committed (kept even when a later chunk fails).
+  const recordProgress = { chunks: 0, recorded: 0 };
   // Every step of the pipeline (fetch -> link -> normalize -> record ->
   // finalize -> attempt bookkeeping -> ledger completion) can fail
   // independently; tag which one so a failure is diagnosable from the
@@ -695,11 +728,11 @@ async function syncOneResultsDate() {
       ),
     );
     stage = "record";
-    const persistence = await rpc("futbeat_record_live_batch", {
-      p_provider: "goal_api",
-      p_received_at: receivedAt,
-      p_observations: observations,
-    }, 30000);
+    const persistence = await recordObservationsInChunks(
+      receivedAt,
+      observations,
+      recordProgress,
+    );
     stage = "finalize";
     const finalized = await rpc("futbeat_finalize_goal_results_date", {
       p_provider_date: providerDate,
@@ -732,6 +765,7 @@ async function syncOneResultsDate() {
         unmappedMatches: linkResult?.unmappedCount ?? 0,
         insertedObservations: persistence?.insertedObservations ?? 0,
         duplicates: persistence?.duplicates ?? 0,
+        recordChunks: persistence.chunks,
         resultsComplete: finalized?.resultsComplete ?? false,
         unresolved: finalized?.unresolved ?? null,
         ...(truncatedBy ? { truncatedBy } : {}),
@@ -778,6 +812,12 @@ async function syncOneResultsDate() {
         date: providerDate,
         providerRequests,
         stage,
+        ...(recordProgress.chunks > 0
+          ? {
+            recordedChunks: recordProgress.chunks,
+            recordedObservations: recordProgress.recorded,
+          }
+          : {}),
         detail: error instanceof Error ? error.message.slice(0, 300) : "unknown",
       },
       remaining,
@@ -807,6 +847,19 @@ async function syncOneMatchDetail(
   // reserve. This prevents a historical backlog from starving current games.
   let recovery: Record<string, unknown> | null = null;
   if (allowRecovery) {
+    // Stuck non-terminal sweep (20261002110000): queues bounded provider
+    // re-checks for matches seen in play that never got a final. Its own
+    // transactions, outside the quota lock, throttled by a committed claim;
+    // a slow or failed sweep never blocks the reservation below.
+    try {
+      const claim = await rpc("futbeat_claim_stuck_sweep", {}, 10000);
+      if (claim?.due) await rpc("futbeat_run_stuck_sweep", {}, 15000);
+    } catch (error) {
+      console.warn(
+        "stuck terminal sweep unavailable",
+        error instanceof Error ? error.message : "unknown",
+      );
+    }
     try {
       // The reservation RPC owns the protected user_high/LIVE guard under the
       // provider quota lock. Do not pre-check it here: a read-then-reserve
