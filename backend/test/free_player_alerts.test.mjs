@@ -169,7 +169,7 @@ async function started(db, ids) {
   await live(db, ids, [], { minute: 1 });
 }
 
-test('7-13. player events: goal, assist, yellow, red, in, out, missed penalty -> one alert each for the right follower', async () => {
+test('7-13. player events: goal, assist, red, in, out -> one alert each for the right follower; yellow / missed penalty silent (20261002130000)', async () => {
   const db = await openDatabase();
   try {
     const ids = await world(db);
@@ -186,7 +186,7 @@ test('7-13. player events: goal, assist, yellow, red, in, out, missed penalty ->
     for (let i = 1; i <= events.length; i++) await live(db, ids, events.slice(0, i), { minute: events[i - 1].minute });
     const titles = async (uid) => (await outbox(db, uid)).map((r) => r.message.title.replace(/^\S+ \d+' /, ''));
     // SUBSTITUTION: playerId (mate) leaves, assistPlayerId (star) enters.
-    assert.deepEqual(await titles(fanStar), ['Gol de Estrella', 'Amarilla para Estrella', 'Entra Estrella', 'Penal fallado por Estrella']);
+    assert.deepEqual(await titles(fanStar), ['Gol de Estrella', 'Entra Estrella']);
     assert.deepEqual(await titles(fanMate), ['Asistencia de Compañero', 'Roja para Compañero', 'Sale Compañero']);
     for (const row of await outbox(db, fanStar)) {
       assert.equal(row.message.playerId, ids.star);
@@ -283,7 +283,7 @@ test('19. an event recovered 30 match minutes late is stored for history but sen
   } finally { await db.close(); }
 });
 
-test('preferences: notify_goals / notify_cards also gate player alerts', async () => {
+test('preferences: notify_goals also gates player alerts (red cards still alert)', async () => {
   const db = await openDatabase();
   try {
     const ids = await world(db);
@@ -291,8 +291,8 @@ test('preferences: notify_goals / notify_cards also gate player alerts', async (
     await started(db, ids);
     const goal = ev(ids, 'g1', 'GOAL', 10, ids.pStar);
     await live(db, ids, [goal], { minute: 10 });
-    await live(db, ids, [goal, ev(ids, 'y1', 'YELLOW_CARD', 11, ids.pStar)], { minute: 11 });
-    assert.deepEqual((await outbox(db, noGoals)).map((r) => r.message.type), ['YELLOW_CARD']);
+    await live(db, ids, [goal, ev(ids, 'r1', 'RED_CARD', 11, ids.pStar)], { minute: 11 });
+    assert.deepEqual((await outbox(db, noGoals)).map((r) => r.message.type), ['RED_CARD']);
   } finally { await db.close(); }
 });
 
