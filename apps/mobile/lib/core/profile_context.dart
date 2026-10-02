@@ -43,6 +43,22 @@ class ProfileContextOption {
       hasStandings = json['hasStandings'] == true,
       currentSeason = json['currentSeason'] == true;
 
+  ProfileContextOption._renamed(
+    ProfileContextOption source,
+    this.competitionName,
+  ) : competitionId = source.competitionId,
+      seasonKey = source.seasonKey,
+      matchCount = source.matchCount,
+      hasStandings = source.hasStandings,
+      currentSeason = source.currentSeason;
+
+  /// Same option (same [key], same request) shown under [name]: e.g. the
+  /// canonical competition's name for an option sent under an alias id.
+  ProfileContextOption withCompetitionName(String name) =>
+      name == competitionName
+      ? this
+      : ProfileContextOption._renamed(this, name);
+
   final String competitionId;
   final String competitionName;
 

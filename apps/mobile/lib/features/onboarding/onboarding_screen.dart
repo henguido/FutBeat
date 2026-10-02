@@ -204,7 +204,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Future<void> _toggle(String type, String id) async {
-    await ref.read(databaseProvider).toggle(type, id);
+    await toggleFollow(
+      ref.read(databaseProvider),
+      ref.read(entityMediaProvider).redirects,
+      type,
+      id,
+    );
   }
 
   Future<void> _saveSettings(UserProfileSettings next) async {
