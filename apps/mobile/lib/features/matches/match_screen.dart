@@ -316,7 +316,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final previewSections = [
       const _SectionTitle('Forma reciente'),
       RecentFormSection(preview: preview, data: data, match: match),
-      StandingsSnapshotCard(data: data, match: match),
+      StandingsSnapshotCard(data: data, match: match, stage: detail.stage),
     ];
 
     // Bounded: once the retries are spent a pending table settles into a
@@ -496,6 +496,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                 match.competitionId,
                 homeTeamId: match.homeId,
                 awayTeamId: match.awayId,
+                stage: detail.stage,
                 refreshing: standingsRefreshing || _standingsManualRetry,
                 onRetry: _retryStandings,
               ),
@@ -1308,6 +1309,7 @@ class MatchStandingsTab extends StatelessWidget {
     this.homeTeamId,
     this.awayTeamId,
     this.onRetry,
+    this.stage,
   });
 
   final Snapshot data;
@@ -1316,6 +1318,10 @@ class MatchStandingsTab extends StatelessWidget {
   /// The selected match's sides, highlighted in the table.
   final String? homeTeamId;
   final String? awayTeamId;
+
+  /// The match's provider stage (match detail), when known: the table of
+  /// that phase is shown (see standingsGroups).
+  final String? stage;
 
   /// A visible refresh for this table is running (bounded or manual).
   final bool refreshing;
@@ -1353,6 +1359,7 @@ class MatchStandingsTab extends StatelessWidget {
             // The match's own group; teams from different groups each get
             // their own labelled group, never one mixed table.
             focusTeamIds: {?homeTeamId, ?awayTeamId},
+            stage: stage,
             highlightedTeams: {?homeTeamId: lime, ?awayTeamId: awaySideColor},
             // In-play evidence from the snapshot itself (never the clock).
             liveTeamIds: liveTeamIds(data, competitionId),

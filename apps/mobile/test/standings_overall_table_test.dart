@@ -72,8 +72,9 @@ List<String?>? _labels(Snapshot data, Set<String> focus) => standingsGroups(
 void main() {
   test('overall table plus stage groups: the overall table, never hidden', () {
     final data = _snapshot(stageRows: _stages);
-    // Both sides in the overall table and in Grupo A.
-    expect(_labels(data, {_teams[0], _teams[1]}), [null]);
+    // Both sides in the overall table and in Grupo A: the overall table,
+    // labelled as such next to the stage groups.
+    expect(_labels(data, {_teams[0], _teams[1]}), [overallStandingsLabel]);
     final rows = standingsGroups(
       standingsTableFor(data, _comp),
       data,
@@ -81,9 +82,9 @@ void main() {
     )!.single.rows;
     expect(rows, hasLength(20));
     // Only the overall table holds both: unchanged rule.
-    expect(_labels(data, {_teams[0], _teams[10]}), [null]);
+    expect(_labels(data, {_teams[0], _teams[10]}), [overallStandingsLabel]);
     // A team profile (one focus team): the overall table too.
-    expect(_labels(data, {_teams[5]}), [null]);
+    expect(_labels(data, {_teams[5]}), [overallStandingsLabel]);
   });
 
   test('two labelled groups holding both sides still fail closed', () {
