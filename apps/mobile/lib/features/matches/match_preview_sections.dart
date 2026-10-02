@@ -239,11 +239,15 @@ class StandingsSnapshotCard extends StatelessWidget {
   const StandingsSnapshotCard({
     required this.data,
     required this.match,
+    this.stage,
     super.key,
   });
 
   final Snapshot data;
   final FootballMatch match;
+
+  /// The match's provider stage (match detail), when known.
+  final String? stage;
 
   @override
   Widget build(BuildContext context) {
@@ -253,6 +257,7 @@ class StandingsSnapshotCard extends StatelessWidget {
       standingsTableFor(data, match.competitionId),
       data,
       focusTeamIds: {match.homeId, match.awayId},
+      stage: stage,
     );
     // Across groups each position is labelled with its own group.
     final crossGroup = (groups?.length ?? 0) > 1;

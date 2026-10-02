@@ -36,19 +36,49 @@ Set<String> liveTeamIds(Snapshot data, String competitionId) => {
 /// unnamed table).
 typedef StandingsGroup = ({String? label, List<Json> rows});
 
+/// Label shown on the unlabelled table (the competition's overall/annual
+/// table) when the stored table also has labelled groups.
+const overallStandingsLabel = 'Tabla general';
+
+/// Normalized tokens of a stage or group label: lower case, accents folded,
+/// split on anything that is not a letter or digit.
+Set<String> standingsLabelTokens(String? text) {
+  const from = 'áàâäãåéèêëíìîïóòôöõúùûüñç';
+  const to = 'aaaaaaeeeeiiiiooooouuuunc';
+  final buffer = StringBuffer();
+  for (final char in (text ?? '').toLowerCase().split('')) {
+    final i = from.indexOf(char);
+    buffer.write(i < 0 ? char : to[i]);
+  }
+  return {
+    for (final token in buffer.toString().split(RegExp('[^a-z0-9]+')))
+      if (token.isNotEmpty) token,
+  };
+}
+
 /// The groups of [table] that can be shown, or null when the table must not
 /// be shown at all ("Tabla no disponible"):
 ///  * no rows, or the server could not tell its groups apart;
 ///  * a row whose team entity is unknown (never a placeholder name);
 ///  * a repeated position inside one group (unlabelled groups mixed).
+/// Without [focusTeamIds], every group; the unlabelled one is labelled
+/// [overallStandingsLabel] when labelled groups are shown with it.
 /// With [focusTeamIds] and several groups:
 ///  * one group holds every focus team: only that group (a team profile
 ///    shows the team's group, a Match Center the match's group);
-///  * several groups hold them all and exactly one of them is unlabelled:
-///    that one, the competition's overall table (a league table sent
-///    together with labelled stage groups, e.g. playoff groups);
-///  * otherwise several groups hold them all (e.g. "Grupo A" plus a ranking
-///    of third-placed teams): null, the right one cannot be told;
+///  * several groups hold them all (e.g. the annual table plus one table per
+///    season phase), the current phase is chosen, never mixed:
+///     1. [stage] (the match's provider stage, Match Center) names exactly
+///        one labelled group of the table (every normalized token of the
+///        label is in the stage, see [standingsLabelTokens]) and that group
+///        holds them all: that group;
+///     2. the table's server hint `currentGroup` (every recent match of the
+///        competition was played in that phase) is a labelled group holding
+///        them all: that group;
+///     3. exactly one of them is unlabelled: that one, the competition's
+///        overall table, labelled [overallStandingsLabel];
+///     4. otherwise (e.g. "Grupo A" plus a ranking of third-placed teams):
+///        null, the right one cannot be told;
 ///  * no group holds them all (a knockout between teams of different
 ///    groups): each focus team's own group, as separate labelled tables,
 ///    never merged. Null when a focus team is in no group or in more than
@@ -57,6 +87,7 @@ List<StandingsGroup>? standingsGroups(
   Json? table,
   Snapshot data, {
   Set<String> focusTeamIds = const {},
+  String? stage,
 }) {
   final rows = (table?['rows'] as List? ?? const []).cast<Json>();
   if (table == null || rows.isEmpty || table['groupsResolved'] == false) {
@@ -79,7 +110,13 @@ List<StandingsGroup>? standingsGroups(
     for (final entry in groups.entries)
       (label: entry.key.isEmpty ? null : entry.key, rows: entry.value),
   ];
-  if (focusTeamIds.isEmpty || all.length == 1) return all;
+  StandingsGroup labelled(StandingsGroup group) =>
+      group.label == null && all.any((other) => other.label != null)
+      ? (label: overallStandingsLabel, rows: group.rows)
+      : group;
+  if (focusTeamIds.isEmpty || all.length == 1) {
+    return [for (final group in all) labelled(group)];
+  }
   bool holds(StandingsGroup group, String id) =>
       group.rows.any((row) => row['teamId'] == id);
   final whole = [
@@ -87,13 +124,37 @@ List<StandingsGroup>? standingsGroups(
       if (focusTeamIds.every((id) => holds(group, id))) group,
   ];
   if (whole.length > 1) {
+    // 1. The match's own stage names one labelled group of the table.
+    final stageTokens = standingsLabelTokens(stage);
+    if (stageTokens.isNotEmpty) {
+      final named = [
+        for (final group in all)
+          if (group.label != null)
+            if (standingsLabelTokens(group.label) case final tokens
+                when tokens.isNotEmpty && stageTokens.containsAll(tokens))
+              group,
+      ];
+      if (named.length == 1 && whole.contains(named.single)) {
+        return [named.single];
+      }
+    }
+    // 2. The server's evidence-based current phase.
+    final current = table['currentGroup']?.toString().trim() ?? '';
+    if (current.isNotEmpty) {
+      final hinted = [
+        for (final group in whole)
+          if (group.label == current) group,
+      ];
+      if (hinted.length == 1) return hinted;
+    }
+    // 3. The overall table, labelled as such; 4. ambiguous: nothing.
     final overall = [
       for (final group in whole)
         if (group.label == null) group,
     ];
-    return overall.length == 1 ? overall : null;
+    return overall.length == 1 ? [labelled(overall.single)] : null;
   }
-  if (whole.isNotEmpty) return whole;
+  if (whole.isNotEmpty) return [labelled(whole.single)];
   final picked = <int>{};
   for (final id in focusTeamIds) {
     final candidates = [
@@ -140,6 +201,7 @@ class Standings extends StatefulWidget {
     this.selectableView = true,
     this.focusTeamIds = const {},
     this.season,
+    this.stage,
   });
 
   final Snapshot data;
@@ -149,6 +211,10 @@ class Standings extends StatefulWidget {
   /// [standingsGroups]). A single focus team without [highlightedTeams] is
   /// highlighted (team profile).
   final Set<String> focusTeamIds;
+
+  /// The match's provider stage (Match Center): picks the phase table when
+  /// several groups hold the focus teams (see [standingsGroups]).
+  final String? stage;
 
   /// Team id -> accent color (e.g. the selected match's home/away sides).
   final Map<String, Color> highlightedTeams;
@@ -286,6 +352,7 @@ class _StandingsState extends State<Standings> {
       table,
       data,
       focusTeamIds: widget.focusTeamIds,
+      stage: widget.stage,
     );
     if (table == null || groups == null) {
       return const Padding(

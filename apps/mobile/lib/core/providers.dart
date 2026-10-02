@@ -1250,6 +1250,7 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
     'stadium': _latestNonEmpty(current.json['stadium'], next.json['stadium']),
     'referee': _latestNonEmpty(current.json['referee'], next.json['referee']),
     'round': _latestNonEmpty(current.json['round'], next.json['round']),
+    'stage': _latestNonEmpty(current.json['stage'], next.json['stage']),
     'home': home,
     'away': away,
     'statistics': statistics,
