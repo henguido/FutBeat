@@ -881,17 +881,55 @@ final calendarSnapshotProvider = StreamProvider.autoDispose
       // automatic error retry would restart a failed date forever.
     }, retry: (_, _) => null);
 
+/// Device clock, injectable for tests.
+final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
+
+/// A profile re-opened at least this long after its last answer revalidates
+/// (see [revalidateEntitySnapshot]).
+const entityRevalidateAfter = Duration(seconds: 30);
+
+/// When each `/v1/entity` answer of this session was received (device
+/// clock). Session memory, written only by [entitySnapshotProvider].
+final entitySnapshotReceivedAtProvider =
+    Provider<Map<({String type, String id}), DateTime>>((ref) => {});
+
+/// Kept for the session (not autoDispose) so a re-opened profile paints its
+/// last answer at once; [revalidateEntitySnapshot] refreshes it on re-entry.
 final entitySnapshotProvider =
     FutureProvider.family<Snapshot, ({String type, String id})>((
       ref,
       request,
     ) async {
       final repository = ref.watch(repositoryProvider);
-      if (repository is ApiRepository) {
-        return repository.loadEntity(request.type, request.id);
+      final snapshot = repository is ApiRepository
+          ? await repository.loadEntity(request.type, request.id)
+          : await repository.load();
+      if (ref.mounted) {
+        ref.read(entitySnapshotReceivedAtProvider)[request] = ref.read(
+          clockProvider,
+        )();
       }
-      return repository.load();
+      return snapshot;
     });
+
+/// Called when a profile screen is (re-)entered: an answer already held for
+/// [request] that is at least [entityRevalidateAfter] old is refreshed in
+/// the background. The old answer stays on screen meanwhile (instant paint;
+/// a failed refresh keeps it, see `_loadSnapshot`), so server changes (e.g. a
+/// deduplicated squad) appear without restarting the app. Returns whether a
+/// refresh started.
+bool revalidateEntitySnapshot(
+  WidgetRef ref,
+  ({String type, String id}) request,
+) {
+  if (!ref.exists(entitySnapshotProvider(request))) return false;
+  final received = ref.read(entitySnapshotReceivedAtProvider)[request];
+  if (received == null) return false;
+  final age = ref.read(clockProvider)().difference(received);
+  if (age < entityRevalidateAfter) return false;
+  ref.invalidate(entitySnapshotProvider(request));
+  return true;
+}
 
 final exploreSnapshotProvider = FutureProvider.autoDispose<Snapshot>((
   ref,
