@@ -302,7 +302,6 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     // Key statistics only when one row is worth showing (see Statistics).
     final hasStats = displayableStatistics(
       detail.statistics.isNotEmpty ? detail.statistics : match.statistics,
-      compact: true,
     ).isNotEmpty;
     // Recent form + head-to-head: a separate read, never blocking the header
     // or the tabs, failing on its own, read once per open.
@@ -1474,9 +1473,7 @@ class Statistics extends StatelessWidget {
       return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
     }
     final compact = mode == StatisticsDisplayMode.compact;
-    final ordered = orderedStatistics(
-      displayableStatistics(stats, compact: compact),
-    );
+    final ordered = orderedStatistics(displayableStatistics(stats));
     if (ordered.isEmpty) {
       return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
     }
@@ -1523,6 +1520,7 @@ const _onTargetKeys = {
   'shots on target',
   'shots on goal',
   'on target',
+  'shot on goal',
   'tiros a puerta',
 };
 const _passKeys = {
@@ -1578,6 +1576,7 @@ _StatisticGroup _statisticGroup(String name) {
         'shots off target',
         'shots off goal',
         'off target',
+        'shot off goal',
         'blocked shots',
         'shots blocked',
         'shots inside box',
@@ -1623,6 +1622,7 @@ bool statisticHigherIsBetter(String name) {
         'shots off target',
         'shots off goal',
         'off target',
+        'shot off goal',
         'blocked shots',
         'shots blocked',
         'shots inside box',
@@ -1968,17 +1968,60 @@ bool _meaningfulAtZero(String name) {
       const {'offsides', 'saves', 'goalkeeper saves'}.contains(key);
 }
 
-/// Rows FutBeat can show: a known Spanish label and, for the compact key
-/// statistics, no data-less 0-0 row.
-List<Json> displayableStatistics(List<Json> stats, {bool compact = false}) => [
-  for (final stat in stats)
-    if (_statLabel(statisticName(stat)) != null &&
-        !(compact &&
-            statNumericValue(stat['home']) == 0 &&
-            statNumericValue(stat['away']) == 0 &&
-            !_meaningfulAtZero(statisticName(stat))))
-      stat,
-];
+/// Precedence of provider keys that share one Spanish label: declaration
+/// order of [_statLabels] (e.g. "Shots on Target" before "Shots on Goal"
+/// before "On Target" before "Shot On Goal").
+final _statKeyPrecedence = {
+  for (final (index, key) in _statLabels.keys.indexed) key: index,
+};
+
+/// A row carrying data: a numeric value on a side, and not a 0-0 of a count
+/// that is not meaningful at zero (see [_meaningfulAtZero]).
+bool _hasStatValue(Json stat) {
+  final home = statNumericValue(stat['home']);
+  final away = statNumericValue(stat['away']);
+  if (home == null && away == null) return false;
+  return !(home == 0 && away == 0 && !_meaningfulAtZero(statisticName(stat)));
+}
+
+/// Rows FutBeat can show, in input order:
+/// - a known Spanish label (never a raw provider key);
+/// - one row per Spanish label: a provider can send synonyms of one metric
+///   ("Shots on Goal" and "Shot On Goal") with different values, and two
+///   rows must never read "Tiros a puerta" twice. The kept row is the one
+///   with a value, then the first key of [_statLabels] (see
+///   [_statKeyPrecedence]), then the first in the input;
+/// - no data-less 0-0 row: a count that is not meaningful at zero (throw-ins,
+///   free kicks, goal kicks, passes...) at 0-0 means the provider sent no
+///   data, in the key statistics and in the full list alike.
+List<Json> displayableStatistics(List<Json> stats) {
+  final winners = <String, Json>{};
+  for (final stat in stats) {
+    final name = statisticName(stat);
+    final label = _statLabel(name);
+    if (label == null) continue;
+    final current = winners[label];
+    if (current == null) {
+      winners[label] = stat;
+      continue;
+    }
+    int rank(Json row) =>
+        (_hasStatValue(row) ? 0 : 1 << 20) +
+        (_statKeyPrecedence[_statKey(statisticName(row))] ?? 1 << 19);
+    if (rank(stat) < rank(current)) winners[label] = stat;
+  }
+  final kept = Set<Json>.identity()..addAll(winners.values);
+  final result = <Json>[];
+  for (final stat in stats) {
+    if (!kept.remove(stat)) continue;
+    final dataLessZero =
+        statNumericValue(stat['home']) == 0 &&
+        statNumericValue(stat['away']) == 0 &&
+        !_hasStatValue(stat);
+    if (!dataLessZero) result.add(stat);
+  }
+  return result;
+}
 
 /// Resolves which side an event belongs to using only data already present.
 /// Returns null when the side is genuinely unknown (never guessed).

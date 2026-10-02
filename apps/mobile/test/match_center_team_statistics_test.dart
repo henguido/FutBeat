@@ -220,7 +220,37 @@ void main() {
     expect(find.text('Tiros a puerta'), findsOneWidget);
     expect(find.text('Faltas'), findsOneWidget);
     expect(find.text('Tarjetas rojas'), findsOneWidget);
-    // The full tab still lists every known row.
+    // The full tab applies the same rule: data-less 0-0 rows are hidden,
+    // real zeros (shots, cards, offsides, saves...) stay.
+    await _pump(
+      tester,
+      match: _match(
+        statistics: const [
+          {'label': 'Throw In', 'home': 0, 'away': 0},
+          {'label': 'Free Kicks', 'home': 0, 'away': 0},
+          {'label': 'Goal Kicks', 'home': 0, 'away': 0},
+          {'label': 'Shots on Goal', 'home': 0, 'away': 0},
+          {'label': 'Offsides', 'home': 0, 'away': 0},
+          {'label': 'Saves', 'home': 0, 'away': 0},
+          {'label': 'Red Cards', 'home': 0, 'away': 0},
+          {'label': 'Fouls', 'home': 9, 'away': 11},
+          {'label': 'Throw-ins', 'home': 21, 'away': 18},
+        ],
+      ),
+    );
+    expect(find.text('Tiros libres'), findsNothing);
+    expect(find.text('Saques de meta'), findsNothing);
+    expect(find.text('Saques de banda'), findsOneWidget); // 21-18 is real
+    for (final label in [
+      'Tiros a puerta',
+      'Fueras de juego',
+      'Atajadas',
+      'Tarjetas rojas',
+      'Faltas',
+    ]) {
+      expect(find.text(label), findsOneWidget, reason: label);
+    }
+    // Nothing worth showing -> the empty state, not a list of 0-0 rows.
     await _pump(
       tester,
       match: _match(
@@ -229,7 +259,53 @@ void main() {
         ],
       ),
     );
-    expect(find.text('Saques de banda'), findsOneWidget);
+    expect(find.text('Saques de banda'), findsNothing);
+    expect(find.text('Sin estadísticas'), findsOneWidget);
+  });
+
+  test('synonym provider keys never share one Spanish label twice', () {
+    // Device QA: "Tiros a puerta" twice (6-0 and 5-0) from two provider
+    // spellings of the on-target metric.
+    final rows = displayableStatistics(const [
+      {'label': 'Shot On Goal', 'home': 5, 'away': 0},
+      {'label': 'Ball Possession', 'home': '61%', 'away': '39%'},
+      {'label': 'Shots on Target', 'home': 6, 'away': 0},
+      {'label': 'Shots on Goal', 'home': 4, 'away': 0},
+      {'label': 'Corner', 'home': 3, 'away': 1},
+      {'label': 'Corner Kicks', 'home': 3, 'away': 2},
+    ]);
+    // "Corner" canonicalizes to the plural key "corners", which precedes
+    // "corner kicks".
+    expect(rows.map(statisticName), [
+      'Ball Possession',
+      'Shots on Target',
+      'Corner',
+    ]);
+    // Without the preferred key, the next one in precedence wins; a row
+    // with no value never beats one with a value.
+    final fallback = displayableStatistics(const [
+      {'label': 'Shots on Goal', 'home': '—', 'away': '—'},
+      {'label': 'Shot On Goal', 'home': 2, 'away': 3},
+      {'label': 'On Target', 'home': 1, 'away': 1},
+    ]);
+    expect(fallback.map(statisticName), ['On Target']);
+  });
+
+  testWidgets('key statistics show one "Tiros a puerta" row', (tester) async {
+    await _pump(
+      tester,
+      match: _match(
+        statistics: const [
+          {'label': 'Shots on Goal', 'home': 2, 'away': 3},
+          {'label': 'Shot On Goal', 'home': 1, 'away': 1},
+          {'label': 'Fouls', 'home': 9, 'away': 11},
+        ],
+      ),
+      mode: StatisticsDisplayMode.compact,
+    );
+    expect(find.text('Tiros a puerta'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
   });
 
   testWidgets('compact mode stays flat and limits the summary to four rows', (
