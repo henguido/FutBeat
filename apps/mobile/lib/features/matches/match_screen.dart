@@ -934,7 +934,7 @@ class MatchHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
-    final round = detail.round?.trim() ?? '';
+    final round = matchRoundHeadline(detail.round);
     // Scorers only once the match has started and a goal has a known side.
     final summary = match.showKickoff
         ? null
@@ -980,10 +980,7 @@ class MatchHero extends StatelessWidget {
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
-                          [
-                            competition.name,
-                            if (round.isNotEmpty) 'Jornada $round',
-                          ].join(' · '),
+                          [competition.name, ?round].join(' · '),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(

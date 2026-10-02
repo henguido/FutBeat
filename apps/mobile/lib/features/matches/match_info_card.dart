@@ -29,9 +29,142 @@ String? _present(Object? value) {
   return text.isEmpty ? null : text;
 }
 
+/// Spanish names of the provider's generic round / phase labels (GOAL
+/// `matchRound` / `stageName`, English). Proper names (Clausura, Bayern,
+/// Southern League...) are not in here and are shown as sent.
+const Map<String, String> _phaseNames = {
+  'group stage': 'Fase de grupos',
+  'regular season': 'Temporada regular',
+  'qualification': 'Clasificación',
+  'league phase': 'Fase de liga',
+  'league stage': 'Fase de liga',
+  'knockout stage': 'Fase eliminatoria',
+  'play-offs': 'Playoffs',
+  'playoffs': 'Playoffs',
+  'round of 16': 'Octavos de final',
+  'quarter-finals': 'Cuartos de final',
+  'quarter-final': 'Cuartos de final',
+  'semi-finals': 'Semifinales',
+  'semi-final': 'Semifinal',
+  'final': 'Final',
+  '3rd place': 'Tercer puesto',
+  'third place': 'Tercer puesto',
+  'first stage': 'Primera fase',
+  'second stage': 'Segunda fase',
+  'third stage': 'Tercera fase',
+  'promotion group': 'Grupo de ascenso',
+  'relegation group': 'Grupo de descenso',
+  'championship group': 'Grupo por el título',
+  'placement group': 'Grupo de posiciones',
+  'friendly international': 'Amistoso internacional',
+  'club friendly': 'Amistoso de clubes',
+  'north': 'Norte',
+  'south': 'Sur',
+  'east': 'Este',
+  'west': 'Oeste',
+  'northeast': 'Noreste',
+  'northwest': 'Noroeste',
+  'southeast': 'Sureste',
+  'southwest': 'Suroeste',
+  'central': 'Centro',
+};
+
+const Map<int, String> _fractionFinals = {
+  8: 'Octavos de final',
+  16: 'Dieciseisavos de final',
+  32: 'Treintaidosavos de final',
+};
+
+String _phasePart(String part) {
+  final key = part.trim().toLowerCase();
+  final known = _phaseNames[key];
+  if (known != null) return known;
+  final group = RegExp(
+    r'^(?:group|girone)\s+([a-z]|\d+|[ivx]+)$',
+    caseSensitive: false,
+  ).firstMatch(part.trim());
+  if (group != null) return 'Grupo ${group.group(1)!.toUpperCase()}';
+  final fraction = RegExp(r'^1/(\d+)[- ]finals?$').firstMatch(key);
+  if (fraction != null) {
+    final n = int.parse(fraction.group(1)!);
+    return _fractionFinals[n] ?? '1/$n de final';
+  }
+  return part.trim();
+}
+
+/// Visible Spanish label of a provider round or phase, or null when absent.
+/// Composite labels ("Qualification - First Stage") are translated part by
+/// part; anything unknown is kept exactly as the provider sent it.
+String? matchPhaseLabel(String? raw) {
+  final text = _present(raw);
+  if (text == null) return null;
+  return text.split(' - ').map(_phasePart).join(' - ');
+}
+
+/// A matchday number ("4") reads "Jornada 4"; any other provider round is a
+/// named round ("Quarter-finals" -> "Cuartos de final"), never "Jornada
+/// Quarter-finals".
+bool isMatchdayRound(String? round) =>
+    round != null && RegExp(r'^\d+$').hasMatch(round.trim());
+
+/// Hero line text of a round ("Jornada 4", "Cuartos de final"), or null.
+String? matchRoundHeadline(String? round) {
+  final text = _present(round);
+  if (text == null) return null;
+  return isMatchdayRound(text) ? 'Jornada $text' : matchPhaseLabel(text);
+}
+
+String _fold(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp('[áàä]'), 'a')
+    .replaceAll(RegExp('[éèë]'), 'e')
+    .replaceAll(RegExp('[íìï]'), 'i')
+    .replaceAll(RegExp('[óòö]'), 'o')
+    .replaceAll(RegExp('[úùü]'), 'u')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
+/// The match's competition phase, only when it tells something: the
+/// provider's "Current" placeholder, a phase equal to the competition name
+/// or to the round already shown are hidden.
+String? matchStageLabel({
+  required String? stage,
+  required String competitionName,
+  String? round,
+}) {
+  final text = _present(stage);
+  if (text == null || _fold(text) == 'current') return null;
+  final label = matchPhaseLabel(text)!;
+  if (_fold(text) == _fold(competitionName) ||
+      _fold(label) == _fold(competitionName)) {
+    return null;
+  }
+  final roundLabel = matchPhaseLabel(round);
+  if (roundLabel != null && _fold(roundLabel) == _fold(label)) return null;
+  return label;
+}
+
+/// GOAL sends the referee as "Name" or "Name, Country". The country moves to
+/// the secondary line when it reads as one; otherwise the text is kept whole.
+({String name, String? country}) splitReferee(String referee) {
+  final comma = referee.lastIndexOf(',');
+  if (comma <= 0) return (name: referee, country: null);
+  final name = referee.substring(0, comma).trim();
+  final country = referee.substring(comma + 1).trim();
+  final looksLikeCountry = RegExp(
+    r"^[A-ZÀ-Ý][\p{L} .'’()-]*$",
+    unicode: true,
+  ).hasMatch(country);
+  if (name.isEmpty || !looksLikeCountry) {
+    return (name: referee, country: null);
+  }
+  return (name: name, country: country);
+}
+
 /// #99 Match info facts from data the app already has (no request): the
 /// competition (with its country), round and season, kickoff date and local
-/// time, venue and referee. Missing optional facts produce no item.
+/// time, competition phase, venue and referee. Missing optional facts produce
+/// no item.
 List<MatchInfoItem> matchInfoItems({
   required FootballMatch match,
   required Entity competition,
@@ -47,8 +180,14 @@ List<MatchInfoItem> matchInfoItems({
   // The match's own season only: the competition entity carries its
   // *current* season, which around a rollover is not this match's season.
   final season = _present(match.json['season']);
+  final stage = matchStageLabel(
+    stage: detail.stage,
+    competitionName: competition.name,
+    round: round,
+  );
   final stadium = _present(venue);
-  final referee = _present(detail.referee);
+  final rawReferee = _present(detail.referee);
+  final referee = rawReferee == null ? null : splitReferee(rawReferee);
   return [
     MatchInfoItem(
       id: 'competition',
@@ -68,8 +207,8 @@ List<MatchInfoItem> matchInfoItems({
       MatchInfoItem(
         id: 'round',
         icon: Icons.format_list_numbered_rounded,
-        label: 'Jornada',
-        value: round,
+        label: isMatchdayRound(round) ? 'Jornada' : 'Ronda',
+        value: isMatchdayRound(round) ? round : matchPhaseLabel(round)!,
         secondary: season == null ? null : 'Temporada $season',
       )
     else if (season != null)
@@ -78,6 +217,13 @@ List<MatchInfoItem> matchInfoItems({
         icon: Icons.format_list_numbered_rounded,
         label: 'Temporada',
         value: season,
+      ),
+    if (stage != null)
+      MatchInfoItem(
+        id: 'stage',
+        icon: Icons.account_tree_outlined,
+        label: 'Fase',
+        value: stage,
       ),
     if (stadium != null)
       MatchInfoItem(
@@ -91,7 +237,8 @@ List<MatchInfoItem> matchInfoItems({
         id: 'referee',
         icon: Icons.sports_rounded,
         label: 'Árbitro',
-        value: referee,
+        value: referee.name,
+        secondary: referee.country,
       ),
   ];
 }
