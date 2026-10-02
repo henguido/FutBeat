@@ -119,6 +119,10 @@ class _CalendarFlight {
   }
 }
 
+/// A catalog answer (Explorar, search) younger than this is served from
+/// memory without a request.
+const catalogMemoryTtl = Duration(minutes: 1);
+
 class ApiRepository implements FootballRepository {
   ApiRepository(
     this.dio, [
@@ -657,18 +661,153 @@ class ApiRepository implements FootballRepository {
     ),
   );
 
+  /// The two-letter code `/v1/explore` accepts, or null (global list).
+  static String? exploreCountry(String? country) {
+    final code = country?.trim().toUpperCase();
+    return code != null && RegExp(r'^[A-Z]{2}$').hasMatch(code) ? code : null;
+  }
+
+  static String _exploreKey(String? code) =>
+      code == null ? 'explore' : 'explore:$code';
+
   /// Suggestions. A selectable [country] adds that country's primary league,
   /// national team and league clubs ahead of the same global list (servers
-  /// without the country lens ignore the parameter).
+  /// without the country lens ignore the parameter). Every answer is also
+  /// kept on the device so the next session paints Explorar at once.
   Future<Snapshot> loadExplore({String? country, CancelToken? cancelToken}) {
-    final code = country?.trim().toUpperCase();
-    final local = code != null && RegExp(r'^[A-Z]{2}$').hasMatch(code);
+    final code = exploreCountry(country);
     return _loadCatalog(
-      local ? 'explore:$code' : 'explore',
+      _exploreKey(code),
       '/v1/explore',
-      queryParameters: local ? {'country': code} : null,
+      queryParameters: code != null ? {'country': code} : null,
       cancelToken: cancelToken,
+      persist: true,
     );
+  }
+
+  /// The last Explorar answer for [country] (the global list when null) held
+  /// in memory or on the device, whatever its age. Never a request.
+  Future<Snapshot?> readStoredExplore(String? country) async {
+    final key = _exploreKey(exploreCountry(country));
+    final memory = _snapshotCache[key];
+    if (memory != null) return memory;
+    try {
+      final stored = await database?.readCatalogEntry(key);
+      if (stored == null) return null;
+      final snapshot = _canonical(jsonDecode(stored.payload) as Json);
+      // A response that landed meanwhile wins over the device copy.
+      final landed = _snapshotCache[key];
+      if (landed != null) return landed;
+      // Not marked as fetched: it is shown, never served as fresh.
+      _remember(key, snapshot);
+      return snapshot;
+    } catch (_) {
+      // An unreadable/corrupt local row is replaced by the next response.
+      return null;
+    }
+  }
+
+  bool _exploreFresh(String? code) {
+    final fetched = _catalogFetchedAt[_exploreKey(code)];
+    return fetched != null &&
+        DateTime.now().difference(fetched) < catalogMemoryTtl;
+  }
+
+  /// Explorar suggestions, progressively, so the first paint never waits for
+  /// the network (field report: 10-20 s of an empty page on a first open).
+  ///
+  /// 1. The global request starts at once, before [country] is even known.
+  /// 2. The country request starts as soon as [country] resolves: both run in
+  ///    parallel and neither waits for the other.
+  /// 3. The last stored answer (country, else global) paints immediately,
+  ///    marked `revalidating`.
+  /// 4. A quicker global answer replaces a missing/global placeholder, never
+  ///    a country one; the country answer is final. If it fails, the global
+  ///    answer is final; if both fail, the placeholder stays (marked stale)
+  ///    or the stream ends in the error.
+  Stream<Snapshot> watchExplore(
+    Future<String?> country, {
+    CancelToken? cancelToken,
+  }) async* {
+    final global = _settle(loadExplore(cancelToken: cancelToken));
+    String? code;
+    try {
+      code = exploreCountry(await country);
+    } catch (_) {
+      code = null;
+    }
+    final local = code == null
+        ? null
+        : _settle(loadExplore(country: code, cancelToken: cancelToken));
+    Snapshot? shown;
+    var shownLocal = false;
+    if (!_exploreFresh(code)) {
+      final cachedLocal = code == null ? null : await readStoredExplore(code);
+      final cached = cachedLocal ?? await readStoredExplore(null);
+      if (cached != null) {
+        shown = cached;
+        shownLocal = cachedLocal != null;
+        yield cached.withFreshness(revalidating: true);
+      }
+    }
+    if (local != null) {
+      final globalFirst = await Future.any([
+        local.then((_) => false),
+        global.then((_) => true),
+      ]);
+      if (globalFirst && !shownLocal) {
+        final value = (await global).value;
+        if (value != null) {
+          shown = value;
+          yield value.withFreshness(revalidating: true);
+        }
+      }
+      final answer = await local;
+      if (answer.value != null) {
+        yield answer.value!;
+        return;
+      }
+      final fallback = (await global).value;
+      if (fallback != null && !shownLocal) {
+        yield fallback;
+        return;
+      }
+      if (shown != null) {
+        yield shown.asStale();
+        return;
+      }
+      Error.throwWithStackTrace(answer.error!, answer.stack!);
+    }
+    final answer = await global;
+    if (answer.value != null) {
+      yield answer.value!;
+      return;
+    }
+    if (shown != null) {
+      yield shown.asStale();
+      return;
+    }
+    Error.throwWithStackTrace(answer.error!, answer.stack!);
+  }
+
+  static Future<({Snapshot? value, Object? error, StackTrace? stack})> _settle(
+    Future<Snapshot> request,
+  ) => request.then(
+    (value) => (value: value, error: null, stack: null),
+    onError: (Object error, StackTrace stack) =>
+        (value: null, error: error, stack: stack),
+  );
+
+  void _persistCatalog(String key, Json raw) {
+    final db = database;
+    if (db == null) return;
+    // Never delays showing fresh data: memory already holds the snapshot.
+    late final Future<void> write;
+    write = db
+        .saveCatalogSnapshot(key, jsonEncode(raw))
+        .catchError((Object _) {})
+        .whenComplete(() => _diskWrites.remove(write));
+    _diskWrites.add(write);
   }
 
   Future<Snapshot> _loadCatalog(
@@ -676,6 +815,7 @@ class ApiRepository implements FootballRepository {
     String path, {
     Map<String, dynamic>? queryParameters,
     CancelToken? cancelToken,
+    bool persist = false,
   }) async {
     final cached = _snapshotCache[key];
     final fetched = _catalogFetchedAt[key];
@@ -683,22 +823,22 @@ class ApiRepository implements FootballRepository {
     if (cached != null &&
         !cached.pendingRemote &&
         fetched != null &&
-        DateTime.now().difference(fetched) < const Duration(minutes: 1)) {
+        DateTime.now().difference(fetched) < catalogMemoryTtl) {
       return cached;
     }
-    final snapshot = _canonical(
-      await _getJson(
-        path,
-        queryParameters: queryParameters,
-        cancelToken: cancelToken,
-        maxAttempts: 1,
-      ),
+    final raw = await _getJson(
+      path,
+      queryParameters: queryParameters,
+      cancelToken: cancelToken,
+      maxAttempts: 1,
     );
+    final snapshot = _canonical(raw);
     _remember(key, snapshot);
     _catalogFetchedAt.removeWhere(
       (key, value) => !_snapshotCache.containsKey(key),
     );
     _catalogFetchedAt[key] = DateTime.now();
+    if (persist && !snapshot.pendingRemote) _persistCatalog(key, raw);
     return snapshot;
   }
 
@@ -931,33 +1071,39 @@ bool revalidateEntitySnapshot(
   return true;
 }
 
-final exploreSnapshotProvider = FutureProvider.autoDispose<Snapshot>((
-  ref,
-) async {
+/// Explorar/onboarding suggestions: the stored last answer at once, then the
+/// network (see [ApiRepository.watchExplore]). Kept one minute after the
+/// last listener leaves.
+final exploreSnapshotProvider = StreamProvider.autoDispose<Snapshot>((ref) {
   final repository = ref.watch(repositoryProvider);
   final token = CancelToken();
   ref.onDispose(() => token.cancel('Explore closed'));
-  String? country;
-  if (repository is ApiRepository) {
-    // Country only lifts local suggestions; without one (or if the local
-    // preference is unavailable) the global list is still served.
-    try {
-      country = await ref
-          .watch(preferenceProvider.selectAsync((p) => p.effectiveCountry))
-          .timeout(const Duration(seconds: 2));
-    } catch (_) {
-      country = null;
-    }
-  }
-  final value = await (repository is ApiRepository
-      ? repository.loadExplore(country: country, cancelToken: token)
-      : repository.load());
-  if (ref.mounted) {
+  void keepForAMinute() {
+    if (!ref.mounted) return;
     final link = ref.keepAlive();
     final expiry = Timer(const Duration(minutes: 1), link.close);
     ref.onDispose(expiry.cancel);
   }
-  return value;
+
+  if (repository is! ApiRepository) {
+    return Stream.fromFuture(
+      repository.load().then((value) {
+        keepForAMinute();
+        return value;
+      }),
+    );
+  }
+  // Country only lifts local suggestions; without one (or if the local
+  // preference is unavailable) the global list is still served. The global
+  // request never waits for it.
+  final country = ref
+      .watch(preferenceProvider.selectAsync((p) => p.effectiveCountry))
+      .timeout(const Duration(seconds: 2))
+      .then<String?>((value) => value, onError: (Object _) => null);
+  return () async* {
+    yield* repository.watchExplore(country, cancelToken: token);
+    keepForAMinute();
+  }();
 });
 
 final searchSnapshotProvider = FutureProvider.autoDispose

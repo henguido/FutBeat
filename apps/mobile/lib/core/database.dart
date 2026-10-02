@@ -44,14 +44,31 @@ class CalendarSnapshots extends Table {
   Set<Column> get primaryKey => {calendarDate};
 }
 
+/// Last answer of a public catalog read (Explorar suggestions), so the
+/// screen paints at once on the next app start while it revalidates. Public,
+/// non-personal data; bounded to a handful of keys.
+class CatalogSnapshots extends Table {
+  TextColumn get cacheKey => text()();
+  TextColumn get payload => text()();
+  DateTimeColumn get savedAt => dateTime()();
+  @override
+  Set<Column> get primaryKey => {cacheKey};
+}
+
 @DriftDatabase(
-  tables: [Follows, Preferences, TemporaryInterests, CalendarSnapshots],
+  tables: [
+    Follows,
+    Preferences,
+    TemporaryInterests,
+    CalendarSnapshots,
+    CatalogSnapshots,
+  ],
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor])
     : super(executor ?? driftDatabase(name: 'futbeat'));
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (m) => m.createAll(),
@@ -61,6 +78,7 @@ class AppDatabase extends _$AppDatabase {
         await m.createTable(temporaryInterests);
       }
       if (from < 3) await m.createTable(calendarSnapshots);
+      if (from < 5) await m.createTable(catalogSnapshots);
       if (from >= 2 && from < 4) {
         await m.addColumn(preferences, preferences.competitionOrderMode);
         await m.addColumn(preferences, preferences.competitionOrderPreference);
@@ -302,7 +320,35 @@ class AppDatabase extends _$AppDatabase {
           .go();
     }
   }
+
+  Future<CatalogSnapshot?> readCatalogEntry(String key) => (select(
+    catalogSnapshots,
+  )..where((row) => row.cacheKey.equals(key))).getSingleOrNull();
+
+  Future<void> saveCatalogSnapshot(String key, String payload) async {
+    await into(catalogSnapshots).insertOnConflictUpdate(
+      CatalogSnapshotsCompanion.insert(
+        cacheKey: key,
+        payload: payload,
+        savedAt: DateTime.now().toUtc(),
+      ),
+    );
+    final old =
+        await (select(catalogSnapshots)
+              ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
+              ..limit(100, offset: maxCatalogSnapshots))
+            .get();
+    if (old.isNotEmpty) {
+      await (delete(catalogSnapshots)..where(
+            (row) => row.cacheKey.isIn(old.map((item) => item.cacheKey)),
+          ))
+          .go();
+    }
+  }
 }
+
+/// Stored catalog answers kept on the device (global + recent countries).
+const maxCatalogSnapshots = 8;
 
 class CountryPreference {
   const CountryPreference({

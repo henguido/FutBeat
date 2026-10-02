@@ -1338,6 +1338,275 @@ class CalendarSnapshotsCompanion extends UpdateCompanion<CalendarSnapshot> {
   }
 }
 
+class $CatalogSnapshotsTable extends CatalogSnapshots
+    with TableInfo<$CatalogSnapshotsTable, CatalogSnapshot> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CatalogSnapshotsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _cacheKeyMeta = const VerificationMeta(
+    'cacheKey',
+  );
+  @override
+  late final GeneratedColumn<String> cacheKey = GeneratedColumn<String>(
+    'cache_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
+  );
+  @override
+  late final GeneratedColumn<String> payload = GeneratedColumn<String>(
+    'payload',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _savedAtMeta = const VerificationMeta(
+    'savedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> savedAt = GeneratedColumn<DateTime>(
+    'saved_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [cacheKey, payload, savedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'catalog_snapshots';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<CatalogSnapshot> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('cache_key')) {
+      context.handle(
+        _cacheKeyMeta,
+        cacheKey.isAcceptableOrUnknown(data['cache_key']!, _cacheKeyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_cacheKeyMeta);
+    }
+    if (data.containsKey('payload')) {
+      context.handle(
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_payloadMeta);
+    }
+    if (data.containsKey('saved_at')) {
+      context.handle(
+        _savedAtMeta,
+        savedAt.isAcceptableOrUnknown(data['saved_at']!, _savedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_savedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {cacheKey};
+  @override
+  CatalogSnapshot map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CatalogSnapshot(
+      cacheKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}cache_key'],
+      )!,
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload'],
+      )!,
+      savedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}saved_at'],
+      )!,
+    );
+  }
+
+  @override
+  $CatalogSnapshotsTable createAlias(String alias) {
+    return $CatalogSnapshotsTable(attachedDatabase, alias);
+  }
+}
+
+class CatalogSnapshot extends DataClass implements Insertable<CatalogSnapshot> {
+  final String cacheKey;
+  final String payload;
+  final DateTime savedAt;
+  const CatalogSnapshot({
+    required this.cacheKey,
+    required this.payload,
+    required this.savedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['cache_key'] = Variable<String>(cacheKey);
+    map['payload'] = Variable<String>(payload);
+    map['saved_at'] = Variable<DateTime>(savedAt);
+    return map;
+  }
+
+  CatalogSnapshotsCompanion toCompanion(bool nullToAbsent) {
+    return CatalogSnapshotsCompanion(
+      cacheKey: Value(cacheKey),
+      payload: Value(payload),
+      savedAt: Value(savedAt),
+    );
+  }
+
+  factory CatalogSnapshot.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CatalogSnapshot(
+      cacheKey: serializer.fromJson<String>(json['cacheKey']),
+      payload: serializer.fromJson<String>(json['payload']),
+      savedAt: serializer.fromJson<DateTime>(json['savedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'cacheKey': serializer.toJson<String>(cacheKey),
+      'payload': serializer.toJson<String>(payload),
+      'savedAt': serializer.toJson<DateTime>(savedAt),
+    };
+  }
+
+  CatalogSnapshot copyWith({
+    String? cacheKey,
+    String? payload,
+    DateTime? savedAt,
+  }) => CatalogSnapshot(
+    cacheKey: cacheKey ?? this.cacheKey,
+    payload: payload ?? this.payload,
+    savedAt: savedAt ?? this.savedAt,
+  );
+  CatalogSnapshot copyWithCompanion(CatalogSnapshotsCompanion data) {
+    return CatalogSnapshot(
+      cacheKey: data.cacheKey.present ? data.cacheKey.value : this.cacheKey,
+      payload: data.payload.present ? data.payload.value : this.payload,
+      savedAt: data.savedAt.present ? data.savedAt.value : this.savedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CatalogSnapshot(')
+          ..write('cacheKey: $cacheKey, ')
+          ..write('payload: $payload, ')
+          ..write('savedAt: $savedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(cacheKey, payload, savedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CatalogSnapshot &&
+          other.cacheKey == this.cacheKey &&
+          other.payload == this.payload &&
+          other.savedAt == this.savedAt);
+}
+
+class CatalogSnapshotsCompanion extends UpdateCompanion<CatalogSnapshot> {
+  final Value<String> cacheKey;
+  final Value<String> payload;
+  final Value<DateTime> savedAt;
+  final Value<int> rowid;
+  const CatalogSnapshotsCompanion({
+    this.cacheKey = const Value.absent(),
+    this.payload = const Value.absent(),
+    this.savedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  CatalogSnapshotsCompanion.insert({
+    required String cacheKey,
+    required String payload,
+    required DateTime savedAt,
+    this.rowid = const Value.absent(),
+  }) : cacheKey = Value(cacheKey),
+       payload = Value(payload),
+       savedAt = Value(savedAt);
+  static Insertable<CatalogSnapshot> custom({
+    Expression<String>? cacheKey,
+    Expression<String>? payload,
+    Expression<DateTime>? savedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (cacheKey != null) 'cache_key': cacheKey,
+      if (payload != null) 'payload': payload,
+      if (savedAt != null) 'saved_at': savedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  CatalogSnapshotsCompanion copyWith({
+    Value<String>? cacheKey,
+    Value<String>? payload,
+    Value<DateTime>? savedAt,
+    Value<int>? rowid,
+  }) {
+    return CatalogSnapshotsCompanion(
+      cacheKey: cacheKey ?? this.cacheKey,
+      payload: payload ?? this.payload,
+      savedAt: savedAt ?? this.savedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (cacheKey.present) {
+      map['cache_key'] = Variable<String>(cacheKey.value);
+    }
+    if (payload.present) {
+      map['payload'] = Variable<String>(payload.value);
+    }
+    if (savedAt.present) {
+      map['saved_at'] = Variable<DateTime>(savedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CatalogSnapshotsCompanion(')
+          ..write('cacheKey: $cacheKey, ')
+          ..write('payload: $payload, ')
+          ..write('savedAt: $savedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -1347,6 +1616,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $TemporaryInterestsTable(this);
   late final $CalendarSnapshotsTable calendarSnapshots =
       $CalendarSnapshotsTable(this);
+  late final $CatalogSnapshotsTable catalogSnapshots = $CatalogSnapshotsTable(
+    this,
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -1356,6 +1628,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     preferences,
     temporaryInterests,
     calendarSnapshots,
+    catalogSnapshots,
   ];
 }
 
@@ -2155,6 +2428,183 @@ typedef $$CalendarSnapshotsTableProcessedTableManager =
       CalendarSnapshot,
       PrefetchHooks Function()
     >;
+typedef $$CatalogSnapshotsTableCreateCompanionBuilder =
+    CatalogSnapshotsCompanion Function({
+      required String cacheKey,
+      required String payload,
+      required DateTime savedAt,
+      Value<int> rowid,
+    });
+typedef $$CatalogSnapshotsTableUpdateCompanionBuilder =
+    CatalogSnapshotsCompanion Function({
+      Value<String> cacheKey,
+      Value<String> payload,
+      Value<DateTime> savedAt,
+      Value<int> rowid,
+    });
+
+class $$CatalogSnapshotsTableFilterComposer
+    extends Composer<_$AppDatabase, $CatalogSnapshotsTable> {
+  $$CatalogSnapshotsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get cacheKey => $composableBuilder(
+    column: $table.cacheKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get savedAt => $composableBuilder(
+    column: $table.savedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$CatalogSnapshotsTableOrderingComposer
+    extends Composer<_$AppDatabase, $CatalogSnapshotsTable> {
+  $$CatalogSnapshotsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get cacheKey => $composableBuilder(
+    column: $table.cacheKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get savedAt => $composableBuilder(
+    column: $table.savedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$CatalogSnapshotsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $CatalogSnapshotsTable> {
+  $$CatalogSnapshotsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get cacheKey =>
+      $composableBuilder(column: $table.cacheKey, builder: (column) => column);
+
+  GeneratedColumn<String> get payload =>
+      $composableBuilder(column: $table.payload, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get savedAt =>
+      $composableBuilder(column: $table.savedAt, builder: (column) => column);
+}
+
+class $$CatalogSnapshotsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $CatalogSnapshotsTable,
+          CatalogSnapshot,
+          $$CatalogSnapshotsTableFilterComposer,
+          $$CatalogSnapshotsTableOrderingComposer,
+          $$CatalogSnapshotsTableAnnotationComposer,
+          $$CatalogSnapshotsTableCreateCompanionBuilder,
+          $$CatalogSnapshotsTableUpdateCompanionBuilder,
+          (
+            CatalogSnapshot,
+            BaseReferences<
+              _$AppDatabase,
+              $CatalogSnapshotsTable,
+              CatalogSnapshot
+            >,
+          ),
+          CatalogSnapshot,
+          PrefetchHooks Function()
+        > {
+  $$CatalogSnapshotsTableTableManager(
+    _$AppDatabase db,
+    $CatalogSnapshotsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CatalogSnapshotsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CatalogSnapshotsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CatalogSnapshotsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> cacheKey = const Value.absent(),
+                Value<String> payload = const Value.absent(),
+                Value<DateTime> savedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => CatalogSnapshotsCompanion(
+                cacheKey: cacheKey,
+                payload: payload,
+                savedAt: savedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String cacheKey,
+                required String payload,
+                required DateTime savedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => CatalogSnapshotsCompanion.insert(
+                cacheKey: cacheKey,
+                payload: payload,
+                savedAt: savedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$CatalogSnapshotsTable, CatalogSnapshot>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $CatalogSnapshotsTable,
+                    CatalogSnapshot
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$CatalogSnapshotsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $CatalogSnapshotsTable,
+      CatalogSnapshot,
+      $$CatalogSnapshotsTableFilterComposer,
+      $$CatalogSnapshotsTableOrderingComposer,
+      $$CatalogSnapshotsTableAnnotationComposer,
+      $$CatalogSnapshotsTableCreateCompanionBuilder,
+      $$CatalogSnapshotsTableUpdateCompanionBuilder,
+      (
+        CatalogSnapshot,
+        BaseReferences<_$AppDatabase, $CatalogSnapshotsTable, CatalogSnapshot>,
+      ),
+      CatalogSnapshot,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -2167,4 +2617,6 @@ class $AppDatabaseManager {
       $$TemporaryInterestsTableTableManager(_db, _db.temporaryInterests);
   $$CalendarSnapshotsTableTableManager get calendarSnapshots =>
       $$CalendarSnapshotsTableTableManager(_db, _db.calendarSnapshots);
+  $$CatalogSnapshotsTableTableManager get catalogSnapshots =>
+      $$CatalogSnapshotsTableTableManager(_db, _db.catalogSnapshots);
 }

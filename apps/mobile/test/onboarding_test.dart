@@ -99,7 +99,9 @@ Future<void> pumpOnboarding(
               : Stream.value(preference),
         ),
         exploreSnapshotProvider.overrideWith(
-          (ref) async => offline ? throw Exception('offline') : catalog(),
+          (ref) => offline
+              ? Stream<Snapshot>.error(Exception('offline'))
+              : Stream.value(catalog()),
         ),
         profileSettingsProvider.overrideWith(
           (ref) async => const UserProfileSettings(notifyGoals: false),
@@ -603,7 +605,9 @@ void main() {
               ),
             ),
           ),
-          exploreSnapshotProvider.overrideWith((ref) async => catalog()),
+          exploreSnapshotProvider.overrideWith(
+            (ref) => Stream.value(catalog()),
+          ),
           profileSettingsProvider.overrideWith(
             (ref) async => const UserProfileSettings(notifyGoals: false),
           ),
