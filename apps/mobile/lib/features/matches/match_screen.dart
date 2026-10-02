@@ -2492,20 +2492,40 @@ class Lineups extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final homeHasLineup =
-        detail.homeStarters.isNotEmpty ||
-        detail.homeSubstitutes.isNotEmpty ||
-        detail.homeCoach != null;
-    final awayHasLineup =
-        detail.awayStarters.isNotEmpty ||
-        detail.awaySubstitutes.isNotEmpty ||
-        detail.awayCoach != null;
-    if (!homeHasLineup && !awayHasLineup) {
+    // Players define a lineup. Some providers publish only the coaches (no
+    // starters, no bench); that is not a lineup and must not render as two
+    // lone "Entrenador" cards.
+    final homeHasPlayers =
+        detail.homeStarters.isNotEmpty || detail.homeSubstitutes.isNotEmpty;
+    final awayHasPlayers =
+        detail.awayStarters.isNotEmpty || detail.awaySubstitutes.isNotEmpty;
+    if (!homeHasPlayers && !awayHasPlayers) {
       if (detail.lineupPending) {
         return const _PendingSection('Cargando alineaciones…');
       }
-      return const _EmptySection(Icons.groups_outlined, 'Sin alineaciones');
+      final homeCoach = detail.homeCoach;
+      final awayCoach = detail.awayCoach;
+      if (homeCoach == null && awayCoach == null) {
+        return const _EmptySection(Icons.groups_outlined, 'Sin alineaciones');
+      }
+      return Column(
+        children: [
+          const _EmptySection(Icons.groups_outlined, 'Alineación no publicada'),
+          _CoachesOnly(
+            home: homeCoach == null
+                ? null
+                : (data.team(match.homeId), homeCoach),
+            away: awayCoach == null
+                ? null
+                : (data.team(match.awayId), awayCoach),
+          ),
+        ],
+      );
     }
+    // Once one side has players, a coach-only side still gets its card (with
+    // an explicit "not published" note) so the coach is not lost.
+    final homeHasLineup = homeHasPlayers || detail.homeCoach != null;
+    final awayHasLineup = awayHasPlayers || detail.awayCoach != null;
 
     return Column(
       children: [
@@ -2637,12 +2657,55 @@ class _TeamLineup extends StatelessWidget {
                 },
               ),
             ],
+            if (starters.isEmpty && substitutes.isEmpty)
+              const Text(
+                'Alineación no publicada',
+                style: TextStyle(color: muted),
+              ),
             if (coach != null) ...[
               const SizedBox(height: 16),
               const _LineupLabel('Entrenador'),
               const SizedBox(height: 8),
               _CoachTile(coach!),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Secondary info shown under "Alineación no publicada" when the provider
+/// sent only the coaches.
+class _CoachesOnly extends StatelessWidget {
+  const _CoachesOnly({required this.home, required this.away});
+
+  final (Entity?, Json)? home;
+  final (Entity?, Json)? away;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget row((Entity?, Json) entry) => Row(
+      children: [
+        if (entry.$1 != null) ...[
+          EntityAvatar(entry.$1!, size: 26),
+          const SizedBox(width: 10),
+        ],
+        Expanded(child: _CoachTile(entry.$2)),
+      ],
+    );
+    return Card(
+      key: const ValueKey('lineup-coaches-only'),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _LineupLabel('Entrenadores'),
+            const SizedBox(height: 8),
+            if (home != null) row(home!),
+            if (home != null && away != null) const SizedBox(height: 8),
+            if (away != null) row(away!),
           ],
         ),
       ),
