@@ -13,6 +13,9 @@ test('durable canonical events, first observation, duplicates, cards, two device
   for(const [kind,items] of [['competition',fixture.competitions],['team',fixture.teams],['match',fixture.matches]]) {
    for(const item of items) await db.query('insert into futbeat_private.entities values($1,$2,$3)',[item.id,kind,JSON.stringify(item)]);
   }
+  // The match is played now (pushes for matches that kicked off more than
+  // matchPushMaxAgeHours ago are dropped: 20261002110000).
+  await db.query("update futbeat_private.entities set payload=payload||jsonb_build_object('startTime',to_jsonb(now()-interval '80 minutes')) where id='fb_match_clasico'");
   for(const [kind,external,id] of [['match','test-fixture','fb_match_clasico'],['team','1','fb_team_sap'],['team','2','fb_team_lda']])
    await db.query('insert into futbeat_private.provider_entities values($1,$2,$3,$4)',['api_football',kind,external,id]);
   const uid=randomUUID();

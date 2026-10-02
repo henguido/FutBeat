@@ -847,6 +847,19 @@ async function syncOneMatchDetail(
   // reserve. This prevents a historical backlog from starving current games.
   let recovery: Record<string, unknown> | null = null;
   if (allowRecovery) {
+    // Stuck non-terminal sweep (20261002110000): queues bounded provider
+    // re-checks for matches seen in play that never got a final. Its own
+    // transactions, outside the quota lock, throttled by a committed claim;
+    // a slow or failed sweep never blocks the reservation below.
+    try {
+      const claim = await rpc("futbeat_claim_stuck_sweep", {}, 10000);
+      if (claim?.due) await rpc("futbeat_run_stuck_sweep", {}, 15000);
+    } catch (error) {
+      console.warn(
+        "stuck terminal sweep unavailable",
+        error instanceof Error ? error.message : "unknown",
+      );
+    }
     try {
       // The reservation RPC owns the protected user_high/LIVE guard under the
       // provider quota lock. Do not pre-check it here: a read-then-reserve

@@ -37,7 +37,20 @@
 --      queue, quota class, caps and per-date backoff as a user opening a
 --      match). At most stuckResultsMaxReopens (2) reopens per date, at least
 --      stuckResultsReopenHours (12) apart, stuckReopenDatesPerSweep (2) per
---      sweep, never while the date is in provider backoff or already queued.
+--      sweep, never while the date is in provider backoff or already queued,
+--      and only while the provider budget is above the user_high floor
+--      (provider remaining minus in-flight reservations, the recovery guard).
+--      A date whose last results attempt failed at the record stage (the
+--      statement timeout fixed by chunked recording) gets one reopen even
+--      without stuck matches.
+--      Big dates are never reopened: the reservation's local repair
+--      (reconcile_goal_results_local) locks every calendar match of the date
+--      inside the provider quota lock and takes 6-8 s for ~1,100-1,500
+--      matches, at the 8 s statement timeout; a timed-out reservation would
+--      leave the demand queued and stall the results lane. A date with more
+--      than stuckReopenMaxDateMatches (600) calendar matches is marked as
+--      spent instead (skipped_reason 'date_too_large') and its stuck matches
+--      go straight to the detail path.
 --   2. Detail request. A stuck match whose date was already answered by the
 --      results lane after its kickoff (GOAL's list did not carry it) or whose
 --      reopen budget is spent gets a terminal-recovery row with reason
@@ -49,10 +62,24 @@
 --      stuckDetailMaxAttempts (2) calls, stuckDetailRetryMinutes (180) apart,
 --      and lives stuckDetailWindowHours (24). Fresh recoveries (absent /
 --      overdue LIVE of today's games) are always served first.
---   3. The sweep runs from settle_terminal_recovery (every recovery
---      reservation), throttled to once per stuckSweepMinutes (15) and
---      skipped when another transaction holds it. Cheap: driven by the
---      in-play rows of live_match_state (production: ~70 ms warm).
+--   3. The sweep is its own service-only RPC pair, called by the detail
+--      worker before it reserves a recovery call (no new cron): a claim
+--      (commits the throttle, once per stuckSweepMinutes = 15) and a run.
+--      It never runs inside the provider quota lock and a slow or failed
+--      sweep never fails a reservation; the committed claim keeps a failing
+--      sweep from retrying every minute. Candidates are computed once per run
+--      (driven by the in-play rows of live_match_state; production ~70 ms
+--      warm, ~2.8 s cold).
+--   4. Late pushes. Provider answers for old matches would create "first
+--      seen" GOAL / FULL_TIME events days later. Outbox rows for match events
+--      whose kickoff is older than matchPushMaxAgeHours (8) are dropped at
+--      insert (canonical events are still stored); metric
+--      stale_match_push_skipped.
+-- Worst case per UTC day (all limits at their defaults): detail recovery
+-- 40 requests x 2 calls = 80 match-detail units; reopens 2 dates per sweep,
+-- in practice bounded by the dates in the window (each date at most 2
+-- reopens, 1 for a record failure), 1-5 units each: about 10-20 units on the
+-- first day after deploy, ~0-4/day after. Typical: ~40-60 units/day.
 -- A match is "stuck" when: kickoff in the last stuckTerminalWindowDays (14)
 -- days and older than stuckTerminalHours (6) h, a GOAL mapping, the latest
 -- live state of that mapping is in play and seen after kickoff, the canonical
@@ -82,6 +109,11 @@ create table if not exists futbeat_private.stuck_results_reopen (
   reopen_count integer not null default 0 check (reopen_count>=0),
   last_reopened_at timestamptz,
   stuck_matches integer not null default 0,
+  -- 'stuck' (matches seen in play) or 'record_failed' (last answer lost).
+  reopen_reason text,
+  -- Set when the date must never be reopened (its stuck matches go to the
+  -- detail path at once): 'date_too_large'.
+  skipped_reason text,
   primary key (provider,provider_date)
 );
 alter table futbeat_private.stuck_results_reopen enable row level security;
@@ -102,7 +134,10 @@ revoke all on futbeat_private.stuck_terminal_requests from public,anon,authentic
 
 create table if not exists futbeat_private.stuck_terminal_sweep (
   provider text primary key,
-  last_run_at timestamptz not null,
+  -- Committed by the claim (its own transaction): the throttle survives a
+  -- failed or timed-out run.
+  claimed_at timestamptz,
+  last_run_at timestamptz,
   last_result jsonb
 );
 alter table futbeat_private.stuck_terminal_sweep enable row level security;
@@ -140,26 +175,68 @@ $$;
 -- ---------------------------------------------------------------------------
 -- The sweep
 -- ---------------------------------------------------------------------------
+-- Provider budget above the protected user_high floor, the same guard the
+-- recovery reservation applies (latest provider-reported remaining minus
+-- still-open reservations). Unknown policy/remaining is no permission.
+create or replace function futbeat_private.recovery_headroom()
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare v_floor integer; v_remaining integer; v_committed integer;
+begin
+  select (p.class_floors->>'user_high')::integer into v_floor
+    from futbeat_private.provider_quota_policy p where p.provider='goal_api';
+  v_remaining:=futbeat_private.provider_remaining('goal_api');
+  if v_floor is null or v_remaining is null then
+    return jsonb_build_object('allowed',false,'reason','headroom_unknown','floor',v_floor,'providerRemaining',v_remaining);
+  end if;
+  select coalesce(sum(futbeat_private.provider_call_units(l.metadata)),0)::integer into v_committed
+    from futbeat_private.provider_call_ledger l
+   where l.provider='goal_api' and l.completed_at is null
+     and l.reserved_at>=date_trunc('day',now() at time zone 'UTC') at time zone 'UTC';
+  return jsonb_build_object('allowed',greatest(0,v_remaining-v_committed)>v_floor,
+    'reason',case when greatest(0,v_remaining-v_committed)>v_floor then 'ok' else 'provider_remaining_reserve' end,
+    'providerRemaining',v_remaining,'effectiveProviderRemaining',greatest(0,v_remaining-v_committed),'floor',v_floor);
+end $$;
+
+-- Claim: its own short transaction, so the throttle is committed whatever
+-- happens to the run that follows. Returns due=false while throttled.
+create or replace function futbeat_private.claim_stuck_sweep()
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_every interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','stuckSweepMinutes',15)::integer);
+  v_claimed timestamptz;
+begin
+  insert into futbeat_private.stuck_terminal_sweep as s(provider,claimed_at)
+  values('goal_api',now())
+  on conflict(provider) do update set claimed_at=excluded.claimed_at
+    where s.claimed_at is null or s.claimed_at<=now()-v_every
+  returning s.claimed_at into v_claimed;
+  return jsonb_build_object('due',v_claimed is not null);
+end $$;
+
+-- The sweep. Runs only for a fresh claim that has not run yet (or forced in
+-- tests / by an operator), never inside the provider quota lock.
 create or replace function futbeat_private.sweep_stuck_terminal(p_force boolean default false)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare
-  v_every interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','stuckSweepMinutes',15)::integer);
   v_max_reopens integer:=futbeat_private.quota_setting('goal_api','stuckResultsMaxReopens',2)::integer;
   v_reopen_gap interval:=make_interval(hours=>futbeat_private.quota_setting('goal_api','stuckResultsReopenHours',12)::integer);
   v_dates_per_sweep integer:=futbeat_private.quota_setting('goal_api','stuckReopenDatesPerSweep',2)::integer;
+  v_max_date_matches integer:=futbeat_private.quota_setting('goal_api','stuckReopenMaxDateMatches',600)::integer;
+  v_window_days integer:=futbeat_private.quota_setting('goal_api','stuckTerminalWindowDays',14)::integer;
   v_max_requests integer:=futbeat_private.quota_setting('goal_api','stuckDetailMaxRequests',2)::integer;
   v_request_gap interval:=make_interval(hours=>futbeat_private.quota_setting('goal_api','stuckDetailRetryHours',24)::integer);
   v_daily integer:=futbeat_private.quota_setting('goal_api','stuckDetailDailyRequests',40)::integer;
   v_max_pending integer:=futbeat_private.quota_setting('goal_api','stuckDetailMaxPending',4)::integer;
   v_batch integer:=futbeat_private.quota_setting('goal_api','stuckDetailBatch',4)::integer;
-  v_last timestamptz; v_room integer; v_today integer; v_pending integer;
-  v_reopened jsonb:='[]'::jsonb; v_requested jsonb:='[]'::jsonb; v_stuck integer:=0;
+  v_sweep futbeat_private.stuck_terminal_sweep;
+  v_cands jsonb; v_headroom jsonb; v_room integer; v_today integer; v_pending integer;
+  v_reopened jsonb:='[]'::jsonb; v_skipped jsonb:='[]'::jsonb; v_requested jsonb:='[]'::jsonb;
   d record; c record; v_result jsonb;
 begin
   if not p_force then
-    select s.last_run_at into v_last from futbeat_private.stuck_terminal_sweep s where s.provider='goal_api';
-    if v_last is not null and v_last>now()-v_every then
-      return jsonb_build_object('ran',false,'reason','throttled');
+    select * into v_sweep from futbeat_private.stuck_terminal_sweep s where s.provider='goal_api';
+    if v_sweep.claimed_at is null or v_sweep.claimed_at<now()-interval '5 minutes'
+       or coalesce(v_sweep.last_run_at,'-infinity'::timestamptz)>=v_sweep.claimed_at then
+      return jsonb_build_object('ran',false,'reason','not_claimed');
     end if;
   end if;
   -- One sweep at a time; a concurrent caller simply skips.
@@ -171,26 +248,65 @@ begin
   delete from futbeat_private.stuck_results_reopen
    where provider='goal_api' and provider_date<(now() at time zone 'UTC')::date-90;
 
-  select count(*) into v_stuck from futbeat_private.stuck_nonterminal_candidates();
+  -- Candidates once per run.
+  select coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb) into v_cands
+    from futbeat_private.stuck_nonterminal_candidates() x;
 
   -- 1. Dates whose results lane gave up: ONE more results answer each.
+  v_headroom:=futbeat_private.recovery_headroom();
   for d in
-    select s.provider_date,count(*)::integer n
-    from futbeat_private.stuck_nonterminal_candidates() s
-    join futbeat_private.results_date_attempts a on a.provider='goal_api' and a.provider_date=s.provider_date
-    left join futbeat_private.stuck_results_reopen r on r.provider='goal_api' and r.provider_date=s.provider_date
-    left join futbeat_private.results_date_user_demand q on q.provider='goal_api' and q.provider_date=s.provider_date
+    with stuck as (
+      select s.provider_date,count(*)::integer n
+      from jsonb_to_recordset(v_cands) s(match_id text,provider_date date)
+      group by s.provider_date
+    ), record_failed as (
+      -- The last results answer was lost at the record stage (statement
+      -- timeout before chunked recording): one reopen, stuck or not.
+      select a.provider_date,0 n
+      from futbeat_private.results_date_attempts a
+      where a.provider='goal_api' and a.attempt_count>=4 and a.last_outcome='FAILED'
+        and a.provider_date>=(now() at time zone 'UTC')::date-v_window_days
+        and (select l.status='FAILED' and l.metadata->>'stage'='record'
+          from futbeat_private.provider_call_ledger l
+          where l.provider='goal_api' and l.call_kind='results-date'
+            and l.reserved_at>now()-make_interval(days=>v_window_days+2)
+            and l.metadata->>'date'=a.provider_date::text
+          order by l.reserved_at desc,l.id desc limit 1)
+    ), dates as (
+      select provider_date,max(n) n,bool_or(n>0) has_stuck from (
+        select provider_date,n from stuck union all select provider_date,n from record_failed) u
+      group by provider_date
+    )
+    select x.provider_date,x.n,x.has_stuck,
+      (select count(*) from futbeat_private.calendar_matches cm
+        where cm.start_time>=x.provider_date::timestamp at time zone 'UTC'
+          and cm.start_time<(x.provider_date+1)::timestamp at time zone 'UTC')::integer calendar_matches
+    from dates x
+    join futbeat_private.results_date_attempts a on a.provider='goal_api' and a.provider_date=x.provider_date
+    left join futbeat_private.stuck_results_reopen r on r.provider='goal_api' and r.provider_date=x.provider_date
+    left join futbeat_private.results_date_user_demand q on q.provider='goal_api' and q.provider_date=x.provider_date
     where a.attempt_count>=4
       and a.next_retry_at<=now()
-      and coalesce(r.reopen_count,0)<v_max_reopens
+      and r.skipped_reason is null
+      and coalesce(r.reopen_count,0)<case when x.has_stuck then v_max_reopens else 1 end
       and coalesce(r.last_reopened_at,'-infinity'::timestamptz)<now()-v_reopen_gap
       -- Not while a demand for it is still waiting to be served.
       and not (q.provider_date is not null and q.requested_at>now()-interval '24 hours'
         and a.updated_at<q.requested_at)
-    group by s.provider_date
-    order by count(*) desc,s.provider_date desc
-    limit greatest(v_dates_per_sweep,0)
+    order by x.n desc,x.provider_date desc
   loop
+    if d.calendar_matches>v_max_date_matches then
+      -- Too big for the reservation's local repair under the statement
+      -- timeout: never reopened; its stuck matches go to the detail path.
+      insert into futbeat_private.stuck_results_reopen as r(provider,provider_date,reopen_count,stuck_matches,skipped_reason)
+      values('goal_api',d.provider_date,0,d.n,'date_too_large')
+      on conflict(provider,provider_date) do update set skipped_reason='date_too_large',stuck_matches=excluded.stuck_matches;
+      v_skipped:=v_skipped||jsonb_build_object('date',d.provider_date,'calendarMatches',d.calendar_matches);
+      continue;
+    end if;
+    continue when jsonb_array_length(v_reopened)>=greatest(v_dates_per_sweep,0);
+    -- Same protected floor as recovery: a reopen never spends user_high.
+    continue when not coalesce((v_headroom->>'allowed')::boolean,false);
     -- updated_at is left alone: the demand below is served only while
     -- updated_at < requested_at (both would be now() in this transaction).
     update futbeat_private.results_date_attempts a set attempt_count=3
@@ -198,11 +314,13 @@ begin
     insert into futbeat_private.results_date_user_demand as q(provider,provider_date,requested_at,request_count)
     values('goal_api',d.provider_date,now(),1)
     on conflict(provider,provider_date) do update set requested_at=now(),request_count=q.request_count+1;
-    insert into futbeat_private.stuck_results_reopen as r(provider,provider_date,reopen_count,last_reopened_at,stuck_matches)
-    values('goal_api',d.provider_date,1,now(),d.n)
+    insert into futbeat_private.stuck_results_reopen as r(provider,provider_date,reopen_count,last_reopened_at,stuck_matches,reopen_reason)
+    values('goal_api',d.provider_date,1,now(),d.n,case when d.has_stuck then 'stuck' else 'record_failed' end)
     on conflict(provider,provider_date) do update
-      set reopen_count=r.reopen_count+1,last_reopened_at=now(),stuck_matches=excluded.stuck_matches;
-    v_reopened:=v_reopened||jsonb_build_object('date',d.provider_date,'stuck',d.n);
+      set reopen_count=r.reopen_count+1,last_reopened_at=now(),stuck_matches=excluded.stuck_matches,
+        reopen_reason=excluded.reopen_reason;
+    v_reopened:=v_reopened||jsonb_build_object('date',d.provider_date,'stuck',d.n,
+      'reason',case when d.has_stuck then 'stuck' else 'record_failed' end);
   end loop;
   if jsonb_array_length(v_reopened)>0 then
     perform futbeat_private.bump_metric('stuck_results_reopens',jsonb_array_length(v_reopened));
@@ -229,13 +347,15 @@ begin
           and coalesce(l.metadata->>'date','')~'^\d{4}-\d{2}-\d{2}$'
         group by 1
       )
-      select s.* from futbeat_private.stuck_nonterminal_candidates() s
+      select s.* from jsonb_to_recordset(v_cands) s(match_id text,external_match_id text,provider_date date,
+        start_time timestamptz,last_live_status text,last_seen_at timestamptz)
       left join served v on v.d=s.provider_date
       left join futbeat_private.stuck_results_reopen r on r.provider='goal_api' and r.provider_date=s.provider_date
       where (
           -- The results list was read after this game could have ended...
           v.last_ok>=s.start_time+interval '2 hours'
-          -- ...or the date cannot be reopened any more.
+          -- ...or the date cannot (or can no longer) be reopened.
+          or r.skipped_reason is not null
           or (coalesce(r.reopen_count,0)>=v_max_reopens and r.last_reopened_at<now()-v_reopen_gap))
         and (select count(*) from futbeat_private.stuck_terminal_requests q where q.match_id=s.match_id)<v_max_requests
         and not exists(select 1 from futbeat_private.stuck_terminal_requests q
@@ -268,18 +388,30 @@ begin
     end if;
   end if;
 
-  v_result:=jsonb_build_object('ran',true,'stuck',v_stuck,'reopenedDates',v_reopened,
+  v_result:=jsonb_build_object('ran',true,'stuck',jsonb_array_length(v_cands),'reopenedDates',v_reopened,
+    'skippedDates',v_skipped,'headroom',v_headroom,
     'detailRequests',v_requested,'requestsToday',v_today+jsonb_array_length(v_requested));
-  insert into futbeat_private.stuck_terminal_sweep as s(provider,last_run_at,last_result)
-  values('goal_api',now(),v_result)
+  insert into futbeat_private.stuck_terminal_sweep as s(provider,claimed_at,last_run_at,last_result)
+  values('goal_api',now(),now(),v_result)
   on conflict(provider) do update set last_run_at=excluded.last_run_at,last_result=excluded.last_result;
   return v_result;
 end $$;
 
+-- Worker entry points (service-only). Called before a recovery reservation:
+-- claim, then run only when due. Each is its own transaction.
+create or replace function public.futbeat_claim_stuck_sweep()
+returns jsonb language sql security definer set search_path='' as $$
+  select futbeat_private.claim_stuck_sweep()
+$$;
+create or replace function public.futbeat_run_stuck_sweep()
+returns jsonb language sql security definer set search_path='' as $$
+  select futbeat_private.sweep_stuck_terminal(false)
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Settlement. Base: 20260930130000 (verbatim) except: stuck rows have their
 -- own attempt cap and window and never re-demand their (already answered)
--- date; the throttled sweep runs last.
+-- date. The sweep does NOT run here (it runs outside the quota lock).
 -- ---------------------------------------------------------------------------
 create or replace function futbeat_private.settle_terminal_recovery()
 returns void language plpgsql security definer set search_path='' as $$
@@ -335,14 +467,6 @@ begin
     else make_interval(hours=>futbeat_private.quota_setting('goal_api','terminalRecoveryWindowHours',6)::integer) end;
   delete from futbeat_private.live_terminal_recovery
   where state<>'PENDING' and coalesce(resolved_at,detected_at)<now()-interval '3 days';
-
-  -- CHANGED: the throttled stuck sweep. Never allowed to break settlement
-  -- (and so the recovery reservation that called it).
-  begin
-    perform futbeat_private.sweep_stuck_terminal(false);
-  exception when others then
-    perform futbeat_private.bump_metric('stuck_sweep_failed');
-  end;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -529,11 +653,40 @@ returns jsonb language sql stable security definer set search_path='' as $$
   select futbeat_private.stuck_terminal_status()
 $$;
 
+-- ---------------------------------------------------------------------------
+-- No late pushes. A provider answer for an old match (stuck recovery, a
+-- reopened results date, any late detail) stores its events as "first seen"
+-- now; pushing them days after the game is wrong. Outbox rows of match
+-- events whose kickoff is older than matchPushMaxAgeHours are dropped at
+-- insert; the canonical events themselves are unchanged. Content pushes
+-- (no match event) are untouched.
+-- ---------------------------------------------------------------------------
+create or replace function futbeat_private.drop_stale_match_push()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare v_kickoff timestamptz;
+begin
+  if new.event_id is null then return new; end if;
+  select futbeat_private.try_timestamptz(e.payload->>'startTime') into v_kickoff
+    from futbeat_private.canonical_events c
+    join futbeat_private.entities e on e.id=c.match_id and e.kind='match'
+   where c.id=new.event_id;
+  if v_kickoff is not null and v_kickoff<now()-make_interval(
+      hours=>futbeat_private.quota_setting('goal_api','matchPushMaxAgeHours',8)::integer) then
+    perform futbeat_private.bump_metric('stale_match_push_skipped');
+    return null;
+  end if;
+  return new;
+end $$;
+drop trigger if exists futbeat_drop_stale_match_push on futbeat_private.notification_outbox;
+create trigger futbeat_drop_stale_match_push before insert on futbeat_private.notification_outbox
+for each row execute function futbeat_private.drop_stale_match_push();
+
 do $$ declare fn regprocedure; begin
   for fn in select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where (n.nspname='futbeat_private' and p.proname in ('stuck_nonterminal_candidates','sweep_stuck_terminal',
-      'settle_terminal_recovery','reserve_terminal_recovery_call','stuck_terminal_status'))
-    or (n.nspname='public' and p.proname='futbeat_stuck_terminal_status')
+      'settle_terminal_recovery','reserve_terminal_recovery_call','stuck_terminal_status','recovery_headroom',
+      'claim_stuck_sweep','drop_stale_match_push'))
+    or (n.nspname='public' and p.proname in ('futbeat_stuck_terminal_status','futbeat_claim_stuck_sweep','futbeat_run_stuck_sweep'))
   loop
     execute format('revoke all on function %s from public',fn);
     if exists(select 1 from pg_roles where rolname='anon') then execute format('revoke all on function %s from anon',fn); end if;
@@ -541,6 +694,8 @@ do $$ declare fn regprocedure; begin
   end loop;
   if exists(select 1 from pg_roles where rolname='service_role') then
     grant execute on function public.futbeat_stuck_terminal_status() to service_role;
+    grant execute on function public.futbeat_claim_stuck_sweep() to service_role;
+    grant execute on function public.futbeat_run_stuck_sweep() to service_role;
   end if;
 end $$;
 

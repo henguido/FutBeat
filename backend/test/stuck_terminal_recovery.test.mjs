@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { openDatabase } from '../storage/database.mjs';
+import { goalOk, worker } from './helpers/worker_harness.mjs';
 
 // Stuck non-terminal matches (20261002110000): a match seen in play whose
 // final never arrived (capped bulk lists, recovery expired before quota, the
@@ -57,6 +58,9 @@ async function served(db, date, at) {
     values('goal_api','results-date','test',$2,$2,'SUCCEEDED',jsonb_build_object('date',$1::text,'results',500))`, [date, at]);
 }
 const settings = (db, values) => db.query("update futbeat_private.provider_quota_policy set freshness=freshness||$1::jsonb where provider='goal_api'", [JSON.stringify(values)]);
+// The latest provider-reported remaining budget (what the recovery guard reads).
+const budget = (db, remaining) => db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining)
+  values('goal_api','live-goal','test',now(),now(),'SUCCEEDED',$1)`, [remaining]);
 
 test('a date the results lane gave up on while it holds matches seen in play gets exactly one more results answer per reopen', () => withDb(async (db) => {
   const kickoff = Date.now() - 3 * 86400e3;
@@ -64,6 +68,7 @@ test('a date the results lane gave up on while it holds matches seen in play get
   const stuck = await match(db, { kickoff });
   const neverLive = await match(db, { kickoff: kickoff + 60e3, live: null });
   await gaveUp(db, date);
+  await budget(db, 700);
 
   // Before: the local repair closes the date (attempts >= 4, > 48 h): no call.
   const before = (await db.query("select futbeat_private.reserve_goal_results_date('test') v")).rows[0].v;
@@ -101,6 +106,7 @@ test('a date still worked by the normal results lane, in provider backoff, or al
   const kickoff = Date.now() - 2 * 86400e3;
   const date = utcDate(kickoff);
   await match(db, { kickoff });
+  await budget(db, 700);
   await db.query(`insert into futbeat_private.results_date_attempts(provider,provider_date,attempt_count,last_outcome,next_retry_at,updated_at)
     values('goal_api',$1,2,'PARTIAL',now()-interval '1 hour',now()-interval '1 day')`, [date]);
   assert.deepEqual((await sweep(db)).reopenedDates, [], 'fewer than 4 attempts: the normal lane still owns it');
@@ -109,6 +115,87 @@ test('a date still worked by the normal results lane, in provider backoff, or al
   await db.query("update futbeat_private.results_date_attempts set next_retry_at=now()-interval '1 minute'");
   await db.query("insert into futbeat_private.results_date_user_demand(provider,provider_date,requested_at) values('goal_api',$1,now())", [date]);
   assert.deepEqual((await sweep(db)).reopenedDates, [], 'a waiting demand is not duplicated');
+}));
+
+test('a reopen never spends the user_high reserve (remaining minus in-flight reservations)', () => withDb(async (db) => {
+  const kickoff = Date.now() - 3 * 86400e3;
+  const date = utcDate(kickoff);
+  await match(db, { kickoff });
+  await gaveUp(db, date);
+  const none = await sweep(db);
+  assert.deepEqual([none.reopenedDates, none.headroom.reason], [[], 'headroom_unknown'], 'unknown budget is no permission');
+  await budget(db, 140);
+  assert.deepEqual((await sweep(db)).reopenedDates, [], 'below the 150 floor');
+  await budget(db, 152);
+  // Three reservations still in flight eat the margin above the floor.
+  for (let i = 0; i < 3; i++) {
+    await db.query("insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,metadata) values('goal_api','match-detail','test',now(),'{\"providerRequests\":1}')");
+  }
+  const tight = await sweep(db);
+  assert.deepEqual([tight.reopenedDates, tight.headroom.effectiveProviderRemaining], [[], 149]);
+  await budget(db, 400);
+  assert.deepEqual((await sweep(db)).reopenedDates.map((d) => d.date), [date]);
+  assert.equal(await attempts(db, date), 3);
+}));
+
+test('a date too big for the reservation local repair is never reopened: its stuck matches go straight to detail', () => withDb(async (db) => {
+  const kickoff = Date.now() - 3 * 86400e3;
+  const date = utcDate(kickoff);
+  const a = await match(db, { kickoff });
+  const b = await match(db, { kickoff: kickoff + 60e3 });
+  await match(db, { kickoff: kickoff + 120e3, live: null });
+  await gaveUp(db, date);
+  await budget(db, 700);
+  await settings(db, { stuckReopenMaxDateMatches: 2 });
+  const out = await sweep(db);
+  assert.deepEqual(out.reopenedDates, []);
+  assert.deepEqual(out.skippedDates, [{ date, calendarMatches: 3 }]);
+  assert.equal(await attempts(db, date), 4, 'the date stays closed: no demand, no local repair under the quota lock');
+  assert.equal(await demand(db, date), 0);
+  assert.deepEqual(out.detailRequests.map((r) => r.matchId).sort(), [a.match, b.match].sort(), 'detail path at once');
+  assert.equal((await db.query('select skipped_reason from futbeat_private.stuck_results_reopen')).rows[0].skipped_reason, 'date_too_large');
+  await db.query("update futbeat_private.results_date_attempts set next_retry_at=now()-interval '1 minute'");
+  await db.query("update futbeat_private.stuck_results_reopen set last_reopened_at=now()-interval '2 days'");
+  assert.deepEqual((await sweep(db)).reopenedDates, [], 'never reopened later either');
+}));
+
+test('a date whose last results answer was lost at the record stage gets exactly one reopen, even without stuck matches', () => withDb(async (db) => {
+  const kickoff = Date.now() - 3 * 86400e3;
+  const date = utcDate(kickoff);
+  await match(db, { kickoff, live: null });
+  await budget(db, 700);
+  await db.query(`insert into futbeat_private.results_date_attempts(provider,provider_date,attempt_count,last_outcome,next_retry_at,updated_at)
+    values('goal_api',$1,4,'FAILED',now()-interval '1 hour',now()-interval '1 day')`, [date]);
+  const fail = (stage, ago) => db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,metadata)
+    values('goal_api','results-date','test',now()-$2::interval,now()-$2::interval,'FAILED',jsonb_build_object('date',$1::text,'stage',$3::text))`, [date, ago, stage]);
+  await fail('provider_fetch', '1 day');
+  assert.deepEqual((await sweep(db)).reopenedDates, [], 'a provider failure is the normal lane\'s business');
+  await fail('record', '20 hours');
+  const out = await sweep(db);
+  assert.deepEqual(out.reopenedDates, [{ date, stuck: 0, reason: 'record_failed' }]);
+  assert.equal(await attempts(db, date), 3);
+  // Served and failed again: no second reopen for this reason.
+  await db.query("update futbeat_private.results_date_attempts set attempt_count=4,last_outcome='FAILED',next_retry_at=now()-interval '1 minute'");
+  await db.query("update futbeat_private.stuck_results_reopen set last_reopened_at=now()-interval '13 hours'");
+  await db.query('delete from futbeat_private.results_date_user_demand');
+  await fail('record', '1 minute');
+  assert.deepEqual((await sweep(db)).reopenedDates, []);
+}));
+
+test('a provider answer for an old match never pushes; a recent one still does', () => withDb(async (db) => {
+  const old = await match(db, { kickoff: Date.now() - 2 * 86400e3, live: null });
+  const recent = await match(db, { kickoff: Date.now() - 3600e3, live: null });
+  const device = (await db.query("insert into futbeat_private.push_devices(user_id,installation_id,platform,transport,token) values(gen_random_uuid(),gen_random_uuid(),'android','test','tok-stale') returning id,user_id")).rows[0];
+  for (const g of [old, recent]) {
+    await db.query("insert into futbeat_private.push_follows(user_id,entity_type,entity_id,created_at) values($1,'match',$2,now()-interval '3 days')", [device.user_id, g.match]);
+    await db.query(`insert into futbeat_private.canonical_events(id,match_id,provider,event_type,payload,notify_candidate,first_seen_at)
+      values($1,$2,'goal_api','FULL_TIME',jsonb_build_object('id',$1::text,'matchId',$2::text,'type','FULL_TIME'),true,now())`, [`fb_event_stale_${g.n}`, g.match]);
+    await db.query(`insert into futbeat_private.notification_outbox(event_id,device_id,user_id,message)
+      values($1,$2,$3,'{"title":"t","body":"b"}')`, [`fb_event_stale_${g.n}`, device.id, device.user_id]);
+  }
+  const rows = (await db.query('select event_id from futbeat_private.notification_outbox where device_id=$1', [device.id])).rows.map((r) => r.event_id);
+  assert.deepEqual(rows, [`fb_event_stale_${recent.n}`]);
+  assert.equal((await db.query("select count(*)::int n from futbeat_private.canonical_events where id like 'fb_event_stale_%'")).rows[0].n, 2, 'events are still stored');
 }));
 
 test('matches the results answer did not carry get one bounded detail request each, newest first, never when final or never seen in play', () => withDb(async (db) => {
@@ -206,20 +293,57 @@ test('recovery reservation serves fresh games first; a stuck row makes at most 2
   assert.deepEqual(await canonical(db, g.match), { status: 'SCHEDULED', score: null });
 }));
 
-test('settlement runs the sweep at most once per 15 minutes, and the status function reports it', () => withDb(async (db) => {
+test('the sweep runs outside settlement: a committed claim throttles it to once per 15 minutes, even when the run fails', () => withDb(async (db) => {
   const kickoff = Date.now() - 2 * 86400e3;
   await match(db, { kickoff, live: 'EXTRA_TIME' });
+  // Settlement (inside the provider quota lock) never sweeps.
   await db.query('select futbeat_private.settle_terminal_recovery()');
-  const first = (await db.query("select last_run_at from futbeat_private.stuck_terminal_sweep where provider='goal_api'")).rows[0].last_run_at;
-  await db.query('select futbeat_private.settle_terminal_recovery()');
-  const second = (await db.query("select last_run_at from futbeat_private.stuck_terminal_sweep where provider='goal_api'")).rows[0].last_run_at;
-  assert.equal(String(first), String(second));
-  const throttled = (await db.query('select futbeat_private.sweep_stuck_terminal(false) v')).rows[0].v;
-  assert.deepEqual(throttled, { ran: false, reason: 'throttled' });
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.stuck_terminal_sweep')).rows[0].n, 0);
+
+  const claim = () => db.query('select public.futbeat_claim_stuck_sweep() v').then((r) => r.rows[0].v);
+  const run = () => db.query('select public.futbeat_run_stuck_sweep() v').then((r) => r.rows[0].v);
+  assert.deepEqual(await run(), { ran: false, reason: 'not_claimed' });
+  assert.deepEqual(await claim(), { due: true });
+  assert.equal((await run()).ran, true);
+  assert.deepEqual(await run(), { ran: false, reason: 'not_claimed' }, 'one run per claim');
+  assert.deepEqual(await claim(), { due: false }, 'throttled');
+
+  // A run that fails (statement timeout, anything) leaves the claim committed:
+  // the next attempt waits for the throttle instead of retrying every minute.
+  await db.query("update futbeat_private.stuck_terminal_sweep set claimed_at=now()-interval '16 minutes'");
+  assert.deepEqual(await claim(), { due: true });
+  await db.query("update futbeat_private.provider_quota_policy set freshness=freshness||'{\"stuckTerminalWindowDays\":\"x\"}'::jsonb where provider='goal_api'");
+  await assert.rejects(run());
+  assert.deepEqual(await claim(), { due: false }, 'the failed run did not release the throttle');
+  await db.query("update futbeat_private.provider_quota_policy set freshness=freshness-'stuckTerminalWindowDays' where provider='goal_api'");
+
   const status = (await db.query('select public.futbeat_stuck_terminal_status() v')).rows[0].v;
   assert.equal(status.stuck, 1);
   assert.deepEqual(status.byLastLiveStatus, { EXTRA_TIME: 1 });
   assert.equal(status.lastSweep.last_result.ran, true);
+}));
+
+test('end to end: the detail worker sweeps, then the provider answer closes the stuck match without a push', () => withDb(async (db) => {
+  const kickoff = Date.now() - 3 * 86400e3;
+  const g = await match(db, { kickoff, live: 'PENALTIES', liveAfterMinutes: 120 });
+  await served(db, utcDate(kickoff), iso(kickoff + 5 * 3600e3));
+  await budget(db, 700);
+  const device = (await db.query("insert into futbeat_private.push_devices(user_id,installation_id,platform,transport,token) values(gen_random_uuid(),gen_random_uuid(),'android','test','tok-e2e') returning id,user_id")).rows[0];
+  await db.query("insert into futbeat_private.push_follows(user_id,entity_type,entity_id,created_at) values($1,'match',$2,now()-interval '5 days')", [device.user_id, g.match]);
+  await db.query('insert into futbeat_private.event_baselines values($1) on conflict do nothing', [g.match]);
+  const detail = { id: g.ext, apiId: g.ext, matchStatus: 'AFTER_PEN', matchPeriod: 'FULL_TIME', matchElapsed: 120,
+    homeTeamScore: 1, awayTeamScore: 1, homeTeam: { id: `STH${g.n}` }, awayTeam: { id: `STA${g.n}` },
+    events: [], cards: [], substitutions: [], lineups: [] };
+  const w = worker(db, (url) => {
+    assert.equal(url.pathname, `/v1/fixtures/${g.ext}`, 'only the stuck fixture is asked');
+    return goalOk(detail);
+  });
+  await w.run('detail-only');
+  assert.equal(w.goalCalls().length, 1, JSON.stringify(w.logs));
+  assert.equal(await readStatus(db, g.match), 'FINISHED_PENDING_VERIFICATION');
+  assert.deepEqual((await stuckRows(db)).map((r) => r.state), ['RESOLVED']);
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.notification_outbox where device_id=$1', [device.id])).rows[0].n, 0, 'no push days after the game');
+  assert.ok((await db.query("select claimed_at from futbeat_private.stuck_terminal_sweep where provider='goal_api'")).rows[0].claimed_at);
 }));
 
 test('stuck recovery functions are service-only', () => withDb(async (db) => {
@@ -227,7 +351,8 @@ test('stuck recovery functions are service-only', () => withDb(async (db) => {
       has_function_privilege('anon',p.oid,'execute') anon,has_function_privilege('authenticated',p.oid,'execute') auth
     from pg_proc p join pg_namespace n on n.oid=p.pronamespace
     where p.proname in ('sweep_stuck_terminal','stuck_nonterminal_candidates','stuck_terminal_status','futbeat_stuck_terminal_status',
-      'settle_terminal_recovery','reserve_terminal_recovery_call')`)).rows;
-  assert.equal(rows.length, 6);
+      'settle_terminal_recovery','reserve_terminal_recovery_call','recovery_headroom','claim_stuck_sweep',
+      'futbeat_claim_stuck_sweep','futbeat_run_stuck_sweep','drop_stale_match_push')`)).rows;
+  assert.equal(rows.length, 11);
   for (const r of rows) assert.deepEqual([r.proname, r.anon, r.auth], [r.proname, false, false]);
 }));
