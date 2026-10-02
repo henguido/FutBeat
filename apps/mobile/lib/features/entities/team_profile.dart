@@ -329,7 +329,11 @@ class TeamProfileView extends ConsumerWidget {
       length: tabs.length,
       child: Scaffold(
         appBar: AppBar(
-          title: Text(team.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          title: Text(
+            team.displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           backgroundColor: profileHeaderTop,
           surfaceTintColor: Colors.transparent,
           scrolledUnderElevation: 0,
@@ -432,7 +436,7 @@ class TeamHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                team.name,
+                team.displayName,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(

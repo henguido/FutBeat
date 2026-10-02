@@ -45,7 +45,9 @@ List<Entity> orderedTeamCompetitions(Snapshot data, String teamId) {
       activeCounts[left.id] ?? 0,
     );
     if (byActive != 0) return byActive;
-    return left.name.toLowerCase().compareTo(right.name.toLowerCase());
+    return left.displayName.toLowerCase().compareTo(
+      right.displayName.toLowerCase(),
+    );
   });
   return competitions;
 }
@@ -78,8 +80,9 @@ List<Entity> competitionTeams(Snapshot data, String competitionId) {
 
   final teams = ids.map(data.team).whereType<Entity>().toList()
     ..sort(
-      (left, right) =>
-          left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+      (left, right) => left.displayName.toLowerCase().compareTo(
+        right.displayName.toLowerCase(),
+      ),
     );
   return teams;
 }
@@ -321,7 +324,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
           length: tabs.length,
           child: Scaffold(
             appBar: AppBar(
-              title: Text(entity.name),
+              title: Text(entity.displayName),
               actions: [FollowButton(type, canonicalId)],
               bottom: TabBar(
                 isScrollable: true,
@@ -341,7 +344,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                         const SizedBox(height: 16),
                         Center(
                           child: Text(
-                            entity.name,
+                            entity.displayName,
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.headlineSmall
                                 ?.copyWith(fontWeight: FontWeight.bold),

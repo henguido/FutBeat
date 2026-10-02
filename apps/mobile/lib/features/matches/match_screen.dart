@@ -622,7 +622,8 @@ class TopRatedCard extends StatelessWidget {
   final Entity home;
   final Entity away;
 
-  String _teamName(String side) => side == 'home' ? home.name : away.name;
+  String _teamName(String side) =>
+      side == 'home' ? home.displayName : away.displayName;
 
   @override
   Widget build(BuildContext context) {
@@ -685,7 +686,7 @@ class TeamTopRatedCard extends StatelessWidget {
           : CrossAxisAlignment.start,
       children: [
         Text(
-          team.name,
+          team.displayName,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -1036,7 +1037,7 @@ class _HeaderTeam extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Semantics(
     button: true,
-    label: team.name,
+    label: team.displayName,
     child: InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: () => context.push(
@@ -1063,7 +1064,7 @@ class _HeaderTeam extends StatelessWidget {
             ),
             const SizedBox(height: 7),
             Text(
-              team.name,
+              team.displayName,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
@@ -1425,7 +1426,7 @@ class _StatsLegend extends StatelessWidget {
           if (!end) ...[EntityAvatar(team, size: 26), const SizedBox(width: 8)],
           Flexible(
             child: Text(
-              team.name,
+              team.displayName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: end ? TextAlign.end : TextAlign.start,
@@ -2298,7 +2299,7 @@ class _TimelineRow extends StatelessWidget {
       if (title != typeLabel) typeLabel,
       for (final part in detailParts)
         if (part != title) part,
-      if (side == null && team != null) team.name,
+      if (side == null && team != null) team.displayName,
     ].join(' · ');
 
     final content = _TimelineContent(
@@ -2570,7 +2571,7 @@ class _TeamLineup extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    team.name,
+                    team.displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -3660,7 +3661,7 @@ class MatchPlayerSheet extends StatelessWidget {
         _SheetChip(position, key: const ValueKey('player-sheet-position')),
       if (team != null)
         _SheetChip(
-          team!.name,
+          team!.displayName,
           color: sideColor,
           leading: EntityAvatar(
             team!,

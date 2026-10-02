@@ -75,16 +75,9 @@ List<Entity> onboardingEntitiesForQuery(
 }
 
 /// Visible name of a suggestion. A national team flagged by the catalog uses
-/// the localized name of its country code; everything else keeps its name.
-String onboardingEntityName(Entity entity) {
-  if (entity.json['isNationalTeam'] == true) {
-    final localized = countryDisplayName(
-      entity.json['countryCode']?.toString(),
-    );
-    if (localized != null) return localized;
-  }
-  return entity.name;
-}
+/// the localized name of its country code; everything else keeps its name
+/// (the app-wide resolver, [teamDisplayName]).
+String onboardingEntityName(Entity entity) => entity.displayName;
 
 /// Spanish country/region subtitle; never a raw provider code, and omitted
 /// when it would only repeat the title.

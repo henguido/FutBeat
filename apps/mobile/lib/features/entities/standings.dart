@@ -494,7 +494,7 @@ class _Entry {
   final int position;
   final Map<String, int> values;
 
-  String get name => team.name;
+  String get name => team.displayName;
 }
 
 class _Column {
