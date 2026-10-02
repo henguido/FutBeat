@@ -328,7 +328,17 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Mis favoritos'), findsOneWidget);
-    await tester.drag(find.byType(ListView), const Offset(0, -1400));
+    // The notification switches made the page longer: scroll to the form.
+    await tester.scrollUntilVisible(
+      find.text('Crear cuenta'),
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Crear cuenta'), findsOneWidget);
     expect(find.text('Eliminar cuenta'), findsNothing);

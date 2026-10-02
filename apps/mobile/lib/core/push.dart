@@ -20,6 +20,28 @@ String? reconcileSelectedCountry({
   required bool dirty,
 }) => dirty ? local : cloud;
 
+/// Notification preference keys as the server stores them. The first seven
+/// are understood by every server (`futbeat_sync_user_profile_v2`); the rest
+/// only by servers with `futbeat_update_profile_preferences`.
+const legacyNotificationKeys = [
+  'notify_kickoff',
+  'notify_goals',
+  'notify_final',
+  'notify_cards',
+  'notify_lineups',
+  'notify_news',
+  'notify_transfers',
+];
+
+const extendedNotificationKeys = [
+  'notify_red_cards',
+  'notify_goal_annulled',
+  'notify_player_starter',
+  'notify_player_bench',
+  'notify_player_sub_in',
+  'notify_player_sub_out',
+];
+
 class UserProfileSettings {
   const UserProfileSettings({
     this.displayName,
@@ -33,7 +55,16 @@ class UserProfileSettings {
     this.notifyLineups = true,
     this.notifyNews = true,
     this.notifyTransfers = true,
-  });
+    bool? notifyRedCards,
+    bool? notifyGoalAnnulled,
+    bool? notifyPlayerStarter,
+    bool? notifyPlayerBench,
+    this.notifyPlayerSubIn = true,
+    this.notifyPlayerSubOut = true,
+  }) : notifyRedCards = notifyRedCards ?? notifyCards,
+       notifyGoalAnnulled = notifyGoalAnnulled ?? notifyGoals,
+       notifyPlayerStarter = notifyPlayerStarter ?? notifyLineups,
+       notifyPlayerBench = notifyPlayerBench ?? notifyLineups;
 
   final String? displayName;
   final String languageCode;
@@ -42,25 +73,65 @@ class UserProfileSettings {
   final bool notifyKickoff;
   final bool notifyGoals;
   final bool notifyFinal;
+
+  /// Legacy "Tarjetas" key. Old servers apply it to every card; it is kept
+  /// equal to [notifyRedCards] so they only follow the red-card switch.
   final bool notifyCards;
+
+  /// Legacy "Alineaciones" key: starter or bench alerts for old servers.
   final bool notifyLineups;
   final bool notifyNews;
   final bool notifyTransfers;
+  final bool notifyRedCards;
+  final bool notifyGoalAnnulled;
+  final bool notifyPlayerStarter;
+  final bool notifyPlayerBench;
+  final bool notifyPlayerSubIn;
+  final bool notifyPlayerSubOut;
 
-  factory UserProfileSettings.fromJson(Map<String, dynamic> json) =>
-      UserProfileSettings(
-        displayName: _cleanOptional(json['displayName']),
-        languageCode: _clean(json['languageCode'], 'es'),
-        timezone: _clean(json['timezone'], 'device'),
-        hourFormat: _hourFormat(json['hourFormat']),
-        notifyKickoff: _bool(json['notifyKickoff'], true),
-        notifyGoals: _bool(json['notifyGoals'], true),
-        notifyFinal: _bool(json['notifyFinal'], true),
-        notifyCards: _bool(json['notifyCards'], true),
-        notifyLineups: _bool(json['notifyLineups'], true),
-        notifyNews: _bool(json['notifyNews'], true),
-        notifyTransfers: _bool(json['notifyTransfers'], true),
-      );
+  /// Reads camelCase (local storage, `futbeat_read_user_profile`) and
+  /// snake_case server keys. A new key missing from an older payload
+  /// inherits the legacy key it replaces.
+  factory UserProfileSettings.fromJson(Map<String, dynamic> json) {
+    Object? read(String camel, String snake) =>
+        json.containsKey(camel) ? json[camel] : json[snake];
+    bool? optional(String camel, String snake) {
+      final value = read(camel, snake);
+      return value is bool ? value : null;
+    }
+
+    final cards = _bool(read('notifyCards', 'notify_cards'), true);
+    final goals = _bool(read('notifyGoals', 'notify_goals'), true);
+    final lineups = _bool(read('notifyLineups', 'notify_lineups'), true);
+    return UserProfileSettings(
+      displayName: _cleanOptional(read('displayName', 'display_name')),
+      languageCode: _clean(read('languageCode', 'language_code'), 'es'),
+      timezone: _clean(json['timezone'], 'device'),
+      hourFormat: _hourFormat(read('hourFormat', 'hour_format')),
+      notifyKickoff: _bool(read('notifyKickoff', 'notify_kickoff'), true),
+      notifyGoals: goals,
+      notifyFinal: _bool(read('notifyFinal', 'notify_final'), true),
+      notifyCards: cards,
+      notifyLineups: lineups,
+      notifyNews: _bool(read('notifyNews', 'notify_news'), true),
+      notifyTransfers: _bool(read('notifyTransfers', 'notify_transfers'), true),
+      notifyRedCards: optional('notifyRedCards', 'notify_red_cards') ?? cards,
+      notifyGoalAnnulled:
+          optional('notifyGoalAnnulled', 'notify_goal_annulled') ?? goals,
+      notifyPlayerStarter:
+          optional('notifyPlayerStarter', 'notify_player_starter') ?? lineups,
+      notifyPlayerBench:
+          optional('notifyPlayerBench', 'notify_player_bench') ?? lineups,
+      notifyPlayerSubIn: _bool(
+        read('notifyPlayerSubIn', 'notify_player_sub_in'),
+        true,
+      ),
+      notifyPlayerSubOut: _bool(
+        read('notifyPlayerSubOut', 'notify_player_sub_out'),
+        true,
+      ),
+    );
+  }
 
   static String _clean(dynamic value, String fallback) {
     final result = value?.toString().trim() ?? '';
@@ -92,7 +163,33 @@ class UserProfileSettings {
     'notifyLineups': notifyLineups,
     'notifyNews': notifyNews,
     'notifyTransfers': notifyTransfers,
+    'notifyRedCards': notifyRedCards,
+    'notifyGoalAnnulled': notifyGoalAnnulled,
+    'notifyPlayerStarter': notifyPlayerStarter,
+    'notifyPlayerBench': notifyPlayerBench,
+    'notifyPlayerSubIn': notifyPlayerSubIn,
+    'notifyPlayerSubOut': notifyPlayerSubOut,
   };
+
+  /// Every notification preference under its server key (snake_case).
+  Map<String, bool> get notificationPreferences => {
+    'notify_kickoff': notifyKickoff,
+    'notify_goals': notifyGoals,
+    'notify_final': notifyFinal,
+    'notify_cards': notifyCards,
+    'notify_lineups': notifyLineups,
+    'notify_news': notifyNews,
+    'notify_transfers': notifyTransfers,
+    'notify_red_cards': notifyRedCards,
+    'notify_goal_annulled': notifyGoalAnnulled,
+    'notify_player_starter': notifyPlayerStarter,
+    'notify_player_bench': notifyPlayerBench,
+    'notify_player_sub_in': notifyPlayerSubIn,
+    'notify_player_sub_out': notifyPlayerSubOut,
+  };
+
+  /// Whether at least one alert type is on.
+  bool get anyNotification => notificationPreferences.values.any((v) => v);
 
   UserProfileSettings copyWith({
     String? displayName,
@@ -107,18 +204,56 @@ class UserProfileSettings {
     bool? notifyLineups,
     bool? notifyNews,
     bool? notifyTransfers,
-  }) => UserProfileSettings(
-    displayName: clearDisplayName ? null : (displayName ?? this.displayName),
-    languageCode: languageCode ?? this.languageCode,
-    timezone: timezone ?? this.timezone,
-    hourFormat: hourFormat ?? this.hourFormat,
-    notifyKickoff: notifyKickoff ?? this.notifyKickoff,
-    notifyGoals: notifyGoals ?? this.notifyGoals,
-    notifyFinal: notifyFinal ?? this.notifyFinal,
-    notifyCards: notifyCards ?? this.notifyCards,
-    notifyLineups: notifyLineups ?? this.notifyLineups,
-    notifyNews: notifyNews ?? this.notifyNews,
-    notifyTransfers: notifyTransfers ?? this.notifyTransfers,
+    bool? notifyRedCards,
+    bool? notifyGoalAnnulled,
+    bool? notifyPlayerStarter,
+    bool? notifyPlayerBench,
+    bool? notifyPlayerSubIn,
+    bool? notifyPlayerSubOut,
+  }) {
+    final red = notifyRedCards ?? this.notifyRedCards;
+    final starter = notifyPlayerStarter ?? this.notifyPlayerStarter;
+    final bench = notifyPlayerBench ?? this.notifyPlayerBench;
+    return UserProfileSettings(
+      displayName: clearDisplayName ? null : (displayName ?? this.displayName),
+      languageCode: languageCode ?? this.languageCode,
+      timezone: timezone ?? this.timezone,
+      hourFormat: hourFormat ?? this.hourFormat,
+      notifyKickoff: notifyKickoff ?? this.notifyKickoff,
+      notifyGoals: notifyGoals ?? this.notifyGoals,
+      notifyFinal: notifyFinal ?? this.notifyFinal,
+      // The red-card switch drives the legacy card key for old servers.
+      notifyCards:
+          notifyCards ?? (notifyRedCards != null ? red : this.notifyCards),
+      // Starter/bench drive the legacy lineup key for old servers.
+      notifyLineups:
+          notifyLineups ??
+          (notifyPlayerStarter != null || notifyPlayerBench != null
+              ? starter || bench
+              : this.notifyLineups),
+      notifyNews: notifyNews ?? this.notifyNews,
+      notifyTransfers: notifyTransfers ?? this.notifyTransfers,
+      notifyRedCards: red,
+      notifyGoalAnnulled: notifyGoalAnnulled ?? this.notifyGoalAnnulled,
+      notifyPlayerStarter: starter,
+      notifyPlayerBench: bench,
+      notifyPlayerSubIn: notifyPlayerSubIn ?? this.notifyPlayerSubIn,
+      notifyPlayerSubOut: notifyPlayerSubOut ?? this.notifyPlayerSubOut,
+    );
+  }
+}
+
+/// Initializes Firebase from the public build flags. Only call it when
+/// [PushService.configured] is true.
+Future<void> ensureFirebase() async {
+  if (Firebase.apps.isNotEmpty) return;
+  await Firebase.initializeApp(
+    options: const FirebaseOptions(
+      apiKey: String.fromEnvironment('FUTBEAT_FIREBASE_API_KEY'),
+      appId: String.fromEnvironment('FUTBEAT_FIREBASE_APP_ID'),
+      messagingSenderId: String.fromEnvironment('FUTBEAT_FIREBASE_SENDER_ID'),
+      projectId: String.fromEnvironment('FUTBEAT_FIREBASE_PROJECT_ID'),
+    ),
   );
 }
 
@@ -130,18 +265,7 @@ abstract interface class PushTokenSource {
 class FirebasePushTokens implements PushTokenSource {
   @override
   Future<String?> requestToken() async {
-    if (Firebase.apps.isEmpty) {
-      await Firebase.initializeApp(
-        options: const FirebaseOptions(
-          apiKey: String.fromEnvironment('FUTBEAT_FIREBASE_API_KEY'),
-          appId: String.fromEnvironment('FUTBEAT_FIREBASE_APP_ID'),
-          messagingSenderId: String.fromEnvironment(
-            'FUTBEAT_FIREBASE_SENDER_ID',
-          ),
-          projectId: String.fromEnvironment('FUTBEAT_FIREBASE_PROJECT_ID'),
-        ),
-      );
-    }
+    await ensureFirebase();
     final permission = await FirebaseMessaging.instance.requestPermission();
     if (![
       AuthorizationStatus.authorized,
@@ -168,7 +292,9 @@ class PushService {
     Dio? dio,
     DateTime Function()? clock,
     this.signOutCleanupTimeout = const Duration(seconds: 5),
+    bool? pushConfigured,
   }) : clock = clock ?? DateTime.now,
+       pushConfigured = pushConfigured ?? configured,
        dio =
            dio ??
            Dio(
@@ -187,6 +313,13 @@ class PushService {
   /// Upper bound for the background server sign-out; its requests are
   /// cancelled when it fires.
   final Duration signOutCleanupTimeout;
+
+  /// [configured] unless a test overrides it.
+  final bool pushConfigured;
+
+  /// `futbeat_update_profile_preferences` answered "not found" on this
+  /// server; later saves go straight to the legacy RPC.
+  bool _preferencesRpcMissing = false;
   final storage = const FlutterSecureStorage();
 
   Map<String, dynamic>? session;
@@ -451,7 +584,7 @@ class PushService {
     if (_stale(generation)) return;
     await _startAccountSync();
     try {
-      if (configured &&
+      if (pushConfigured &&
           await storage.read(key: 'futbeat.push.enabled') == 'true' &&
           !_stale(generation)) {
         await enable();
@@ -819,26 +952,62 @@ class PushService {
     );
   }
 
+  /// Saves the profile and every notification preference. Uses the JSON
+  /// RPC `futbeat_update_profile_preferences` when the server has it and
+  /// falls back to `futbeat_sync_user_profile_v2` (legacy keys only) when
+  /// it does not.
   Future<void> _syncProfileSettings(UserProfileSettings settings) async {
     if (!authenticated || disposed) return;
-    await dio.post(
-      '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_profile_v2',
-      options: authHeaders,
-      data: {
-        'p_display_name': settings.displayName,
-        'p_language_code': settings.languageCode,
-        'p_timezone': settings.timezone,
-        'p_hour_format': settings.hourFormat,
-        'p_notify_kickoff': settings.notifyKickoff,
-        'p_notify_goals': settings.notifyGoals,
-        'p_notify_final': settings.notifyFinal,
-        'p_notify_cards': settings.notifyCards,
-        'p_notify_lineups': settings.notifyLineups,
-        'p_notify_news': settings.notifyNews,
-        'p_notify_transfers': settings.notifyTransfers,
-      },
-    );
+    var saved = false;
+    if (!_preferencesRpcMissing) {
+      try {
+        await dio.post(
+          '${config.supabaseUrl}/rest/v1/rpc/futbeat_update_profile_preferences',
+          options: authHeaders,
+          data: {'p_preferences': profilePreferencesPayload(settings)},
+        );
+        saved = true;
+      } on DioException catch (error) {
+        if (!isMissingRpc(error)) rethrow;
+        _preferencesRpcMissing = true;
+      }
+    }
+    if (!saved) {
+      await dio.post(
+        '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_profile_v2',
+        options: authHeaders,
+        data: {
+          'p_display_name': settings.displayName,
+          'p_language_code': settings.languageCode,
+          'p_timezone': settings.timezone,
+          'p_hour_format': settings.hourFormat,
+          for (final key in legacyNotificationKeys)
+            'p_$key': settings.notificationPreferences[key],
+        },
+      );
+    }
     await storage.write(key: 'futbeat.profile.dirty', value: 'false');
+  }
+
+  /// `p_preferences` of `futbeat_update_profile_preferences`: profile
+  /// fields plus every notification key (legacy and new, snake_case).
+  static Map<String, dynamic> profilePreferencesPayload(
+    UserProfileSettings settings,
+  ) => {
+    'display_name': settings.displayName,
+    'language_code': settings.languageCode,
+    'timezone': settings.timezone,
+    'hour_format': settings.hourFormat,
+    ...settings.notificationPreferences,
+  };
+
+  /// PostgREST answers an unknown RPC with 404 / PGRST202.
+  static bool isMissingRpc(DioException error) {
+    final response = error.response;
+    if (response == null) return false;
+    final data = response.data;
+    final code = data is Map ? data['code']?.toString() : null;
+    return response.statusCode == 404 || code == 'PGRST202';
   }
 
   Future<Map<String, dynamic>> _readCloudProfile() async {
@@ -869,7 +1038,12 @@ class PushService {
         dirty: false,
       );
     } else {
-      await _syncProfileSettings(localProfile);
+      try {
+        await _syncProfileSettings(localProfile);
+      } catch (_) {
+        // The profile stays dirty and is retried by the next reconcile; a
+        // failed profile save must never block the follows merge below.
+      }
     }
 
     if (cloudPreferences is Map) {
@@ -977,9 +1151,38 @@ class PushService {
     if (!throttled && enabled) await register(true);
   }
 
+  static const promptShownKey = 'futbeat.push.prompt.shownAt';
+  static const promptInterval = Duration(days: 7);
+
+  /// Whether to offer enabling notifications now: push is configured, the
+  /// user is signed in, this device is not enabled yet and the prompt was
+  /// not shown in the last [promptInterval].
+  Future<bool> shouldPromptForNotifications() async {
+    if (!pushConfigured || !authenticated || enabled || disposed) return false;
+    try {
+      if (await storage.read(key: 'futbeat.push.enabled') == 'true') {
+        return false;
+      }
+      final raw = await storage.read(key: promptShownKey);
+      final last = raw == null ? null : DateTime.tryParse(raw);
+      return last == null || clock().difference(last) >= promptInterval;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> markNotificationPromptShown() async {
+    try {
+      await storage.write(
+        key: promptShownKey,
+        value: clock().toUtc().toIso8601String(),
+      );
+    } catch (_) {}
+  }
+
   Future<void> enable() async {
     await _awaitSignOutCleanup();
-    if (!configured || !authenticated) {
+    if (!pushConfigured || !authenticated) {
       throw StateError('Push requires configuration and sign-in');
     }
     token = await tokens.requestToken();
