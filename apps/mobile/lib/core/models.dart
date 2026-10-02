@@ -507,6 +507,9 @@ class MatchDetail {
   String? get referee => _optional(json['referee']);
   String? get stadium => _optional(json['stadium']);
   String? get round => _optional(json['round']);
+
+  /// Provider stage of the match (e.g. a season phase), null when not sent.
+  String? get stage => _optional(json['stage']);
   Json? get coverage => _nullableMap(json['coverage']);
   bool get lineupEnrichmentPending =>
       coverage?['lineupEnrichmentPending'] == true;

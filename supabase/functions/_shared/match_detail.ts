@@ -412,6 +412,9 @@ export function normalizeMatchDetail(
     referee: cleanText(payload.matchReferee) || null,
     stadium: cleanText(payload.matchStadium) || null,
     round: cleanText(payload.matchRound) || null,
+    // Provider stage of this match (e.g. a season phase); the app uses it to
+    // show the table group of that phase. Additive: older apps ignore it.
+    stage: cleanText(payload.stageName) || null,
     home,
     away,
     statistics: fullTime,
