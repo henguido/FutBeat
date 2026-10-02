@@ -49,7 +49,7 @@ function sqlRpc(db, failAt) {
   ]);
   return async (name, body) => {
     if (!allowed.has(name)) return unhandled;
-    if (name === failAt) throw Object.assign(new Error(`RPC ${name} failed: 500 injected failure`), { httpStatus: 500 });
+    if (typeof failAt === 'function' ? failAt(name, body) : name === failAt) throw Object.assign(new Error(`RPC ${name} failed: 500 injected failure`), { httpStatus: 500 });
     const entries = Object.entries(body);
     assert.ok(entries.every(([key]) => /^p_[a-z_]+$/.test(key)), JSON.stringify(body));
     const args = entries.map(([key], i) => `${key} => $${i + 1}`).join(',');
@@ -495,5 +495,60 @@ test('pagination: 5 full pages reach the page limit -> the 2500 results read are
   assert.equal(value.results.truncatedBy, 'page_limit');
   assert.equal(value.results.results, 2500);
   assert.equal(call, 5, 'never more than five provider requests');
+  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
+}));
+
+// A full results day is recorded in chunks: each record RPC is its own
+// transaction under the API role's statement timeout (8 s in production).
+// One 500-row call timed out once most rows were new observations, rolled
+// back, and every retry hit the same wall.
+function untrackedResults(dateStr, count) {
+  return Array.from({ length: count }, (_, i) => ({
+    apiId: `chunk-untracked-${i}`,
+    homeTeam: { id: `chunk-home-${i}` }, awayTeam: { id: `chunk-away-${i}` },
+    kickoffUtc: `${dateStr}T15:00:00Z`, matchStatus: 'FINISHED', matchPeriod: 'FULL_TIME', matchElapsed: '90',
+    homeTeamScore: 1, awayTeamScore: 0, events: [], cards: [], substitutions: [],
+  }));
+}
+
+test('a results day is recorded in chunks of at most 25 observations, every fixture exactly once', () => withDb(async (db) => {
+  const { external, dateStr, match } = await seedResultsDueMatch(db);
+  const h = harness(db, {
+    provider: () => Response.json({ success: true, data: [...untrackedResults(dateStr, 59), resultFixture(external)], pagination: { total: 60 } }),
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify(value));
+  const chunks = h.rpcCalls('futbeat_record_live_batch').map((c) => c.body.p_observations.map((o) => o.externalMatchId));
+  assert.deepEqual(chunks.map((c) => c.length), [25, 25, 10]);
+  assert.equal(new Set(chunks.flat()).size, 60);
+  assert.equal(new Set(h.rpcCalls('futbeat_record_live_batch').map((c) => c.body.p_received_at)).size, 1, 'one receivedAt for the whole answer');
+  const meta = h.rpcCalls('futbeat_complete_provider_call')[0].body.p_metadata;
+  assert.deepEqual([meta.recordChunks, meta.insertedObservations, meta.duplicates], [3, 60, 0]);
+  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
+}));
+
+test('a record chunk that fails keeps what earlier chunks stored; the retry only pays for the rest', () => withDb(async (db) => {
+  const { external, dateStr, match } = await seedResultsDueMatch(db);
+  const data = [...untrackedResults(dateStr, 59), resultFixture(external)];
+  let recordCalls = 0;
+  const failing = harness(db, {
+    failAt: (name) => name === 'futbeat_record_live_batch' && ++recordCalls === 2,
+    provider: () => Response.json({ success: true, data, pagination: { total: 60 } }),
+  });
+  const { value } = await failing.invoke();
+  assert.equal(value.results.status, 'failed', JSON.stringify(value));
+  assert.equal(value.results.stage, 'record');
+  const meta = failing.rpcCalls('futbeat_complete_provider_call')[0].body.p_metadata;
+  assert.deepEqual([meta.stage, meta.recordedChunks, meta.recordedObservations], ['record', 1, 25]);
+  const stored = (await db.query("select count(distinct external_match_id)::int n from futbeat_private.provider_observations where provider='goal_api'")).rows[0].n;
+  assert.equal(stored, 25, 'the first chunk is committed');
+  assert.equal((await storedMatch(db, match)).status, 'SCHEDULED', 'the tracked fixture (last chunk) was never recorded');
+
+  await db.query("update futbeat_private.results_date_attempts set next_retry_at=now()-interval '1 minute'");
+  const retry = harness(db, { provider: () => Response.json({ success: true, data, pagination: { total: 60 } }) });
+  const second = await retry.invoke();
+  assert.equal(second.value.results.status, 'ok', JSON.stringify(second.value));
+  const done = retry.rpcCalls('futbeat_complete_provider_call')[0].body.p_metadata;
+  assert.deepEqual([done.insertedObservations, done.duplicates], [35, 25]);
   assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
 }));
