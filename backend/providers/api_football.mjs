@@ -132,6 +132,50 @@ function mapEventType(type, detail) {
   return 'OTHER';
 }
 
+// Shoot-out kicks come as `Goal` / `Penalty` | `Missed Penalty` events with
+// comments "Penalty Shootout" (minute 120 + kick order). Like GOAL's
+// isShootoutKickRow they are not match events: the result is score.penalty.
+function isShootoutKick(event) {
+  return event?.type === 'Goal' && /^penalty shootout$/i.test(String(event?.comments ?? '').trim());
+}
+
+// Real sample: the event team is the side credited with the goal; the player
+// is the scorer from the other team.
+function isOwnGoal(event) {
+  return event?.type === 'Goal' && event?.detail === 'Own Goal';
+}
+
+function lineupRows(rows) {
+  return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+    const player = row?.player;
+    if (!Number.isInteger(player?.id) || player.id <= 0) return [];
+    return [{
+      playerExternalId: String(player.id),
+      number: Number.isInteger(player.number) ? player.number : null,
+      position: ['G', 'D', 'M', 'F'].includes(player.pos) ? player.pos : null,
+      grid: typeof player.grid === 'string' && player.grid ? player.grid : null,
+    }];
+  });
+}
+
+// `lineups` of /fixtures?id= as provider ids only (players are never created
+// or matched by name); null when the response has none (live list items).
+function apiFootballLineups(item, homeExternalId, awayExternalId) {
+  if (!Array.isArray(item?.lineups) || item.lineups.length === 0) return null;
+  return item.lineups.map((lineup) => {
+    const teamExternalId = lineup?.team?.id == null ? null : String(lineup.team.id);
+    return {
+      side: teamExternalId !== null && teamExternalId === homeExternalId ? 'home'
+        : teamExternalId !== null && teamExternalId === awayExternalId ? 'away' : null,
+      teamExternalId,
+      formation: typeof lineup?.formation === 'string' && lineup.formation ? lineup.formation : null,
+      coachExternalId: Number.isInteger(lineup?.coach?.id) && lineup.coach.id > 0 ? String(lineup.coach.id) : null,
+      startXI: lineupRows(lineup?.startXI),
+      substitutes: lineupRows(lineup?.substitutes),
+    };
+  });
+}
+
 // A provider score pair only when both sides are non-negative integers.
 function scorePair(value) {
   const home = value?.home;
@@ -140,8 +184,8 @@ function scorePair(value) {
 }
 
 // `score.*` breakdown as sent (complete pairs only). `goals` stays the running
-// score; finals (fulltime / extratime / penalty) are UNVERIFIED against a real
-// FT / AET / PEN response.
+// score; real FT and PEN samples validate the breakdown, while a plain AET
+// finish still has no captured sample.
 function periodScores(score) {
   return {
     halftime: scorePair(score?.halftime),
@@ -290,8 +334,9 @@ export const apiFootballUnavailableCodes = Object.freeze(['API_FOOTBALL_ACCOUNT_
  * strict mappings). Unknown statuses are not guessed (null). Substitution
  * roles follow API-Football's documented `player` (out) / `assist` (in)
  * fields, consistent with the real samples in backend/test/fixtures/api_football
- * (players booked earlier go off). Final scores (AET / PEN) and own goals are
- * still UNVERIFIED: no real sample yet.
+ * (players booked earlier go off). Real FT / PEN samples: `goals` is
+ * score.fulltime (90') + score.extratime (extra-time goals only), without the
+ * shoot-out (score.penalty). A plain AET finish is still UNVERIFIED.
  */
 export function apiFootballFixtureObservation(item, receivedAt) {
   const externalMatchId = Number.isInteger(item?.fixture?.id) && item.fixture.id > 0 ? String(item.fixture.id) : null;
@@ -304,6 +349,7 @@ export function apiFootballFixtureObservation(item, receivedAt) {
   const away = Number.isInteger(item?.goals?.away) && item.goals.away >= 0 ? item.goals.away : null;
   const events = [];
   for (const event of Array.isArray(item?.events) ? item.events : []) {
+    if (isShootoutKick(event)) continue;
     const teamExternalId = event?.team?.id == null ? null : String(event.team.id);
     const type = mapEventType(event?.type, event?.detail);
     const player = event?.player?.id == null ? null : String(event.player.id);
@@ -315,9 +361,11 @@ export function apiFootballFixtureObservation(item, receivedAt) {
       extraMinute: Number.isInteger(event?.time?.extra) ? event.time.extra : null,
       side: teamExternalId !== null && teamExternalId === homeExternalId ? 'home'
         : teamExternalId !== null && teamExternalId === awayExternalId ? 'away' : null,
+      teamExternalId,
       playerExternalId: type === 'SUBSTITUTION' ? null : player,
       outPlayerExternalId: type === 'SUBSTITUTION' ? player : null,
       inPlayerExternalId: type === 'SUBSTITUTION' ? assist : null,
+      ownGoal: isOwnGoal(event),
     });
   }
   return {
@@ -334,6 +382,7 @@ export function apiFootballFixtureObservation(item, receivedAt) {
     score: home === null || away === null ? null : { home, away },
     periodScores: periodScores(item?.score),
     events,
+    lineups: apiFootballLineups(item, homeExternalId, awayExternalId),
   };
 }
 
@@ -377,6 +426,7 @@ export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
 
     const events = [];
     for (const event of (item.events ?? [])) {
+      if (isShootoutKick(event)) continue;
       const externalTeamId = event.team?.id;
       const teamId = String(externalTeamId) === String(item.teams.home.id)
         ? teamIds.home
@@ -384,6 +434,7 @@ export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
           ? teamIds.away
           : null;
       if (!teamId) throw new Error('Event references unknown team');
+      const ownGoal = isOwnGoal(event);
 
       let playerId;
       if (Number.isInteger(event.player?.id) && event.player.id > 0) {
@@ -391,7 +442,8 @@ export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
         players.set(playerId, {
           id: playerId,
           name: requiredString(event.player.name, 'event player name'),
-          teamId,
+          // An own goal is credited to the other side: the scorer is not theirs.
+          teamId: ownGoal ? (teamId === teamIds.home ? teamIds.away : teamIds.home) : teamId,
           position: '',
           country: '',
           media: playerMedia(event.player.id, receivedAt),
@@ -405,6 +457,7 @@ export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
         teamId,
       };
       if (Number.isInteger(event.time?.extra)) normalizedEvent.extraMinute = event.time.extra;
+      if (ownGoal) normalizedEvent.ownGoal = true;
       if (playerId) normalizedEvent.playerId = playerId;
       if (event.detail) normalizedEvent.detail = String(event.detail);
       if (event.comments) normalizedEvent.comments = String(event.comments);

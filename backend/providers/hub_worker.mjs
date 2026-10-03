@@ -245,6 +245,7 @@ export async function runProviderHubWork(input, deps) {
       playerId: e.playerExternalId ? players[e.playerExternalId] ?? null : null,
       inPlayerId: e.inPlayerExternalId ? players[e.inPlayerExternalId] ?? null : null,
       outPlayerId: e.outPlayerExternalId ? players[e.outPlayerExternalId] ?? null : null,
+      ownGoal: e.ownGoal === true,
       provenance: e.provenance,
     }));
     const goalEvents = (match.events ?? []).map((e) => ({

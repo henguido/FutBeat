@@ -407,6 +407,30 @@ test('P/Q. API-Football + GOAL same goal -> one canonical event; a conflicting e
   assert.equal((await db.query('select count(*)::int n from futbeat_private.canonical_events')).rows[0].n, 0, 'no canonical/push writes in 1B');
 }));
 
+test('own goal semantics survive secondary observation storage without resolving a player by name', () => withDb(async (db) => {
+  const s = await seed(db, { status: 'FINISHED_PENDING_VERIFICATION', score: [0, 1] });
+  await enable(db);
+  const events = [{
+    time: { elapsed: 77, extra: null },
+    team: { id: 34 },
+    player: { id: 5996, name: 'Unmapped Own-Goal Scorer' },
+    assist: {}, type: 'Goal', detail: 'Own Goal',
+  }];
+  const fake = transport(db, () => apiResponse(envelope([fixture(s, { goals: [0, 1], events })])));
+  const r = await edge(db, fake).call(body(s));
+  assert.equal(r.body.status, 'ok');
+  const [obs] = await secondary(db);
+  assert.deepEqual(
+    { type: obs.events[0].type, teamId: obs.events[0].teamId, playerId: obs.events[0].playerId, ownGoal: obs.events[0].ownGoal },
+    { type: 'GOAL', teamId: s.away, playerId: null, ownGoal: true },
+  );
+  const evidence = (await db.query(
+    "select observation->'eventReconciliation'->'secondaryOnly' v from futbeat_private.provider_secondary_observations",
+  )).rows[0].v;
+  assert.equal(evidence[0].ownGoal, true);
+  assert.equal((await db.query("select count(*)::int n from futbeat_private.entities where kind='player' and payload->>'name'='Unmapped Own-Goal Scorer'")).rows[0].n, 0);
+}));
+
 test('R. a secondary result never overwrites stronger GOAL evidence (CONFLICT, nothing promoted)', () => withDb(async (db) => {
   const s = await seed(db, { status: 'FINISHED_PENDING_VERIFICATION', score: [2, 1] });
   await enable(db);
