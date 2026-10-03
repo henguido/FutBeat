@@ -371,6 +371,22 @@ test('goal annulled after send: exactly one GOAL_ANNULLED replacing the goal; co
   assert.deepEqual(await types(db, u.uid), []);
 }));
 
+test('an annulled goal reaches a follower of only the assisting player', () => withDb(async (db) => {
+  const s=await seed(db,{follow:null});
+  await db.query("insert into futbeat_private.push_follows(user_id,entity_type,entity_id,created_at) values($1,'player',$2,now()-interval '1 day')",[s.uid,s.p2]);
+  await record(db,fixture(s));
+  await record(db,fixture(s,{home:1,minute:20,events:[{...goalRow(s,{id:'assist-goal',time:'19'}),homeAssistId:`P2-${s.n}`}]}));
+  const goal=(await outbox(db,s.uid)).find((r)=>r.message.type==='GOAL');
+  assert.equal(goal.message.playerRole,'assist');
+  assert.deepEqual((await dryRun(db)).map((r)=>r.state),['simulated']);
+  await record(db,fixture(s,{home:0,minute:22,events:[]}));
+  const annul=(await outbox(db,s.uid)).find((r)=>r.message.type==='GOAL_ANNULLED');
+  assert.ok(annul);
+  assert.equal(annul.message.playerRole,'assist');
+  assert.deepEqual(annul.message.subjectRefs,goal.message.subjectRefs);
+  assert.deepEqual((await dryRun(db)).map((r)=>r.state),['simulated']);
+}));
+
 test('an annulment whose goal is restored before dispatch is cancelled', () => withDb(async (db) => {
   const s = await seed(db);
   const g = goalRow(s, { id: '9001', time: '19' });
@@ -602,6 +618,12 @@ test('shared phone: registering a token owned by another user moves it; profile 
     'a v2 client re-enabling lineups also re-enables starter alerts');
   assert.equal(legacyRead.preferences.notifyPlayerBench, true,
     'a v2 client re-enabling lineups also re-enables bench alerts');
+  await db.query(`select public.futbeat_sync_user_profile_v3('{"notifyPlayerStarter":false,"notifyPlayerBench":false}'::jsonb)`);
+  const starterOnly=(await db.query(`select public.futbeat_sync_user_profile_v3('{"notifyPlayerStarter":true}'::jsonb) v`)).rows[0].v;
+  assert.equal(starterOnly.preferences.notifyLineups,true,
+    'a partial v3 role update must open the legacy delivery gate');
+  assert.equal(starterOnly.preferences.notifyPlayerStarter,true);
+  assert.equal(starterOnly.preferences.notifyPlayerBench,false);
   await assert.rejects(db.query(`select public.futbeat_sync_user_profile_v3('{"notifyGoals":"no"}'::jsonb)`), /Invalid preference/);
   await assert.rejects(db.query(`select public.futbeat_sync_user_profile_v3('{"hourFormat":"13h"}'::jsonb)`), /Invalid hour format/);
   const read = (await db.query('select public.futbeat_read_user_profile() v')).rows[0].v;

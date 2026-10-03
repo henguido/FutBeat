@@ -962,9 +962,12 @@ begin
     'eventId',c.id,'annulsEventId',c.id,'matchId',c.match_id,'collapseKey',c.id));
   insert into futbeat_private.notification_outbox(event_id,notification_key,device_id,user_id,message)
   select null,'annul:'||c.id,o.device_id,o.user_id,
-    v_msg||case when o.message->>'playerRole'='primary' and pl.name is not null then
-      jsonb_build_object('title','❌ Anulado el gol de '||pl.name,'playerId',o.message->>'playerId',
-        'subjectRefs',o.message->'subjectRefs') else '{}'::jsonb end
+    v_msg||case when o.message->>'playerRole' in ('primary','assist') then
+      jsonb_strip_nulls(jsonb_build_object('playerId',o.message->>'playerId',
+        'playerRole',o.message->>'playerRole','subjectRefs',o.message->'subjectRefs'))
+      else '{}'::jsonb end
+      ||case when o.message->>'playerRole'='primary' and pl.name is not null then
+        jsonb_build_object('title','❌ Anulado el gol de '||pl.name) else '{}'::jsonb end
   from futbeat_private.notification_outbox o
   join futbeat_private.push_devices d on d.id=o.device_id and d.user_id=o.user_id
   left join futbeat_private.user_preferences p on p.user_id=o.user_id
@@ -1147,7 +1150,10 @@ begin
     notify_goals=coalesce((p_profile->>'notifyGoals')::boolean,notify_goals),
     notify_final=coalesce((p_profile->>'notifyFinal')::boolean,notify_final),
     notify_cards=coalesce((p_profile->>'notifyRedCards')::boolean,(p_profile->>'notifyCards')::boolean,notify_cards),
-    notify_lineups=coalesce((p_profile->>'notifyLineups')::boolean,notify_lineups),
+    notify_lineups=case when p_profile ? 'notifyPlayerStarter' or p_profile ? 'notifyPlayerBench'
+      then coalesce((p_profile->>'notifyPlayerStarter')::boolean,notify_player_starter)
+        or coalesce((p_profile->>'notifyPlayerBench')::boolean,notify_player_bench)
+      else coalesce((p_profile->>'notifyLineups')::boolean,notify_lineups) end,
     notify_news=coalesce((p_profile->>'notifyNews')::boolean,notify_news),
     notify_transfers=coalesce((p_profile->>'notifyTransfers')::boolean,notify_transfers),
     notify_red_cards=coalesce((p_profile->>'notifyRedCards')::boolean,notify_red_cards),
