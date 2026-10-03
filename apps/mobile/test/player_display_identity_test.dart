@@ -248,6 +248,27 @@ void main() {
     memory.dispose();
   });
 
+  test('hidden alias-only guard survives a later target-only conflict', () {
+    final memory = EntityMediaMemory();
+    final alias = {
+      ...sparseWaston,
+      'country': 'Costa Rica',
+      'position': 'Defender',
+    };
+    memory.absorb(Snapshot(_snapshot([alias, richWaston])));
+    expect(memory.redirects.resolve(_wastonAlias), _waston);
+    memory.absorb(
+      Snapshot(
+        _snapshot([
+          {...richWaston, 'country': 'Other country'},
+        ]),
+      ),
+    );
+    expect(memory.revokedDisplayAliases, contains(_wastonAlias));
+    expect(memory.redirects.resolve(_wastonAlias), _wastonAlias);
+    memory.dispose();
+  });
+
   test('alias-only country drift revokes prior target evidence', () {
     final memory = EntityMediaMemory();
     final alias = {...sparseWaston, 'country': 'Costa Rica'};

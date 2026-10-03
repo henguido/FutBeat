@@ -58,6 +58,24 @@ class EntityMediaMemory extends ChangeNotifier {
     // payload. Canonical database redirects still arrive in entityRedirects;
     // only known display aliases are invalidated.
     final rejectedDisplayAliases = <String>{};
+    final sourceAliasGuards = <String, ({String country, String position})>{};
+    for (final entry in snapshot.presentationSourceAliases.entries) {
+      final decision = adjudicationForAlias(entry.key);
+      if (decision == null || _authoritativePlayerAliases.contains(entry.key)) {
+        continue;
+      }
+      final prior = _displayTargetGuards[entry.key];
+      final country = _displayGuardValue(entry.value['country']);
+      final position = _displayGuardValue(entry.value['position']);
+      if (!adjudicatedAliasMatches(decision, entry.value) ||
+          (prior != null &&
+              (_displayGuardConflict(prior.country, country) ||
+                  _displayGuardConflict(prior.position, position)))) {
+        rejectedDisplayAliases.add(entry.key);
+        continue;
+      }
+      sourceAliasGuards[entry.key] = (country: country, position: position);
+    }
     for (final player in snapshot.players) {
       final decision = adjudicationForAlias(player.id);
       if (decision == null ||
@@ -146,6 +164,21 @@ class EntityMediaMemory extends ChangeNotifier {
       _displayTargetGuards[decision.aliasId] = (
         country: country.isNotEmpty ? country : prior?.country ?? '',
         position: position.isNotEmpty ? position : prior?.position ?? '',
+      );
+    }
+    for (final entry in sourceAliasGuards.entries) {
+      if (_authoritativePlayerAliases.contains(entry.key) ||
+          invalidatedAliases.contains(entry.key)) {
+        continue;
+      }
+      final prior = _displayTargetGuards[entry.key];
+      _displayTargetGuards[entry.key] = (
+        country: entry.value.country.isNotEmpty
+            ? entry.value.country
+            : prior?.country ?? '',
+        position: entry.value.position.isNotEmpty
+            ? entry.value.position
+            : prior?.position ?? '',
       );
     }
     final next = {..._images};

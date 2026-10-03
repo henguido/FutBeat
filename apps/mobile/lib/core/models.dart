@@ -1002,6 +1002,27 @@ class Snapshot {
   final Set<String> _blockedAliasIds;
   final bool _presentationEnabled;
 
+  /// Raw adjudicated alias rows that presentation may have hidden. A deep
+  /// link's verified alias response is kept in its reversible fallback.
+  Map<String, Json> get presentationSourceAliases {
+    final fallback = _sourceJson['_futbeatAliasProfileFallback'];
+    final fallbackSnapshot = fallback is Map ? fallback['snapshot'] : null;
+    final rows = <dynamic>[
+      ...(_sourceJson['players'] as List? ?? const []),
+      if (fallbackSnapshot is Map)
+        ...(fallbackSnapshot['players'] as List? ?? const []),
+    ];
+    final result = <String, Json>{};
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final id = row['id']?.toString();
+      if (id != null && presentationRedirectIds.contains(id)) {
+        result[id] = Map<String, dynamic>.from(row);
+      }
+    }
+    return result;
+  }
+
   /// Rebuilds a cached response from its untouched source after an alias is
   /// revoked. Merely reprocessing its already-collapsed rows could not
   /// restore the second person or the original squad count.
