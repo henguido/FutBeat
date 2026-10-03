@@ -51,12 +51,12 @@ class _Repository implements FootballRepository {
 const _longHome = 'Club Deportivo Universitario Metropolitano de Occidente';
 const _longAway = 'Asociación Deportiva Atlética Internacional Fronteriza';
 
-Snapshot _snapshot() {
+Snapshot _snapshot({bool adjacentMatches = false}) {
   final today = costaRicaNow();
-  String startAt(int hour) => DateTime.utc(
+  String startAt(int hour, int dayOffset) => DateTime.utc(
     today.year,
     today.month,
-    today.day,
+    today.day + dayOffset,
     hour + 6,
   ).toIso8601String();
   Map<String, dynamic> match(
@@ -70,12 +70,13 @@ Snapshot _snapshot() {
     int? minute,
     Map<String, dynamic>? latestEvent,
     bool played = false,
+    int dayOffset = 0,
   }) => {
     'id': id,
     'competitionId': comp,
     'homeTeamId': home,
     'awayTeamId': away,
-    'startTime': startAt(hour),
+    'startTime': startAt(hour, dayOffset),
     'status': status,
     'minute': minute,
     'score': score,
@@ -158,6 +159,26 @@ Snapshot _snapshot() {
         score: {'home': 2, 'away': 1},
         played: true,
       ),
+      if (adjacentMatches) ...[
+        match(
+          'm_yesterday_final',
+          'c_cr',
+          't_sap',
+          't_lda',
+          'FINISHED',
+          12,
+          dayOffset: -1,
+        ),
+        match(
+          'm_tomorrow_scheduled',
+          'c_cr',
+          't_her',
+          't_car',
+          'SCHEDULED',
+          12,
+          dayOffset: 1,
+        ),
+      ],
     ],
     'standings': <dynamic>[],
   });
@@ -232,6 +253,20 @@ Future<List<String>> _pump(
 Finder _row(String matchId) => find.byKey(ValueKey('match-card-$matchId'));
 
 void main() {
+  test('date transition clears only LIVE and never reapplies it', () {
+    final today = DateTime(2026, 10, 2);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final tomorrow = today.add(const Duration(days: 1));
+    expect(matchFilterForDate('En vivo', today, today), 'En vivo');
+    expect(matchFilterForDate('En vivo', yesterday, today), 'Todos');
+    expect(matchFilterForDate('En vivo', tomorrow, today), 'Todos');
+    expect(matchFilterForDate('Todos', today, today), 'Todos');
+    for (final filter in ['Próximos', 'Finalizados']) {
+      expect(matchFilterForDate(filter, yesterday, today), filter);
+      expect(matchFilterForDate(filter, tomorrow, today), filter);
+    }
+  });
+
   testWidgets('every match of the day is a row, once, without follows', (
     tester,
   ) async {
@@ -673,6 +708,74 @@ void main() {
     await tester.fling(swipe, const Offset(300, 0), 1200); // yesterday
     await tester.pumpAndSettle();
     expect(selected('Finalizados'), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    '#168: date buttons show adjacent matches and do not revive LIVE',
+    (tester) async {
+      await _pump(tester, data: _snapshot(adjacentMatches: true));
+      bool selected(String label) => tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, label))
+          .selected;
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('MAÑANA'));
+      await tester.pumpAndSettle();
+      expect(selected('Todos'), isTrue);
+      expect(_row('m_tomorrow_scheduled'), findsOneWidget);
+      expect(
+        tester
+            .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'En vivo'))
+            .onSelected,
+        isNull,
+        reason: 'LIVE cannot be reselected on a future date',
+      );
+
+      await tester.tap(find.text('HOY'));
+      await tester.pumpAndSettle();
+      expect(selected('Todos'), isTrue);
+      await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('AYER'));
+      await tester.pumpAndSettle();
+      expect(selected('Todos'), isTrue);
+      expect(_row('m_yesterday_final'), findsOneWidget);
+      expect(
+        tester
+            .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'En vivo'))
+            .onSelected,
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('#168: calendar date without matches clears LIVE', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+    await tester.pumpAndSettle();
+    final today = costaRicaNow();
+    final otherDay = today.day == 15 ? 16 : 15;
+    await tester.tap(find.byTooltip('Elegir otra fecha'));
+    await tester.pumpAndSettle();
+    final dialog = find.byType(DatePickerDialog);
+    expect(dialog, findsOneWidget);
+    await tester.tap(
+      find.descendant(of: dialog, matching: find.text('$otherDay')).last,
+    );
+    await tester.tap(find.descendant(of: dialog, matching: find.text('OK')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Todos'))
+          .selected,
+      isTrue,
+    );
+    expect(find.text('Sin partidos'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

@@ -146,6 +146,13 @@ String _dateContextLabel(DateTime value, DateTime today) {
   return weekdays[date.weekday - 1];
 }
 
+/// Only the LIVE status is date-dependent; all other user filters survive.
+String matchFilterForDate(String filter, DateTime selected, DateTime today) =>
+    filter == 'En vivo' &&
+        DateUtils.dateOnly(selected) != DateUtils.dateOnly(today)
+    ? 'Todos'
+    : filter;
+
 /// Orders visible competitions without ever filtering the daily catalog.
 ///
 /// The selected country (or the detected one) only REORDERS; every
@@ -239,7 +246,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       if (next != previous) _dayDirection = next.isAfter(previous) ? 1 : -1;
       // #168: "En vivo" only makes sense today. On any other day it would
       // leave an empty screen although that day has matches.
-      if (filter == 'En vivo' && next != today) filter = 'Todos';
+      filter = matchFilterForDate(filter, next, today);
     });
     if (next == previous) return;
     if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
@@ -433,7 +440,12 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                             ),
                           ),
                           selected: filter == value,
-                          onSelected: (_) => setState(() => filter = value),
+                          // A non-today date cannot contain an in-progress
+                          // match. Keep the option visible for orientation,
+                          // but do not allow an artificial empty LIVE view.
+                          onSelected: value == 'En vivo' && selected != anchor
+                              ? null
+                              : (_) => setState(() => filter = value),
                         ),
                       ),
                   ],
