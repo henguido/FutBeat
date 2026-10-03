@@ -11,6 +11,8 @@ import 'player_display_identity.dart';
 /// (older) payload still has no media.
 class EntityMediaMemory extends ChangeNotifier {
   Map<String, String> _images = const {};
+  final Map<String, ({String country, String position})> _displayTargetGuards =
+      {};
 
   /// Alias -> canonical ids seen in every snapshot read this session. A
   /// separate notifier: redirect changes (not image changes) notify.
@@ -30,17 +32,50 @@ class EntityMediaMemory extends ChangeNotifier {
   void absorb(Snapshot snapshot) {
     // Presentation adjudications can be revoked by a later contradictory
     // payload. Canonical database redirects still arrive in entityRedirects;
-    // only a known display alias observed as a separate row is invalidated.
+    // only known display aliases are invalidated.
     final rejectedDisplayAliases = {
       for (final player in snapshot.players)
         if (adjudicationForAlias(player.id) != null &&
             !snapshot.entityRedirects.containsKey(player.id))
           player.id,
     };
+    for (final player in snapshot.players) {
+      final decision = adjudicationForVisible(player.id);
+      if (decision == null) continue;
+      if (player.json['displaySourceAliasId'] == decision.aliasId) {
+        // Alias-only search rows are presented with the target ID/name but
+        // cannot be validated as the actual target's richer profile.
+        continue;
+      }
+      final prior = _displayTargetGuards[decision.aliasId];
+      final country = _displayGuardValue(player.json['country']);
+      final position = _displayGuardValue(player.json['position']);
+      if (!adjudicatedVisibleMatches(decision, player.json) ||
+          (prior != null &&
+              (_displayGuardConflict(prior.country, country) ||
+                  _displayGuardConflict(prior.position, position)))) {
+        rejectedDisplayAliases.add(decision.aliasId);
+      }
+    }
     redirects.absorb(
       snapshot.entityRedirects,
       invalidatedAliases: rejectedDisplayAliases,
     );
+    for (final alias in rejectedDisplayAliases) {
+      _displayTargetGuards.remove(alias);
+    }
+    for (final player in snapshot.players) {
+      final decision = adjudicationForVisible(player.id);
+      if (decision == null ||
+          rejectedDisplayAliases.contains(decision.aliasId) ||
+          redirects.resolve(decision.aliasId) != decision.visibleId) {
+        continue;
+      }
+      _displayTargetGuards[decision.aliasId] = (
+        country: _displayGuardValue(player.json['country']),
+        position: _displayGuardValue(player.json['position']),
+      );
+    }
     final next = {..._images};
     for (final alias in rejectedDisplayAliases) {
       next.remove(alias);
@@ -56,6 +91,7 @@ class EntityMediaMemory extends ChangeNotifier {
     // An alias id shows the same image as its canonical entity.
     for (final MapEntry(key: alias, value: canonical)
         in snapshot.entityRedirects.entries) {
+      if (rejectedDisplayAliases.contains(alias)) continue;
       final image = next[canonical] ?? next[alias];
       if (image == null) continue;
       next[canonical] ??= image;
@@ -69,6 +105,12 @@ class EntityMediaMemory extends ChangeNotifier {
     notifyListeners();
   }
 }
+
+String _displayGuardValue(Object? value) =>
+    value?.toString().trim().toLowerCase() ?? '';
+
+bool _displayGuardConflict(String prior, String current) =>
+    prior.isNotEmpty && current.isNotEmpty && prior != current;
 
 /// Session memory of entity redirects (alias id -> canonical id) from every
 /// snapshot read. Lets ids stored before a merge (e.g. a follow of the legacy
@@ -86,10 +128,10 @@ class EntityRedirectMemory extends ChangeNotifier {
   }) {
     if (redirects.isEmpty && invalidatedAliases.isEmpty) return;
     final next = {..._redirects};
-    for (final alias in invalidatedAliases) {
-      if (!redirects.containsKey(alias)) next.remove(alias);
-    }
     next.addAll(redirects);
+    for (final alias in invalidatedAliases) {
+      next.remove(alias);
+    }
     if (next.length == _redirects.length &&
         next.entries.every((entry) => _redirects[entry.key] == entry.value)) {
       return;

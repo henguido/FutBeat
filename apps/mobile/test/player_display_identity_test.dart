@@ -54,7 +54,10 @@ void main() {
     _saprissa,
     4,
     dob: '1988-01-01',
-    media: {'verificationStatus': 'VERIFIED'},
+    media: {
+      'verificationStatus': 'VERIFIED',
+      'url': 'https://media.example.test/waston.png',
+    },
   );
   final sparseWaston = _player(_wastonAlias, 'Waston Kendall', _saprissa, 4);
   final richVera = _player(
@@ -138,6 +141,7 @@ void main() {
     final memory = EntityMediaMemory();
     memory.absorb(Snapshot(_snapshot([sparseWaston, richWaston])));
     expect(memory.redirects.resolve(_wastonAlias), _waston);
+    expect(memory.imageFor(_wastonAlias), isNotNull);
 
     memory.absorb(
       Snapshot(
@@ -148,7 +152,44 @@ void main() {
       ),
     );
     expect(memory.redirects.resolve(_wastonAlias), _wastonAlias);
+    expect(memory.imageFor(_wastonAlias), isNull);
     memory.dispose();
+  });
+
+  test('target-only DOB or country drift revokes a learned alias', () {
+    for (final change in [
+      {'dateOfBirth': '1990-01-01'},
+      {'country': 'Different country'},
+      {'position': 'Goalkeeper'},
+    ]) {
+      final memory = EntityMediaMemory();
+      final originalAlias = {
+        ...sparseWaston,
+        'country': 'Costa Rica',
+        'position': 'Defender',
+      };
+      final originalTarget = {
+        ...richWaston,
+        'country': 'Costa Rica',
+        'position': 'Defender',
+      };
+      memory.absorb(Snapshot(_snapshot([originalAlias, originalTarget])));
+      expect(memory.redirects.resolve(_wastonAlias), _waston);
+      memory.absorb(
+        Snapshot(
+          _snapshot([
+            {...originalTarget, ...change},
+          ]),
+        ),
+      );
+      expect(
+        memory.redirects.resolve(_wastonAlias),
+        _wastonAlias,
+        reason: change.toString(),
+      );
+      expect(memory.imageFor(_wastonAlias), isNull);
+      memory.dispose();
+    }
   });
 
   test('snapshot keeps counts, search identity, and navigation coherent', () {

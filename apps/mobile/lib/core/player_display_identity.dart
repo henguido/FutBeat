@@ -55,6 +55,13 @@ PlayerDisplayAlias? adjudicationForAlias(String id) {
   return null;
 }
 
+PlayerDisplayAlias? adjudicationForVisible(String id) {
+  for (final decision in adjudicatedPlayerDisplayAliases) {
+    if (decision.visibleId == id) return decision;
+  }
+  return null;
+}
+
 int? _shirt(Object? value) {
   final parsed = value is num
       ? (value == value.roundToDouble() ? value.toInt() : null)
@@ -147,7 +154,13 @@ List<Map<String, dynamic>> presentPlayers(
     if (!seen.add(visibleId)) continue;
     if (aliases.containsKey(id)) {
       final decision = adjudicationForAlias(id)!;
-      result.add({...row, 'id': visibleId, 'name': decision.visibleName});
+      result.add({
+        ...row,
+        'id': visibleId,
+        'name': decision.visibleName,
+        // Internal provenance: this is not the actual target payload yet.
+        'displaySourceAliasId': id,
+      });
     } else {
       result.add(row);
     }
