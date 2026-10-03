@@ -194,6 +194,78 @@ void main() {
     }
   });
 
+  test('only the adjudicated sparse Waston squad row is hidden', () {
+    const team = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
+    const richId = 'fb_player_333ccb5b7044465497e7888298dc7f87';
+    const sparseId = 'fb_player_a7a7c8d3a8474ef68c968dca80d2e975';
+    final rich = {
+      ..._player(
+        richId,
+        'Jamaal Waston Manley Kendall',
+        'Defender',
+        number: 4,
+        photo: true,
+      ),
+      'teamId': team,
+      'dateOfBirth': '1988-01-01',
+    };
+    final sparse = {
+      ..._player(sparseId, 'Waston Kendall', 'Defender', number: 4),
+      'teamId': team,
+    };
+    List<String> shown(List<Map<String, dynamic>> rows) => [
+      for (final (_, group) in squadGroups(rows.map(Entity.new)))
+        for (final player in group) player.id,
+    ];
+
+    expect(shown([sparse, rich]), [richId]);
+    expect(shown([rich, sparse]), [richId]);
+    expect(shown([sparse]), [sparseId], reason: 'never hide a lone row');
+    expect(
+      shown([
+        rich,
+        {...sparse, 'teamId': 'fb_other'},
+      ]),
+      contains(sparseId),
+      reason: 'same team is required',
+    );
+    expect(
+      shown([
+        rich,
+        {...sparse, 'shirtNumber': 5},
+      ]),
+      contains(sparseId),
+      reason: 'same shirt is required',
+    );
+    expect(
+      shown([
+        rich,
+        {...sparse, 'dateOfBirth': '1990-01-01'},
+      ]),
+      contains(sparseId),
+      reason: 'a second dated person stays visible',
+    );
+    expect(
+      shown([
+        rich,
+        {
+          ...sparse,
+          'media': {'url': 'different'},
+        },
+      ]),
+      contains(sparseId),
+      reason: 'a rich second profile stays visible',
+    );
+    expect(
+      shown([
+        rich,
+        {...sparse, 'id': 'fb_player_other'},
+      ]),
+      contains('fb_player_other'),
+      reason: 'no generic name-subset merge',
+    );
+  });
+
   testWidgets('team with squad shows header and grouped Plantilla', (
     tester,
   ) async {
