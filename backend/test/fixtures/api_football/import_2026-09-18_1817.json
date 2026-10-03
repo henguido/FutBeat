@@ -1,0 +1,376 @@
+{
+  "contract": {
+    "real": true,
+    "unmodified": true,
+    "source": "futbeat_private.imports job=63dd14a6-0d9b-4cb1-afae-989dbf7fcd94",
+    "endpoint": "GET /fixtures?date=&timezone= (full envelope, stored by legacy futbeat-fixtures-sync)",
+    "receivedAt": "2026-09-17T18:17:02.766Z",
+    "extractedAt": "2026-10-03",
+    "redaction": "no headers, keys or tokens present; payload copied as stored"
+  },
+  "payload": {
+    "errors": [],
+    "get": "fixtures",
+    "paging": {
+      "current": 1,
+      "total": 1
+    },
+    "parameters": {
+      "date": "2026-09-18",
+      "timezone": "America/Costa_Rica"
+    },
+    "response": [
+      {
+        "fixture": {
+          "date": "2026-09-18T13:00:00-06:00",
+          "id": 1557408,
+          "periods": {
+            "first": null,
+            "second": null
+          },
+          "referee": null,
+          "status": {
+            "elapsed": null,
+            "extra": null,
+            "long": "Not Started",
+            "short": "NS"
+          },
+          "timestamp": 1789758000,
+          "timezone": "America/Costa_Rica",
+          "venue": {
+            "city": "London",
+            "id": null,
+            "name": "Brentford Community Stadium"
+          }
+        },
+        "goals": {
+          "away": null,
+          "home": null
+        },
+        "league": {
+          "country": "England",
+          "flag": "https://media.api-sports.io/flags/gb-eng.svg",
+          "id": 39,
+          "logo": "https://media.api-sports.io/football/leagues/39.png",
+          "name": "Premier League",
+          "round": "Regular Season - 5",
+          "season": 2026,
+          "standings": true
+        },
+        "score": {
+          "extratime": {
+            "away": null,
+            "home": null
+          },
+          "fulltime": {
+            "away": null,
+            "home": null
+          },
+          "halftime": {
+            "away": null,
+            "home": null
+          },
+          "penalty": {
+            "away": null,
+            "home": null
+          }
+        },
+        "teams": {
+          "away": {
+            "id": 49,
+            "logo": "https://media.api-sports.io/football/teams/49.png",
+            "name": "Chelsea",
+            "winner": null
+          },
+          "home": {
+            "id": 55,
+            "logo": "https://media.api-sports.io/football/teams/55.png",
+            "name": "Brentford",
+            "winner": null
+          }
+        }
+      },
+      {
+        "fixture": {
+          "date": "2026-09-18T13:00:00-06:00",
+          "id": 1570397,
+          "periods": {
+            "first": null,
+            "second": null
+          },
+          "referee": null,
+          "status": {
+            "elapsed": null,
+            "extra": null,
+            "long": "Not Started",
+            "short": "NS"
+          },
+          "timestamp": 1789758000,
+          "timezone": "America/Costa_Rica",
+          "venue": {
+            "city": "Cornella de Llobregat",
+            "id": null,
+            "name": "RCDE Stadium"
+          }
+        },
+        "goals": {
+          "away": null,
+          "home": null
+        },
+        "league": {
+          "country": "Spain",
+          "flag": "https://media.api-sports.io/flags/es.svg",
+          "id": 140,
+          "logo": "https://media.api-sports.io/football/leagues/140.png",
+          "name": "La Liga",
+          "round": "Regular Season - 7",
+          "season": 2026,
+          "standings": true
+        },
+        "score": {
+          "extratime": {
+            "away": null,
+            "home": null
+          },
+          "fulltime": {
+            "away": null,
+            "home": null
+          },
+          "halftime": {
+            "away": null,
+            "home": null
+          },
+          "penalty": {
+            "away": null,
+            "home": null
+          }
+        },
+        "teams": {
+          "away": {
+            "id": 797,
+            "logo": "https://media.api-sports.io/football/teams/797.png",
+            "name": "Elche",
+            "winner": null
+          },
+          "home": {
+            "id": 540,
+            "logo": "https://media.api-sports.io/football/teams/540.png",
+            "name": "Espanyol",
+            "winner": null
+          }
+        }
+      },
+      {
+        "fixture": {
+          "date": "2026-09-18T17:30:00-06:00",
+          "id": 1490481,
+          "periods": {
+            "first": null,
+            "second": null
+          },
+          "referee": null,
+          "status": {
+            "elapsed": null,
+            "extra": null,
+            "long": "Not Started",
+            "short": "NS"
+          },
+          "timestamp": 1789774200,
+          "timezone": "America/Costa_Rica",
+          "venue": {
+            "city": "New York",
+            "id": null,
+            "name": "Yankee Stadium"
+          }
+        },
+        "goals": {
+          "away": null,
+          "home": null
+        },
+        "league": {
+          "country": "USA",
+          "flag": "https://media.api-sports.io/flags/us.svg",
+          "id": 253,
+          "logo": "https://media.api-sports.io/football/leagues/253.png",
+          "name": "Major League Soccer",
+          "round": "Regular Season - 26",
+          "season": 2026,
+          "standings": true
+        },
+        "score": {
+          "extratime": {
+            "away": null,
+            "home": null
+          },
+          "fulltime": {
+            "away": null,
+            "home": null
+          },
+          "halftime": {
+            "away": null,
+            "home": null
+          },
+          "penalty": {
+            "away": null,
+            "home": null
+          }
+        },
+        "teams": {
+          "away": {
+            "id": 1602,
+            "logo": "https://media.api-sports.io/football/teams/1602.png",
+            "name": "New York Red Bulls",
+            "winner": null
+          },
+          "home": {
+            "id": 1604,
+            "logo": "https://media.api-sports.io/football/teams/1604.png",
+            "name": "New York City FC",
+            "winner": null
+          }
+        }
+      },
+      {
+        "fixture": {
+          "date": "2026-09-18T19:00:00-06:00",
+          "id": 1550966,
+          "periods": {
+            "first": null,
+            "second": null
+          },
+          "referee": null,
+          "status": {
+            "elapsed": null,
+            "extra": null,
+            "long": "Not Started",
+            "short": "NS"
+          },
+          "timestamp": 1789779600,
+          "timezone": "America/Costa_Rica",
+          "venue": {
+            "city": "Puebla",
+            "id": 1082,
+            "name": "Estadio Cuauhtémoc"
+          }
+        },
+        "goals": {
+          "away": null,
+          "home": null
+        },
+        "league": {
+          "country": "Mexico",
+          "flag": "https://media.api-sports.io/flags/mx.svg",
+          "id": 262,
+          "logo": "https://media.api-sports.io/football/leagues/262.png",
+          "name": "Liga MX",
+          "round": "Apertura - 9",
+          "season": 2026,
+          "standings": true
+        },
+        "score": {
+          "extratime": {
+            "away": null,
+            "home": null
+          },
+          "fulltime": {
+            "away": null,
+            "home": null
+          },
+          "halftime": {
+            "away": null,
+            "home": null
+          },
+          "penalty": {
+            "away": null,
+            "home": null
+          }
+        },
+        "teams": {
+          "away": {
+            "id": 2312,
+            "logo": "https://media.api-sports.io/football/teams/2312.png",
+            "name": "Atlante FC",
+            "winner": null
+          },
+          "home": {
+            "id": 2291,
+            "logo": "https://media.api-sports.io/football/teams/2291.png",
+            "name": "Puebla",
+            "winner": null
+          }
+        }
+      },
+      {
+        "fixture": {
+          "date": "2026-09-18T21:00:00-06:00",
+          "id": 1550967,
+          "periods": {
+            "first": null,
+            "second": null
+          },
+          "referee": null,
+          "status": {
+            "elapsed": null,
+            "extra": null,
+            "long": "Not Started",
+            "short": "NS"
+          },
+          "timestamp": 1789786800,
+          "timezone": "America/Costa_Rica",
+          "venue": {
+            "city": "Ciudad Juarez",
+            "id": 1845,
+            "name": "Estadio Olímpico Benito Juárez"
+          }
+        },
+        "goals": {
+          "away": null,
+          "home": null
+        },
+        "league": {
+          "country": "Mexico",
+          "flag": "https://media.api-sports.io/flags/mx.svg",
+          "id": 262,
+          "logo": "https://media.api-sports.io/football/leagues/262.png",
+          "name": "Liga MX",
+          "round": "Apertura - 9",
+          "season": 2026,
+          "standings": true
+        },
+        "score": {
+          "extratime": {
+            "away": null,
+            "home": null
+          },
+          "fulltime": {
+            "away": null,
+            "home": null
+          },
+          "halftime": {
+            "away": null,
+            "home": null
+          },
+          "penalty": {
+            "away": null,
+            "home": null
+          }
+        },
+        "teams": {
+          "away": {
+            "id": 2279,
+            "logo": "https://media.api-sports.io/football/teams/2279.png",
+            "name": "Tigres UANL",
+            "winner": null
+          },
+          "home": {
+            "id": 2298,
+            "logo": "https://media.api-sports.io/football/teams/2298.png",
+            "name": "FC Juarez",
+            "winner": null
+          }
+        }
+      }
+    ],
+    "results": 5
+  }
+}

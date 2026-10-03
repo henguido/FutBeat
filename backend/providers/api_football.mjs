@@ -132,6 +132,25 @@ function mapEventType(type, detail) {
   return 'OTHER';
 }
 
+// A provider score pair only when both sides are non-negative integers.
+function scorePair(value) {
+  const home = value?.home;
+  const away = value?.away;
+  return Number.isInteger(home) && home >= 0 && Number.isInteger(away) && away >= 0 ? { home, away } : null;
+}
+
+// `score.*` breakdown as sent (complete pairs only). `goals` stays the running
+// score; finals (fulltime / extratime / penalty) are UNVERIFIED against a real
+// FT / AET / PEN response.
+function periodScores(score) {
+  return {
+    halftime: scorePair(score?.halftime),
+    fulltime: scorePair(score?.fulltime),
+    extratime: scorePair(score?.extratime),
+    penalty: scorePair(score?.penalty),
+  };
+}
+
 function stableEventId(fixtureId, event) {
   const fingerprint = JSON.stringify([
     fixtureId,
@@ -270,7 +289,9 @@ export const apiFootballUnavailableCodes = Object.freeze(['API_FOOTBALL_ACCOUNT_
  * with provider external ids only (canonical resolution happens through
  * strict mappings). Unknown statuses are not guessed (null). Substitution
  * roles follow API-Football's documented `player` (out) / `assist` (in)
- * fields: UNVERIFIED against a live response.
+ * fields, consistent with the real samples in backend/test/fixtures/api_football
+ * (players booked earlier go off). Final scores (AET / PEN) and own goals are
+ * still UNVERIFIED: no real sample yet.
  */
 export function apiFootballFixtureObservation(item, receivedAt) {
   const externalMatchId = Number.isInteger(item?.fixture?.id) && item.fixture.id > 0 ? String(item.fixture.id) : null;
@@ -311,6 +332,7 @@ export function apiFootballFixtureObservation(item, receivedAt) {
     status,
     minute: Number.isInteger(item?.fixture?.status?.elapsed) ? item.fixture.status.elapsed : null,
     score: home === null || away === null ? null : { home, away },
+    periodScores: periodScores(item?.score),
     events,
   };
 }
@@ -382,6 +404,7 @@ export async function normalizeApiFootballFixtures(raw, resolve, receivedAt) {
         type: mapEventType(event.type, event.detail),
         teamId,
       };
+      if (Number.isInteger(event.time?.extra)) normalizedEvent.extraMinute = event.time.extra;
       if (playerId) normalizedEvent.playerId = playerId;
       if (event.detail) normalizedEvent.detail = String(event.detail);
       if (event.comments) normalizedEvent.comments = String(event.comments);

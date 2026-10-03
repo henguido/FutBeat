@@ -1,0 +1,259 @@
+{
+  "contract": {
+    "real": true,
+    "unmodified": true,
+    "source": "futbeat_private.provider_observations id=15 (provider=api_football)",
+    "endpoint": "GET /fixtures?live=all (one response item, stored by legacy futbeat-live-sync)",
+    "receivedAt": "2026-09-17T18:10:01.839Z",
+    "extractedAt": "2026-10-03",
+    "redaction": "no headers, keys or tokens present; payload copied as stored"
+  },
+  "payload": {
+    "events": [
+      {
+        "assist": {
+          "id": null,
+          "name": null
+        },
+        "comments": "Dissent",
+        "detail": "Yellow Card",
+        "player": {
+          "id": null,
+          "name": "José Bordalás Jiménez"
+        },
+        "team": {
+          "id": 546,
+          "logo": "https://media.api-sports.io/football/teams/546.png",
+          "name": "Getafe"
+        },
+        "time": {
+          "elapsed": 19,
+          "extra": null
+        },
+        "type": "Card"
+      },
+      {
+        "assist": {
+          "id": null,
+          "name": null
+        },
+        "comments": "Foul",
+        "detail": "Yellow Card",
+        "player": {
+          "id": 334574,
+          "name": "Ángel Ortiz"
+        },
+        "team": {
+          "id": 543,
+          "logo": "https://media.api-sports.io/football/teams/543.png",
+          "name": "Real Betis"
+        },
+        "time": {
+          "elapsed": 24,
+          "extra": null
+        },
+        "type": "Card"
+      },
+      {
+        "assist": {
+          "id": null,
+          "name": null
+        },
+        "comments": "Foul",
+        "detail": "Yellow Card",
+        "player": {
+          "id": 471478,
+          "name": "David Cordón Mancha"
+        },
+        "team": {
+          "id": 546,
+          "logo": "https://media.api-sports.io/football/teams/546.png",
+          "name": "Getafe"
+        },
+        "time": {
+          "elapsed": 25,
+          "extra": null
+        },
+        "type": "Card"
+      },
+      {
+        "assist": {
+          "id": 149551,
+          "name": "Troy Parrott"
+        },
+        "comments": null,
+        "detail": "Normal Goal",
+        "player": {
+          "id": 181421,
+          "name": "Abde Ezzalzouli"
+        },
+        "team": {
+          "id": 543,
+          "logo": "https://media.api-sports.io/football/teams/543.png",
+          "name": "Real Betis"
+        },
+        "time": {
+          "elapsed": 45,
+          "extra": null
+        },
+        "type": "Goal"
+      },
+      {
+        "assist": {
+          "id": null,
+          "name": null
+        },
+        "comments": null,
+        "detail": "Goal confirmed",
+        "player": {
+          "id": 181421,
+          "name": "Abde Ezzalzouli"
+        },
+        "team": {
+          "id": 543,
+          "logo": "https://media.api-sports.io/football/teams/543.png",
+          "name": "Real Betis"
+        },
+        "time": {
+          "elapsed": 45,
+          "extra": 2
+        },
+        "type": "Var"
+      },
+      {
+        "assist": {
+          "id": 64268,
+          "name": "Johan Mojica"
+        },
+        "comments": null,
+        "detail": "Substitution 1",
+        "player": {
+          "id": 471478,
+          "name": "David Cordón Mancha"
+        },
+        "team": {
+          "id": 546,
+          "logo": "https://media.api-sports.io/football/teams/546.png",
+          "name": "Getafe"
+        },
+        "time": {
+          "elapsed": 45,
+          "extra": null
+        },
+        "type": "subst"
+      },
+      {
+        "assist": {
+          "id": 1439,
+          "name": "Héctor Bellerín"
+        },
+        "comments": null,
+        "detail": "Substitution 1",
+        "player": {
+          "id": 334574,
+          "name": "Ángel Ortiz"
+        },
+        "team": {
+          "id": 543,
+          "logo": "https://media.api-sports.io/football/teams/543.png",
+          "name": "Real Betis"
+        },
+        "time": {
+          "elapsed": 45,
+          "extra": null
+        },
+        "type": "subst"
+      },
+      {
+        "assist": {
+          "id": 47499,
+          "name": "Enes Ünal"
+        },
+        "comments": null,
+        "detail": "Substitution 2",
+        "player": {
+          "id": 195512,
+          "name": "Martin Satriano"
+        },
+        "team": {
+          "id": 546,
+          "logo": "https://media.api-sports.io/football/teams/546.png",
+          "name": "Getafe"
+        },
+        "time": {
+          "elapsed": 45,
+          "extra": null
+        },
+        "type": "subst"
+      }
+    ],
+    "fixture": {
+      "date": "2026-09-17T17:00:00+00:00",
+      "id": 1570386,
+      "periods": {
+        "first": null,
+        "second": null
+      },
+      "referee": "J. Sanchez",
+      "status": {
+        "elapsed": 45,
+        "extra": null,
+        "long": "Halftime",
+        "short": "HT"
+      },
+      "timestamp": 1789664400,
+      "timezone": "UTC",
+      "venue": {
+        "city": "Sevilla",
+        "id": null,
+        "name": "Estadio de La Cartuja"
+      }
+    },
+    "goals": {
+      "away": 0,
+      "home": 1
+    },
+    "league": {
+      "country": "Spain",
+      "flag": "https://media.api-sports.io/flags/es.svg",
+      "id": 140,
+      "logo": "https://media.api-sports.io/football/leagues/140.png",
+      "name": "La Liga",
+      "round": "Regular Season - 6",
+      "season": 2026,
+      "standings": true
+    },
+    "score": {
+      "extratime": {
+        "away": null,
+        "home": null
+      },
+      "fulltime": {
+        "away": null,
+        "home": null
+      },
+      "halftime": {
+        "away": 0,
+        "home": 1
+      },
+      "penalty": {
+        "away": null,
+        "home": null
+      }
+    },
+    "teams": {
+      "away": {
+        "id": 546,
+        "logo": "https://media.api-sports.io/football/teams/546.png",
+        "name": "Getafe",
+        "winner": false
+      },
+      "home": {
+        "id": 543,
+        "logo": "https://media.api-sports.io/football/teams/543.png",
+        "name": "Real Betis",
+        "winner": true
+      }
+    }
+  }
+}
