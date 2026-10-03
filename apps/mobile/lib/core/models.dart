@@ -1,4 +1,5 @@
 import 'countries.dart';
+import 'player_display_identity.dart';
 
 typedef Json = Map<String, dynamic>;
 
@@ -549,7 +550,7 @@ class LiveMatchUpdate {
 }
 
 class MatchDetail {
-  MatchDetail(this.json);
+  MatchDetail(Json json) : json = presentPlayerMatchDetail(json);
 
   factory MatchDetail.waiting(String matchId) =>
       MatchDetail({...MatchDetail.empty(matchId).json, 'pending': true});
@@ -922,7 +923,13 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
 }
 
 class Snapshot {
-  Snapshot(Json json)
+  Snapshot(Json json) : this._present(presentPlayerSnapshot(json));
+
+  /// Used only when an adjudicated profile guard fails: show the two source
+  /// records rather than applying a stale display decision.
+  Snapshot.unpresented(Json json) : this._present(json);
+
+  Snapshot._present(Json json)
     : demo = json['demo'] as bool,
       coverage = json['coverage'] as Json?,
       stale = (json['freshness'] as Json?)?['stale'] == true,
@@ -1013,6 +1020,22 @@ class Snapshot {
     }
     return current;
   }
+
+  Snapshot withDisplayRedirect(String aliasId, String visibleId) => Snapshot({
+    'schemaVersion': 1,
+    'demo': demo,
+    'coverage': coverage,
+    'freshness': {'stale': stale, 'revalidating': revalidating},
+    'updatedAt': updatedAt.toIso8601String(),
+    'entityRedirects': {...entityRedirects, aliasId: visibleId},
+    'teams': teams.map((entity) => entity.json).toList(),
+    'players': players.map((entity) => entity.json).toList(),
+    'competitions': competitions.map((entity) => entity.json).toList(),
+    'matches': matches.map((match) => match.json).toList(),
+    'standings': standings,
+    'news': news,
+    'transfers': transfers,
+  });
 
   Snapshot forMatch(String id) {
     final target = match(id);
@@ -1119,7 +1142,8 @@ class Snapshot {
   }
 
   Entity? team(String id) => _teamsById[id];
-  Entity? player(String id) => _playersById[id];
+  Entity? player(String id) =>
+      _playersById[id] ?? _playersById[resolveEntityId(id)];
   Entity? competition(String id) => _competitionsById[id];
   FootballMatch? match(String id) => _matchesById[id];
   List<FootballMatch> onDate(DateTime date, String filter) =>

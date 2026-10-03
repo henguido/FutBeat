@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/player_display_identity.dart';
 import '../../core/profile_context.dart';
 import '../../core/entity_media.dart';
 import '../../core/providers.dart';
@@ -63,31 +64,6 @@ int? _shirtNumber(Entity player) => player.shirtNumber;
 String _playerCountLabel(int count) =>
     '$count ${count == 1 ? 'jugador' : 'jugadores'}';
 
-// #191: a single adjudicated GOAL pair in Saprissa's same squad answer.
-// Hide the sparse display row only while all observed identity guards still
-// hold. This never redirects IDs, merges players, or broadens subset matching.
-bool _isSparseWastonAlias(Entity player, Map<String, Entity> byId) {
-  const teamId = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
-  const richId = 'fb_player_333ccb5b7044465497e7888298dc7f87';
-  const sparseId = 'fb_player_a7a7c8d3a8474ef68c968dca80d2e975';
-  if (player.id != sparseId) return false;
-  final rich = byId[richId];
-  if (rich == null ||
-      player.json['teamId'] != teamId ||
-      rich.json['teamId'] != teamId ||
-      player.shirtNumber != 4 ||
-      rich.shirtNumber != 4 ||
-      player.name != 'Waston Kendall' ||
-      rich.name != 'Jamaal Waston Manley Kendall' ||
-      rich.json['dateOfBirth'] != '1988-01-01' ||
-      player.json['dateOfBirth'] != null ||
-      rich.json['media'] == null ||
-      player.json['media'] != null) {
-    return false;
-  }
-  return true;
-}
-
 /// Age in whole years from `age` or `dateOfBirth` (null when unknown).
 int? playerAge(Entity player, {DateTime? now}) {
   final value = player.json['age'];
@@ -109,13 +85,12 @@ int? playerAge(Entity player, {DateTime? now}) {
 /// Players grouped by position, each group sorted by shirt number then name;
 /// each canonical player once.
 List<(String, List<Entity>)> squadGroups(Iterable<Entity> players) {
-  final unique = <String, Entity>{};
-  for (final player in players) {
-    unique.putIfAbsent(player.id, () => player);
-  }
+  final unique = presentPlayers(
+    players.map((player) => player.json),
+    includeStandalone: false,
+  ).map(Entity.new);
   final groups = <String, List<Entity>>{};
-  for (final player in unique.values) {
-    if (_isSparseWastonAlias(player, unique)) continue;
+  for (final player in unique) {
     groups
         .putIfAbsent(squadGroupOf(player.json['position']), () => [])
         .add(player);

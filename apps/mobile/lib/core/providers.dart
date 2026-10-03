@@ -10,6 +10,7 @@ import 'entity_media.dart';
 import 'interests.dart';
 import 'live_realtime.dart';
 import 'models.dart';
+import 'player_display_identity.dart';
 import 'profile_context.dart';
 import 'team_matches.dart';
 
@@ -573,11 +574,66 @@ class ApiRepository implements FootballRepository {
     return null;
   }
 
-  Future<Snapshot> loadEntity(String type, String id) => _loadSnapshot(
-    'entity:$type:$id',
-    '/v1/entity',
-    queryParameters: {'type': type, 'id': id},
-  );
+  Future<Snapshot> loadEntity(String type, String id) async {
+    final decision = type == 'player' ? adjudicationForAlias(id) : null;
+    if (decision == null) {
+      return _loadSnapshot(
+        'entity:$type:$id',
+        '/v1/entity',
+        queryParameters: {'type': type, 'id': id},
+      );
+    }
+    final key = 'entity:$type:$id';
+    Json raw;
+    try {
+      raw = await _getJson(
+        '/v1/entity',
+        queryParameters: {'type': type, 'id': id},
+      );
+    } catch (error, stack) {
+      final cached = _snapshotCache[key];
+      if (cached != null) return cached.asStale();
+      Error.throwWithStackTrace(error, stack);
+    }
+    if (raw['schemaVersion'] != 1 || raw['demo'] != false) {
+      throw const FormatException('Versión de datos incompatible');
+    }
+    final source = (raw['players'] as List? ?? const [])
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .where((row) => row['id'] == id)
+        .firstOrNull;
+    Snapshot fallback() {
+      final original = Snapshot.unpresented(raw);
+      media?.absorb(original);
+      _remember(key, original);
+      return original;
+    }
+
+    if (source == null || !adjudicatedAliasMatches(decision, source)) {
+      return fallback();
+    }
+    try {
+      final target = await _loadSnapshot(
+        'entity:player:${decision.visibleId}',
+        '/v1/entity',
+        queryParameters: {'type': 'player', 'id': decision.visibleId},
+      );
+      final visible = target.player(decision.visibleId);
+      if (visible == null ||
+          !adjudicatedVisibleMatches(decision, visible.json) ||
+          !adjudicatedPairCompatible(source, visible.json)) {
+        return fallback();
+      }
+      final resolved = target.withDisplayRedirect(id, decision.visibleId);
+      media?.absorb(resolved);
+      _remember(key, resolved);
+      return resolved;
+    } catch (_) {
+      // A missing/changed target never turns an alias deep link into a 404.
+      return fallback();
+    }
+  }
 
   /// One page of a team's matches across every competition (#150). One
   /// attempt: the profile already shows its own matches meanwhile.

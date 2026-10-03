@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import 'models.dart';
+import 'player_display_identity.dart';
 
 /// Session memory of verified crests / logos / photos by entity id.
 ///
@@ -12,7 +13,7 @@ class EntityMediaMemory extends ChangeNotifier {
   Map<String, String> _images = const {};
 
   /// Alias -> canonical ids seen in every snapshot read this session. A
-  /// separate notifier: only a new redirect (not a new image) notifies.
+  /// separate notifier: redirect changes (not image changes) notify.
   final EntityRedirectMemory redirects = EntityRedirectMemory();
 
   /// Immutable; replaced (never mutated) on every change.
@@ -27,8 +28,23 @@ class EntityMediaMemory extends ChangeNotifier {
   }
 
   void absorb(Snapshot snapshot) {
-    redirects.absorb(snapshot.entityRedirects);
+    // Presentation adjudications can be revoked by a later contradictory
+    // payload. Canonical database redirects still arrive in entityRedirects;
+    // only a known display alias observed as a separate row is invalidated.
+    final rejectedDisplayAliases = {
+      for (final player in snapshot.players)
+        if (adjudicationForAlias(player.id) != null &&
+            !snapshot.entityRedirects.containsKey(player.id))
+          player.id,
+    };
+    redirects.absorb(
+      snapshot.entityRedirects,
+      invalidatedAliases: rejectedDisplayAliases,
+    );
     final next = {..._images};
+    for (final alias in rejectedDisplayAliases) {
+      next.remove(alias);
+    }
     for (final entity in [
       ...snapshot.teams,
       ...snapshot.competitions,
@@ -56,22 +72,29 @@ class EntityMediaMemory extends ChangeNotifier {
 
 /// Session memory of entity redirects (alias id -> canonical id) from every
 /// snapshot read. Lets ids stored before a merge (e.g. a follow of the legacy
-/// `fb_comp_cr`) resolve to the canonical entity on read, without rewriting
-/// what is stored.
+/// `fb_comp_cr`) resolve on read without rewriting storage. Adjudicated
+/// display aliases are removable when a later response contradicts them.
 class EntityRedirectMemory extends ChangeNotifier {
   Map<String, String> _redirects = const {};
 
   /// Immutable; replaced (never mutated) on every change.
   Map<String, String> get redirects => _redirects;
 
-  void absorb(Map<String, String> redirects) {
-    if (redirects.isEmpty) return;
-    if (redirects.entries.every(
-      (entry) => _redirects[entry.key] == entry.value,
-    )) {
+  void absorb(
+    Map<String, String> redirects, {
+    Set<String> invalidatedAliases = const {},
+  }) {
+    if (redirects.isEmpty && invalidatedAliases.isEmpty) return;
+    final next = {..._redirects};
+    for (final alias in invalidatedAliases) {
+      if (!redirects.containsKey(alias)) next.remove(alias);
+    }
+    next.addAll(redirects);
+    if (next.length == _redirects.length &&
+        next.entries.every((entry) => _redirects[entry.key] == entry.value)) {
       return;
     }
-    _redirects = Map.unmodifiable({..._redirects, ...redirects});
+    _redirects = Map.unmodifiable(next);
     notifyListeners();
   }
 

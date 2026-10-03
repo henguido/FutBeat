@@ -297,6 +297,7 @@ void main() {
       ],
     );
     (payload['teams'] as List)[0]['id'] = team;
+    expect(Snapshot(payload).players, hasLength(1));
     await _pumpTeam(tester, payload, teamId: team);
     expect(find.text('1 jugador'), findsOneWidget);
     expect(find.text('2 jugadores'), findsNothing);
