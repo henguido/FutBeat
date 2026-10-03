@@ -1,0 +1,82 @@
+{
+  "contract": {
+    "real": true,
+    "unmodified": true,
+    "source": "futbeat_private.provider_observations id=7 (provider=api_football)",
+    "endpoint": "GET /fixtures?live=all (one response item, stored by legacy futbeat-live-sync)",
+    "receivedAt": "2026-09-17T17:05:01.941Z",
+    "extractedAt": "2026-10-03",
+    "redaction": "no headers, keys or tokens present; payload copied as stored"
+  },
+  "payload": {
+    "events": [],
+    "fixture": {
+      "date": "2026-09-17T17:00:00+00:00",
+      "id": 1570386,
+      "periods": {
+        "first": null,
+        "second": null
+      },
+      "referee": "J. Sanchez",
+      "status": {
+        "elapsed": 1,
+        "extra": null,
+        "long": "First Half",
+        "short": "1H"
+      },
+      "timestamp": 1789664400,
+      "timezone": "UTC",
+      "venue": {
+        "city": "Sevilla",
+        "id": null,
+        "name": "Estadio de La Cartuja"
+      }
+    },
+    "goals": {
+      "away": 0,
+      "home": 0
+    },
+    "league": {
+      "country": "Spain",
+      "flag": "https://media.api-sports.io/flags/es.svg",
+      "id": 140,
+      "logo": "https://media.api-sports.io/football/leagues/140.png",
+      "name": "La Liga",
+      "round": "Regular Season - 6",
+      "season": 2026,
+      "standings": true
+    },
+    "score": {
+      "extratime": {
+        "away": null,
+        "home": null
+      },
+      "fulltime": {
+        "away": null,
+        "home": null
+      },
+      "halftime": {
+        "away": 0,
+        "home": 0
+      },
+      "penalty": {
+        "away": null,
+        "home": null
+      }
+    },
+    "teams": {
+      "away": {
+        "id": 546,
+        "logo": "https://media.api-sports.io/football/teams/546.png",
+        "name": "Getafe",
+        "winner": null
+      },
+      "home": {
+        "id": 543,
+        "logo": "https://media.api-sports.io/football/teams/543.png",
+        "name": "Real Betis",
+        "winner": null
+      }
+    }
+  }
+}
