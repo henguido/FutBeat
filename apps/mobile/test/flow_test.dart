@@ -228,12 +228,12 @@ void main() {
   });
 
   testWidgets(
-    'partial provider coverage keeps freshness warning and calendar recovery',
+    'partial provider coverage keeps calendar recovery without freshness copy',
     (tester) async {
       await openApp(tester, repository: TestRepository(real: true));
       expect(
         find.textContaining('Los datos pueden estar desactualizados'),
-        findsOneWidget,
+        findsNothing,
       );
       expect(find.text('Sin partidos'), findsOneWidget);
       expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
