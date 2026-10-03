@@ -81,12 +81,16 @@ test('FCM / APNs dead tokens are classified; server errors stay uncertain; auth 
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const apnsEnv = { APNS_PRIVATE_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }), APNS_KEY_ID: 'K', APNS_TEAM_ID: 'T', APNS_TOPIC: 'app.futbeat' };
   let apnsStatus = 410;
-  const apns = fakeFetch(() => ({ status: apnsStatus, json: { reason: 'Unregistered' } }));
+  let apnsHeaders = {};
+  const apns = fakeFetch(() => ({ status: apnsStatus, json: { reason: 'Unregistered' }, headers: apnsHeaders }));
   const apnsTransport = createTransport({ mode: 'live', env: apnsEnv, fetcher: apns.fetcher });
   assert.deepEqual(await apnsTransport.send(fcmRow({ transport: 'apns' })), { state: 'failed', receipt: 'APNS_UNREGISTERED' });
   const sent = apns.calls[0];
   assert.equal(sent.init.headers['apns-collapse-id'], 'fb_event_abc');
   assert.equal(sent.body.aps.alert.body, 'Local 1-0 Visita');
+  apnsStatus = 429; apnsHeaders = { 'retry-after': '90' };
+  assert.deepEqual(await apnsTransport.send(fcmRow({ transport: 'apns' })),
+    { state:'retryable', receipt:'APNS_HTTP_429', retryAfterSeconds:90 });
   apnsStatus = 200;
   await apnsTransport.send(fcmRow({ transport: 'apns' }));
   assert.equal(apns.calls[0].init.headers.authorization, apns.calls[1].init.headers.authorization, 'APNs provider token reused');

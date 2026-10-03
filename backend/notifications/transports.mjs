@@ -32,15 +32,16 @@ function dataOf(row) {
 
 // Dead-token classification: the device must be disabled (receipt handled by
 // futbeat_finish_notification).
-async function fcmFailure(response) {
- if (response.status === 429) {
+function retryAfterSeconds(response) {
   const retryAfter = response.headers.get('retry-after');
   const seconds = Number(retryAfter);
   const delay = retryAfter && Number.isFinite(seconds)
    ? Math.ceil(seconds) : retryAfter ? Math.ceil((Date.parse(retryAfter)-Date.now())/1000) : 60;
-  return { state:'retryable', receipt:'FCM_HTTP_429',
-   retryAfterSeconds:Number.isFinite(delay) ? Math.min(2147483647,Math.max(60,delay)) : 60 };
- }
+  return Number.isFinite(delay) ? Math.min(2147483647,Math.max(60,delay)) : 60;
+}
+async function fcmFailure(response) {
+ if (response.status === 429)
+  return { state:'retryable', receipt:'FCM_HTTP_429', retryAfterSeconds:retryAfterSeconds(response) };
  let code = null;
  try {
   const body = await response.json();
@@ -52,6 +53,8 @@ async function fcmFailure(response) {
  return { state: response.status >= 500 ? 'uncertain' : 'failed', receipt:'FCM_HTTP_' + response.status + (code ? ':' + code : '') };
 }
 async function apnsFailure(response) {
+ if (response.status === 429)
+  return { state:'retryable', receipt:'APNS_HTTP_429', retryAfterSeconds:retryAfterSeconds(response) };
  let reason = null;
  try { reason = (await response.json())?.reason ?? null; } catch { /* no body */ }
  if (response.status === 410 || reason === 'Unregistered') return { state:'failed', receipt:'APNS_UNREGISTERED' };
