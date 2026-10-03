@@ -84,10 +84,14 @@ int? playerAge(Entity player, {DateTime? now}) {
 
 /// Players grouped by position, each group sorted by shirt number then name;
 /// each canonical player once.
-List<(String, List<Entity>)> squadGroups(Iterable<Entity> players) {
+List<(String, List<Entity>)> squadGroups(
+  Iterable<Entity> players, {
+  Set<String> blockedAliasIds = const {},
+}) {
   final unique = presentPlayers(
     players.map((player) => player.json),
     includeStandalone: false,
+    blockedAliasIds: blockedAliasIds,
   ).map(Entity.new);
   final groups = <String, List<Entity>>{};
   for (final player in unique) {
@@ -190,8 +194,10 @@ class TeamProfileView extends ConsumerWidget {
     final players = data.players
         .where((player) => player.json['teamId'] == team.id)
         .toList();
-    final visiblePlayerCount = squadGroups(players)
-        .fold<int>(0, (sum, group) => sum + group.$2.length);
+    final visiblePlayerCount = squadGroups(
+      players,
+      blockedAliasIds: data.entityRedirects.keys.toSet(),
+    ).fold<int>(0, (sum, group) => sum + group.$2.length);
     // Competition + season context: the user's choice this session, else the
     // match it was opened from, else the server's default.
     final request = profileContextRequest(
@@ -333,6 +339,7 @@ class TeamProfileView extends ConsumerWidget {
             players,
             demo: data.demo,
             state: data.squadState,
+            blockedAliasIds: data.entityRedirects.keys.toSet(),
             updatedAt: DateTime.tryParse(
               ((data.coverage?['squad'] as Map?)?['updatedAt'])?.toString() ??
                   '',
@@ -538,10 +545,12 @@ class TeamSquad extends StatelessWidget {
     this.demo = false,
     this.state,
     this.updatedAt,
+    this.blockedAliasIds = const {},
     super.key,
   });
 
   final List<Entity> players;
+  final Set<String> blockedAliasIds;
   final bool demo;
 
   /// Server squad state (see [Snapshot.squadState]).
@@ -564,7 +573,7 @@ class TeamSquad extends StatelessWidget {
               key: ValueKey('squad-pending'),
             );
     }
-    final groups = squadGroups(players);
+    final groups = squadGroups(players, blockedAliasIds: blockedAliasIds);
     final count = groups.fold<int>(0, (sum, g) => sum + g.$2.length);
     // No player classified by position: a lone "Otros" header says nothing,
     // so the squad is one plain list (still number-then-name order).

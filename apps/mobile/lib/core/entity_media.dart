@@ -13,6 +13,7 @@ class EntityMediaMemory extends ChangeNotifier {
   Map<String, String> _images = const {};
   final Map<String, ({String country, String position})> _displayTargetGuards =
       {};
+  final Set<String> _authoritativePlayerAliases = {};
 
   /// Alias -> canonical ids seen in every snapshot read this session. A
   /// separate notifier: redirect changes (not image changes) notify.
@@ -30,21 +31,47 @@ class EntityMediaMemory extends ChangeNotifier {
   }
 
   void absorb(Snapshot snapshot) {
+    for (final entry in snapshot.entityRedirects.entries) {
+      final decision = adjudicationForAlias(entry.key);
+      if (decision != null && entry.value != decision.visibleId) {
+        // A server-side canonical redirect to another entity supersedes the
+        // local presentation decision for the rest of this session.
+        _authoritativePlayerAliases.add(entry.key);
+        _displayTargetGuards.remove(entry.key);
+      }
+    }
     // Presentation adjudications can be revoked by a later contradictory
     // payload. Canonical database redirects still arrive in entityRedirects;
     // only known display aliases are invalidated.
     final rejectedDisplayAliases = {
       for (final player in snapshot.players)
         if (adjudicationForAlias(player.id) != null &&
+            !_authoritativePlayerAliases.contains(player.id) &&
             !snapshot.entityRedirects.containsKey(player.id))
           player.id,
     };
     for (final player in snapshot.players) {
       final decision = adjudicationForVisible(player.id);
-      if (decision == null) continue;
+      if (decision == null ||
+          _authoritativePlayerAliases.contains(decision.aliasId)) {
+        continue;
+      }
       if (player.json['displaySourceAliasId'] == decision.aliasId) {
         // Alias-only search rows are presented with the target ID/name but
-        // cannot be validated as the actual target's richer profile.
+        // cannot be validated as the actual target's richer profile. They
+        // still must not contradict a target observed earlier this session.
+        final prior = _displayTargetGuards[decision.aliasId];
+        if (prior != null &&
+            (_displayGuardConflict(
+                  prior.country,
+                  _displayGuardValue(player.json['country']),
+                ) ||
+                _displayGuardConflict(
+                  prior.position,
+                  _displayGuardValue(player.json['position']),
+                ))) {
+          rejectedDisplayAliases.add(decision.aliasId);
+        }
         continue;
       }
       final prior = _displayTargetGuards[decision.aliasId];
@@ -57,8 +84,14 @@ class EntityMediaMemory extends ChangeNotifier {
         rejectedDisplayAliases.add(decision.aliasId);
       }
     }
+    final effectiveRedirects =
+        Map<String, String>.from(snapshot.entityRedirects)..removeWhere(
+          (alias, target) =>
+              _authoritativePlayerAliases.contains(alias) &&
+              adjudicationForAlias(alias)?.visibleId == target,
+        );
     redirects.absorb(
-      snapshot.entityRedirects,
+      effectiveRedirects,
       invalidatedAliases: rejectedDisplayAliases,
     );
     for (final alias in rejectedDisplayAliases) {
@@ -67,9 +100,14 @@ class EntityMediaMemory extends ChangeNotifier {
     for (final player in snapshot.players) {
       final decision = adjudicationForVisible(player.id);
       if (decision == null ||
+          _authoritativePlayerAliases.contains(decision.aliasId) ||
           rejectedDisplayAliases.contains(decision.aliasId) ||
           redirects.resolve(decision.aliasId) != decision.visibleId) {
         continue;
+      }
+      if (player.json['displaySourceAliasId'] == decision.aliasId &&
+          _displayTargetGuards.containsKey(decision.aliasId)) {
+        continue; // do not replace richer target evidence with a sparse row
       }
       _displayTargetGuards[decision.aliasId] = (
         country: _displayGuardValue(player.json['country']),
@@ -90,7 +128,7 @@ class EntityMediaMemory extends ChangeNotifier {
     }
     // An alias id shows the same image as its canonical entity.
     for (final MapEntry(key: alias, value: canonical)
-        in snapshot.entityRedirects.entries) {
+        in effectiveRedirects.entries) {
       if (rejectedDisplayAliases.contains(alias)) continue;
       final image = next[canonical] ?? next[alias];
       if (image == null) continue;

@@ -114,10 +114,12 @@ bool adjudicatedPairCompatible(
 Map<String, String> visiblePlayerAliases(
   Iterable<Map<String, dynamic>> players, {
   bool includeStandalone = true,
+  Set<String> blockedAliasIds = const {},
 }) {
   final byId = {for (final player in players) player['id']?.toString(): player};
   final result = <String, String>{};
   for (final decision in adjudicatedPlayerDisplayAliases) {
+    if (blockedAliasIds.contains(decision.aliasId)) continue;
     final alias = byId[decision.aliasId];
     final visible = byId[decision.visibleId];
     if (alias == null || !_validAlias(decision, alias)) continue;
@@ -135,11 +137,13 @@ Map<String, String> visiblePlayerAliases(
 List<Map<String, dynamic>> presentPlayers(
   Iterable<Map<String, dynamic>> players, {
   bool includeStandalone = true,
+  Set<String> blockedAliasIds = const {},
 }) {
   final rows = players.toList();
   final aliases = visiblePlayerAliases(
     rows,
     includeStandalone: includeStandalone,
+    blockedAliasIds: blockedAliasIds,
   );
   final realIds = {for (final row in rows) row['id']?.toString()};
   final result = <Map<String, dynamic>>[];
@@ -179,10 +183,16 @@ Map<String, dynamic> presentPlayerSnapshot(Map<String, dynamic> snapshot) {
       .whereType<Map>()
       .map((row) => Map<String, dynamic>.from(row))
       .toList();
-  final aliases = visiblePlayerAliases(players);
-  if (aliases.isEmpty) return snapshot;
-  final shown = presentPlayers(players);
   final originalRedirects = snapshot['entityRedirects'];
+  final authoritativeAliases = originalRedirects is Map
+      ? originalRedirects.keys.map((key) => key.toString()).toSet()
+      : <String>{};
+  final aliases = visiblePlayerAliases(
+    players,
+    blockedAliasIds: authoritativeAliases,
+  );
+  if (aliases.isEmpty) return snapshot;
+  final shown = presentPlayers(players, blockedAliasIds: authoritativeAliases);
   final redirects = <String, dynamic>{
     if (originalRedirects is Map) ...originalRedirects.cast<String, dynamic>(),
     ...aliases,

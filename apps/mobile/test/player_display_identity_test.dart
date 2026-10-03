@@ -7,6 +7,7 @@ import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/player_display_identity.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/features/entities/team_profile.dart';
 
 const _saprissa = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
 const _waston = 'fb_player_333ccb5b7044465497e7888298dc7f87';
@@ -190,6 +191,63 @@ void main() {
       expect(memory.imageFor(_wastonAlias), isNull);
       memory.dispose();
     }
+  });
+
+  test('alias-only country drift revokes prior target evidence', () {
+    final memory = EntityMediaMemory();
+    final alias = {...sparseWaston, 'country': 'Costa Rica'};
+    final target = {...richWaston, 'country': 'Costa Rica'};
+    memory.absorb(Snapshot(_snapshot([alias, target])));
+    expect(memory.redirects.resolve(_wastonAlias), _waston);
+
+    memory.absorb(
+      Snapshot(
+        _snapshot([
+          {...alias, 'country': 'Different country'},
+        ]),
+      ),
+    );
+    expect(memory.redirects.resolve(_wastonAlias), _wastonAlias);
+    expect(memory.imageFor(_wastonAlias), isNull);
+    memory.dispose();
+  });
+
+  test('server canonical redirect outranks the display adjudication', () {
+    const mergedElsewhere = 'fb_player_authoritative_other';
+    final raw = _snapshot([sparseWaston, richWaston]);
+    raw['entityRedirects'] = {_wastonAlias: mergedElsewhere};
+    final snapshot = Snapshot(raw);
+    expect(
+      snapshot.players.map((player) => player.id),
+      containsAll([_wastonAlias, _waston]),
+    );
+    expect(snapshot.resolveEntityId(_wastonAlias), mergedElsewhere);
+    final groups = squadGroups(
+      snapshot.players,
+      blockedAliasIds: snapshot.entityRedirects.keys.toSet(),
+    );
+    expect(groups.expand((group) => group.$2), hasLength(2));
+
+    final memory = EntityMediaMemory();
+    memory.absorb(Snapshot(_snapshot([sparseWaston, richWaston])));
+    expect(memory.redirects.resolve(_wastonAlias), _waston);
+    memory.absorb(snapshot);
+    expect(memory.redirects.resolve(_wastonAlias), mergedElsewhere);
+    memory.absorb(
+      Snapshot(
+        _snapshot([
+          {...richWaston, 'dateOfBirth': '1990-01-01'},
+        ]),
+      ),
+    );
+    expect(memory.redirects.resolve(_wastonAlias), mergedElsewhere);
+    memory.absorb(Snapshot(_snapshot([sparseWaston, richWaston])));
+    expect(
+      memory.redirects.resolve(_wastonAlias),
+      mergedElsewhere,
+      reason: 'stale presentation snapshots cannot override canonical data',
+    );
+    memory.dispose();
   });
 
   test('snapshot keeps counts, search identity, and navigation coherent', () {
