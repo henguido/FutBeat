@@ -56,3 +56,5 @@ revoke all on function public.futbeat_record_goal_standings_shape(text, text, js
   from public, anon, authenticated, service_role;
 grant execute on function public.futbeat_record_goal_standings_shape(text, text, jsonb)
   to service_role;
+
+notify pgrst,'reload schema';

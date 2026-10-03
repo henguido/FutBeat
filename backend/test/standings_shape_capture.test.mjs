@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { goalStandingsShape } from '../../supabase/functions/_shared/goal_standings.ts';
 import { openDatabase } from '../storage/database.mjs';
+
+test('shape RPC migration reloads the PostgREST schema cache', () => {
+  const migration = readFileSync(new URL('../../supabase/migrations/20261003050020_goal_standings_shape_sample.sql', import.meta.url), 'utf8');
+  assert.match(migration, /notify pgrst\s*,\s*'reload schema'\s*;\s*$/i);
+});
 
 test('shape capture retains only bounded stage/group field paths and numeric/UUID IDs', () => {
   const rows = [
