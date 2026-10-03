@@ -63,6 +63,8 @@ Set<String> standingsLabelTokens(String? text) {
 ///  * a repeated position inside one group (unlabelled groups mixed).
 /// Without [focusTeamIds], every group; the unlabelled one is labelled
 /// [overallStandingsLabel] when labelled groups are shown with it.
+/// With one group and [focusTeamIds], it is shown only when it holds every
+/// focus team; otherwise the table is unavailable.
 /// With [focusTeamIds] and several groups:
 ///  * one group holds every focus team: only that group (a team profile
 ///    shows the team's group, a Match Center the match's group);
@@ -114,11 +116,19 @@ List<StandingsGroup>? standingsGroups(
       group.label == null && all.any((other) => other.label != null)
       ? (label: overallStandingsLabel, rows: group.rows)
       : group;
-  if (focusTeamIds.isEmpty || all.length == 1) {
+  if (focusTeamIds.isEmpty) {
     return [for (final group in all) labelled(group)];
   }
-  bool holds(StandingsGroup group, String id) =>
-      group.rows.any((row) => row['teamId'] == id);
+  bool holds(StandingsGroup group, String id) => group.rows.any(
+    (row) =>
+        data.resolveEntityId(row['teamId']?.toString() ?? '') ==
+        data.resolveEntityId(id),
+  );
+  if (all.length == 1) {
+    return focusTeamIds.every((id) => holds(all.single, id))
+        ? [labelled(all.single)]
+        : null;
+  }
   final whole = [
     for (final group in all)
       if (focusTeamIds.every((id) => holds(group, id))) group,

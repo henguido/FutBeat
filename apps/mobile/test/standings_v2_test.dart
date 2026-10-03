@@ -49,6 +49,7 @@ Snapshot _snapshot({
   String? updatedAt,
   bool? provisional,
   List<Map<String, dynamic>> extraRows = const [],
+  Set<String> omittedStandingTeamIds = const {},
   Map<String, String> rowAliases = const {},
   List<Map<String, dynamic>> matches = const [],
 }) {
@@ -92,7 +93,8 @@ Snapshot _snapshot({
                 _row(stored(id), i + 1, group: 'Grupo $g', points: 12 - 3 * i)
           else
             for (final (i, id) in _teamsOf('A').indexed)
-              _row(stored(id), i + 1, points: 12 - 3 * i),
+              if (!omittedStandingTeamIds.contains(id))
+                _row(stored(id), i + 1, points: 12 - 3 * i),
           ...extraRows,
         ],
       },
@@ -519,6 +521,72 @@ void main() {
     );
   });
 
+  test('single standings group requires every focus team', () {
+    final data = _snapshot();
+    final table = standingsTableFor(data, _comp)!;
+    final rows = (table['rows'] as List).cast<Json>();
+    final bothPresent = {'fb_team_tv2_a1', 'fb_team_tv2_a2'};
+    final oneMissing = {
+      ...table,
+      'rows': [
+        for (final row in rows)
+          if (row['teamId'] != 'fb_team_tv2_a2') row,
+      ],
+    };
+    final bothMissing = {
+      ...table,
+      'rows': [
+        for (final row in rows)
+          if (!bothPresent.contains(row['teamId'])) row,
+      ],
+    };
+
+    expect(
+      standingsGroups(table, data, focusTeamIds: bothPresent)!.single.rows,
+      hasLength(4),
+    );
+    expect(
+      standingsGroups(oneMissing, data, focusTeamIds: bothPresent),
+      isNull,
+    );
+    expect(
+      standingsGroups(bothMissing, data, focusTeamIds: bothPresent),
+      isNull,
+    );
+    expect(standingsGroups(oneMissing, data)!.single.rows, hasLength(3));
+  });
+
+  test('single group accepts a redirected row ID, but not a missing team', () {
+    final data = _snapshot(rowAliases: {'fb_team_tv2_a1': 'fb_team_tv2_old1'});
+    final table = standingsTableFor(data, _comp)!;
+    const focus = {'fb_team_tv2_a1', 'fb_team_tv2_a2'};
+    expect(standingsGroups(table, data, focusTeamIds: focus), hasLength(1));
+
+    final withoutAway = {
+      ...table,
+      'rows': [
+        for (final row in (table['rows'] as List).cast<Json>())
+          if (row['teamId'] != 'fb_team_tv2_a2') row,
+      ],
+    };
+    expect(standingsGroups(withoutAway, data, focusTeamIds: focus), isNull);
+  });
+
+  testWidgets('Match Center hides a partial single-group table', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _matchTab(
+        _snapshot(omittedStandingTeamIds: {'fb_team_tv2_a2'}),
+        home: 'fb_team_tv2_a1',
+        away: 'fb_team_tv2_a2',
+      ),
+    );
+    expect(find.text('Tabla no disponible'), findsOneWidget);
+    expect(find.byKey(const ValueKey('standings-compact')), findsNothing);
+  });
+
   testWidgets('unresolved groups: Tabla no disponible (no switch)', (
     tester,
   ) async {
@@ -815,6 +883,36 @@ void main() {
     expect(find.byKey(const ValueKey('standings-snapshot')), findsOneWidget);
     expect(find.text('Grupo A'), findsOneWidget);
     expect(find.text('Grupo C'), findsOneWidget);
+    expect(find.text('#1'), findsOneWidget);
+    expect(find.text('#2'), findsOneWidget);
+  });
+
+  testWidgets('Posición en la tabla resolves a stored team alias', (
+    tester,
+  ) async {
+    final data = _snapshot(
+      rowAliases: {'fb_team_tv2_a1': 'fb_team_tv2_old1'},
+      matches: [
+        {
+          'id': 'fb_match_tv2_alias',
+          'competitionId': _comp,
+          'homeTeamId': 'fb_team_tv2_a1',
+          'awayTeamId': 'fb_team_tv2_a2',
+          'startTime': DateTime.now()
+              .toUtc()
+              .add(const Duration(days: 2))
+              .toIso8601String(),
+          'status': 'SCHEDULED',
+          'events': <dynamic>[],
+          'statistics': <dynamic>[],
+        },
+      ],
+    );
+    await _pump(
+      tester,
+      StandingsSnapshotCard(data: data, match: data.matches.single),
+    );
+    expect(find.byKey(const ValueKey('standings-snapshot')), findsOneWidget);
     expect(find.text('#1'), findsOneWidget);
     expect(find.text('#2'), findsOneWidget);
   });

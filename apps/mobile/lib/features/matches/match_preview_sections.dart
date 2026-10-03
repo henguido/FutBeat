@@ -264,10 +264,12 @@ class StandingsSnapshotCard extends StatelessWidget {
     // Across groups each position is labelled with its own group.
     final crossGroup = (groups?.length ?? 0) > 1;
     (int, Json, String?)? find(String teamId) {
+      final resolvedTeamId = data.resolveEntityId(teamId);
       for (final group in groups ?? const <StandingsGroup>[]) {
         final rows = group.rows;
         for (var i = 0; i < rows.length; i++) {
-          if (rows[i]['teamId'] == teamId) {
+          if (data.resolveEntityId(rows[i]['teamId']?.toString() ?? '') ==
+              resolvedTeamId) {
             return (
               (rows[i]['position'] as num?)?.toInt() ?? i + 1,
               rows[i],

@@ -41,6 +41,7 @@ Map<String, dynamic> _payload({
             'rows': [
               {
                 'teamId': 'fb_home',
+                'position': 1,
                 'played': 3,
                 'won': 2,
                 'drawn': 1,
@@ -48,6 +49,17 @@ Map<String, dynamic> _payload({
                 'gf': 6,
                 'ga': 2,
                 'points': 7,
+              },
+              {
+                'teamId': 'fb_away',
+                'position': 2,
+                'played': 3,
+                'won': 1,
+                'drawn': 1,
+                'lost': 1,
+                'gf': 4,
+                'ga': 4,
+                'points': 4,
               },
             ],
           },
