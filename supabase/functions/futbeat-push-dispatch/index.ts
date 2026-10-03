@@ -1,5 +1,5 @@
 import { createTransport } from '../../../backend/notifications/transports.mjs';
-import { dispatchNotifications } from '../../../backend/notifications/dispatch.mjs';
+import { dispatchNotifications, summarize } from '../../../backend/notifications/dispatch.mjs';
 
 // Platform JWT verification stays enabled; a public JWT alone never authorizes dispatch.
 Deno.serve(async (request: Request) => {
@@ -19,8 +19,12 @@ Deno.serve(async (request: Request) => {
    if(!token || !await rpc('futbeat_authorize_push_scheduler',{p_token:token})) return new Response(null,{status:403});
   }
   const mode=Deno.env.get('FUTBEAT_PUSH_MODE') ?? 'dry_run';
-  const env=Object.fromEntries(['FCM_SERVICE_ACCOUNT_JSON','APNS_PRIVATE_KEY','APNS_KEY_ID','APNS_TEAM_ID','APNS_TOPIC','APNS_SANDBOX']
+  const env=Object.fromEntries(['FCM_SERVICE_ACCOUNT_JSON','FCM_ANDROID_CHANNEL_ID','APNS_PRIVATE_KEY','APNS_KEY_ID','APNS_TEAM_ID','APNS_TOPIC','APNS_SANDBOX']
    .map(name=>[name,Deno.env.get(name)]));
-  return Response.json({results:await dispatchNotifications({rpc,transport:createTransport({mode,env}),mode,limit:3})});
+  // Drain within ~45 s (batches of 50, 10 concurrent sends; the FCM access
+  // token is fetched once per invocation by the transport).
+  const results=await dispatchNotifications({rpc,transport:createTransport({mode,env}),mode,
+   batchSize:50,concurrency:10,budgetMs:45000});
+  return Response.json({...summarize(results),results:results.map(({id,state})=>({id,state}))});
  } catch { return Response.json({error:'Push dispatch unavailable'},{status:503}); }
 });

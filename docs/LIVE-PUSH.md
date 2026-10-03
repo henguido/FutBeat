@@ -34,6 +34,36 @@ El despachador empieza en `dry_run`. En ese modo procesa únicamente tokens
 `test`, no abre conexiones con FCM/APNs y registra un recibo simulado. En
 modo real, un resultado de red ambiguo queda `uncertain` y no se reenvía a
 ciegas, evitando duplicados visibles.
+Si falla una validación antes de iniciar el transporte, el intento vuelve a
+`pending` con una pausa de un minuto; el barrido de intentos atascados también
+lo recupera. Un recibo de token muerto solo deshabilita el token exacto usado
+en ese intento, nunca otro registrado después en la misma instalación.
+Un fallo transitorio de autorización de FCM también vuelve a `pending`, pues
+todavía no se ha llamado a `messages:send`. Los avisos del mismo dispositivo
+que comparten clave de reemplazo se envían en el orden en que se reclamaron.
+La firma del token APNs también se prepara antes de marcar el intento como
+enviado; un error de firma no crea un recibo incierto sin llamada al proveedor.
+Un HTTP 429 explícito de FCM o APNs se reintenta tras al menos 60 segundos y respeta
+una espera mayor indicada por `Retry-After`. Si falla transitoriamente la
+escritura de reencolado, el despachador la intenta hasta tres veces.
+Los 5xx con respuesta explícita también se reencolan: FCM con backoff desde
+60 segundos y APNs desde 15 minutos, ambos crecientes por intento y con
+desfase por alerta. Una excepción de red sin respuesta sigue `uncertain`.
+El contrato de claim antiguo sigue siendo conservador durante el despliegue:
+sus envíos se marcan como iniciados antes de devolverlos, para no duplicarlos
+si un despachador anterior pierde el recibo.
+Las opciones nuevas de titular/suplente mantienen sincronizada la opción
+antigua de alineaciones; una corrección de gol anulado conserva también el
+seguimiento del asistente para que llegue a quien recibió ese aviso.
+
+El envío real requiere que el modo de la Edge Function y
+`futbeat_private.push_settings.mode` sean ambos `live`. El modo de la base
+se vuelve a consultar inmediatamente antes de cada envío. Los dispositivos
+`test` siempre producen un recibo simulado. Cada intento también valida que
+el dispositivo conserve el token y propietario con que se reclamó la fila;
+registrar el mismo token para otra cuenta cancela los intentos pendientes o
+reclamados del propietario anterior. Un mensaje que FCM/APNs ya aceptó antes
+del cambio de cuenta puede entregarse después: el servidor no puede revocarlo.
 
 La outbox garantiza idempotencia de procesamiento. Ningún proveedor externo
 puede prometer entrega exactamente una vez: FCM/APNs pueden entregar tarde o

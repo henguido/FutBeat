@@ -43,7 +43,8 @@ test('durable canonical events, first observation, duplicates, cards, two device
   assert.equal((await db.query('select * from futbeat_private.notification_outbox')).rows.length,2);
   const second=event('second','GOAL',66),card=event('card','YELLOW_CARD',71);
   await record([first,goal,second,card]);
-  assert.equal((await db.query('select * from futbeat_private.notification_outbox')).rows.length,6);
+  // Yellow cards are stored for the timeline but no longer pushed (20261002130000).
+  assert.equal((await db.query('select * from futbeat_private.notification_outbox')).rows.length,4);
   await record([event('unknown','GOAL',5)],'LIVE','unmapped-fixture');
   assert.equal((await db.query('select * from public.live_match_updates')).rows.length,1);
   let timeline=(await db.query('select latest_events from public.live_match_updates')).rows[0].latest_events;
@@ -58,10 +59,10 @@ test('durable canonical events, first observation, duplicates, cards, two device
    return (await db.query('select public.'+name+'('+keys.map((_,i)=>'$'+(i+1)).join(',')+') as value',Object.values(args))).rows[0].value;
   };
   const deliveries=await dispatchNotifications({rpc,transport:createTransport(),mode:'dry_run'});
-  assert.equal(deliveries.length,8);
+  assert.equal(deliveries.length,6);
   assert.ok(deliveries.every(x=>x.state==='simulated'));
   assert.equal((await dispatchNotifications({rpc,transport:createTransport()})).length,0);
-  assert.equal((await db.query('select count(*)::int n from futbeat_private.notification_outbox')).rows[0].n,8);
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.notification_outbox')).rows[0].n,6);
   await db.exec("create role outsider; set role outsider");
   await assert.rejects(db.query('select * from futbeat_private.push_devices'));
   await assert.rejects(db.query("select public.futbeat_claim_notifications()"));
@@ -109,8 +110,13 @@ test('push registration requires authenticated ownership and raw tables stay pri
   const uid=randomUUID(),other=randomUUID(),installation=randomUUID();
   await db.query("select set_config('request.jwt.claim.sub',$1,false)",[uid]);
   const did=(await db.query("select public.futbeat_register_push($1,'android','fcm','owner-token',true) as id",[installation])).rows[0].id;
-  await db.query("select set_config('request.jwt.claim.sub',$1,false)",[other]);
-  await assert.rejects(db.query("select public.futbeat_register_push($1,'android','fcm','owner-token',true)",[randomUUID()]));
   assert.equal((await db.query('select user_id from futbeat_private.push_devices where id=$1',[did])).rows[0].user_id,uid);
+  // Shared phone (20261002130000): another account signing in on the same
+  // phone takes the token; the previous row is retired, never shared.
+  await db.query("select set_config('request.jwt.claim.sub',$1,false)",[other]);
+  const moved=(await db.query("select public.futbeat_register_push($1,'android','fcm','owner-token',true) as id",[randomUUID()])).rows[0].id;
+  assert.notEqual(moved,did);
+  assert.equal((await db.query("select count(*)::int n from futbeat_private.push_devices where token='owner-token' and user_id=$1 and enabled",[other])).rows[0].n,1);
+  assert.equal((await db.query('select enabled from futbeat_private.push_devices where id=$1',[did])).rows[0].enabled,false);
  } finally {await db.close();}
 });

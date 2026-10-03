@@ -123,7 +123,7 @@ test('re-issued ids, deployed (legacy) worker without completeSections: one goal
   assert.equal(await active(db, s.match, 'GOAL'), 4, 'one active canonical row per goal, not per answer');
   assert.equal(await active(db, s.match, 'YELLOW_CARD'), 1);
   assert.equal(await pushes(db, s.match, 'GOAL'), 4);
-  assert.equal(await pushes(db, s.match, 'YELLOW_CARD'), 1);
+  assert.equal(await pushes(db, s.match, 'YELLOW_CARD'), 0, 'yellow cards are no longer pushed (20261002130000)');
 }));
 
 test('re-issued ids, current worker (complete answers): annulled goal retracted, one of each, one push', () => withDb(async (db) => {
@@ -136,7 +136,7 @@ test('re-issued ids, current worker (complete answers): annulled goal retracted,
   assert.equal(await active(db, s.match, 'GOAL'), 3);
   assert.equal(await stored(db, s.match), 5, 'no row per answer: 4 goals + 1 card ever stored, nothing churned');
   assert.equal(await pushes(db, s.match, 'GOAL'), 4, 'the annulled goal was pushed when scored, nothing more');
-  assert.equal(await pushes(db, s.match, 'YELLOW_CARD'), 1);
+  assert.equal(await pushes(db, s.match, 'YELLOW_CARD'), 0, 'yellow cards are no longer pushed (20261002130000)');
 }));
 
 test('normalizer: re-issued GOAL ids keep the same keys; the same content is a duplicate observation', () => withDb(async (db) => {
