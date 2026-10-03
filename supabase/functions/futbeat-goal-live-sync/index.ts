@@ -16,6 +16,7 @@ import {
   GOAL_STANDINGS_ENDPOINT,
   goalStandingsRows,
   goalStandingsSeason,
+  goalStandingsShape,
 } from "../_shared/goal_standings.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -1139,6 +1140,19 @@ async function syncStandingsDemand() {
         p_season: goalStandingsSeason(rows),
         p_rows: rows,
       }, 30000);
+      const shape = goalStandingsShape(rows);
+      if (shape) {
+        try {
+          await rpc("futbeat_record_goal_standings_shape", {
+            p_competition_id: clean(plan.competitionId),
+            p_source: "demand",
+            p_shape: shape,
+          }, 3000);
+        } catch {
+          // Observability must not turn a successful standings read into a retry.
+          console.warn("standings shape capture unavailable");
+        }
+      }
     }
     const completed = await rpc("futbeat_complete_standings_call", {
       p_reservation_id: reservationId,
