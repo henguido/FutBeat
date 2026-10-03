@@ -119,8 +119,11 @@ List<StandingsGroup>? standingsGroups(
   if (focusTeamIds.isEmpty) {
     return [for (final group in all) labelled(group)];
   }
-  bool holds(StandingsGroup group, String id) =>
-      group.rows.any((row) => row['teamId'] == id);
+  bool holds(StandingsGroup group, String id) => group.rows.any(
+    (row) =>
+        data.resolveEntityId(row['teamId']?.toString() ?? '') ==
+        data.resolveEntityId(id),
+  );
   if (all.length == 1) {
     return focusTeamIds.every((id) => holds(all.single, id))
         ? [labelled(all.single)]

@@ -556,6 +556,22 @@ void main() {
     expect(standingsGroups(oneMissing, data)!.single.rows, hasLength(3));
   });
 
+  test('single group accepts a redirected row ID, but not a missing team', () {
+    final data = _snapshot(rowAliases: {'fb_team_tv2_a1': 'fb_team_tv2_old1'});
+    final table = standingsTableFor(data, _comp)!;
+    const focus = {'fb_team_tv2_a1', 'fb_team_tv2_a2'};
+    expect(standingsGroups(table, data, focusTeamIds: focus), hasLength(1));
+
+    final withoutAway = {
+      ...table,
+      'rows': [
+        for (final row in (table['rows'] as List).cast<Json>())
+          if (row['teamId'] != 'fb_team_tv2_a2') row,
+      ],
+    };
+    expect(standingsGroups(withoutAway, data, focusTeamIds: focus), isNull);
+  });
+
   testWidgets('Match Center hides a partial single-group table', (
     tester,
   ) async {
@@ -867,6 +883,36 @@ void main() {
     expect(find.byKey(const ValueKey('standings-snapshot')), findsOneWidget);
     expect(find.text('Grupo A'), findsOneWidget);
     expect(find.text('Grupo C'), findsOneWidget);
+    expect(find.text('#1'), findsOneWidget);
+    expect(find.text('#2'), findsOneWidget);
+  });
+
+  testWidgets('Posición en la tabla resolves a stored team alias', (
+    tester,
+  ) async {
+    final data = _snapshot(
+      rowAliases: {'fb_team_tv2_a1': 'fb_team_tv2_old1'},
+      matches: [
+        {
+          'id': 'fb_match_tv2_alias',
+          'competitionId': _comp,
+          'homeTeamId': 'fb_team_tv2_a1',
+          'awayTeamId': 'fb_team_tv2_a2',
+          'startTime': DateTime.now()
+              .toUtc()
+              .add(const Duration(days: 2))
+              .toIso8601String(),
+          'status': 'SCHEDULED',
+          'events': <dynamic>[],
+          'statistics': <dynamic>[],
+        },
+      ],
+    );
+    await _pump(
+      tester,
+      StandingsSnapshotCard(data: data, match: data.matches.single),
+    );
+    expect(find.byKey(const ValueKey('standings-snapshot')), findsOneWidget);
     expect(find.text('#1'), findsOneWidget);
     expect(find.text('#2'), findsOneWidget);
   });
