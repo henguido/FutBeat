@@ -41,6 +41,8 @@ en ese intento, nunca otro registrado después en la misma instalación.
 Un fallo transitorio de autorización de FCM también vuelve a `pending`, pues
 todavía no se ha llamado a `messages:send`. Los avisos del mismo dispositivo
 que comparten clave de reemplazo se envían en el orden en que se reclamaron.
+La firma del token APNs también se prepara antes de marcar el intento como
+enviado; un error de firma no crea un recibo incierto sin llamada al proveedor.
 Un HTTP 429 explícito de FCM o APNs se reintenta tras al menos 60 segundos y respeta
 una espera mayor indicada por `Retry-After`. Si falla transitoriamente la
 escritura de reencolado, el despachador la intenta hasta tres veces.

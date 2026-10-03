@@ -122,6 +122,11 @@ export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, c
  };
 
  return { async prepare(row) {
+  if (row.transport === 'apns') {
+   if (!env.APNS_PRIVATE_KEY || !env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_TOPIC) return null;
+   try { await apnsToken(); return null; }
+   catch { return { state:'retryable', receipt:'APNS_AUTH_UNAVAILABLE' }; }
+  }
   if (row.transport !== 'fcm') return null;
   const access = await fcmAccess();
   return access.error && access.retryable

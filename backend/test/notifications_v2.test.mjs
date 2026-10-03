@@ -216,6 +216,24 @@ test('OAuth failure is detected before marking the provider-send boundary', asyn
   assert.equal(remote.calls.filter((c)=>c.url.includes('messages:send')).length,0);
 });
 
+test('APNs signing failure is detected before marking the provider-send boundary', async () => {
+  const q=fakeQueue(1);
+  let marked=0, providerCalls=0;
+  const rpc=async(name,args)=>{
+    if(name==='futbeat_mark_notification_send_started') marked++;
+    const answer=await q.rpc(name,args);
+    return name==='futbeat_claim_notifications_v2'
+      ? {...answer,rows:answer.rows.map((row)=>({...row,transport:'apns'}))} : answer;
+  };
+  const transport=createTransport({mode:'live',env:{APNS_PRIVATE_KEY:'invalid',APNS_KEY_ID:'K',
+    APNS_TEAM_ID:'T',APNS_TOPIC:'app.futbeat'},fetcher:async()=>{providerCalls++;throw new Error('must not send');}});
+  const result=await dispatchNotifications({rpc,transport,maxBatches:1});
+  assert.deepEqual(result.map((r)=>r.state),['pending']);
+  assert.equal(result[0].receipt,'APNS_AUTH_UNAVAILABLE');
+  assert.equal(marked,0);
+  assert.equal(providerCalls,0);
+});
+
 test('rows for one device and collapse key send in claim order', async () => {
   const rows=[
     {id:'old',deviceId:'device',attemptId:'a',token:'tok',transport:'test',message:{collapseKey:'lineup:match:player'}},
