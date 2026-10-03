@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/player_display_identity.dart';
 import '../../core/profile_context.dart';
 import '../../core/entity_media.dart';
 import '../../core/providers.dart';
@@ -60,6 +61,9 @@ String squadGroupOf(Object? position) {
 
 int? _shirtNumber(Entity player) => player.shirtNumber;
 
+String _playerCountLabel(int count) =>
+    '$count ${count == 1 ? 'jugador' : 'jugadores'}';
+
 /// Age in whole years from `age` or `dateOfBirth` (null when unknown).
 int? playerAge(Entity player, {DateTime? now}) {
   final value = player.json['age'];
@@ -80,11 +84,17 @@ int? playerAge(Entity player, {DateTime? now}) {
 
 /// Players grouped by position, each group sorted by shirt number then name;
 /// each canonical player once.
-List<(String, List<Entity>)> squadGroups(Iterable<Entity> players) {
+List<(String, List<Entity>)> squadGroups(
+  Iterable<Entity> players, {
+  Set<String> blockedAliasIds = const {},
+}) {
+  final unique = presentPlayers(
+    players.map((player) => player.json),
+    includeStandalone: false,
+    blockedAliasIds: blockedAliasIds,
+  ).map(Entity.new);
   final groups = <String, List<Entity>>{};
-  final seen = <String>{};
-  for (final player in players) {
-    if (!seen.add(player.id)) continue;
+  for (final player in unique) {
     groups
         .putIfAbsent(squadGroupOf(player.json['position']), () => [])
         .add(player);
@@ -184,6 +194,13 @@ class TeamProfileView extends ConsumerWidget {
     final players = data.players
         .where((player) => player.json['teamId'] == team.id)
         .toList();
+    final visiblePlayerCount = squadGroups(
+      players,
+      blockedAliasIds: {
+        ...data.entityRedirects.keys,
+        ...data.blockedDisplayAliases,
+      },
+    ).fold<int>(0, (sum, group) => sum + group.$2.length);
     // Competition + season context: the user's choice this session, else the
     // match it was opened from, else the server's default.
     final request = profileContextRequest(
@@ -274,7 +291,7 @@ class TeamProfileView extends ConsumerWidget {
             team: team,
             matches: matches,
             competitions: competitions,
-            players: players.length,
+            players: visiblePlayerCount,
             table: summaryTable?.snapshot,
             tableCompetitionId: summaryTable?.competitionId,
             tableLabel: summaryTable?.label,
@@ -325,6 +342,10 @@ class TeamProfileView extends ConsumerWidget {
             players,
             demo: data.demo,
             state: data.squadState,
+            blockedAliasIds: {
+              ...data.entityRedirects.keys,
+              ...data.blockedDisplayAliases,
+            },
             updatedAt: DateTime.tryParse(
               ((data.coverage?['squad'] as Map?)?['updatedAt'])?.toString() ??
                   '',
@@ -380,7 +401,7 @@ class TeamProfileView extends ConsumerWidget {
               child: TeamHeader(
                 team: team,
                 competition: competitions.firstOrNull,
-                players: players.length,
+                players: visiblePlayerCount,
               ),
             ),
             if (teamContext != null && selected != null)
@@ -512,7 +533,7 @@ class TeamHeader extends StatelessWidget {
                   if (players > 0)
                     ProfileHeaderChip(
                       icon: Icons.groups_outlined,
-                      label: '$players jugadores',
+                      label: _playerCountLabel(players),
                     ),
                 ],
               ),
@@ -530,10 +551,12 @@ class TeamSquad extends StatelessWidget {
     this.demo = false,
     this.state,
     this.updatedAt,
+    this.blockedAliasIds = const {},
     super.key,
   });
 
   final List<Entity> players;
+  final Set<String> blockedAliasIds;
   final bool demo;
 
   /// Server squad state (see [Snapshot.squadState]).
@@ -556,7 +579,7 @@ class TeamSquad extends StatelessWidget {
               key: ValueKey('squad-pending'),
             );
     }
-    final groups = squadGroups(players);
+    final groups = squadGroups(players, blockedAliasIds: blockedAliasIds);
     final count = groups.fold<int>(0, (sum, g) => sum + g.$2.length);
     // No player classified by position: a lone "Otros" header says nothing,
     // so the squad is one plain list (still number-then-name order).
@@ -579,7 +602,7 @@ class TeamSquad extends StatelessWidget {
                   ? 'Selección de jugadores de demostración'
                   : count == 1
                   ? '1 jugador'
-                  : '$count jugadores',
+                  : _playerCountLabel(count),
               // Stored squad older than its freshness window: say since when.
               if (stale && sinceShown != null)
                 'Actualizada el ${sinceShown.day} ${_months[sinceShown.month - 1]}'

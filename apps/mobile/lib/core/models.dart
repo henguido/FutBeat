@@ -1,4 +1,5 @@
 import 'countries.dart';
+import 'player_display_identity.dart';
 
 typedef Json = Map<String, dynamic>;
 
@@ -549,7 +550,22 @@ class LiveMatchUpdate {
 }
 
 class MatchDetail {
-  MatchDetail(this.json);
+  MatchDetail(Json json, {Set<String> blockedAliasIds = const {}})
+    : _sourceJson = json,
+      blockedAliasIds = Set.unmodifiable(blockedAliasIds),
+      json = presentPlayerMatchDetail(json, blockedAliasIds: blockedAliasIds);
+
+  final Json _sourceJson;
+  Json get sourceJson => _sourceJson;
+  final Set<String> blockedAliasIds;
+
+  MatchDetail withBlockedAliases(Set<String> blockedAliasIds) =>
+      MatchDetail(_sourceJson, blockedAliasIds: blockedAliasIds);
+
+  MatchDetail withPending(bool pending) => MatchDetail({
+    ..._sourceJson,
+    'pending': pending,
+  }, blockedAliasIds: blockedAliasIds);
 
   factory MatchDetail.waiting(String matchId) =>
       MatchDetail({...MatchDetail.empty(matchId).json, 'pending': true});
@@ -922,8 +938,24 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
 }
 
 class Snapshot {
-  Snapshot(Json json)
-    : demo = json['demo'] as bool,
+  Snapshot(Json json, {Set<String> blockedAliasIds = const {}})
+    : this._present(
+        presentPlayerSnapshot(json, blockedAliasIds: blockedAliasIds),
+        json,
+        Set.unmodifiable(blockedAliasIds),
+        true,
+      );
+
+  /// Used only when an adjudicated profile guard fails: show the two source
+  /// records rather than applying a stale display decision.
+  Snapshot.unpresented(Json json) : this._present(json, json, const {}, false);
+
+  Snapshot._present(
+    Json json,
+    this._sourceJson,
+    this._blockedAliasIds,
+    this._presentationEnabled,
+  ) : demo = json['demo'] as bool,
       coverage = json['coverage'] as Json?,
       stale = (json['freshness'] as Json?)?['stale'] == true,
       revalidating = (json['freshness'] as Json?)?['revalidating'] == true,
@@ -931,6 +963,10 @@ class Snapshot {
       entityRedirects = (json['entityRedirects'] as Map? ?? const {}).map(
         (key, value) => MapEntry(key.toString(), value.toString()),
       ),
+      presentationRedirectIds =
+          (json['_futbeatDisplayRedirectIds'] as List? ?? const [])
+              .map((id) => id.toString())
+              .toSet(),
       teams = (json['teams'] as List).map((e) => Entity(e as Json)).toList(),
       players = (json['players'] as List)
           .map((e) => Entity(e as Json))
@@ -962,6 +998,57 @@ class Snapshot {
     _matchesById = {for (final match in matches) match.id: match};
   }
   final bool demo;
+  final Json _sourceJson;
+  final Set<String> _blockedAliasIds;
+  final bool _presentationEnabled;
+
+  Set<String> get blockedDisplayAliases => _blockedAliasIds;
+
+  /// Original player rows, including a verified deep-link alias fallback.
+  Map<String, Json> get sourcePlayerRowsById {
+    final fallback = _sourceJson['_futbeatAliasProfileFallback'];
+    final fallbackSnapshot = fallback is Map ? fallback['snapshot'] : null;
+    final rows = <dynamic>[
+      ...(_sourceJson['players'] as List? ?? const []),
+      if (fallbackSnapshot is Map)
+        ...(fallbackSnapshot['players'] as List? ?? const []),
+    ];
+    final result = <String, Json>{};
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final id = row['id']?.toString();
+      if (id != null) result[id] = Map<String, dynamic>.from(row);
+    }
+    return result;
+  }
+
+  /// Raw adjudicated alias rows that presentation may have hidden. A deep
+  /// link's verified alias response is kept in its reversible fallback.
+  Map<String, Json> get presentationSourceAliases {
+    return {
+      for (final entry in sourcePlayerRowsById.entries)
+        if (presentationRedirectIds.contains(entry.key)) entry.key: entry.value,
+    };
+  }
+
+  /// Rebuilds a cached response from its untouched source after an alias is
+  /// revoked. Merely reprocessing its already-collapsed rows could not
+  /// restore the second person or the original squad count.
+  Snapshot withBlockedAliases(Set<String> blockedAliasIds) {
+    final fallback = _sourceJson['_futbeatAliasProfileFallback'];
+    if (fallback is Map &&
+        blockedAliasIds.contains(fallback['aliasId']?.toString()) &&
+        fallback['snapshot'] is Map) {
+      return Snapshot.unpresented({
+        ...Map<String, dynamic>.from(fallback['snapshot'] as Map),
+        'freshness': _sourceJson['freshness'],
+      });
+    }
+    return _presentationEnabled
+        ? Snapshot(_sourceJson, blockedAliasIds: blockedAliasIds)
+        : Snapshot.unpresented(_sourceJson);
+  }
+
   final Json? coverage;
 
   /// The server launched a remote player discovery for this search; results
@@ -994,6 +1081,7 @@ class Snapshot {
   final bool revalidating;
   final DateTime updatedAt;
   final Map<String, String> entityRedirects;
+  final Set<String> presentationRedirectIds;
   final List<Entity> teams, players, competitions;
   final List<FootballMatch> matches;
   final List<Json> standings, news, transfers;
@@ -1014,9 +1102,39 @@ class Snapshot {
     return current;
   }
 
+  Snapshot withDisplayRedirect(
+    String aliasId,
+    String visibleId, {
+    required Json fallback,
+  }) => Snapshot({
+    'schemaVersion': 1,
+    'demo': demo,
+    'coverage': coverage,
+    'freshness': {'stale': stale, 'revalidating': revalidating},
+    'updatedAt': updatedAt.toIso8601String(),
+    'entityRedirects': {...entityRedirects, aliasId: visibleId},
+    '_futbeatDisplayRedirectIds': {
+      ...presentationRedirectIds,
+      aliasId,
+    }.toList(),
+    '_futbeatAliasProfileFallback': {'aliasId': aliasId, 'snapshot': fallback},
+    'teams': teams.map((entity) => entity.json).toList(),
+    'players': players.map((entity) => entity.json).toList(),
+    'competitions': competitions.map((entity) => entity.json).toList(),
+    'matches': matches.map((match) => match.json).toList(),
+    'standings': standings,
+    'news': news,
+    'transfers': transfers,
+  });
+
   Snapshot forMatch(String id) {
     final target = match(id);
     if (target == null) return this;
+    final sourceMatch = (_sourceJson['matches'] as List? ?? const [])
+        .whereType<Map>()
+        .cast<Map>()
+        .where((row) => row['id'] == id)
+        .firstOrNull;
 
     final matchStandings = standings
         .where((table) => table['competitionId'] == target.competitionId)
@@ -1035,34 +1153,54 @@ class Snapshot {
       final playerId = event['playerId']?.toString();
       if (playerId != null && playerId.isNotEmpty) playerIds.add(playerId);
     }
+    for (final event
+        in sourceMatch?['events'] is List
+            ? sourceMatch!['events'] as List
+            : const []) {
+      if (event is! Map) continue;
+      final playerId = event['playerId']?.toString();
+      if (playerId != null && playerId.isNotEmpty) playerIds.add(playerId);
+    }
 
     final contextTeams = [
-      for (final team in teams)
-        if (teamIds.contains(team.id)) team.json,
+      for (final team in _sourceJson['teams'] as List? ?? const [])
+        if (team is Map && teamIds.contains(team['id']?.toString())) team,
     ];
     final contextPlayers = [
-      for (final player in players)
-        if (playerIds.contains(player.id) ||
-            teamIds.contains(player.json['teamId']?.toString()))
-          player.json,
+      for (final player in _sourceJson['players'] as List? ?? const [])
+        if (player is Map &&
+            (playerIds.contains(player['id']?.toString()) ||
+                teamIds.contains(player['teamId']?.toString())))
+          player,
     ];
-    final competitionEntity = competition(target.competitionId);
+    final sourceCompetition = (_sourceJson['competitions'] as List? ?? const [])
+        .whereType<Map>()
+        .where((row) => row['id'] == target.competitionId)
+        .firstOrNull;
 
-    return Snapshot({
+    final source = <String, dynamic>{
       'schemaVersion': 1,
       'demo': demo,
-      'coverage': coverage,
+      'coverage': _sourceJson['coverage'],
       'freshness': {'stale': stale},
       'updatedAt': updatedAt.toIso8601String(),
-      'entityRedirects': entityRedirects,
+      'entityRedirects': _sourceJson['entityRedirects'] ?? const {},
+      if (_sourceJson.containsKey('_futbeatDisplayRedirectIds'))
+        '_futbeatDisplayRedirectIds': _sourceJson['_futbeatDisplayRedirectIds'],
+      if (_sourceJson.containsKey('_futbeatAliasProfileFallback'))
+        '_futbeatAliasProfileFallback':
+            _sourceJson['_futbeatAliasProfileFallback'],
       'teams': contextTeams,
       'players': contextPlayers,
-      'competitions': [if (competitionEntity != null) competitionEntity.json],
-      'matches': [target.json],
+      'competitions': [?sourceCompetition],
+      'matches': [sourceMatch ?? target.json],
       'standings': matchStandings,
       'news': const <dynamic>[],
       'transfers': const <dynamic>[],
-    });
+    };
+    return _presentationEnabled
+        ? Snapshot(source, blockedAliasIds: _blockedAliasIds)
+        : Snapshot.unpresented(source);
   }
 
   Snapshot asStale() {
@@ -1070,21 +1208,13 @@ class Snapshot {
   }
 
   Snapshot withFreshness({bool stale = false, bool revalidating = false}) {
-    return Snapshot({
-      'schemaVersion': 1,
-      'demo': demo,
-      'coverage': coverage,
+    final source = {
+      ..._sourceJson,
       'freshness': {'stale': stale, 'revalidating': revalidating},
-      'updatedAt': updatedAt.toIso8601String(),
-      'entityRedirects': entityRedirects,
-      'teams': teams.map((entity) => entity.json).toList(),
-      'players': players.map((entity) => entity.json).toList(),
-      'competitions': competitions.map((entity) => entity.json).toList(),
-      'matches': matches.map((match) => match.json).toList(),
-      'standings': standings,
-      'news': news,
-      'transfers': transfers,
-    });
+    };
+    return _presentationEnabled
+        ? Snapshot(source, blockedAliasIds: _blockedAliasIds)
+        : Snapshot.unpresented(source);
   }
 
   Snapshot withLiveUpdates(
@@ -1093,33 +1223,26 @@ class Snapshot {
   }) {
     if (demo || updates.isEmpty) return this;
     var changed = false;
-    final mergedMatches = matches.map((match) {
-      final update = updates[match.id];
-      if (update == null) return match.json;
-      final merged = update.applyTo(match.json, now: now);
-      if (!identical(merged, match.json)) changed = true;
+    final sourceMatches = (_sourceJson['matches'] as List? ?? const []);
+    final mergedMatches = sourceMatches.map((row) {
+      if (row is! Map) return row;
+      final raw = Map<String, dynamic>.from(row);
+      final update = updates[raw['id']?.toString()];
+      if (update == null) return raw;
+      final merged = update.applyTo(raw, now: now);
+      if (!identical(merged, raw)) changed = true;
       return merged;
     }).toList();
     if (!changed) return this;
-    return Snapshot({
-      'schemaVersion': 1,
-      'demo': demo,
-      'coverage': coverage,
-      'freshness': {'stale': stale, 'revalidating': revalidating},
-      'updatedAt': updatedAt.toIso8601String(),
-      'entityRedirects': entityRedirects,
-      'teams': teams.map((entity) => entity.json).toList(),
-      'players': players.map((entity) => entity.json).toList(),
-      'competitions': competitions.map((entity) => entity.json).toList(),
-      'matches': mergedMatches,
-      'standings': standings,
-      'news': news,
-      'transfers': transfers,
-    });
+    final source = {..._sourceJson, 'matches': mergedMatches};
+    return _presentationEnabled
+        ? Snapshot(source, blockedAliasIds: _blockedAliasIds)
+        : Snapshot.unpresented(source);
   }
 
   Entity? team(String id) => _teamsById[id];
-  Entity? player(String id) => _playersById[id];
+  Entity? player(String id) =>
+      _playersById[id] ?? _playersById[resolveEntityId(id)];
   Entity? competition(String id) => _competitionsById[id];
   FootballMatch? match(String id) => _matchesById[id];
   List<FootballMatch> onDate(DateTime date, String filter) =>

@@ -129,7 +129,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         : ref.watch(exploreSnapshotProvider);
     final fresh = result.asData?.value;
     if (fresh != null) previous = fresh;
-    final data = fresh ?? previous;
+    final source = fresh ?? previous;
+    final data = source == null ? null : presentSnapshotForSession(ref, source);
     // Suggestions paint from the stored answer while they revalidate; a
     // failed refresh keeps them (marked stale) and offers Retry.
     final refreshing =

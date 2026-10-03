@@ -325,7 +325,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final follows =
         ref.watch(followsProvider).asData?.value ?? const <String>{};
     final catalogState = ref.watch(exploreSnapshotProvider);
-    final catalog = catalogState.asData?.value;
+    final rawCatalog = catalogState.asData?.value;
+    final catalog = rawCatalog == null
+        ? null
+        : presentSnapshotForSession(ref, rawCatalog);
     final country = preference?.effectiveCountry;
     final searchRequest = (query: query, country: country);
     final searchState = query.length >= 2 && const {1, 2, 3}.contains(step)
@@ -338,7 +341,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         }
       });
     }
-    final data = searchState?.asData?.value ?? catalog;
+    final rawSearch = searchState?.asData?.value;
+    final data = rawSearch == null
+        ? catalog
+        : presentSnapshotForSession(ref, rawSearch);
     settings ??= ref.watch(profileSettingsProvider).asData?.value;
 
     return Scaffold(

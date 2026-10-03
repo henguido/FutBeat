@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import 'models.dart';
+import 'player_display_identity.dart';
 
 /// Session memory of verified crests / logos / photos by entity id.
 ///
@@ -10,9 +11,22 @@ import 'models.dart';
 /// (older) payload still has no media.
 class EntityMediaMemory extends ChangeNotifier {
   Map<String, String> _images = const {};
+  final Map<String, ({String country, String position})> _displayTargetGuards =
+      {};
+  final Set<String> _authoritativePlayerAliases = {};
+  // A contradiction is sticky for this session. Older cached responses must
+  // never reinstate an adjudication; a fresh session can evaluate it again.
+  final Set<String> _revokedDisplayAliases = {};
+
+  /// Presentation is also blocked when an explicit server redirect has
+  /// superseded a local adjudication, even if no contradiction was observed.
+  Set<String> get revokedDisplayAliases => Set.unmodifiable({
+    ..._revokedDisplayAliases,
+    ..._authoritativePlayerAliases,
+  });
 
   /// Alias -> canonical ids seen in every snapshot read this session. A
-  /// separate notifier: only a new redirect (not a new image) notifies.
+  /// separate notifier: redirect changes (not image changes) notify.
   final EntityRedirectMemory redirects = EntityRedirectMemory();
 
   /// Immutable; replaced (never mutated) on every change.
@@ -27,26 +41,189 @@ class EntityMediaMemory extends ChangeNotifier {
   }
 
   void absorb(Snapshot snapshot) {
-    redirects.absorb(snapshot.entityRedirects);
+    final blockedCountBefore = revokedDisplayAliases.length;
+    final newlyAuthoritative = <String>{};
+    for (final entry in snapshot.entityRedirects.entries) {
+      final decision = adjudicationForAlias(entry.key);
+      if (decision != null &&
+          !snapshot.presentationRedirectIds.contains(entry.key)) {
+        // A server-side canonical redirect to another entity supersedes the
+        // local presentation decision for the rest of this session.
+        _authoritativePlayerAliases.add(entry.key);
+        newlyAuthoritative.add(entry.key);
+        _displayTargetGuards.remove(entry.key);
+      }
+    }
+    // Presentation adjudications can be revoked by a later contradictory
+    // payload. Canonical database redirects still arrive in entityRedirects;
+    // only known display aliases are invalidated.
+    final rejectedDisplayAliases = <String>{};
+    final sourcePlayers = snapshot.sourcePlayerRowsById;
+    for (final decision in adjudicatedPlayerDisplayAliases) {
+      final alias = sourcePlayers[decision.aliasId];
+      final visible = sourcePlayers[decision.visibleId];
+      if (alias != null &&
+          visible != null &&
+          !adjudicatedPairCompatible(alias, visible)) {
+        rejectedDisplayAliases.add(decision.aliasId);
+      }
+    }
+    final sourceAliasGuards = <String, ({String country, String position})>{};
+    for (final entry in snapshot.presentationSourceAliases.entries) {
+      final decision = adjudicationForAlias(entry.key);
+      if (decision == null || _authoritativePlayerAliases.contains(entry.key)) {
+        continue;
+      }
+      final prior = _displayTargetGuards[entry.key];
+      final country = _displayGuardValue(entry.value['country']);
+      final position = _displayGuardValue(entry.value['position']);
+      if (!adjudicatedAliasMatches(decision, entry.value) ||
+          (prior != null &&
+              (_displayGuardConflict(prior.country, country) ||
+                  _displayGuardConflict(prior.position, position)))) {
+        rejectedDisplayAliases.add(entry.key);
+        continue;
+      }
+      sourceAliasGuards[entry.key] = (country: country, position: position);
+    }
+    for (final player in snapshot.players) {
+      final decision = adjudicationForAlias(player.id);
+      if (decision == null ||
+          _authoritativePlayerAliases.contains(player.id) ||
+          snapshot.entityRedirects.containsKey(player.id)) {
+        continue;
+      }
+      final prior = _displayTargetGuards[player.id];
+      if (!adjudicatedAliasMatches(decision, player.json) ||
+          (prior != null &&
+              (_displayGuardConflict(
+                    prior.country,
+                    _displayGuardValue(player.json['country']),
+                  ) ||
+                  _displayGuardConflict(
+                    prior.position,
+                    _displayGuardValue(player.json['position']),
+                  )))) {
+        rejectedDisplayAliases.add(player.id);
+      }
+    }
+    for (final player in snapshot.players) {
+      final decision = adjudicationForVisible(player.id);
+      if (decision == null ||
+          _authoritativePlayerAliases.contains(decision.aliasId)) {
+        continue;
+      }
+      if (player.json['displaySourceAliasId'] == decision.aliasId) {
+        // Alias-only search rows are presented with the target ID/name but
+        // cannot be validated as the actual target's richer profile. They
+        // still must not contradict a target observed earlier this session.
+        final prior = _displayTargetGuards[decision.aliasId];
+        if (prior != null &&
+            (_displayGuardConflict(
+                  prior.country,
+                  _displayGuardValue(player.json['country']),
+                ) ||
+                _displayGuardConflict(
+                  prior.position,
+                  _displayGuardValue(player.json['position']),
+                ))) {
+          rejectedDisplayAliases.add(decision.aliasId);
+        }
+        continue;
+      }
+      final prior = _displayTargetGuards[decision.aliasId];
+      final country = _displayGuardValue(player.json['country']);
+      final position = _displayGuardValue(player.json['position']);
+      if (!adjudicatedVisibleMatches(decision, player.json) ||
+          (prior != null &&
+              (_displayGuardConflict(prior.country, country) ||
+                  _displayGuardConflict(prior.position, position)))) {
+        rejectedDisplayAliases.add(decision.aliasId);
+      }
+    }
+    _revokedDisplayAliases.addAll(rejectedDisplayAliases);
+    final invalidatedAliases = _revokedDisplayAliases.difference(
+      _authoritativePlayerAliases,
+    );
+    final effectiveRedirects =
+        Map<String, String>.from(snapshot.entityRedirects)..removeWhere(
+          (alias, target) =>
+              snapshot.presentationRedirectIds.contains(alias) &&
+              (_authoritativePlayerAliases.contains(alias) ||
+                  invalidatedAliases.contains(alias)) &&
+              adjudicationForAlias(alias)?.visibleId == target,
+        );
+    redirects.absorb(
+      effectiveRedirects,
+      invalidatedAliases: invalidatedAliases,
+    );
+    for (final alias in rejectedDisplayAliases) {
+      _displayTargetGuards.remove(alias);
+    }
+    for (final player in snapshot.players) {
+      final decision = adjudicationForVisible(player.id);
+      if (decision == null ||
+          _authoritativePlayerAliases.contains(decision.aliasId) ||
+          invalidatedAliases.contains(decision.aliasId)) {
+        continue;
+      }
+      if (player.json['displaySourceAliasId'] == decision.aliasId) continue;
+      final prior = _displayTargetGuards[decision.aliasId];
+      final country = _displayGuardValue(player.json['country']);
+      final position = _displayGuardValue(player.json['position']);
+      _displayTargetGuards[decision.aliasId] = (
+        country: country.isNotEmpty ? country : prior?.country ?? '',
+        position: position.isNotEmpty ? position : prior?.position ?? '',
+      );
+    }
+    for (final entry in sourceAliasGuards.entries) {
+      if (_authoritativePlayerAliases.contains(entry.key) ||
+          invalidatedAliases.contains(entry.key)) {
+        continue;
+      }
+      final prior = _displayTargetGuards[entry.key];
+      _displayTargetGuards[entry.key] = (
+        country: entry.value.country.isNotEmpty
+            ? entry.value.country
+            : prior?.country ?? '',
+        position: entry.value.position.isNotEmpty
+            ? entry.value.position
+            : prior?.position ?? '',
+      );
+    }
     final next = {..._images};
+    for (final alias in {...invalidatedAliases, ...newlyAuthoritative}) {
+      next.remove(alias);
+    }
+    final freshPlayerImages = <String>{};
     for (final entity in [
       ...snapshot.teams,
       ...snapshot.competitions,
       ...snapshot.players,
     ]) {
       final image = entity.imageUrl;
-      if (image != null) next[entity.id] = image;
+      if (image != null && !invalidatedAliases.contains(entity.id)) {
+        next[entity.id] = image;
+        if (snapshot.players.contains(entity)) freshPlayerImages.add(entity.id);
+      }
     }
     // An alias id shows the same image as its canonical entity.
     for (final MapEntry(key: alias, value: canonical)
-        in snapshot.entityRedirects.entries) {
-      final image = next[canonical] ?? next[alias];
+        in effectiveRedirects.entries) {
+      if (invalidatedAliases.contains(alias)) continue;
+      final image =
+          next[canonical] ??
+          (newlyAuthoritative.contains(alias) &&
+                  !freshPlayerImages.contains(alias)
+              ? null
+              : next[alias]);
       if (image == null) continue;
       next[canonical] ??= image;
       next[alias] = next[canonical]!;
     }
     if (next.length == _images.length &&
         next.entries.every((entry) => _images[entry.key] == entry.value)) {
+      if (blockedCountBefore != revokedDisplayAliases.length) notifyListeners();
       return;
     }
     _images = Map.unmodifiable(next);
@@ -54,24 +231,37 @@ class EntityMediaMemory extends ChangeNotifier {
   }
 }
 
+String _displayGuardValue(Object? value) =>
+    value?.toString().trim().toLowerCase() ?? '';
+
+bool _displayGuardConflict(String prior, String current) =>
+    prior.isNotEmpty && current.isNotEmpty && prior != current;
+
 /// Session memory of entity redirects (alias id -> canonical id) from every
 /// snapshot read. Lets ids stored before a merge (e.g. a follow of the legacy
-/// `fb_comp_cr`) resolve to the canonical entity on read, without rewriting
-/// what is stored.
+/// `fb_comp_cr`) resolve on read without rewriting storage. Adjudicated
+/// display aliases are removable when a later response contradicts them.
 class EntityRedirectMemory extends ChangeNotifier {
   Map<String, String> _redirects = const {};
 
   /// Immutable; replaced (never mutated) on every change.
   Map<String, String> get redirects => _redirects;
 
-  void absorb(Map<String, String> redirects) {
-    if (redirects.isEmpty) return;
-    if (redirects.entries.every(
-      (entry) => _redirects[entry.key] == entry.value,
-    )) {
+  void absorb(
+    Map<String, String> redirects, {
+    Set<String> invalidatedAliases = const {},
+  }) {
+    if (redirects.isEmpty && invalidatedAliases.isEmpty) return;
+    final next = {..._redirects};
+    next.addAll(redirects);
+    for (final alias in invalidatedAliases) {
+      next.remove(alias);
+    }
+    if (next.length == _redirects.length &&
+        next.entries.every((entry) => _redirects[entry.key] == entry.value)) {
       return;
     }
-    _redirects = Map.unmodifiable({..._redirects, ...redirects});
+    _redirects = Map.unmodifiable(next);
     notifyListeners();
   }
 

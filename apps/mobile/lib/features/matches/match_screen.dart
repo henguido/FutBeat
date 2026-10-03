@@ -214,7 +214,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final refreshed = watchesContext
         ? ref.watch(matchContextSnapshotProvider(widget.id)).value
         : null;
-    final initialData = refreshed ?? widget.initialData;
+    final source = refreshed ?? widget.initialData;
+    final initialData = source == null
+        ? null
+        : presentSnapshotForSession(ref, source);
     if (initialData != null) {
       final merged = initialData.withLiveUpdates(updates);
       if (watchesContext) _watchStaleLive(merged);
@@ -257,7 +260,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
             ),
           ),
           data: (data) {
-            final merged = data.withLiveUpdates(updates);
+            final merged = presentSnapshotForSession(
+              ref,
+              data,
+            ).withLiveUpdates(updates);
             _watchStaleLive(merged);
             return _buildMatchCenter(merged);
           },
@@ -293,9 +299,13 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       );
     }
 
-    final detail =
+    final rawDetail =
         ref.watch(matchDetailProvider(widget.id)).asData?.value ??
         MatchDetail.waiting(widget.id);
+    final detail = rawDetail.withBlockedAliases(
+      ref.watch(playerDisplayBlockedAliasesProvider).asData?.value ??
+          ref.read(entityMediaProvider).revokedDisplayAliases,
+    );
     final venue = detail.stadium ?? match.json['venue']?.toString() ?? '';
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;

@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
 import 'package:futbeat/features/entities/team_profile.dart';
+import 'package:futbeat/features/entities/team_summary.dart';
 import 'package:go_router/go_router.dart';
 
 const _longTeam = 'Club Deportivo Asociación Muy Larga de Nombre Extenso FC';
@@ -103,6 +105,8 @@ Future<void> _pumpTeam(
   WidgetTester tester,
   Map<String, dynamic> payload, {
   Size size = const Size(360, 780),
+  String teamId = 'fb_team',
+  EntityMediaMemory? media,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -113,7 +117,7 @@ Future<void> _pumpTeam(
     await db.customSelect('select 1').get();
   });
   final router = GoRouter(
-    initialLocation: '/team/fb_team',
+    initialLocation: '/team/$teamId',
     routes: [
       GoRoute(
         path: '/team/:id',
@@ -135,6 +139,7 @@ Future<void> _pumpTeam(
   final container = ProviderContainer(
     overrides: [
       databaseProvider.overrideWithValue(db),
+      if (media != null) entityMediaProvider.overrideWithValue(media),
       entitySnapshotProvider.overrideWith(
         (ref, request) async => Snapshot(payload),
       ),
@@ -192,6 +197,192 @@ void main() {
     ]) {
       expect(squadGroupOf(raw), group, reason: raw);
     }
+  });
+
+  test('only the adjudicated sparse Waston squad row is hidden', () {
+    const team = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
+    const richId = 'fb_player_333ccb5b7044465497e7888298dc7f87';
+    const sparseId = 'fb_player_a7a7c8d3a8474ef68c968dca80d2e975';
+    final rich = {
+      ..._player(
+        richId,
+        'Jamaal Waston Manley Kendall',
+        'Defender',
+        number: 4,
+        photo: true,
+      ),
+      'teamId': team,
+      'dateOfBirth': '1988-01-01',
+    };
+    final sparse = {
+      ..._player(sparseId, 'Waston Kendall', 'Defender', number: 4),
+      'teamId': team,
+    };
+    List<String> shown(List<Map<String, dynamic>> rows) => [
+      for (final (_, group) in squadGroups(rows.map(Entity.new)))
+        for (final player in group) player.id,
+    ];
+
+    expect(shown([sparse, rich]), [richId]);
+    expect(shown([rich, sparse]), [richId]);
+    expect(shown([sparse]), [sparseId], reason: 'never hide a lone row');
+    expect(
+      shown([
+        rich,
+        {...sparse, 'teamId': 'fb_other'},
+      ]),
+      contains(sparseId),
+      reason: 'same team is required',
+    );
+    expect(
+      shown([
+        rich,
+        {...sparse, 'shirtNumber': 5},
+      ]),
+      contains(sparseId),
+      reason: 'same shirt is required',
+    );
+    expect(
+      shown([
+        rich,
+        {...sparse, 'dateOfBirth': '1990-01-01'},
+      ]),
+      contains(sparseId),
+      reason: 'a second dated person stays visible',
+    );
+    expect(
+      shown([
+        rich,
+        {
+          ...sparse,
+          'media': {'url': 'different'},
+        },
+      ]),
+      contains(sparseId),
+      reason: 'a rich second profile stays visible',
+    );
+    expect(
+      shown([
+        rich,
+        {...sparse, 'id': 'fb_player_other'},
+      ]),
+      contains('fb_player_other'),
+      reason: 'no generic name-subset merge',
+    );
+  });
+
+  testWidgets('Saprissa summary and Plantilla count the same visible players', (
+    tester,
+  ) async {
+    const team = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
+    final payload = _payload(
+      players: [
+        {
+          ..._player(
+            'fb_player_333ccb5b7044465497e7888298dc7f87',
+            'Jamaal Waston Manley Kendall',
+            'Defender',
+            number: 4,
+            photo: true,
+          ),
+          'teamId': team,
+          'dateOfBirth': '1988-01-01',
+        },
+        {
+          ..._player(
+            'fb_player_a7a7c8d3a8474ef68c968dca80d2e975',
+            'Waston Kendall',
+            'Defender',
+            number: 4,
+          ),
+          'teamId': team,
+        },
+      ],
+    );
+    (payload['teams'] as List)[0]['id'] = team;
+    expect(Snapshot(payload).players, hasLength(1));
+    await _pumpTeam(tester, payload, teamId: team);
+    expect(find.text('1 jugador'), findsOneWidget);
+    expect(find.text('2 jugadores'), findsNothing);
+    expect(
+      find.descendant(of: find.byType(TeamSummary), matching: find.text('1')),
+      findsOneWidget,
+    );
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('1 jugador'), findsOneWidget);
+    expect(find.text('Jamaal Waston Manley Kendall'), findsOneWidget);
+    expect(find.text('Waston Kendall'), findsNothing);
+  });
+
+  testWidgets('a lone adjudicated alias keeps its own squad navigation', (
+    tester,
+  ) async {
+    const team = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
+    const aliasId = 'fb_player_a7a7c8d3a8474ef68c968dca80d2e975';
+    final payload = _payload(
+      players: [
+        {
+          ..._player(aliasId, 'Waston Kendall', 'Defender', number: 4),
+          'teamId': team,
+        },
+      ],
+    );
+    (payload['teams'] as List)[0]['id'] = team;
+    payload['coverage'] = {
+      'squad': {'state': 'AVAILABLE', 'playerCount': 1},
+    };
+    expect(Snapshot(payload).players.single.id, aliasId);
+    await _pumpTeam(tester, payload, teamId: team);
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('Waston Kendall'), findsOneWidget);
+    expect(find.text('Jamaal Waston Manley Kendall'), findsNothing);
+    await tester.tap(find.text('Waston Kendall'));
+    await tester.pumpAndSettle();
+    expect(find.text('Perfil $aliasId'), findsOneWidget);
+  });
+
+  testWidgets('revoked alias remains two players in summary and Plantilla', (
+    tester,
+  ) async {
+    const team = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
+    const richId = 'fb_player_333ccb5b7044465497e7888298dc7f87';
+    const aliasId = 'fb_player_a7a7c8d3a8474ef68c968dca80d2e975';
+    final rich = {
+      ..._player(
+        richId,
+        'Jamaal Waston Manley Kendall',
+        'Defender',
+        number: 4,
+        photo: true,
+      ),
+      'teamId': team,
+      'dateOfBirth': '1988-01-01',
+    };
+    final alias = {
+      ..._player(aliasId, 'Waston Kendall', 'Defender', number: 4),
+      'teamId': team,
+    };
+    final payload = _payload(players: [rich, alias]);
+    (payload['teams'] as List)[0]['id'] = team;
+    final memory = EntityMediaMemory();
+    addTearDown(memory.dispose);
+    memory.absorb(Snapshot(payload));
+    memory.absorb(
+      Snapshot(
+        _payload(
+          players: [
+            {...rich, 'dateOfBirth': '1990-01-01'},
+          ],
+        ),
+      ),
+    );
+    expect(memory.revokedDisplayAliases, contains(aliasId));
+    await _pumpTeam(tester, payload, teamId: team, media: memory);
+    expect(find.text('2 jugadores'), findsOneWidget);
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('2 jugadores'), findsOneWidget);
+    expect(find.text('Jamaal Waston Manley Kendall'), findsOneWidget);
+    expect(find.text('Waston Kendall'), findsOneWidget);
   });
 
   testWidgets('team with squad shows header and grouped Plantilla', (
