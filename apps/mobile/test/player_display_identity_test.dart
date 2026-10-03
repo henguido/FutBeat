@@ -193,6 +193,39 @@ void main() {
     }
   });
 
+  test('sparse target updates retain earlier non-empty guards', () {
+    final memory = EntityMediaMemory();
+    final alias = {
+      ...sparseWaston,
+      'country': 'Costa Rica',
+      'position': 'Defender',
+    };
+    final target = {
+      ...richWaston,
+      'country': 'Costa Rica',
+      'position': 'Defender',
+    };
+    memory.absorb(Snapshot(_snapshot([alias, target])));
+    memory.absorb(
+      Snapshot(
+        _snapshot([
+          {...target, 'country': '', 'position': ''},
+        ]),
+      ),
+    );
+    expect(memory.redirects.resolve(_wastonAlias), _waston);
+    memory.absorb(
+      Snapshot(
+        _snapshot([
+          {...target, 'country': 'Another country', 'position': ''},
+        ]),
+      ),
+    );
+    expect(memory.redirects.resolve(_wastonAlias), _wastonAlias);
+    expect(memory.revokedDisplayAliases, contains(_wastonAlias));
+    memory.dispose();
+  });
+
   test('alias-only country drift revokes prior target evidence', () {
     final memory = EntityMediaMemory();
     final alias = {...sparseWaston, 'country': 'Costa Rica'};
@@ -394,6 +427,52 @@ void main() {
     expect(search.players.single.name, 'Jamaal Waston Manley Kendall');
     expect(search.resolveEntityId(_wastonAlias), _waston);
     expect(search.coverage?['squad']['playerCount'], 1);
+  });
+
+  test('freshness copies preserve raw rows for a later revocation', () {
+    final presented = Snapshot(_snapshot([sparseWaston, richWaston]));
+    final stale = presented.asStale();
+    expect(stale.players, hasLength(1));
+    final restored = stale.withBlockedAliases({_wastonAlias});
+    expect(restored.players, hasLength(2));
+    expect(restored.coverage?['squad']['playerCount'], 2);
+    expect(restored.resolveEntityId(_wastonAlias), _wastonAlias);
+    expect(restored.stale, isTrue);
+    final unpresented = Snapshot.unpresented(_snapshot([sparseWaston]))
+        .asStale();
+    expect(unpresented.players.single.id, _wastonAlias);
+  });
+
+  test('match context copies preserve source alias rows and event IDs', () {
+    final raw = _snapshot([sparseWaston, richWaston]);
+    raw['teams'] = [
+      {'id': _saprissa, 'name': 'Saprissa'},
+      {'id': 'fb_away', 'name': 'Visitante'},
+    ];
+    raw['competitions'] = [
+      {'id': 'fb_comp', 'name': 'Liga'},
+    ];
+    raw['matches'] = [
+      {
+        'id': 'fb_match',
+        'competitionId': 'fb_comp',
+        'homeTeamId': _saprissa,
+        'awayTeamId': 'fb_away',
+        'startTime': '2026-10-03T18:00:00Z',
+        'status': 'VERIFIED',
+        'score': {'home': 1, 'away': 0},
+        'events': [
+          {'playerId': _wastonAlias},
+        ],
+        'statistics': <dynamic>[],
+      },
+    ];
+    final context = Snapshot(raw).forMatch('fb_match');
+    expect(context.players, hasLength(1));
+    expect(context.match('fb_match')!.events.single['playerId'], _waston);
+    final restored = context.withBlockedAliases({_wastonAlias});
+    expect(restored.players, hasLength(2));
+    expect(restored.match('fb_match')!.events.single['playerId'], _wastonAlias);
   });
 
   test('match-context event IDs follow the same visible identity', () {

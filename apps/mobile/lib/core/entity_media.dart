@@ -144,9 +144,12 @@ class EntityMediaMemory extends ChangeNotifier {
           _displayTargetGuards.containsKey(decision.aliasId)) {
         continue; // do not replace richer target evidence with a sparse row
       }
+      final prior = _displayTargetGuards[decision.aliasId];
+      final country = _displayGuardValue(player.json['country']);
+      final position = _displayGuardValue(player.json['position']);
       _displayTargetGuards[decision.aliasId] = (
-        country: _displayGuardValue(player.json['country']),
-        position: _displayGuardValue(player.json['position']),
+        country: country.isNotEmpty ? country : prior?.country ?? '',
+        position: position.isNotEmpty ? position : prior?.position ?? '',
       );
     }
     final next = {..._images};
