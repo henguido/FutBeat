@@ -513,7 +513,8 @@ export default {
       const until = requestUrl.searchParams.get('until');
       if (
         !validEntityId(competitionId) ||
-        !competitionId?.startsWith('fb_comp_') ||
+        !(competitionId?.startsWith('fb_comp_') ||
+          competitionId?.startsWith('fb_competition_')) ||
         season.length < 1 || season.length > 20 ||
         (until !== null && (until.length > 40 ||
           !/^\d{4}-\d{2}-\d{2}T/.test(until) || Number.isNaN(Date.parse(until))))
