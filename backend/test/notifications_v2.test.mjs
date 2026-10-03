@@ -180,6 +180,21 @@ test('FCM 429 requeues with the requested minimum delay', async () => {
   assert.equal(q.finished[0].p_state,undefined);
 });
 
+test('a rejected FCM 429 survives transient requeue storage failures', async () => {
+  const q=fakeQueue(1);
+  let attempts=0;
+  const rpc=async(name,args)=>{
+    if(name==='futbeat_requeue_notification_attempt' && ++attempts<3)
+      throw new Error('temporary database outage');
+    return q.rpc(name,args);
+  };
+  const result=await dispatchNotifications({rpc,
+    transport:{send:async()=>({state:'retryable',receipt:'FCM_HTTP_429',retryAfterSeconds:120})},maxBatches:1});
+  assert.equal(attempts,3);
+  assert.deepEqual(result.map((r)=>r.state),['pending']);
+  assert.equal(q.finished.length,1);
+});
+
 test('OAuth failure is detected before marking the provider-send boundary', async () => {
   const q=fakeQueue(1);
   let marked=0;

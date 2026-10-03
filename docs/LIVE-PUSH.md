@@ -42,7 +42,8 @@ Un fallo transitorio de autorización de FCM también vuelve a `pending`, pues
 todavía no se ha llamado a `messages:send`. Los avisos del mismo dispositivo
 que comparten clave de reemplazo se envían en el orden en que se reclamaron.
 Un HTTP 429 explícito de FCM se reintenta tras al menos 60 segundos y respeta
-una espera mayor indicada por `Retry-After`.
+una espera mayor indicada por `Retry-After`. Si falla transitoriamente la
+escritura de reencolado, el despachador la intenta hasta tres veces.
 El contrato de claim antiguo sigue siendo conservador durante el despliegue:
 sus envíos se marcan como iniciados antes de devolverlos, para no duplicarlos
 si un despachador anterior pierde el recibo.

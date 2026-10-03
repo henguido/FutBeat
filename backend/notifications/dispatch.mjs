@@ -8,10 +8,19 @@ export const DISPATCH_DEFAULTS = Object.freeze({ batchSize:50, concurrency:10, b
 async function sendOne({ row, rpc, transport }) {
  async function retryBeforeSend(receipt, retryAfterSeconds = 60) {
   let recorded = false;
-  try { recorded = await rpc('futbeat_requeue_notification_attempt',{
-   p_id:row.id,p_attempt:row.attemptId,p_reason:receipt,p_retry_after_seconds:retryAfterSeconds,
-  }); } catch { /* the stale-attempt guard requeues when no transport started */ }
-  return { id:row.id, state:'pending', receipt, recorded };
+  for (let attempt = 0; attempt < 3; attempt++) {
+   try {
+    recorded = await rpc('futbeat_requeue_notification_attempt',{
+     p_id:row.id,p_attempt:row.attemptId,p_reason:receipt,p_retry_after_seconds:retryAfterSeconds,
+    });
+    break;
+   } catch {
+    // A 429 is explicitly rejected by FCM, yet the send boundary was marked.
+    // Retry transient storage failures before the conservative stale sweep.
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve,250 * 2 ** attempt));
+   }
+  }
+  return { id:row.id, state:recorded ? 'pending' : 'unrecorded', receipt, recorded };
  }
  let valid;
  try {
