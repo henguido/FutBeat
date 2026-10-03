@@ -48,6 +48,12 @@ alter table futbeat_private.user_preferences
   add column if not exists notify_player_sub_in boolean not null default true,
   add column if not exists notify_player_sub_out boolean not null default true;
 
+-- Existing clients only had notify_cards. Carry their explicit choice into
+-- the new red-card switch before the v3 profile can report it; otherwise a
+-- legacy false would look enabled in the app but still be gated at delivery.
+update futbeat_private.user_preferences
+set notify_red_cards=notify_cards;
+
 alter table futbeat_private.push_devices
   add column if not exists disabled_at timestamptz,
   add column if not exists disabled_reason text;

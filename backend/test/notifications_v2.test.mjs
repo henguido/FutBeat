@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { openDatabase } from '../storage/database.mjs';
 import { createTransport, collapseKeyOf, DEFAULT_ANDROID_CHANNEL } from '../notifications/transports.mjs';
 import { dispatchNotifications, summarize } from '../notifications/dispatch.mjs';
@@ -9,6 +10,11 @@ import { fixtureEventSections, liveEventsContentSignature, normalizeFixtureEvent
 // Notifications v2 (20261002130000): dispatcher throughput, dead tokens,
 // send-time age, match start, goal annulled, approved types / preferences,
 // shared phone. Generic fixtures only; no network, no provider.
+
+test('migration carries existing card opt-outs into the new red-card switch', async () => {
+  const sql = await readFile(new URL('../../supabase/migrations/20261002130000_notifications_v2.sql', import.meta.url), 'utf8');
+  assert.match(sql, /update\s+futbeat_private\.user_preferences\s+set\s+notify_red_cards\s*=\s*notify_cards\s*;/i);
+});
 
 // ---------------------------------------------------------------- transport
 const serviceAccount = () => {
