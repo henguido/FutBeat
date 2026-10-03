@@ -1005,10 +1005,21 @@ class Snapshot {
   /// Rebuilds a cached response from its untouched source after an alias is
   /// revoked. Merely reprocessing its already-collapsed rows could not
   /// restore the second person or the original squad count.
-  Snapshot withBlockedAliases(Set<String> blockedAliasIds) =>
-      _presentationEnabled
-      ? Snapshot(_sourceJson, blockedAliasIds: blockedAliasIds)
-      : Snapshot.unpresented(_sourceJson);
+  Snapshot withBlockedAliases(Set<String> blockedAliasIds) {
+    final fallback = _sourceJson['_futbeatAliasProfileFallback'];
+    if (fallback is Map &&
+        blockedAliasIds.contains(fallback['aliasId']?.toString()) &&
+        fallback['snapshot'] is Map) {
+      return Snapshot.unpresented({
+        ...Map<String, dynamic>.from(fallback['snapshot'] as Map),
+        'freshness': _sourceJson['freshness'],
+      });
+    }
+    return _presentationEnabled
+        ? Snapshot(_sourceJson, blockedAliasIds: blockedAliasIds)
+        : Snapshot.unpresented(_sourceJson);
+  }
+
   final Json? coverage;
 
   /// The server launched a remote player discovery for this search; results
@@ -1062,7 +1073,11 @@ class Snapshot {
     return current;
   }
 
-  Snapshot withDisplayRedirect(String aliasId, String visibleId) => Snapshot({
+  Snapshot withDisplayRedirect(
+    String aliasId,
+    String visibleId, {
+    required Json fallback,
+  }) => Snapshot({
     'schemaVersion': 1,
     'demo': demo,
     'coverage': coverage,
@@ -1073,6 +1088,7 @@ class Snapshot {
       ...presentationRedirectIds,
       aliasId,
     }.toList(),
+    '_futbeatAliasProfileFallback': {'aliasId': aliasId, 'snapshot': fallback},
     'teams': teams.map((entity) => entity.json).toList(),
     'players': players.map((entity) => entity.json).toList(),
     'competitions': competitions.map((entity) => entity.json).toList(),
@@ -1142,6 +1158,9 @@ class Snapshot {
       'entityRedirects': _sourceJson['entityRedirects'] ?? const {},
       if (_sourceJson.containsKey('_futbeatDisplayRedirectIds'))
         '_futbeatDisplayRedirectIds': _sourceJson['_futbeatDisplayRedirectIds'],
+      if (_sourceJson.containsKey('_futbeatAliasProfileFallback'))
+        '_futbeatAliasProfileFallback':
+            _sourceJson['_futbeatAliasProfileFallback'],
       'teams': contextTeams,
       'players': contextPlayers,
       'competitions': [?sourceCompetition],

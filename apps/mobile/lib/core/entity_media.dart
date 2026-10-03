@@ -136,14 +136,10 @@ class EntityMediaMemory extends ChangeNotifier {
       final decision = adjudicationForVisible(player.id);
       if (decision == null ||
           _authoritativePlayerAliases.contains(decision.aliasId) ||
-          invalidatedAliases.contains(decision.aliasId) ||
-          redirects.resolve(decision.aliasId) != decision.visibleId) {
+          invalidatedAliases.contains(decision.aliasId)) {
         continue;
       }
-      if (player.json['displaySourceAliasId'] == decision.aliasId &&
-          _displayTargetGuards.containsKey(decision.aliasId)) {
-        continue; // do not replace richer target evidence with a sparse row
-      }
+      if (player.json['displaySourceAliasId'] == decision.aliasId) continue;
       final prior = _displayTargetGuards[decision.aliasId];
       final country = _displayGuardValue(player.json['country']);
       final position = _displayGuardValue(player.json['position']);

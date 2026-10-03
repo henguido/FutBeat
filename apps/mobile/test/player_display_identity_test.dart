@@ -226,6 +226,28 @@ void main() {
     memory.dispose();
   });
 
+  test('target-first evidence rejects a conflicting alias-only row', () {
+    final memory = EntityMediaMemory();
+    memory.absorb(
+      Snapshot(
+        _snapshot([
+          {...richWaston, 'country': 'Costa Rica', 'position': 'Defender'},
+        ]),
+      ),
+    );
+    expect(memory.redirects.resolve(_wastonAlias), _wastonAlias);
+    memory.absorb(
+      Snapshot(
+        _snapshot([
+          {...sparseWaston, 'country': 'Other country'},
+        ]),
+      ),
+    );
+    expect(memory.revokedDisplayAliases, contains(_wastonAlias));
+    expect(memory.redirects.resolve(_wastonAlias), _wastonAlias);
+    memory.dispose();
+  });
+
   test('alias-only country drift revokes prior target evidence', () {
     final memory = EntityMediaMemory();
     final alias = {...sparseWaston, 'country': 'Costa Rica'};
@@ -576,6 +598,10 @@ void main() {
         expect(requests, [_wastonAlias, _waston]);
         expect(good.resolveEntityId(_wastonAlias), _waston);
         expect(good.player(_waston)?.json['dateOfBirth'], '1988-01-01');
+        final revoked = good.asStale().withBlockedAliases({_wastonAlias});
+        expect(revoked.resolveEntityId(_wastonAlias), _wastonAlias);
+        expect(revoked.players.single.id, _wastonAlias);
+        expect(revoked.player(_wastonAlias)?.name, 'Waston Kendall');
 
         conflictingTarget = true;
         requests.clear();

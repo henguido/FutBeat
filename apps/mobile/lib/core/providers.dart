@@ -642,7 +642,11 @@ class ApiRepository implements FootballRepository {
           !adjudicatedPairCompatible(source, visible.json)) {
         return fallback();
       }
-      final resolved = target.withDisplayRedirect(id, decision.visibleId);
+      final resolved = target.withDisplayRedirect(
+        id,
+        decision.visibleId,
+        fallback: raw,
+      );
       media?.absorb(resolved);
       _remember(key, resolved);
       return resolved;
