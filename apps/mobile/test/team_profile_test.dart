@@ -7,6 +7,7 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
 import 'package:futbeat/features/entities/team_profile.dart';
+import 'package:futbeat/features/entities/team_summary.dart';
 import 'package:go_router/go_router.dart';
 
 const _longTeam = 'Club Deportivo Asociación Muy Larga de Nombre Extenso FC';
@@ -103,6 +104,7 @@ Future<void> _pumpTeam(
   WidgetTester tester,
   Map<String, dynamic> payload, {
   Size size = const Size(360, 780),
+  String teamId = 'fb_team',
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -113,7 +115,7 @@ Future<void> _pumpTeam(
     await db.customSelect('select 1').get();
   });
   final router = GoRouter(
-    initialLocation: '/team/fb_team',
+    initialLocation: '/team/$teamId',
     routes: [
       GoRoute(
         path: '/team/:id',
@@ -264,6 +266,48 @@ void main() {
       contains('fb_player_other'),
       reason: 'no generic name-subset merge',
     );
+  });
+
+  testWidgets('Saprissa summary and Plantilla count the same visible players', (
+    tester,
+  ) async {
+    const team = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
+    final payload = _payload(
+      players: [
+        {
+          ..._player(
+            'fb_player_333ccb5b7044465497e7888298dc7f87',
+            'Jamaal Waston Manley Kendall',
+            'Defender',
+            number: 4,
+            photo: true,
+          ),
+          'teamId': team,
+          'dateOfBirth': '1988-01-01',
+        },
+        {
+          ..._player(
+            'fb_player_a7a7c8d3a8474ef68c968dca80d2e975',
+            'Waston Kendall',
+            'Defender',
+            number: 4,
+          ),
+          'teamId': team,
+        },
+      ],
+    );
+    (payload['teams'] as List)[0]['id'] = team;
+    await _pumpTeam(tester, payload, teamId: team);
+    expect(find.text('1 jugador'), findsOneWidget);
+    expect(find.text('2 jugadores'), findsNothing);
+    expect(
+      find.descendant(of: find.byType(TeamSummary), matching: find.text('1')),
+      findsOneWidget,
+    );
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('1 jugador'), findsOneWidget);
+    expect(find.text('Jamaal Waston Manley Kendall'), findsOneWidget);
+    expect(find.text('Waston Kendall'), findsNothing);
   });
 
   testWidgets('team with squad shows header and grouped Plantilla', (

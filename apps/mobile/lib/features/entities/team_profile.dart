@@ -60,6 +60,9 @@ String squadGroupOf(Object? position) {
 
 int? _shirtNumber(Entity player) => player.shirtNumber;
 
+String _playerCountLabel(int count) =>
+    '$count ${count == 1 ? 'jugador' : 'jugadores'}';
+
 // #191: a single adjudicated GOAL pair in Saprissa's same squad answer.
 // Hide the sparse display row only while all observed identity guards still
 // hold. This never redirects IDs, merges players, or broadens subset matching.
@@ -212,6 +215,8 @@ class TeamProfileView extends ConsumerWidget {
     final players = data.players
         .where((player) => player.json['teamId'] == team.id)
         .toList();
+    final visiblePlayerCount = squadGroups(players)
+        .fold<int>(0, (sum, group) => sum + group.$2.length);
     // Competition + season context: the user's choice this session, else the
     // match it was opened from, else the server's default.
     final request = profileContextRequest(
@@ -302,7 +307,7 @@ class TeamProfileView extends ConsumerWidget {
             team: team,
             matches: matches,
             competitions: competitions,
-            players: players.length,
+            players: visiblePlayerCount,
             table: summaryTable?.snapshot,
             tableCompetitionId: summaryTable?.competitionId,
             tableLabel: summaryTable?.label,
@@ -408,7 +413,7 @@ class TeamProfileView extends ConsumerWidget {
               child: TeamHeader(
                 team: team,
                 competition: competitions.firstOrNull,
-                players: players.length,
+                players: visiblePlayerCount,
               ),
             ),
             if (teamContext != null && selected != null)
@@ -540,7 +545,7 @@ class TeamHeader extends StatelessWidget {
                   if (players > 0)
                     ProfileHeaderChip(
                       icon: Icons.groups_outlined,
-                      label: '$players jugadores',
+                      label: _playerCountLabel(players),
                     ),
                 ],
               ),
@@ -607,7 +612,7 @@ class TeamSquad extends StatelessWidget {
                   ? 'Selección de jugadores de demostración'
                   : count == 1
                   ? '1 jugador'
-                  : '$count jugadores',
+                  : _playerCountLabel(count),
               // Stored squad older than its freshness window: say since when.
               if (stale && sinceShown != null)
                 'Actualizada el ${sinceShown.day} ${_months[sinceShown.month - 1]}'
