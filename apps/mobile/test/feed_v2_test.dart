@@ -191,6 +191,7 @@ Future<List<String>> _pump(
   Snapshot? data,
   AppDatabase? db,
   String? country,
+  DateTime Function()? now,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -199,7 +200,10 @@ Future<List<String>> _pump(
   final opened = <String>[];
   final router = GoRouter(
     routes: [
-      GoRoute(path: '/', builder: (_, _) => const MatchesScreen()),
+      GoRoute(
+        path: '/',
+        builder: (_, _) => MatchesScreen(now: now ?? costaRicaNow),
+      ),
       GoRoute(
         path: '/match/:id',
         builder: (_, state) {
@@ -265,6 +269,54 @@ void main() {
       expect(matchFilterForDate(filter, yesterday, today), filter);
       expect(matchFilterForDate(filter, tomorrow, today), filter);
     }
+  });
+
+  testWidgets('#168: midnight rollover normalizes an explicit yesterday', (
+    tester,
+  ) async {
+    final today = DateUtils.dateOnly(costaRicaNow());
+    var clock = today.add(const Duration(hours: 23, minutes: 59));
+    await _pump(tester, now: () => clock);
+    await tester.tap(find.text('HOY')); // Keep the date explicit in state.
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'En vivo'))
+          .selected,
+      isTrue,
+    );
+
+    clock = today.add(const Duration(days: 1, minutes: 1));
+    tester.element(find.byType(MatchesScreen)).markNeedsBuild();
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Todos'))
+          .selected,
+      isTrue,
+    );
+    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'En vivo'))
+          .onSelected,
+      isNull,
+    );
+
+    // Changing the anchor back cannot resurrect the old LIVE selection: the
+    // post-frame normalization changed the stored filter, not only the paint.
+    clock = today.add(const Duration(hours: 23, minutes: 59));
+    tester.element(find.byType(MatchesScreen)).markNeedsBuild();
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Todos'))
+          .selected,
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('every match of the day is a row, once, without follows', (
