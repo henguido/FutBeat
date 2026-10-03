@@ -48,11 +48,13 @@ alter table futbeat_private.user_preferences
   add column if not exists notify_player_sub_in boolean not null default true,
   add column if not exists notify_player_sub_out boolean not null default true;
 
--- Existing clients only had notify_cards. Carry their explicit choice into
--- the new red-card switch before the v3 profile can report it; otherwise a
--- legacy false would look enabled in the app but still be gated at delivery.
+-- Carry legacy opt-outs into the new role-specific switches before the v3
+-- profile can report them; otherwise a legacy false would look enabled in
+-- the app but still be gated at delivery.
 update futbeat_private.user_preferences
-set notify_red_cards=notify_cards;
+set notify_red_cards=notify_cards,
+    notify_player_starter=notify_lineups,
+    notify_player_bench=notify_lineups;
 
 alter table futbeat_private.push_devices
   add column if not exists disabled_at timestamptz,
@@ -708,8 +710,12 @@ begin
     where o.state='pending'
       and (o.attempt_at is null or o.attempt_at<now()-interval '1 minute')
       and (d.transport='test' or (p_mode='live' and v_push_mode='live'))
-    order by o.created_at
-    for update of o skip locked
+      and not exists(select 1 from futbeat_private.notification_outbox active
+        where active.device_id=o.device_id and active.id<>o.id and active.state='sending'
+          and o.message ? 'collapseKey'
+          and active.message->>'collapseKey'=o.message->>'collapseKey')
+    order by o.created_at,o.id
+    for update of o,d skip locked
     limit least(greatest(p_limit,1),100)
   loop
     v_scanned:=v_scanned+1;
@@ -802,6 +808,7 @@ begin
     rows:=rows||jsonb_build_array(
       jsonb_build_object(
         'id',row.id,
+        'deviceId',row.device_id,
         'attemptId',attempt,
         'transport',row.transport,
         'token',row.token,

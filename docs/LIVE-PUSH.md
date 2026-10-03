@@ -38,6 +38,9 @@ Si falla una validación antes de iniciar el transporte, el intento vuelve a
 `pending` con una pausa de un minuto; el barrido de intentos atascados también
 lo recupera. Un recibo de token muerto solo deshabilita el token exacto usado
 en ese intento, nunca otro registrado después en la misma instalación.
+Un fallo transitorio de autorización de FCM también vuelve a `pending`, pues
+todavía no se ha llamado a `messages:send`. Los avisos del mismo dispositivo
+que comparten clave de reemplazo se envían en el orden en que se reclamaron.
 
 El envío real requiere que el modo de la Edge Function y
 `futbeat_private.push_settings.mode` sean ambos `live`. El modo de la base

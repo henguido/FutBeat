@@ -72,24 +72,32 @@ export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, c
   if (!(fcmToken instanceof Promise)) {
    fcmToken = (async () => {
     const now = Math.floor(clock()/1000);
-    const assertion = await jwt({alg:'RS256',typ:'JWT'},{
+    let assertion;
+    try { assertion = await jwt({alg:'RS256',typ:'JWT'},{
      iss:account.client_email,scope:'https://www.googleapis.com/auth/firebase.messaging',
      aud:'https://oauth2.googleapis.com/token',iat:now,exp:now+3600,
-    },account.private_key,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'});
-    const reply = await fetcher('https://oauth2.googleapis.com/token',{method:'POST',
+    },account.private_key,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'}); }
+    catch { return { error:'FCM_AUTH_INVALID', retryable:false }; }
+    let reply;
+    try { reply = await fetcher('https://oauth2.googleapis.com/token',{method:'POST',
      headers:{'Content-Type':'application/x-www-form-urlencoded'},
      body:new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion}),
-     signal:AbortSignal.timeout(SEND_TIMEOUT_MS)});
-    if (!reply.ok) return null;
-    const { access_token, expires_in } = await reply.json();
-    if (!access_token) return null;
+     signal:AbortSignal.timeout(SEND_TIMEOUT_MS)}); }
+    catch { return { error:'FCM_AUTH_UNAVAILABLE', retryable:true }; }
+    if (!reply.ok) return { error:'FCM_AUTH_HTTP_'+reply.status,
+     retryable:reply.status===429 || reply.status>=500 };
+    let payload;
+    try { payload = await reply.json(); }
+    catch { return { error:'FCM_AUTH_UNAVAILABLE', retryable:true }; }
+    const { access_token, expires_in } = payload ?? {};
+    if (!access_token) return { error:'FCM_AUTH_INVALID', retryable:false };
     return { value:access_token, expiresAt:clock() + Math.max(60, Number(expires_in) || 3600) * 1000 };
-   })().catch(() => null);
+   })();
   }
   const pending = fcmToken;
   const resolved = await pending;
-  if (fcmToken === pending) fcmToken = resolved; // null: the next send retries
-  return resolved ? { account, token:resolved.value } : { error:'FCM_AUTH_FAILED' };
+  if (fcmToken === pending) fcmToken = resolved.value ? resolved : null;
+  return resolved.value ? { account, token:resolved.value } : resolved;
  };
 
  let apnsJwt = null; // { value, issuedAt }; APNs accepts a provider token for up to 1 h
@@ -102,7 +110,12 @@ export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, c
   return value;
  };
 
- return { async send(row) {
+ return { async prepare(row) {
+  if (row.transport !== 'fcm') return null;
+  const access = await fcmAccess();
+  return access.error && access.retryable
+   ? { state:'retryable', receipt:access.error } : null;
+ }, async send(row) {
   if (row.transport === 'test') return { state:'simulated', receipt:'dry-run:' + row.id };
   let url,headers,body;
   const title = row.message?.title;
@@ -110,7 +123,7 @@ export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, c
   const collapse = collapseKeyOf(row);
   if (row.transport === 'fcm') {
    const access = await fcmAccess();
-   if (access.error) return {state:'failed',receipt:access.error};
+   if (access.error) return {state:access.retryable ? 'retryable' : 'failed',receipt:access.error};
    url='https://fcm.googleapis.com/v1/projects/'+encodeURIComponent(access.account.project_id)+'/messages:send';
    headers={Authorization:'Bearer '+access.token,'Content-Type':'application/json'};
    body={message:{token:row.token,notification:{title,...(text ? {body:text} : {})},

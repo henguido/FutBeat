@@ -13,7 +13,7 @@ import { fixtureEventSections, liveEventsContentSignature, normalizeFixtureEvent
 
 test('migration carries existing card opt-outs into the new red-card switch', async () => {
   const sql = await readFile(new URL('../../supabase/migrations/20261002130000_notifications_v2.sql', import.meta.url), 'utf8');
-  assert.match(sql, /update\s+futbeat_private\.user_preferences\s+set\s+notify_red_cards\s*=\s*notify_cards\s*;/i);
+  assert.match(sql, /update\s+futbeat_private\.user_preferences\s+set\s+notify_red_cards\s*=\s*notify_cards\s*,\s*notify_player_starter\s*=\s*notify_lineups\s*,\s*notify_player_bench\s*=\s*notify_lineups\s*;/i);
 });
 
 // ---------------------------------------------------------------- transport
@@ -60,7 +60,7 @@ test('FCM / APNs dead tokens are classified; server errors stay uncertain; auth 
   const { fetcher, calls } = fakeFetch((url) => url.includes('oauth2')
     ? (authOk ? { json: { access_token: 'a', expires_in: 3600 } } : { status: 500 }) : { status, json });
   const transport = createTransport({ mode: 'live', env: { FCM_SERVICE_ACCOUNT_JSON: serviceAccount() }, fetcher });
-  assert.deepEqual(await transport.send(fcmRow()), { state: 'failed', receipt: 'FCM_AUTH_FAILED' });
+  assert.deepEqual(await transport.send(fcmRow()), { state: 'retryable', receipt: 'FCM_AUTH_HTTP_500' });
   authOk = true;
   assert.deepEqual(await transport.send(fcmRow()), { state: 'failed', receipt: 'FCM_UNREGISTERED' });
   status = 400; json = { error: { status: 'INVALID_ARGUMENT', details: [{ errorCode: 'UNREGISTERED' }] } };
@@ -157,6 +157,51 @@ test('one validation failure does not abandon the rest of a claimed batch', asyn
   assert.equal(results.find((r)=>r.id==='row-3').receipt,'VALIDATION_UNAVAILABLE');
   assert.equal(results.find((r)=>r.id==='row-3').state,'pending', 'nothing was sent, so the alert is retryable');
   assert.equal(q.finished.length,50);
+});
+
+test('FCM auth failure before messages:send requeues rather than failing the alert', async () => {
+  const q=fakeQueue(1);
+  const result=await dispatchNotifications({rpc:q.rpc,transport:{send:async()=>({state:'retryable',receipt:'FCM_AUTH_HTTP_503'})},maxBatches:1});
+  assert.deepEqual(result.map((r)=>r.state),['pending']);
+  assert.equal(q.finished[0].p_reason,'FCM_AUTH_HTTP_503');
+  assert.equal(q.finished[0].p_state,undefined,'no terminal receipt was written');
+});
+
+test('OAuth failure is detected before marking the provider-send boundary', async () => {
+  const q=fakeQueue(1);
+  let marked=0;
+  const rpc=async(name,args)=>{
+    if(name==='futbeat_mark_notification_send_started') marked++;
+    const answer=await q.rpc(name,args);
+    return name==='futbeat_claim_notifications_v2'
+      ? {...answer,rows:answer.rows.map((row)=>({...row,transport:'fcm'}))} : answer;
+  };
+  const remote=fakeFetch(()=>({status:503}));
+  const transport=createTransport({mode:'live',env:{FCM_SERVICE_ACCOUNT_JSON:serviceAccount()},fetcher:remote.fetcher});
+  const result=await dispatchNotifications({rpc,transport,maxBatches:1});
+  assert.deepEqual(result.map((r)=>r.state),['pending']);
+  assert.equal(marked,0);
+  assert.equal(remote.calls.filter((c)=>c.url.includes('messages:send')).length,0);
+});
+
+test('rows for one device and collapse key send in claim order', async () => {
+  const rows=[
+    {id:'old',deviceId:'device',attemptId:'a',token:'tok',transport:'test',message:{collapseKey:'lineup:match:player'}},
+    {id:'new',deviceId:'device',attemptId:'b',token:'tok',transport:'test',message:{collapseKey:'lineup:match:player'}},
+  ];
+  const calls=[];
+  let claimed=false;
+  const rpc=async(name)=>{
+    if(name==='futbeat_claim_notifications_v2') return claimed ? {rows:[],scanned:0} : (claimed=true,{rows,scanned:2});
+    return true;
+  };
+  await dispatchNotifications({rpc,transport:{send:async(row)=>{
+    calls.push('start:'+row.id);
+    if(row.id==='old') await new Promise((resolve)=>setTimeout(resolve,20));
+    calls.push('end:'+row.id);
+    return {state:'simulated'};
+  }}});
+  assert.deepEqual(calls,['start:old','end:old','start:new','end:new']);
 });
 
 test('dispatcher stops claiming when the time budget is spent but finishes the claimed batch', async () => {
@@ -463,6 +508,21 @@ test('a pre-send failure is requeued, including by the stale sweep if its RPC fa
   await db.query("update futbeat_private.notification_outbox set attempt_at=now()-interval '6 minutes' where id=$1",[first.id]);
   await db.query("select public.futbeat_claim_notifications_v2('dry_run',1)");
   assert.equal((await db.query('select state from futbeat_private.notification_outbox where id=$1',[first.id])).rows[0].state,'pending');
+}));
+
+test('a second invocation waits for an in-flight alert with the same collapse key', () => withDb(async (db) => {
+  const s=await seed(db);
+  for(const [key,age] of [['lineup:old','2 minutes'],['lineup:new','1 minute']])
+    await db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message,created_at)
+      values($1,$2,$3,jsonb_build_object('type','NEWS','title',$1::text,'collapseKey','same-slot',
+      'subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$4::text))),now()-$5::interval)`,
+      [key,s.device,s.uid,s.match,age]);
+  const first=(await db.query("select public.futbeat_claim_notifications_v2('dry_run',1) v")).rows[0].v.rows[0];
+  assert.equal(first.message.title,'lineup:old');
+  assert.equal((await db.query("select public.futbeat_claim_notifications_v2('dry_run',1) v")).rows[0].v.rows.length,0);
+  await db.query("select public.futbeat_finish_notification($1,$2,'simulated','ok')",[first.id,first.attemptId]);
+  const next=(await db.query("select public.futbeat_claim_notifications_v2('dry_run',1) v")).rows[0].v.rows[0];
+  assert.equal(next.message.title,'lineup:new');
 }));
 
 test('an old dead-token receipt cannot disable a freshly registered token', () => withDb(async (db) => {
