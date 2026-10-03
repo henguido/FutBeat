@@ -216,4 +216,3 @@ begin
 end $$;
 
 revoke all on function futbeat_private.read_match_preview(text) from public,anon,authenticated,service_role;
-
