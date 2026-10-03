@@ -15,6 +15,7 @@ import '../../shared/widgets.dart';
 import '../entities/standings.dart';
 import 'match_info_card.dart';
 import 'match_preview_sections.dart';
+import 'match_period_scores.dart';
 
 const _headerTop = Color(0xFF1B2B31);
 const _headerBottom = Color(0xFF0F181C);
@@ -323,6 +324,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         (match.isAwaitingUpdate && detail.pending) ||
         mergedMatchTimeline(match, detail).isNotEmpty;
     final factsTabLabel = match.showKickoff ? 'Previa' : 'Hechos';
+    final periodScores = MatchPeriodScores.fromMatch(match, detail);
     final previewSections = [
       const _SectionTitle('Forma reciente'),
       RecentFormSection(preview: preview, data: data, match: match),
@@ -416,6 +418,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
               if (detail.videos.isNotEmpty) ...[
                 const _SectionTitle('Resumen oficial'),
                 PostMatchVideos(detail),
+              ],
+              if (periodScores != null) ...[
+                const _SectionTitle('Marcador por período'),
+                MatchPeriodScoresCard(scores: periodScores),
               ],
               if (!match.showKickoff && detail.topRated().isNotEmpty) ...[
                 _SectionTitle(_topRatedTitle(match, detail)),

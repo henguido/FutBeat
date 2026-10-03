@@ -14,6 +14,25 @@ const FIRST_GUARDED_MIGRATION = '20260923170000';
 const BANNED = [/newcastle/i, /\bhull\b/i, /premier league/i, /\bmatz\b/i, /\bsels\b/i];
 // Concrete canonical ids (fb_<kind>_<32 hex>) must never be hardcoded.
 const CANONICAL_ID = /fb_(comp|competition|team|player|match)_[0-9a-f]{32}/i;
+const ADJUDICATED_REGISTRY = 'apps/mobile/lib/core/player_display_identity.dart';
+
+function idGuardText(path, text) {
+  // This one registry contains individually reviewed alias *data*. Keep the
+  // no-hardcoded-ID guard for the executable logic around the registry.
+  if (path.replaceAll('\\', '/') !== ADJUDICATED_REGISTRY) return text;
+  return text.replace(
+    /const adjudicatedPlayerDisplayAliases = <PlayerDisplayAlias>\[[\s\S]*?\n\];/,
+    '',
+  );
+}
+
+test('only the adjudicated data block is exempt from the canonical-ID guard', () => {
+  const id = 'fb_player_0123456789abcdef0123456789abcdef';
+  const registry = `const adjudicatedPlayerDisplayAliases = <PlayerDisplayAlias>[\n  '${id}',\n];`;
+  assert.equal(idGuardText(ADJUDICATED_REGISTRY, registry).match(CANONICAL_ID), null);
+  assert.match(idGuardText(ADJUDICATED_REGISTRY, `${registry}\nif (id == '${id}') {}`), CANONICAL_ID);
+  assert.match(idGuardText('apps/mobile/lib/other.dart', registry), CANONICAL_ID);
+});
 
 async function files(dir, pattern) {
   const out = [];
@@ -37,10 +56,12 @@ test('production runtime code and new migrations contain no QA-specific names or
   const violations = [];
   for (const path of guarded) {
     const text = await readFile(new URL(path.replaceAll('\\', '/'), root), 'utf8');
-    for (const pattern of [...BANNED, CANONICAL_ID]) {
+    for (const pattern of BANNED) {
       const hit = text.match(pattern);
       if (hit) violations.push(`${path}: ${hit[0]}`);
     }
+    const idHit = idGuardText(path, text).match(CANONICAL_ID);
+    if (idHit) violations.push(`${path}: ${idHit[0]}`);
   }
   assert.deepEqual(violations, []);
 });

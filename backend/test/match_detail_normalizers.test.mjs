@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   lineupPlayerIds,
+  normalizeMatchDetail,
+  normalizePeriodScores,
   normalizeLineupSide,
   normalizeStatistics,
 } from '../../supabase/functions/_shared/match_detail.ts';
@@ -116,4 +118,94 @@ test('statistics never invent values', () => {
     { type: 'Offsides', home: null, away: '' },
     { type: 'Saves', home: 3, away: null },
   ]), [{ label: 'Saves', home: 3, away: '—' }]);
+});
+
+const score = (home, away) => ({ home, away });
+const periods = (fixture) => normalizePeriodScores(fixture);
+
+test('period scores: finished matches expose only complete, coherent stored halves', () => {
+  const finished = {
+    matchStatus: 'FINISHED',
+    homeTeamScore: '0', awayTeamScore: '0', // GOAL may reset the running total.
+    homeTeamHalftimeScore: '1', awayTeamHalftimeScore: '0',
+    homeTeamFtScore: '2', awayTeamFtScore: '1',
+  };
+  const expected = { halfTime: score(1, 0), fullTime: score(2, 1) };
+  assert.deepEqual(periods(finished), expected);
+  assert.deepEqual(normalizeMatchDetail({ payload: finished }).periodScores, expected);
+  assert.deepEqual(periods({ ...finished, homeTeamHalftimeScore: null }),
+    { fullTime: score(2, 1) });
+  assert.deepEqual(periods({ ...finished, homeTeamFtScore: null,
+    homeTeamScore: '2', awayTeamScore: '1' }),
+    {});
+  assert.deepEqual(periods({ ...finished, homeTeamHalftimeScore: '3' }),
+    {});
+  assert.deepEqual(periods({ ...finished, awayTeamFtScore: 'x',
+    homeTeamScore: '2', awayTeamScore: '1' }),
+    {});
+  assert.deepEqual(periods({ ...finished, homeTeamFtScore: '-1',
+    homeTeamScore: '2', awayTeamScore: '1' }),
+    {});
+  assert.deepEqual(periods({ ...finished, homeTeamFtScore: '2.5',
+    homeTeamScore: '2', awayTeamScore: '1' }),
+    {});
+});
+
+test('period scores: extra time and penalties stay separate from final match score', () => {
+  const extra = {
+    matchStatus: 'AFTER_ET',
+    homeTeamScore: '2', awayTeamScore: '1',
+    homeTeamHalftimeScore: '1', awayTeamHalftimeScore: '0',
+    homeTeamFtScore: '1', awayTeamFtScore: '1',
+    homeTeamExtraScore: '1', awayTeamExtraScore: '0',
+  };
+  assert.deepEqual(periods(extra), {
+    halfTime: score(1, 0), fullTime: score(1, 1), extraTime: score(1, 0),
+  });
+  const afterPen = {
+    ...extra, matchStatus: 'AFTER_PEN',
+    homeTeamScore: '3', awayTeamScore: '1', // Shoot-out bonus for winner.
+    homeTeamPenaltyScore: '4', awayTeamPenaltyScore: '3',
+  };
+  assert.deepEqual(periods(afterPen), {
+    halfTime: score(1, 0), fullTime: score(1, 1),
+    extraTime: score(1, 0), penalties: score(4, 3),
+  }); // Non-tied match total can still have a two-legged aggregate shoot-out.
+  assert.deepEqual(periods({ ...afterPen, homeTeamExtraScore: '0',
+    homeTeamScore: '2' }), {
+    halfTime: score(1, 0), fullTime: score(1, 1),
+    extraTime: score(0, 0), penalties: score(4, 3),
+  }); // Ordinary tied match with the shoot-out bonus.
+  assert.deepEqual(periods({ ...afterPen, homeTeamScore: '0', awayTeamScore: '0' }),
+    periods(afterPen)); // GOAL's post-match reset is also coherent.
+  assert.deepEqual(periods({ ...afterPen, homeTeamPenaltyScore: '3', awayTeamPenaltyScore: '3',
+    homeTeamScore: '2', awayTeamScore: '1' }), {
+    halfTime: score(1, 0), fullTime: score(1, 1), extraTime: score(1, 0),
+  });
+  assert.deepEqual(periods({ ...afterPen, homeTeamPenaltyScore: null,
+    homeTeamScore: '2', awayTeamScore: '1' }), {
+    halfTime: score(1, 0), fullTime: score(1, 1), extraTime: score(1, 0),
+  });
+});
+
+test('period scores: absent, nonterminal, awarded and incoherent answers fail closed', () => {
+  const fixture = {
+    homeTeamScore: '2', awayTeamScore: '1',
+    homeTeamHalftimeScore: '1', awayTeamHalftimeScore: '0',
+    homeTeamFtScore: '2', awayTeamFtScore: '1',
+    homeTeamExtraScore: '0', awayTeamExtraScore: '0',
+    homeTeamPenaltyScore: '4', awayTeamPenaltyScore: '3',
+  };
+  for (const status of [null, 'SCHEDULED', 'LIVE', 'HALF_TIME', 'AWARDED', 'ABANDONED']) {
+    assert.deepEqual(periods({ ...fixture, matchStatus: status }), {}, String(status));
+  }
+  assert.deepEqual(periods({ matchStatus: 'FINISHED' }), {});
+  assert.deepEqual(periods({ ...fixture, matchStatus: 'FINISHED', homeTeamScore: '3' }), {});
+  assert.deepEqual(periods({ ...fixture, matchStatus: 'AFTER_ET', awayTeamExtraScore: null }), {});
+  assert.deepEqual(periods({ ...fixture, matchStatus: 'AFTER_PEN', homeTeamPenaltyScore: '4',
+    awayTeamPenaltyScore: null, homeTeamScore: '3' }), {});
+  assert.deepEqual(periods({ ...fixture, matchStatus: 'AFTER_PEN', homeTeamScore: '3',
+    awayTeamPenaltyScore: '5' }), {}); // Bonus assigned to shoot-out loser.
+  assert.deepEqual(periods({ ...fixture, matchStatus: 'FINISHED', homeTeamHalftimeScore: '999' }),
+    {});
 });
