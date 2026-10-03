@@ -75,7 +75,11 @@ test('FCM / APNs dead tokens are classified; server errors stay uncertain; auth 
   assert.deepEqual(await transport.send(fcmRow()), { state: 'retryable', receipt: 'FCM_HTTP_429', retryAfterSeconds: 120 });
   headers = {};
   status = 503; json = {};
-  assert.equal((await transport.send(fcmRow())).state, 'uncertain');
+  const fcmOutage=await transport.send(fcmRow({retryCount:2}));
+  assert.equal(fcmOutage.state, 'retryable');
+  assert.ok(fcmOutage.retryAfterSeconds>=240, 'FCM backoff grows by attempt');
+  status = 500;
+  assert.equal((await transport.send(fcmRow())).state,'retryable');
   assert.equal(calls.filter((c) => c.url.includes('oauth2')).length, 2);
 
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -91,6 +95,10 @@ test('FCM / APNs dead tokens are classified; server errors stay uncertain; auth 
   apnsStatus = 429; apnsHeaders = { 'retry-after': '90' };
   assert.deepEqual(await apnsTransport.send(fcmRow({ transport: 'apns' })),
     { state:'retryable', receipt:'APNS_HTTP_429', retryAfterSeconds:90 });
+  apnsStatus = 503; apnsHeaders = {};
+  const apnsOutage=await apnsTransport.send(fcmRow({ transport:'apns', retryCount:2 }));
+  assert.equal(apnsOutage.state,'retryable');
+  assert.ok(apnsOutage.retryAfterSeconds>=3600,'APNs waits at least 15 minutes and backs off');
   apnsStatus = 200;
   await apnsTransport.send(fcmRow({ transport: 'apns' }));
   assert.equal(apns.calls[0].init.headers.authorization, apns.calls[1].init.headers.authorization, 'APNs provider token reused');

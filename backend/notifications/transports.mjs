@@ -39,9 +39,15 @@ function retryAfterSeconds(response) {
    ? Math.ceil(seconds) : retryAfter ? Math.ceil((Date.parse(retryAfter)-Date.now())/1000) : 60;
   return Number.isFinite(delay) ? Math.min(2147483647,Math.max(60,delay)) : 60;
 }
-async function fcmFailure(response) {
+function backoffSeconds(row, base) {
+ const attempts = Math.min(8,Math.max(0,Number(row.retryCount) || 0));
+ const stagger = [...String(row.id ?? '')].reduce((sum,ch)=>sum+ch.charCodeAt(0),0) % 16;
+ return Math.ceil(Math.min(86400,base * 2 ** attempts) * (1 + stagger / 100));
+}
+async function fcmFailure(response, row) {
  if (response.status === 429)
-  return { state:'retryable', receipt:'FCM_HTTP_429', retryAfterSeconds:retryAfterSeconds(response) };
+  return { state:'retryable', receipt:'FCM_HTTP_429',
+   retryAfterSeconds:Math.max(retryAfterSeconds(response),backoffSeconds(row,60)) };
  let code = null;
  try {
   const body = await response.json();
@@ -50,15 +56,21 @@ async function fcmFailure(response) {
  // A generic 404 can mean the FCM project or endpoint is misconfigured.
  // Only the token-specific FcmError is evidence that this device is dead.
  if (code === 'UNREGISTERED') return { state:'failed', receipt:'FCM_UNREGISTERED' };
- return { state: response.status >= 500 ? 'uncertain' : 'failed', receipt:'FCM_HTTP_' + response.status + (code ? ':' + code : '') };
+ return { state: response.status >= 500 ? 'retryable' : 'failed',
+  receipt:'FCM_HTTP_' + response.status + (code ? ':' + code : ''),
+  ...(response.status >= 500 ? { retryAfterSeconds:Math.max(retryAfterSeconds(response),backoffSeconds(row,60)) } : {}) };
 }
-async function apnsFailure(response) {
+async function apnsFailure(response, row) {
  if (response.status === 429)
-  return { state:'retryable', receipt:'APNS_HTTP_429', retryAfterSeconds:retryAfterSeconds(response) };
+  return { state:'retryable', receipt:'APNS_HTTP_429',
+   retryAfterSeconds:Math.max(retryAfterSeconds(response),backoffSeconds(row,60)) };
  let reason = null;
  try { reason = (await response.json())?.reason ?? null; } catch { /* no body */ }
- if (response.status === 410 || reason === 'Unregistered') return { state:'failed', receipt:'APNS_UNREGISTERED' };
- return { state: response.status >= 500 ? 'uncertain' : 'failed', receipt:'APNS_HTTP_' + response.status + (reason ? ':' + reason : '') };
+ if (response.status === 410 || (response.status < 500 && reason === 'Unregistered'))
+  return { state:'failed', receipt:'APNS_UNREGISTERED' };
+ return { state: response.status >= 500 ? 'retryable' : 'failed',
+  receipt:'APNS_HTTP_' + response.status + (reason ? ':' + reason : ''),
+  ...(response.status >= 500 ? { retryAfterSeconds:Math.max(retryAfterSeconds(response),backoffSeconds(row,900)) } : {}) };
 }
 
 export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, clock = () => Date.now() } = {}) {
@@ -162,7 +174,7 @@ export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, c
   try {
    const response=await fetcher(url,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(SEND_TIMEOUT_MS)});
    if(response.ok) return {state:'sent',receipt:row.transport==='apns' ? response.headers.get('apns-id') : (await response.json()).name};
-   return row.transport==='apns' ? apnsFailure(response) : fcmFailure(response);
+   return row.transport==='apns' ? apnsFailure(response,row) : fcmFailure(response,row);
   } catch { return {state:'uncertain',receipt:'SEND_ACK_UNKNOWN'}; }
  }};
 }

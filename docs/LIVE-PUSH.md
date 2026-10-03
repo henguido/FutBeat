@@ -46,6 +46,9 @@ enviado; un error de firma no crea un recibo incierto sin llamada al proveedor.
 Un HTTP 429 explícito de FCM o APNs se reintenta tras al menos 60 segundos y respeta
 una espera mayor indicada por `Retry-After`. Si falla transitoriamente la
 escritura de reencolado, el despachador la intenta hasta tres veces.
+Los 5xx con respuesta explícita también se reencolan: FCM con backoff desde
+60 segundos y APNs desde 15 minutos, ambos crecientes por intento y con
+desfase por alerta. Una excepción de red sin respuesta sigue `uncertain`.
 El contrato de claim antiguo sigue siendo conservador durante el despliegue:
 sus envíos se marcan como iniciados antes de devolverlos, para no duplicarlos
 si un despachador anterior pierde el recibo.

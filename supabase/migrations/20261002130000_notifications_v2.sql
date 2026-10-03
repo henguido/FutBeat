@@ -62,7 +62,8 @@ alter table futbeat_private.push_devices
 
 alter table futbeat_private.notification_outbox
   add column if not exists attempt_token text,
-  add column if not exists transport_started_at timestamptz;
+  add column if not exists transport_started_at timestamptz,
+  add column if not exists retry_count integer not null default 0;
 
 -- In-flight attempts claimed by the old dispatcher before this migration may
 -- already have reached FCM/APNs. Treat their lost receipts as uncertain, not
@@ -817,6 +818,7 @@ begin
         'id',row.id,
         'deviceId',row.device_id,
         'attemptId',attempt,
+        'retryCount',row.retry_count,
         'transport',row.transport,
         'token',row.token,
         'message',row.message
@@ -863,7 +865,7 @@ begin
   update futbeat_private.notification_outbox
   set state='pending',attempt_id=null,attempt_token=null,
     attempt_at=now()+make_interval(secs=>greatest(coalesce(p_retry_after_seconds,60),60)-60),
-    transport_started_at=null,provider_receipt=left(p_reason,200)
+    transport_started_at=null,provider_receipt=left(p_reason,200),retry_count=retry_count+1
   where id=p_id and attempt_id=p_attempt and state='sending';
   get diagnostics affected=row_count;
   return affected=1;
