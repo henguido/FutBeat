@@ -420,8 +420,8 @@ void main() {
       'at most 5', (tester) async {
     final container = await _open(tester, _Server((_) => _context()));
     await _scrollTo(tester, find.byKey(const ValueKey('recent-form')));
-    // Home newest first: W, L, D, W, (no score) -> shown oldest first.
-    expect(_chips(tester, 'form-home'), ['–', 'V', 'E', 'D', 'V']);
+    // Missing score is skipped; the next real result fills the fifth chip.
+    expect(_chips(tester, 'form-home'), ['V', 'V', 'E', 'D', 'V']);
     // Away newest first: D (0-0 home), L (lost 2-1 away).
     expect(_chips(tester, 'form-away'), ['D', 'E']);
     await _close(tester, container);
@@ -543,14 +543,96 @@ void main() {
       'retried automatically', (tester) async {
     final server = _Server((_) => _context(), preview: () => null);
     final container = await _open(tester, server);
+    await _settle(tester);
     expect(find.text('Información del partido'), findsOneWidget);
-    await _scrollTo(tester, find.byKey(const ValueKey('form-unavailable')));
+    expect(find.text('Forma reciente'), findsNothing);
+    expect(find.byKey(const ValueKey('recent-form')), findsNothing);
     await _tab(tester, 'Cara a cara');
     expect(find.text('Cara a cara no disponible'), findsOneWidget);
     await _elapse(tester, const Duration(seconds: 30));
     expect(server.previewReads, 1, reason: 'no automatic retry');
     await _tab(tester, 'Tabla');
     expect(find.text('Clasificación'), findsOneWidget);
+    await _close(tester, container);
+  });
+
+  testWidgets('form hides missing coverage instead of claiming no matches', (
+    tester,
+  ) async {
+    final preview = _preview();
+    preview['form'] = {
+      'home': {
+        'state': 'none',
+        'matchIds': ['fb_match_f5'],
+      },
+      'away': {'state': 'none', 'matchIds': <String>[]},
+    };
+    final container = await _open(
+      tester,
+      _Server((_) => _context(), preview: () => preview),
+    );
+    await _settle(tester);
+    expect(find.text('Forma reciente'), findsNothing);
+    expect(find.byKey(const ValueKey('recent-form')), findsNothing);
+    expect(find.text('Sin partidos recientes'), findsNothing);
+    await _close(tester, container);
+  });
+
+  testWidgets('form shows only the side with a real scored result', (
+    tester,
+  ) async {
+    final preview = _preview();
+    preview['form'] = {
+      'home': {
+        'state': 'partial',
+        'matchIds': ['fb_match_f1'],
+      },
+      'away': {'state': 'none', 'matchIds': <String>[]},
+    };
+    final container = await _open(
+      tester,
+      _Server((_) => _context(), preview: () => preview),
+      width: 320,
+    );
+    await _scrollTo(tester, find.byKey(const ValueKey('recent-form')));
+    expect(find.text('Forma reciente'), findsOneWidget);
+    expect(find.byKey(const ValueKey('form-home')), findsOneWidget);
+    expect(find.byKey(const ValueKey('form-away')), findsNothing);
+    expect(_chips(tester, 'form-home'), ['V']);
+    expect(tester.takeException(), isNull);
+    await _close(tester, container);
+  });
+
+  testWidgets('form rejects incomplete, negative and fractional scores', (
+    tester,
+  ) async {
+    final preview = _preview();
+    final matches = preview['matches'] as List;
+    for (final item in matches) {
+      if (item is! Map<String, dynamic>) continue;
+      switch (item['matchId']) {
+        case 'fb_match_f1':
+          item['score'] = {'home': 1, 'away': null};
+        case 'fb_match_f2':
+          item['score'] = {'home': -1, 'away': 0};
+        case 'fb_match_f3':
+          item['score'] = {'home': 1.5, 'away': 1};
+      }
+    }
+    preview['form'] = {
+      'home': {
+        'state': 'partial',
+        'matchIds': ['fb_match_f1', 'fb_match_f2', 'fb_match_f3'],
+      },
+      'away': {'state': 'none', 'matchIds': <String>[]},
+    };
+    final container = await _open(
+      tester,
+      _Server((_) => _context(), preview: () => preview),
+    );
+    await _settle(tester);
+    expect(find.text('Forma reciente'), findsNothing);
+    expect(find.byKey(const ValueKey('recent-form')), findsNothing);
     await _close(tester, container);
   });
 
