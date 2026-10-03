@@ -190,20 +190,26 @@ Map<String, dynamic> presentPlayerSnapshot(
   final authoritativeAliases = originalRedirects is Map
       ? originalRedirects.keys.map((key) => key.toString()).toSet()
       : <String>{};
+  final coverage = snapshot['coverage'];
+  // A team squad must never invent the absent richer row from a lone alias.
+  // Search/favorites may present an adjudicated standalone alias so saved
+  // links still resolve to the visible identity.
+  final includeStandalone = coverage is! Map || coverage['squad'] is! Map;
   final aliases = visiblePlayerAliases(
     players,
+    includeStandalone: includeStandalone,
     blockedAliasIds: {...authoritativeAliases, ...blockedAliasIds},
   );
   if (aliases.isEmpty) return snapshot;
   final shown = presentPlayers(
     players,
+    includeStandalone: includeStandalone,
     blockedAliasIds: {...authoritativeAliases, ...blockedAliasIds},
   );
   final redirects = <String, dynamic>{
     if (originalRedirects is Map) ...originalRedirects.cast<String, dynamic>(),
     ...aliases,
   };
-  final coverage = snapshot['coverage'];
   final nextCoverage = coverage is Map
       ? Map<String, dynamic>.from(coverage)
       : null;

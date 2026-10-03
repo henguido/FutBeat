@@ -314,6 +314,33 @@ void main() {
     expect(find.text('Waston Kendall'), findsNothing);
   });
 
+  testWidgets('a lone adjudicated alias keeps its own squad navigation', (
+    tester,
+  ) async {
+    const team = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
+    const aliasId = 'fb_player_a7a7c8d3a8474ef68c968dca80d2e975';
+    final payload = _payload(
+      players: [
+        {
+          ..._player(aliasId, 'Waston Kendall', 'Defender', number: 4),
+          'teamId': team,
+        },
+      ],
+    );
+    (payload['teams'] as List)[0]['id'] = team;
+    payload['coverage'] = {
+      'squad': {'state': 'AVAILABLE', 'playerCount': 1},
+    };
+    expect(Snapshot(payload).players.single.id, aliasId);
+    await _pumpTeam(tester, payload, teamId: team);
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('Waston Kendall'), findsOneWidget);
+    expect(find.text('Jamaal Waston Manley Kendall'), findsNothing);
+    await tester.tap(find.text('Waston Kendall'));
+    await tester.pumpAndSettle();
+    expect(find.text('Perfil $aliasId'), findsOneWidget);
+  });
+
   testWidgets('revoked alias remains two players in summary and Plantilla', (
     tester,
   ) async {

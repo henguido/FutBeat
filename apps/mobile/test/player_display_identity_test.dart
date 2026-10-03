@@ -483,11 +483,18 @@ void main() {
     expect(squad.player(_waston)?.name, 'Jamaal Waston Manley Kendall');
     expect(squad.player(_wastonAlias)?.id, _waston);
 
-    final search = Snapshot(_snapshot([sparseWaston]));
+    final loneSquad = Snapshot(_snapshot([sparseWaston]));
+    expect(loneSquad.players.single.id, _wastonAlias);
+    expect(loneSquad.resolveEntityId(_wastonAlias), _wastonAlias);
+    expect(loneSquad.coverage?['squad']['playerCount'], 1);
+
+    final searchRaw = _snapshot([sparseWaston]);
+    searchRaw['coverage'] = {'search': true};
+    final search = Snapshot(searchRaw);
     expect(search.players.single.id, _waston);
     expect(search.players.single.name, 'Jamaal Waston Manley Kendall');
     expect(search.resolveEntityId(_wastonAlias), _waston);
-    expect(search.coverage?['squad']['playerCount'], 1);
+    expect(search.coverage?['search'], isTrue);
   });
 
   test('freshness copies preserve raw rows for a later revocation', () {
