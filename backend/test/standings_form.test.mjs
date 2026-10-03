@@ -253,6 +253,19 @@ test('API: validates ids and season; normal cache policy; one DB-only read', () 
   assert.equal(missing.status, 404);
 }));
 
+test('API: accepts canonical fb_competition ids as well as legacy fb_comp ids', () => withDb(async (db) => {
+  const comp = 'fb_competition_665500f19ba64bf4895d3f4880560aec';
+  await db.query("insert into futbeat_private.entities values($1,'competition',$2)",
+    [comp, JSON.stringify({ id: comp, name: 'Canonical competition', season: '2026' })]);
+  const [home, away] = [await team(db), await team(db)];
+  await match(db, { comp, home, away, at: Date.now() - DAY });
+  const { call, rpcs } = await api(db);
+  const result = await call(`?competitionId=${comp}&season=2026`);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.teams[home].results, ['WIN']);
+  assert.deepEqual(rpcs, ['futbeat_read_standings_form']);
+}));
+
 // ---------------------------------------------------------------------------
 // Review follow-ups: groups, published-table cap, terminal shortcut
 // ---------------------------------------------------------------------------
