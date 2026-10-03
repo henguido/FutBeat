@@ -100,7 +100,7 @@ function fakeQueue(total, { sendMs = 5 } = {}) {
       const rows = pending.splice(0, args.p_limit);
       return { rows, scanned: rows.length };
     }
-    if (name === 'futbeat_notification_attempt_valid') return true;
+    if (name === 'futbeat_notification_attempt_valid' || name === 'futbeat_mark_notification_send_started') return true;
     finished.push(args); return true;
   };
   const transport = { async send(row) {
@@ -133,7 +133,7 @@ test('dispatcher advances past cancelled claim batches to a valid alert', async 
       if (claims === 3) return { rows: [{ id: 'goal', attemptId: 'a', token: 'tok', transport: 'test', message: {} }], scanned: 1 };
       return { rows: [], scanned: 0 };
     }
-    if (name === 'futbeat_notification_attempt_valid') return true;
+    if (name === 'futbeat_notification_attempt_valid' || name === 'futbeat_mark_notification_send_started') return true;
     return true;
   };
   const results = await dispatchNotifications({ rpc, transport: { send: async () => {
@@ -155,6 +155,7 @@ test('one validation failure does not abandon the rest of a claimed batch', asyn
   const results=await dispatchNotifications({rpc,transport:q.transport,maxBatches:1});
   assert.equal(results.length,50);
   assert.equal(results.find((r)=>r.id==='row-3').receipt,'VALIDATION_UNAVAILABLE');
+  assert.equal(results.find((r)=>r.id==='row-3').state,'pending', 'nothing was sent, so the alert is retryable');
   assert.equal(q.finished.length,50);
 });
 
@@ -447,6 +448,44 @@ test('dead token receipt disables the device and cancels its pending pushes; re-
   assert.equal((await db.query('select enabled from futbeat_private.push_devices where id=$1', [t.device])).rows[0].enabled, true);
 }));
 
+test('a pre-send failure is requeued, including by the stale sweep if its RPC fails', () => withDb(async (db) => {
+  const s = await seed(db);
+  await db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message)
+    values('retry:news',$1,$2,jsonb_build_object('type','NEWS','title','news',
+    'subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$3::text))))`, [s.device,s.uid,s.match]);
+  const first=(await db.query("select public.futbeat_claim_notifications_v2('dry_run',1) v")).rows[0].v.rows[0];
+  assert.equal((await db.query('select public.futbeat_requeue_notification_attempt($1,$2,$3) v',
+    [first.id,first.attemptId,'VALIDATION_UNAVAILABLE'])).rows[0].v,true);
+  assert.equal((await db.query('select state from futbeat_private.notification_outbox where id=$1',[first.id])).rows[0].state,'pending');
+  await db.query("update futbeat_private.notification_outbox set attempt_at=now()-interval '2 minutes' where id=$1",[first.id]);
+  const second=(await db.query("select public.futbeat_claim_notifications_v2('dry_run',1) v")).rows[0].v.rows[0];
+  assert.notEqual(second.attemptId,first.attemptId);
+  await db.query("update futbeat_private.notification_outbox set attempt_at=now()-interval '6 minutes' where id=$1",[first.id]);
+  await db.query("select public.futbeat_claim_notifications_v2('dry_run',1)");
+  assert.equal((await db.query('select state from futbeat_private.notification_outbox where id=$1',[first.id])).rows[0].state,'pending');
+}));
+
+test('an old dead-token receipt cannot disable a freshly registered token', () => withDb(async (db) => {
+  const s=await seed(db);
+  const device=(await db.query(`insert into futbeat_private.push_devices(user_id,installation_id,platform,transport,token)
+    values($1,$2,'android','fcm','old-token') returning id`,[s.uid,randomUUID()])).rows[0].id;
+  const news=(key)=>db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message)
+    values($1,$2,$3,jsonb_build_object('type','NEWS','title','news',
+    'subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$4::text))))`,[key,device,s.uid,s.match]);
+  await news('token:old');
+  await db.query("update futbeat_private.push_settings set mode='live' where id=true");
+  const claimed=(await db.query("select public.futbeat_claim_notifications_v2('live',1) v")).rows[0].v.rows[0];
+  assert.equal((await db.query('select public.futbeat_mark_notification_send_started($1,$2,$3) v',
+    [claimed.id,claimed.attemptId,claimed.token])).rows[0].v,true);
+  await db.query("update futbeat_private.push_devices set token='fresh-token' where id=$1",[device]);
+  await news('token:new');
+  assert.equal((await db.query("select public.futbeat_finish_notification($1,$2,'failed','FCM_UNREGISTERED') v",
+    [claimed.id,claimed.attemptId])).rows[0].v,true);
+  assert.deepEqual((await db.query('select token,enabled from futbeat_private.push_devices where id=$1',[device])).rows[0],
+    {token:'fresh-token',enabled:true});
+  assert.equal((await db.query("select state from futbeat_private.notification_outbox where notification_key='token:new'")).rows[0].state,'pending');
+}));
+
 test('shared phone: registering a token owned by another user moves it; profile v3 partial update', () => withDb(async (db) => {
   await db.exec("create schema auth; create function auth.uid() returns uuid language sql as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;");
   const as = (uid) => db.query("select set_config('request.jwt.claim.sub',$1,false)", [uid]);
@@ -523,6 +562,7 @@ test('new helpers are private; the profile RPC is for signed-in users only', () 
     from pg_proc p join pg_namespace n on n.oid=p.pronamespace
     where p.proname in ('enqueue_goal_annulled','goal_annulled_push_trigger','kickoff_push_is_fresh','futbeat_sync_user_profile_v3',
       'futbeat_claim_notifications','futbeat_claim_notifications_v2','futbeat_notification_attempt_valid',
+      'futbeat_requeue_notification_attempt','futbeat_mark_notification_send_started',
       'futbeat_cancel_notification_attempt','futbeat_finish_notification')`)).rows;
   const by = Object.fromEntries(rows.map((r) => [r.f, r]));
   for (const f of ['futbeat_private.enqueue_goal_annulled', 'futbeat_private.goal_annulled_push_trigger', 'futbeat_private.kickoff_push_is_fresh'])
@@ -530,6 +570,7 @@ test('new helpers are private; the profile RPC is for signed-in users only', () 
   assert.ok(by['public.futbeat_sync_user_profile_v3'].auth && !by['public.futbeat_sync_user_profile_v3'].anon);
   for (const f of ['public.futbeat_claim_notifications', 'public.futbeat_claim_notifications_v2',
     'public.futbeat_notification_attempt_valid', 'public.futbeat_cancel_notification_attempt',
+    'public.futbeat_requeue_notification_attempt', 'public.futbeat_mark_notification_send_started',
     'public.futbeat_finish_notification'])
     assert.ok(by[f].svc && !by[f].auth && !by[f].anon, f);
 }));

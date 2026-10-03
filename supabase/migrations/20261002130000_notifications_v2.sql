@@ -58,6 +58,10 @@ alter table futbeat_private.push_devices
   add column if not exists disabled_at timestamptz,
   add column if not exists disabled_reason text;
 
+alter table futbeat_private.notification_outbox
+  add column if not exists attempt_token text,
+  add column if not exists transport_started_at timestamptz;
+
 create index if not exists outbox_event_idx on futbeat_private.notification_outbox(event_id)
   where event_id is not null;
 
@@ -670,7 +674,12 @@ begin
   select mode into v_push_mode from futbeat_private.push_settings where id=true;
 
   update futbeat_private.notification_outbox
-  set state='uncertain',finished_at=now()
+  set state=case when transport_started_at is null then 'pending' else 'uncertain' end,
+    finished_at=case when transport_started_at is null then null else now() end,
+    attempt_id=case when transport_started_at is null then null else attempt_id end,
+    attempt_token=case when transport_started_at is null then null else attempt_token end,
+    attempt_at=case when transport_started_at is null then now() else attempt_at end,
+    provider_receipt=case when transport_started_at is null then 'VALIDATION_RETRY' else provider_receipt end
   where state='sending'
     and attempt_at<now()-interval '5 minutes';
 
@@ -697,6 +706,7 @@ begin
     left join futbeat_private.entities m
       on m.id=e.match_id
     where o.state='pending'
+      and (o.attempt_at is null or o.attempt_at<now()-interval '1 minute')
       and (d.transport='test' or (p_mode='live' and v_push_mode='live'))
     order by o.created_at
     for update of o skip locked
@@ -785,7 +795,8 @@ begin
 
     attempt:=gen_random_uuid();
     update futbeat_private.notification_outbox
-    set state='sending',attempt_id=attempt,attempt_at=now()
+    set state='sending',attempt_id=attempt,attempt_at=now(),
+      attempt_token=row.token,transport_started_at=null
     where id=row.id;
 
     rows:=rows||jsonb_build_array(
@@ -819,6 +830,37 @@ returns boolean language sql security definer set search_path='' as $$
       and (d.transport='test' or (select mode from futbeat_private.push_settings where id=true)='live'))
 $$;
 
+-- No provider request has begun if validation fails. A failed requeue RPC is
+-- recovered by the stale-attempt sweep above (transport_started_at is null).
+create or replace function public.futbeat_requeue_notification_attempt(p_id uuid,p_attempt uuid,p_reason text)
+returns boolean language plpgsql security definer set search_path='' as $$
+declare affected integer;
+begin
+  update futbeat_private.notification_outbox
+  set state='pending',attempt_id=null,attempt_token=null,attempt_at=now(),
+    transport_started_at=null,provider_receipt=left(p_reason,200)
+  where id=p_id and attempt_id=p_attempt and state='sending';
+  get diagnostics affected=row_count;
+  return affected=1;
+end $$;
+
+-- Mark the boundary immediately before the transport call. A stale attempt
+-- after this point is uncertain; before it, it is safe to retry.
+create or replace function public.futbeat_mark_notification_send_started(p_id uuid,p_attempt uuid,p_token text)
+returns boolean language plpgsql security definer set search_path='' as $$
+declare affected integer;
+begin
+  update futbeat_private.notification_outbox o
+  set transport_started_at=now()
+  from futbeat_private.push_devices d
+  where o.id=p_id and o.attempt_id=p_attempt and o.state='sending'
+    and d.id=o.device_id and d.user_id=o.user_id and d.enabled and d.token=p_token
+    and o.attempt_token=p_token
+    and (d.transport='test' or (select mode from futbeat_private.push_settings where id=true)='live');
+  get diagnostics affected=row_count;
+  return affected=1;
+end $$;
+
 create or replace function public.futbeat_cancel_notification_attempt(p_id uuid,p_attempt uuid,p_reason text)
 returns boolean language plpgsql security definer set search_path='' as $$
 declare affected integer;
@@ -841,6 +883,7 @@ create or replace function public.futbeat_finish_notification(p_id uuid,p_attemp
 returns boolean language plpgsql security definer set search_path='' as $$
 declare count_rows int;
  v_device uuid; -- NOTIFICATIONS V2
+ v_disabled integer;
 begin
  if p_state not in ('sent','simulated','failed','uncertain') then raise exception 'Invalid terminal state'; end if;
  update futbeat_private.notification_outbox set state=p_state,finished_at=now(),provider_receipt=left(p_receipt,200)
@@ -850,9 +893,13 @@ begin
  -- NOTIFICATIONS V2: dead token.
  if count_rows=1 and p_state='failed' and p_receipt in ('FCM_UNREGISTERED','APNS_UNREGISTERED') then
   update futbeat_private.push_devices set enabled=false,disabled_at=now(),disabled_reason=p_receipt
-  where id=v_device and enabled;
-  update futbeat_private.notification_outbox set state='cancelled',finished_at=now(),provider_receipt='device_disabled'
-  where device_id=v_device and state='pending';
+  where id=v_device and enabled and token=(
+    select attempt_token from futbeat_private.notification_outbox where id=p_id);
+  get diagnostics v_disabled=row_count;
+  if v_disabled=1 then
+   update futbeat_private.notification_outbox set state='cancelled',finished_at=now(),provider_receipt='device_disabled'
+   where device_id=v_device and state='pending';
+  end if;
  end if;
  return count_rows=1;
 end $$;
@@ -1128,7 +1175,8 @@ do $$ declare fn regprocedure; role_name text; begin
      'record_live_events','note_lineup_alerts','enqueue_goal_annulled','goal_annulled_push_trigger',
      'futbeat_register_push','read_user_profile','sync_user_profile_v3','sync_legacy_red_card_preference'))
    or (n.nspname='public' and p.proname in ('futbeat_claim_notifications','futbeat_claim_notifications_v2',
-     'futbeat_notification_attempt_valid','futbeat_cancel_notification_attempt','futbeat_finish_notification',
+     'futbeat_notification_attempt_valid','futbeat_requeue_notification_attempt',
+     'futbeat_mark_notification_send_started','futbeat_cancel_notification_attempt','futbeat_finish_notification',
      'futbeat_sync_user_profile_v3'))
  loop
   execute format('revoke all on function %s from public',fn);
@@ -1140,6 +1188,8 @@ do $$ declare fn regprocedure; role_name text; begin
   grant execute on function public.futbeat_claim_notifications(text,int),
     public.futbeat_claim_notifications_v2(text,int),
     public.futbeat_notification_attempt_valid(uuid,uuid,text),
+    public.futbeat_requeue_notification_attempt(uuid,uuid,text),
+    public.futbeat_mark_notification_send_started(uuid,uuid,text),
     public.futbeat_cancel_notification_attempt(uuid,uuid,text),
     public.futbeat_finish_notification(uuid,uuid,text,text) to service_role;
  end if;

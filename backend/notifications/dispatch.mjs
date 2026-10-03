@@ -5,19 +5,33 @@
 export const DISPATCH_DEFAULTS = Object.freeze({ batchSize:50, concurrency:10, budgetMs:45000 });
 
 async function sendOne({ row, rpc, transport }) {
+ async function retryBeforeSend(receipt) {
+  let recorded = false;
+  try { recorded = await rpc('futbeat_requeue_notification_attempt',{
+   p_id:row.id,p_attempt:row.attemptId,p_reason:receipt,
+  }); } catch { /* the stale-attempt guard requeues when no transport started */ }
+  return { id:row.id, state:'pending', receipt, recorded };
+ }
  let valid;
  try {
   valid = await rpc('futbeat_notification_attempt_valid',{
    p_id:row.id,p_attempt:row.attemptId,p_token:row.token,
   });
  } catch {
-  let recorded = false;
-  try { recorded = await rpc('futbeat_finish_notification',{
-   p_id:row.id,p_attempt:row.attemptId,p_state:'uncertain',p_receipt:'VALIDATION_UNAVAILABLE',
-  }); } catch { /* the stale-attempt guard will settle it */ }
-  return { id:row.id, state:'uncertain', receipt:'VALIDATION_UNAVAILABLE', recorded };
+  return retryBeforeSend('VALIDATION_UNAVAILABLE');
  }
  if (!valid) {
+  let recorded = false;
+  try { recorded = await rpc('futbeat_cancel_notification_attempt',{
+   p_id:row.id,p_attempt:row.attemptId,p_reason:'PRE_SEND_INVALID',
+  }); } catch { /* the stale-attempt guard will settle it */ }
+  return { id:row.id, state:'cancelled', receipt:'attempt_invalid', recorded };
+ }
+ let started;
+ try { started = await rpc('futbeat_mark_notification_send_started',{
+  p_id:row.id,p_attempt:row.attemptId,p_token:row.token,
+ }); } catch { return retryBeforeSend('SEND_START_UNAVAILABLE'); }
+ if (!started) {
   let recorded = false;
   try { recorded = await rpc('futbeat_cancel_notification_attempt',{
    p_id:row.id,p_attempt:row.attemptId,p_reason:'PRE_SEND_INVALID',

@@ -34,6 +34,10 @@ El despachador empieza en `dry_run`. En ese modo procesa únicamente tokens
 `test`, no abre conexiones con FCM/APNs y registra un recibo simulado. En
 modo real, un resultado de red ambiguo queda `uncertain` y no se reenvía a
 ciegas, evitando duplicados visibles.
+Si falla una validación antes de iniciar el transporte, el intento vuelve a
+`pending` con una pausa de un minuto; el barrido de intentos atascados también
+lo recupera. Un recibo de token muerto solo deshabilita el token exacto usado
+en ese intento, nunca otro registrado después en la misma instalación.
 
 El envío real requiere que el modo de la Edge Function y
 `futbeat_private.push_settings.mode` sean ambos `live`. El modo de la base
