@@ -197,24 +197,7 @@ class DataView extends ConsumerWidget {
             ],
           ),
         ),
-        data: (data) => Column(
-          children: [
-            if (!data.demo && data.stale)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 10,
-                ),
-                color: lime.withValues(alpha: .08),
-                child: const Text(
-                  'Los datos pueden estar desactualizados. Desliza para actualizar.',
-                  style: TextStyle(color: lime, fontSize: 12),
-                ),
-              ),
-            Expanded(child: builder(data)),
-          ],
-        ),
+        data: (data) => Column(children: [Expanded(child: builder(data))]),
       );
 }
 
@@ -261,13 +244,6 @@ class CalendarDataView extends ConsumerWidget {
     return Column(
       children: [
         if (data.revalidating) const LinearProgressIndicator(minHeight: 2),
-        if (data.stale)
-          const Padding(
-            padding: EdgeInsets.all(8),
-            child: Text(
-              'Los datos pueden estar desactualizados. Desliza para actualizar.',
-            ),
-          ),
         Expanded(
           child: builder(
             data,
