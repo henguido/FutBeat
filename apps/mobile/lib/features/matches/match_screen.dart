@@ -2913,8 +2913,10 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
     final ownGoal = type == 'GOAL' && incident['ownGoal'] == true;
     // The normalizer credits an own goal to the beneficiary. Its playerId
     // still identifies the scorer, who belongs to the opposite lineup.
-    if (ownGoal && incidentSide != 'home' && incidentSide != 'away') continue;
-    final playerSide = ownGoal
+    // With no side, the explicit provider playerId still identifies the
+    // scorer; do not discard that evidence just because the name is absent.
+    final playerSide =
+        ownGoal && (incidentSide == 'home' || incidentSide == 'away')
         ? (incidentSide == 'home' ? 'away' : 'home')
         : incidentSide;
     if (playerSide.isNotEmpty && playerSide != side) continue;

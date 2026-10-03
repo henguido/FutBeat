@@ -328,6 +328,21 @@ void main() {
         lineupEventsForPlayer(
           {'id': 'home-player'},
           [
+            {
+              'type': 'GOAL',
+              'side': null,
+              'ownGoal': true,
+              'playerId': 'home-player',
+            },
+          ],
+          'home',
+        ).map((e) => e.type),
+        ['OWN_GOAL'],
+      );
+      expect(
+        lineupEventsForPlayer(
+          {'id': 'home-player'},
+          [
             {'type': 'GOAL', 'side': 'away', 'playerId': 'home-player'},
           ],
           'home',
