@@ -688,15 +688,18 @@ class MatchDetail {
     return deduped;
   }
 
-  /// The single standout, only when their rating strictly beats the runner
-  /// up's; a tie at the top means no individual player of the match.
+  /// The single standout only when both sides have a real rated player and
+  /// their rating strictly beats the runner-up's. One-sided coverage or a tie
+  /// cannot establish a player of the match.
   ({Json player, String side})? get playerOfTheMatch {
-    final top = topRated(limit: 2);
-    if (top.isEmpty) return null;
-    if (top.length == 1) return top.first;
-    final first = (top.first.player['rating'] as num).toDouble();
-    final second = (top[1].player['rating'] as num).toDouble();
-    return first > second ? top.first : null;
+    final rated = _ratedPlayers();
+    if (!rated.any((entry) => entry.side == 'home') ||
+        !rated.any((entry) => entry.side == 'away')) {
+      return null;
+    }
+    final first = (rated[0].player['rating'] as num).toDouble();
+    final second = (rated[1].player['rating'] as num).toDouble();
+    return first > second ? rated[0] : null;
   }
 
   static String? _optional(dynamic value) {

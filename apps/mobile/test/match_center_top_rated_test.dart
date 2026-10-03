@@ -253,15 +253,22 @@ void main() {
       expect(clear.playerOfTheMatch?.player['name'], 'A');
     });
 
-    test(
-      'playerOfTheMatch is the sole entry when only one player is rated',
-      () {
-        final detail = MatchDetail(
-          _detail(homeStarters: [p('Unico', rating: 7.5)]),
-        );
-        expect(detail.playerOfTheMatch?.player['name'], 'Unico');
-      },
-    );
+    test('one-sided ratings never establish a player of the match', () {
+      final homeOnly = MatchDetail(
+        _detail(
+          homeStarters: [p('Lider', rating: 9), p('Segundo', rating: 8)],
+          awayStarters: [p('SinNota')],
+        ),
+      );
+      expect(homeOnly.topRated().length, 2);
+      expect(homeOnly.playerOfTheMatch, isNull);
+
+      final awayOnly = MatchDetail(
+        _detail(awaySubstitutes: [p('Unico', rating: 7.5)]),
+      );
+      expect(awayOnly.topRated().single.player['name'], 'Unico');
+      expect(awayOnly.playerOfTheMatch, isNull);
+    });
 
     test('empty when nothing is rated', () {
       final detail = MatchDetail(_detail(homeStarters: [p('SinNota')]));
@@ -319,6 +326,29 @@ void main() {
     await _scrollTo(tester, find.byKey(const ValueKey('top-rated-card')));
     expect(find.text('Mejores puntuados'), findsOneWidget);
     expect(find.text('Jugador del partido'), findsNothing);
+    await _close(tester, container);
+  });
+
+  testWidgets('finished match with one-sided ratings keeps real cards but '
+      'does not proclaim a player of the match', (tester) async {
+    final container = await _open(
+      tester,
+      _Server(
+        (_) => _context(status: 'VERIFIED'),
+        detail: () => _detail(
+          homeStarters: [
+            _player('Lider', rating: 9.2, canonicalId: 'p1'),
+            _player('Segundo', rating: 8.1, canonicalId: 'p2'),
+          ],
+          awayStarters: [_player('SinNota', canonicalId: 'p3')],
+        ),
+      ),
+    );
+    await _scrollTo(tester, find.byKey(const ValueKey('top-rated-card')));
+    expect(find.text('Jugador del partido'), findsNothing);
+    expect(find.text('Mejores puntuados'), findsOneWidget);
+    expect(find.byKey(const ValueKey('top-rated-card')), findsOneWidget);
+    expect(find.text('Lider'), findsWidgets);
     await _close(tester, container);
   });
 
