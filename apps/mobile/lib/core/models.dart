@@ -552,12 +552,20 @@ class LiveMatchUpdate {
 class MatchDetail {
   MatchDetail(Json json, {Set<String> blockedAliasIds = const {}})
     : _sourceJson = json,
+      blockedAliasIds = Set.unmodifiable(blockedAliasIds),
       json = presentPlayerMatchDetail(json, blockedAliasIds: blockedAliasIds);
 
   final Json _sourceJson;
+  Json get sourceJson => _sourceJson;
+  final Set<String> blockedAliasIds;
 
   MatchDetail withBlockedAliases(Set<String> blockedAliasIds) =>
       MatchDetail(_sourceJson, blockedAliasIds: blockedAliasIds);
+
+  MatchDetail withPending(bool pending) => MatchDetail({
+    ..._sourceJson,
+    'pending': pending,
+  }, blockedAliasIds: blockedAliasIds);
 
   factory MatchDetail.waiting(String matchId) =>
       MatchDetail({...MatchDetail.empty(matchId).json, 'pending': true});

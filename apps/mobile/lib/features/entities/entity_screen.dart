@@ -205,7 +205,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
         _seed = repository.entitySeed(widget.type, widget.id);
       }
     }
-    final seed = _seed;
+    final seed = _seed == null ? null : presentSnapshotForSession(ref, _seed!);
     if (seed == null) return null;
     final canonicalId = seed.resolveEntityId(widget.id);
     final team = seed.team(canonicalId);
@@ -230,7 +230,9 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
         _scheduleEnrichmentRefresh();
       }
     });
-    final detail = ref.watch(entitySnapshotProvider((type: type, id: id)));
+    final detail = ref
+        .watch(entitySnapshotProvider((type: type, id: id)))
+        .whenData((snapshot) => presentSnapshotForSession(ref, snapshot));
 
     return detail.when(
       // First open: paint what the session already knows (header, context,

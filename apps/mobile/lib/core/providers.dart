@@ -1050,6 +1050,38 @@ final entityMediaProvider = Provider<EntityMediaMemory>((ref) {
   return memory;
 });
 
+/// Emits only when a presentation adjudication is revoked or superseded.
+/// Screens re-present their already-emitted snapshots without refetching GOAL
+/// or invalidating unrelated network providers.
+final playerDisplayBlockedAliasesProvider = StreamProvider<Set<String>>((ref) {
+  final memory = ref.watch(entityMediaProvider);
+  final controller = StreamController<Set<String>>();
+  var last = memory.revokedDisplayAliases;
+  controller.add(last);
+  void onChange() {
+    final next = memory.revokedDisplayAliases;
+    if (next.length == last.length) return;
+    last = next;
+    controller.add(next);
+  }
+
+  memory.addListener(onChange);
+  ref.onDispose(() {
+    memory.removeListener(onChange);
+    controller.close();
+  });
+  return controller.stream;
+});
+
+/// Re-present an already-delivered snapshot when session evidence changes.
+/// Calling this in a widget build subscribes it to revocations without a
+/// fresh network read and restores hidden rows from Snapshot's source JSON.
+Snapshot presentSnapshotForSession(WidgetRef ref, Snapshot snapshot) =>
+    snapshot.withBlockedAliases(
+      ref.watch(playerDisplayBlockedAliasesProvider).asData?.value ??
+          ref.read(entityMediaProvider).revokedDisplayAliases,
+    );
+
 final snapshotProvider = FutureProvider<Snapshot>(
   (ref) => ref.watch(repositoryProvider).load(),
 );
@@ -1454,29 +1486,51 @@ bool _hasVisibleLineup(Json home, Json away) {
 /// latest answer. Rechecks may add data, but never erase richer UI state.
 MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   if (!current.available) return next;
+  // Merge untouched provider rows; presentation may have hidden an alias row
+  // that must be restorable if the adjudication is revoked later.
+  final currentRaw = current.sourceJson;
+  final nextRaw = next.sourceJson;
+  Json side(Json detail, String key) =>
+      detail[key] is Map ? Map<String, dynamic>.from(detail[key] as Map) : {};
+  final currentHome = side(currentRaw, 'home');
+  final currentAway = side(currentRaw, 'away');
+  final nextHome = side(nextRaw, 'home');
+  final nextAway = side(nextRaw, 'away');
   final replaceExisting =
       _detailLevelRank(next.detailLevel) >=
       _detailLevelRank(current.detailLevel);
   final rememberedPlayers = <dynamic>[
-    for (final player in current.homeStarters)
-      {...player, '_memorySide': 'home'},
-    for (final player in current.homeSubstitutes)
-      {...player, '_memorySide': 'home'},
-    for (final player in current.awayStarters)
-      {...player, '_memorySide': 'away'},
-    for (final player in current.awaySubstitutes)
-      {...player, '_memorySide': 'away'},
+    for (final player
+        in currentHome['starters'] is List
+            ? currentHome['starters'] as List
+            : const [])
+      if (player is Map) {...player, '_memorySide': 'home'},
+    for (final player
+        in currentHome['substitutes'] is List
+            ? currentHome['substitutes'] as List
+            : const [])
+      if (player is Map) {...player, '_memorySide': 'home'},
+    for (final player
+        in currentAway['starters'] is List
+            ? currentAway['starters'] as List
+            : const [])
+      if (player is Map) {...player, '_memorySide': 'away'},
+    for (final player
+        in currentAway['substitutes'] is List
+            ? currentAway['substitutes'] as List
+            : const [])
+      if (player is Map) {...player, '_memorySide': 'away'},
   ];
   final home = _mergeDetailSide(
-    current.home,
-    next.home,
+    currentHome,
+    nextHome,
     replaceExisting: replaceExisting,
     rememberedPlayers: rememberedPlayers,
     side: 'home',
   );
   final away = _mergeDetailSide(
-    current.away,
-    next.away,
+    currentAway,
+    nextAway,
     replaceExisting: replaceExisting,
     rememberedPlayers: rememberedPlayers,
     side: 'away',
@@ -1501,29 +1555,32 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
     coverage['statistics'] = 'available';
   }
   final detailLevel = replaceExisting ? next.detailLevel : current.detailLevel;
-  return MatchDetail({
-    ...current.json,
-    ...next.json,
-    'available': true,
-    'detailLevel': detailLevel,
-    'stadium': _latestNonEmpty(current.json['stadium'], next.json['stadium']),
-    'referee': _latestNonEmpty(current.json['referee'], next.json['referee']),
-    'round': _latestNonEmpty(current.json['round'], next.json['round']),
-    'stage': _latestNonEmpty(current.json['stage'], next.json['stage']),
-    'home': home,
-    'away': away,
-    'statistics': statistics,
-    // P0-A: the incidents list is the provider's current answer (a
-    // corrected or annulled goal, a deleted card): a present list replaces,
-    // even when shorter or empty; only a missing section keeps the old one.
-    'incidents': next.available && next.json['incidents'] is List
-        ? next.json['incidents']
-        : current.json['incidents'],
-    'videos': videos,
-    'pending': next.pending,
-    'hydrationNeeded': next.hydrationNeeded,
-    'coverage': coverage,
-  });
+  return MatchDetail(
+    {
+      ...currentRaw,
+      ...nextRaw,
+      'available': true,
+      'detailLevel': detailLevel,
+      'stadium': _latestNonEmpty(current.json['stadium'], next.json['stadium']),
+      'referee': _latestNonEmpty(current.json['referee'], next.json['referee']),
+      'round': _latestNonEmpty(current.json['round'], next.json['round']),
+      'stage': _latestNonEmpty(current.json['stage'], next.json['stage']),
+      'home': home,
+      'away': away,
+      'statistics': statistics,
+      // P0-A: the incidents list is the provider's current answer (a
+      // corrected or annulled goal, a deleted card): a present list replaces,
+      // even when shorter or empty; only a missing section keeps the old one.
+      'incidents': next.available && next.json['incidents'] is List
+          ? next.json['incidents']
+          : current.json['incidents'],
+      'videos': videos,
+      'pending': next.pending,
+      'hydrationNeeded': next.hydrationNeeded,
+      'coverage': coverage,
+    },
+    blockedAliasIds: {...current.blockedAliasIds, ...next.blockedAliasIds},
+  );
 }
 
 final matchDetailProvider = StreamProvider.autoDispose
@@ -1578,14 +1635,19 @@ final matchDetailProvider = StreamProvider.autoDispose
       } catch (_) {
         // A failed read is not evidence that data is absent: keep what we
         // had and try bounded read-only refreshes.
-        current = memory[id] ?? MatchDetail.waiting(id);
+        final currentBlocked = repository is ApiRepository
+            ? repository.media?.revokedDisplayAliases ?? const <String>{}
+            : const <String>{};
+        current =
+            memory[id]?.withBlockedAliases(currentBlocked) ??
+            MatchDetail.waiting(id);
       }
       if (disposed) return;
       yield current;
 
       if (repository is! ApiRepository) {
         if (current.pending) {
-          yield MatchDetail({...current.json, 'pending': false});
+          yield current.withPending(false);
         }
         return;
       }
@@ -1618,7 +1680,7 @@ final matchDetailProvider = StreamProvider.autoDispose
       // Complete by the server's own view (not just "displayable").
       final complete = !current.pending && !current.hydrationNeeded;
       if (!disposed && current.pending) {
-        current = MatchDetail({...current.json, 'pending': false});
+        current = current.withPending(false);
         yield current;
       }
       // Retain only real, complete detail; an incomplete one is re-read on
@@ -1651,7 +1713,14 @@ final effectiveSnapshotProvider = Provider<AsyncValue<Snapshot>>((ref) {
       const <String, LiveMatchUpdate>{};
   return ref
       .watch(snapshotProvider)
-      .whenData((snapshot) => snapshot.withLiveUpdates(updates));
+      .whenData(
+        (snapshot) => snapshot
+            .withBlockedAliases(
+              ref.watch(playerDisplayBlockedAliasesProvider).asData?.value ??
+                  ref.read(entityMediaProvider).revokedDisplayAliases,
+            )
+            .withLiveUpdates(updates),
+      );
 });
 
 final effectiveCalendarSnapshotProvider = Provider.autoDispose
@@ -1661,7 +1730,17 @@ final effectiveCalendarSnapshotProvider = Provider.autoDispose
           const <String, LiveMatchUpdate>{};
       return ref
           .watch(calendarSnapshotProvider(date))
-          .whenData((snapshot) => snapshot.withLiveUpdates(updates));
+          .whenData(
+            (snapshot) => snapshot
+                .withBlockedAliases(
+                  ref
+                          .watch(playerDisplayBlockedAliasesProvider)
+                          .asData
+                          ?.value ??
+                      ref.read(entityMediaProvider).revokedDisplayAliases,
+                )
+                .withLiveUpdates(updates),
+          );
     });
 
 final databaseProvider = Provider<AppDatabase>((ref) {

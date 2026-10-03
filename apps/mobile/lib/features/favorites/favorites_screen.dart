@@ -97,7 +97,10 @@ class FavoritesScreen extends ConsumerWidget {
               ),
             ),
             data: (snapshot) {
-              final data = snapshot.withLiveUpdates(updates);
+              final data = presentSnapshotForSession(
+                ref,
+                snapshot,
+              ).withLiveUpdates(updates);
               return ListView(
                 padding: const EdgeInsets.all(20),
                 children: [

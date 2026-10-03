@@ -18,8 +18,12 @@ class EntityMediaMemory extends ChangeNotifier {
   // never reinstate an adjudication; a fresh session can evaluate it again.
   final Set<String> _revokedDisplayAliases = {};
 
-  Set<String> get revokedDisplayAliases =>
-      Set.unmodifiable(_revokedDisplayAliases);
+  /// Presentation is also blocked when an explicit server redirect has
+  /// superseded a local adjudication, even if no contradiction was observed.
+  Set<String> get revokedDisplayAliases => Set.unmodifiable({
+    ..._revokedDisplayAliases,
+    ..._authoritativePlayerAliases,
+  });
 
   /// Alias -> canonical ids seen in every snapshot read this session. A
   /// separate notifier: redirect changes (not image changes) notify.
@@ -37,6 +41,7 @@ class EntityMediaMemory extends ChangeNotifier {
   }
 
   void absorb(Snapshot snapshot) {
+    final blockedCountBefore = revokedDisplayAliases.length;
     final newlyAuthoritative = <String>{};
     for (final entry in snapshot.entityRedirects.entries) {
       final decision = adjudicationForAlias(entry.key);
@@ -176,6 +181,7 @@ class EntityMediaMemory extends ChangeNotifier {
     }
     if (next.length == _images.length &&
         next.entries.every((entry) => _images[entry.key] == entry.value)) {
+      if (blockedCountBefore != revokedDisplayAliases.length) notifyListeners();
       return;
     }
     _images = Map.unmodifiable(next);

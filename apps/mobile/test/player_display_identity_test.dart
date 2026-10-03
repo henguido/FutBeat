@@ -328,6 +328,7 @@ void main() {
     expect(memory.redirects.resolve(_wastonAlias), _waston);
     memory.absorb(snapshot);
     expect(memory.redirects.resolve(_wastonAlias), mergedElsewhere);
+    expect(memory.revokedDisplayAliases, contains(_wastonAlias));
     memory.absorb(
       Snapshot(
         _snapshot([
