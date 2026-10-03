@@ -41,6 +41,9 @@ en ese intento, nunca otro registrado después en la misma instalación.
 Un fallo transitorio de autorización de FCM también vuelve a `pending`, pues
 todavía no se ha llamado a `messages:send`. Los avisos del mismo dispositivo
 que comparten clave de reemplazo se envían en el orden en que se reclamaron.
+El contrato de claim antiguo sigue siendo conservador durante el despliegue:
+sus envíos se marcan como iniciados antes de devolverlos, para no duplicarlos
+si un despachador anterior pierde el recibo.
 
 El envío real requiere que el modo de la Edge Function y
 `futbeat_private.push_settings.mode` sean ambos `live`. El modo de la base

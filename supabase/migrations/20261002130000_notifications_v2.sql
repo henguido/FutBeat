@@ -822,10 +822,19 @@ end
 $$;
 
 -- Keep the original array contract for older dispatchers during rollout.
+-- They do not call the new mark-started RPC, so conservatively mark their
+-- claims before returning them: a lost receipt must never requeue a send.
 create or replace function public.futbeat_claim_notifications(p_mode text default 'dry_run',p_limit int default 20)
-returns jsonb language sql security invoker set search_path='' as $$
-  select public.futbeat_claim_notifications_v2(p_mode,p_limit)->'rows'
-$$;
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_claim jsonb; v_rows jsonb;
+begin
+  v_claim:=public.futbeat_claim_notifications_v2(p_mode,p_limit);
+  v_rows:=v_claim->'rows';
+  update futbeat_private.notification_outbox o set transport_started_at=now()
+  where o.id in (select (r.value->>'id')::uuid from jsonb_array_elements(v_rows) r)
+    and o.state='sending';
+  return v_rows;
+end $$;
 
 -- A claimed row may have been cancelled because its device was reassigned.
 create or replace function public.futbeat_notification_attempt_valid(p_id uuid,p_attempt uuid,p_token text)
@@ -1165,6 +1174,12 @@ begin
   if tg_op='INSERT' or (new.notify_cards is distinct from old.notify_cards
     and new.notify_red_cards is not distinct from old.notify_red_cards) then
     new.notify_red_cards:=new.notify_cards;
+  end if;
+  if tg_op='INSERT' or (new.notify_lineups is distinct from old.notify_lineups
+    and new.notify_player_starter is not distinct from old.notify_player_starter
+    and new.notify_player_bench is not distinct from old.notify_player_bench) then
+    new.notify_player_starter:=new.notify_lineups;
+    new.notify_player_bench:=new.notify_lineups;
   end if;
   return new;
 end $$;

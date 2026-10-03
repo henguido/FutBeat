@@ -525,6 +525,20 @@ test('a second invocation waits for an in-flight alert with the same collapse ke
   assert.equal(next.message.title,'lineup:new');
 }));
 
+test('legacy claim marks its send boundary so stale receipts stay uncertain', () => withDb(async (db) => {
+  const s=await seed(db);
+  await db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message)
+    values('legacy:news',$1,$2,jsonb_build_object('type','NEWS','title','news',
+    'subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$3::text))))`,[s.device,s.uid,s.match]);
+  const legacy=(await db.query("select public.futbeat_claim_notifications('dry_run',1) v")).rows[0].v;
+  assert.equal(legacy.length,1);
+  const row=(await db.query('select transport_started_at from futbeat_private.notification_outbox where id=$1',[legacy[0].id])).rows[0];
+  assert.ok(row.transport_started_at);
+  await db.query("update futbeat_private.notification_outbox set attempt_at=now()-interval '6 minutes' where id=$1",[legacy[0].id]);
+  await db.query("select public.futbeat_claim_notifications_v2('dry_run',1)");
+  assert.equal((await db.query('select state from futbeat_private.notification_outbox where id=$1',[legacy[0].id])).rows[0].state,'uncertain');
+}));
+
 test('an old dead-token receipt cannot disable a freshly registered token', () => withDb(async (db) => {
   const s=await seed(db);
   const device=(await db.query(`insert into futbeat_private.push_devices(user_id,installation_id,platform,transport,token)
@@ -568,11 +582,13 @@ test('shared phone: registering a token owned by another user moves it; profile 
   assert.deepEqual((await db.query('select enabled,disabled_reason from futbeat_private.push_devices where id=$1', [da])).rows[0], { enabled: true, disabled_reason: null });
 
   // Profile v3.
-  const profile = (await db.query(`select public.futbeat_sync_user_profile_v3('{"notifyRedCards":false,"notifyPlayerSubIn":false,"hourFormat":"24h","unknownKey":1}'::jsonb) v`)).rows[0].v;
+  const profile = (await db.query(`select public.futbeat_sync_user_profile_v3('{"notifyRedCards":false,"notifyPlayerSubIn":false,"notifyLineups":false,"notifyPlayerStarter":false,"notifyPlayerBench":false,"hourFormat":"24h","unknownKey":1}'::jsonb) v`)).rows[0].v;
   assert.equal(profile.preferences.notifyRedCards, false);
   assert.equal(profile.preferences.notifyCards, false, 'red cards also drive the legacy cards switch');
   assert.equal(profile.preferences.notifyPlayerSubIn, false);
   assert.equal(profile.preferences.notifyPlayerSubOut, true);
+  assert.equal(profile.preferences.notifyPlayerStarter, false);
+  assert.equal(profile.preferences.notifyPlayerBench, false);
   assert.equal(profile.preferences.notifyGoalAnnulled, true);
   assert.equal(profile.preferences.notifyGoals, true, 'absent keys never change');
   assert.equal(profile.preferences.hourFormat, '24h');
@@ -582,6 +598,10 @@ test('shared phone: registering a token owned by another user moves it; profile 
   assert.equal(legacyRead.preferences.notifyCards, true);
   assert.equal(legacyRead.preferences.notifyRedCards, true,
     'a v2 client re-enabling cards also re-enables the v3 red-card switch');
+  assert.equal(legacyRead.preferences.notifyPlayerStarter, true,
+    'a v2 client re-enabling lineups also re-enables starter alerts');
+  assert.equal(legacyRead.preferences.notifyPlayerBench, true,
+    'a v2 client re-enabling lineups also re-enables bench alerts');
   await assert.rejects(db.query(`select public.futbeat_sync_user_profile_v3('{"notifyGoals":"no"}'::jsonb)`), /Invalid preference/);
   await assert.rejects(db.query(`select public.futbeat_sync_user_profile_v3('{"hourFormat":"13h"}'::jsonb)`), /Invalid hour format/);
   const read = (await db.query('select public.futbeat_read_user_profile() v')).rows[0].v;
