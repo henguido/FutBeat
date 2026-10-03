@@ -64,6 +64,13 @@ alter table futbeat_private.notification_outbox
   add column if not exists attempt_token text,
   add column if not exists transport_started_at timestamptz;
 
+-- In-flight attempts claimed by the old dispatcher before this migration may
+-- already have reached FCM/APNs. Treat their lost receipts as uncertain, not
+-- safe to retry. New v2 claims start with transport_started_at=null.
+update futbeat_private.notification_outbox
+set transport_started_at=coalesce(attempt_at,now())
+where state='sending' and transport_started_at is null;
+
 create index if not exists outbox_event_idx on futbeat_private.notification_outbox(event_id)
   where event_id is not null;
 
@@ -848,12 +855,14 @@ $$;
 
 -- No provider request has begun if validation fails. A failed requeue RPC is
 -- recovered by the stale-attempt sweep above (transport_started_at is null).
-create or replace function public.futbeat_requeue_notification_attempt(p_id uuid,p_attempt uuid,p_reason text)
+create or replace function public.futbeat_requeue_notification_attempt(
+  p_id uuid,p_attempt uuid,p_reason text,p_retry_after_seconds integer default 60)
 returns boolean language plpgsql security definer set search_path='' as $$
 declare affected integer;
 begin
   update futbeat_private.notification_outbox
-  set state='pending',attempt_id=null,attempt_token=null,attempt_at=now(),
+  set state='pending',attempt_id=null,attempt_token=null,
+    attempt_at=now()+make_interval(secs=>greatest(coalesce(p_retry_after_seconds,60),60)-60),
     transport_started_at=null,provider_receipt=left(p_reason,200)
   where id=p_id and attempt_id=p_attempt and state='sending';
   get diagnostics affected=row_count;
@@ -1216,7 +1225,7 @@ do $$ declare fn regprocedure; role_name text; begin
   grant execute on function public.futbeat_claim_notifications(text,int),
     public.futbeat_claim_notifications_v2(text,int),
     public.futbeat_notification_attempt_valid(uuid,uuid,text),
-    public.futbeat_requeue_notification_attempt(uuid,uuid,text),
+    public.futbeat_requeue_notification_attempt(uuid,uuid,text,integer),
     public.futbeat_mark_notification_send_started(uuid,uuid,text),
     public.futbeat_cancel_notification_attempt(uuid,uuid,text),
     public.futbeat_finish_notification(uuid,uuid,text,text) to service_role;

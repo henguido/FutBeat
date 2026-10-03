@@ -6,10 +6,10 @@ import { collapseKeyOf } from './transports.mjs';
 export const DISPATCH_DEFAULTS = Object.freeze({ batchSize:50, concurrency:10, budgetMs:45000 });
 
 async function sendOne({ row, rpc, transport }) {
- async function retryBeforeSend(receipt) {
+ async function retryBeforeSend(receipt, retryAfterSeconds = 60) {
   let recorded = false;
   try { recorded = await rpc('futbeat_requeue_notification_attempt',{
-   p_id:row.id,p_attempt:row.attemptId,p_reason:receipt,
+   p_id:row.id,p_attempt:row.attemptId,p_reason:receipt,p_retry_after_seconds:retryAfterSeconds,
   }); } catch { /* the stale-attempt guard requeues when no transport started */ }
   return { id:row.id, state:'pending', receipt, recorded };
  }
@@ -51,7 +51,8 @@ async function sendOne({ row, rpc, transport }) {
  let outcome;
  try { outcome = await transport.send(row); }
  catch { outcome = { state:'uncertain', receipt:'TRANSPORT_FAILURE' }; }
- if (outcome.state === 'retryable') return retryBeforeSend(outcome.receipt ?? 'PRE_SEND_RETRY');
+ if (outcome.state === 'retryable')
+  return retryBeforeSend(outcome.receipt ?? 'PRE_SEND_RETRY',outcome.retryAfterSeconds);
  let recorded = false;
  try { recorded = await rpc('futbeat_finish_notification',{p_id:row.id,p_attempt:row.attemptId,
   p_state:outcome.state,p_receipt:outcome.receipt ?? null}); }

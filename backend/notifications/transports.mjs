@@ -33,6 +33,14 @@ function dataOf(row) {
 // Dead-token classification: the device must be disabled (receipt handled by
 // futbeat_finish_notification).
 async function fcmFailure(response) {
+ if (response.status === 429) {
+  const retryAfter = response.headers.get('retry-after');
+  const seconds = Number(retryAfter);
+  const delay = retryAfter && Number.isFinite(seconds)
+   ? Math.ceil(seconds) : retryAfter ? Math.ceil((Date.parse(retryAfter)-Date.now())/1000) : 60;
+  return { state:'retryable', receipt:'FCM_HTTP_429',
+   retryAfterSeconds:Number.isFinite(delay) ? Math.min(2147483647,Math.max(60,delay)) : 60 };
+ }
  let code = null;
  try {
   const body = await response.json();

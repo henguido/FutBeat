@@ -14,6 +14,7 @@ import { fixtureEventSections, liveEventsContentSignature, normalizeFixtureEvent
 test('migration carries existing card opt-outs into the new red-card switch', async () => {
   const sql = await readFile(new URL('../../supabase/migrations/20261002130000_notifications_v2.sql', import.meta.url), 'utf8');
   assert.match(sql, /update\s+futbeat_private\.user_preferences\s+set\s+notify_red_cards\s*=\s*notify_cards\s*,\s*notify_player_starter\s*=\s*notify_lineups\s*,\s*notify_player_bench\s*=\s*notify_lineups\s*;/i);
+  assert.match(sql, /update\s+futbeat_private\.notification_outbox\s+set\s+transport_started_at\s*=\s*coalesce\(attempt_at,now\(\)\)\s+where\s+state='sending'/i);
 });
 
 // ---------------------------------------------------------------- transport
@@ -55,10 +56,10 @@ test('FCM: one OAuth token per invocation, body + channel + per-event collapse k
 });
 
 test('FCM / APNs dead tokens are classified; server errors stay uncertain; auth failure retried next send', async () => {
-  let status = 404, json = { error: { status: 'NOT_FOUND', details: [{ errorCode: 'UNREGISTERED' }] } };
+  let status = 404, json = { error: { status: 'NOT_FOUND', details: [{ errorCode: 'UNREGISTERED' }] } }, headers = {};
   let authOk = false;
   const { fetcher, calls } = fakeFetch((url) => url.includes('oauth2')
-    ? (authOk ? { json: { access_token: 'a', expires_in: 3600 } } : { status: 500 }) : { status, json });
+    ? (authOk ? { json: { access_token: 'a', expires_in: 3600 } } : { status: 500 }) : { status, json, headers });
   const transport = createTransport({ mode: 'live', env: { FCM_SERVICE_ACCOUNT_JSON: serviceAccount() }, fetcher });
   assert.deepEqual(await transport.send(fcmRow()), { state: 'retryable', receipt: 'FCM_AUTH_HTTP_500' });
   authOk = true;
@@ -70,6 +71,9 @@ test('FCM / APNs dead tokens are classified; server errors stay uncertain; auth 
   status = 404; json = { error: { status: 'NOT_FOUND' } };
   assert.deepEqual(await transport.send(fcmRow()), { state: 'failed', receipt: 'FCM_HTTP_404:NOT_FOUND' },
     'a missing project or endpoint must not disable a valid device');
+  status = 429; headers = { 'retry-after': '120' };
+  assert.deepEqual(await transport.send(fcmRow()), { state: 'retryable', receipt: 'FCM_HTTP_429', retryAfterSeconds: 120 });
+  headers = {};
   status = 503; json = {};
   assert.equal((await transport.send(fcmRow())).state, 'uncertain');
   assert.equal(calls.filter((c) => c.url.includes('oauth2')).length, 2);
@@ -165,6 +169,15 @@ test('FCM auth failure before messages:send requeues rather than failing the ale
   assert.deepEqual(result.map((r)=>r.state),['pending']);
   assert.equal(q.finished[0].p_reason,'FCM_AUTH_HTTP_503');
   assert.equal(q.finished[0].p_state,undefined,'no terminal receipt was written');
+});
+
+test('FCM 429 requeues with the requested minimum delay', async () => {
+  const q=fakeQueue(1);
+  const result=await dispatchNotifications({rpc:q.rpc,
+    transport:{send:async()=>({state:'retryable',receipt:'FCM_HTTP_429',retryAfterSeconds:120})},maxBatches:1});
+  assert.deepEqual(result.map((r)=>r.state),['pending']);
+  assert.equal(q.finished[0].p_retry_after_seconds,120);
+  assert.equal(q.finished[0].p_state,undefined);
 });
 
 test('OAuth failure is detected before marking the provider-send boundary', async () => {
@@ -515,9 +528,12 @@ test('a pre-send failure is requeued, including by the stale sweep if its RPC fa
     values('retry:news',$1,$2,jsonb_build_object('type','NEWS','title','news',
     'subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$3::text))))`, [s.device,s.uid,s.match]);
   const first=(await db.query("select public.futbeat_claim_notifications_v2('dry_run',1) v")).rows[0].v.rows[0];
-  assert.equal((await db.query('select public.futbeat_requeue_notification_attempt($1,$2,$3) v',
-    [first.id,first.attemptId,'VALIDATION_UNAVAILABLE'])).rows[0].v,true);
-  assert.equal((await db.query('select state from futbeat_private.notification_outbox where id=$1',[first.id])).rows[0].state,'pending');
+  assert.equal((await db.query('select public.futbeat_requeue_notification_attempt($1,$2,$3,$4) v',
+    [first.id,first.attemptId,'FCM_HTTP_429',120])).rows[0].v,true);
+  const delayed=(await db.query('select state,attempt_at>now()+interval \'55 seconds\' as delayed from futbeat_private.notification_outbox where id=$1',[first.id])).rows[0];
+  assert.equal(delayed.state,'pending');
+  assert.equal(delayed.delayed,true);
+  assert.equal((await db.query("select public.futbeat_claim_notifications_v2('dry_run',1) v")).rows[0].v.rows.length,0);
   await db.query("update futbeat_private.notification_outbox set attempt_at=now()-interval '2 minutes' where id=$1",[first.id]);
   const second=(await db.query("select public.futbeat_claim_notifications_v2('dry_run',1) v")).rows[0].v.rows[0];
   assert.notEqual(second.attemptId,first.attemptId);
