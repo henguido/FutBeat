@@ -11,6 +11,7 @@ import 'core/models.dart';
 import 'core/providers.dart';
 import 'core/theme.dart';
 import 'core/push.dart';
+import 'core/push_messages.dart';
 import 'core/interests.dart';
 import 'features/profile/profile_screen.dart';
 import 'features/matches/matches_screen.dart';
@@ -137,11 +138,37 @@ class FutBeatApp extends ConsumerStatefulWidget {
 class _FutBeatAppState extends ConsumerState<FutBeatApp>
     with WidgetsBindingObserver {
   late final GoRouter router = widget.router ?? createRouter();
+  final messenger = GlobalKey<ScaffoldMessengerState>();
+  PushMessageRouter? pushMessages;
+  bool followPromptChecked = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Null unless the build has the push flags: nothing runs otherwise.
+    final source = ref.read(pushMessageSourceProvider);
+    if (source != null) {
+      unawaited(ensureAndroidNotificationChannel());
+      pushMessages = PushMessageRouter(
+        source: source,
+        router: router,
+        messenger: messenger,
+      )..start();
+    }
+  }
+
+  /// The first follow added in this session offers notifications once.
+  void _onFollows(
+    AsyncValue<Set<String>>? previous,
+    AsyncValue<Set<String>> next,
+  ) {
+    if (followPromptChecked) return;
+    if (!followAdded(previous?.asData?.value, next.asData?.value)) return;
+    followPromptChecked = true;
+    final context = router.routerDelegate.navigatorKey.currentContext;
+    if (context == null) return;
+    unawaited(maybeOfferNotifications(context, ref.read(pushServiceProvider)));
   }
 
   @override
@@ -181,6 +208,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    pushMessages?.dispose();
     if (widget.router == null) router.dispose();
     super.dispose();
   }
@@ -190,6 +218,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     final hourFormat =
         ref.watch(profileSettingsProvider).asData?.value.hourFormat ?? 'system';
     final media = ref.watch(entityMediaProvider);
+    if (PushService.configured) ref.listen(followsProvider, _onFollows);
 
     return MaterialApp.router(
       locale: const Locale('es'),
@@ -197,6 +226,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       title: 'FutBeat',
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: messenger,
       theme: futbeatTheme(),
       builder: (context, child) {
         final query = MediaQuery.of(context);

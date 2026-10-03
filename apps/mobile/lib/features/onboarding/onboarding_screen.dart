@@ -13,6 +13,7 @@ import '../../core/push.dart';
 import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
+import '../profile/notification_options.dart';
 
 const onboardingStepCount = 6;
 
@@ -639,43 +640,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Widget _alertsStep() {
     final value = settings;
     if (value == null) return const LinearProgressIndicator();
-    final options = <(String, bool, UserProfileSettings Function(bool))>[
-      (
-        'Inicio de partido',
-        value.notifyKickoff,
-        (v) => value.copyWith(notifyKickoff: v),
-      ),
-      ('Goles', value.notifyGoals, (v) => value.copyWith(notifyGoals: v)),
-      (
-        'Resultado final',
-        value.notifyFinal,
-        (v) => value.copyWith(notifyFinal: v),
-      ),
-      ('Tarjetas', value.notifyCards, (v) => value.copyWith(notifyCards: v)),
-      (
-        'Alineaciones',
-        value.notifyLineups,
-        (v) => value.copyWith(notifyLineups: v),
-      ),
-      ('Noticias', value.notifyNews, (v) => value.copyWith(notifyNews: v)),
-      (
-        'Transferencias',
-        value.notifyTransfers,
-        (v) => value.copyWith(notifyTransfers: v),
-      ),
-    ];
-    final any = options.any((item) => item.$2);
+    final any = value.anyNotification;
     final service = ref.watch(pushServiceProvider);
     return Column(
       children: [
-        for (final item in options)
+        for (final option in notificationOptions)
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: Text(item.$1),
-            value: item.$2,
+            title: Text(option.title),
+            value: option.value(value),
             onChanged: settingsBusy
                 ? null
-                : (next) => _saveSettings(item.$3(next)),
+                : (next) => _saveSettings(option.update(value, next)),
           ),
         const SizedBox(height: 8),
         if (service.authenticated && PushService.configured)
