@@ -269,6 +269,24 @@ void main() {
     memory.dispose();
   });
 
+  test('co-present incompatible pair revokes an older display redirect', () {
+    final memory = EntityMediaMemory();
+    memory.absorb(Snapshot(_snapshot([sparseWaston, richWaston])));
+    expect(memory.redirects.resolve(_wastonAlias), _waston);
+    expect(memory.imageFor(_wastonAlias), isNotNull);
+    final conflict = Snapshot(
+      _snapshot([
+        {...sparseWaston, 'country': 'Costa Rica'},
+        {...richWaston, 'country': 'Other country'},
+      ]),
+    );
+    expect(conflict.players, hasLength(2));
+    memory.absorb(conflict);
+    expect(memory.redirects.resolve(_wastonAlias), _wastonAlias);
+    expect(memory.imageFor(_wastonAlias), isNull);
+    memory.dispose();
+  });
+
   test('alias-only country drift revokes prior target evidence', () {
     final memory = EntityMediaMemory();
     final alias = {...sparseWaston, 'country': 'Costa Rica'};
@@ -481,6 +499,14 @@ void main() {
     expect(restored.coverage?['squad']['playerCount'], 2);
     expect(restored.resolveEntityId(_wastonAlias), _wastonAlias);
     expect(restored.stale, isTrue);
+    final groups = squadGroups(
+      restored.players,
+      blockedAliasIds: {
+        ...restored.entityRedirects.keys,
+        ...restored.blockedDisplayAliases,
+      },
+    );
+    expect(groups.expand((group) => group.$2), hasLength(2));
     final unpresented = Snapshot.unpresented(_snapshot([sparseWaston]))
         .asStale();
     expect(unpresented.players.single.id, _wastonAlias);

@@ -1002,9 +1002,10 @@ class Snapshot {
   final Set<String> _blockedAliasIds;
   final bool _presentationEnabled;
 
-  /// Raw adjudicated alias rows that presentation may have hidden. A deep
-  /// link's verified alias response is kept in its reversible fallback.
-  Map<String, Json> get presentationSourceAliases {
+  Set<String> get blockedDisplayAliases => _blockedAliasIds;
+
+  /// Original player rows, including a verified deep-link alias fallback.
+  Map<String, Json> get sourcePlayerRowsById {
     final fallback = _sourceJson['_futbeatAliasProfileFallback'];
     final fallbackSnapshot = fallback is Map ? fallback['snapshot'] : null;
     final rows = <dynamic>[
@@ -1016,11 +1017,18 @@ class Snapshot {
     for (final row in rows) {
       if (row is! Map) continue;
       final id = row['id']?.toString();
-      if (id != null && presentationRedirectIds.contains(id)) {
-        result[id] = Map<String, dynamic>.from(row);
-      }
+      if (id != null) result[id] = Map<String, dynamic>.from(row);
     }
     return result;
+  }
+
+  /// Raw adjudicated alias rows that presentation may have hidden. A deep
+  /// link's verified alias response is kept in its reversible fallback.
+  Map<String, Json> get presentationSourceAliases {
+    return {
+      for (final entry in sourcePlayerRowsById.entries)
+        if (presentationRedirectIds.contains(entry.key)) entry.key: entry.value,
+    };
   }
 
   /// Rebuilds a cached response from its untouched source after an alias is

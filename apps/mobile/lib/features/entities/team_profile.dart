@@ -196,7 +196,10 @@ class TeamProfileView extends ConsumerWidget {
         .toList();
     final visiblePlayerCount = squadGroups(
       players,
-      blockedAliasIds: data.entityRedirects.keys.toSet(),
+      blockedAliasIds: {
+        ...data.entityRedirects.keys,
+        ...data.blockedDisplayAliases,
+      },
     ).fold<int>(0, (sum, group) => sum + group.$2.length);
     // Competition + season context: the user's choice this session, else the
     // match it was opened from, else the server's default.
@@ -339,7 +342,10 @@ class TeamProfileView extends ConsumerWidget {
             players,
             demo: data.demo,
             state: data.squadState,
-            blockedAliasIds: data.entityRedirects.keys.toSet(),
+            blockedAliasIds: {
+              ...data.entityRedirects.keys,
+              ...data.blockedDisplayAliases,
+            },
             updatedAt: DateTime.tryParse(
               ((data.coverage?['squad'] as Map?)?['updatedAt'])?.toString() ??
                   '',

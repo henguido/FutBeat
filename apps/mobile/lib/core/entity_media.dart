@@ -58,6 +58,16 @@ class EntityMediaMemory extends ChangeNotifier {
     // payload. Canonical database redirects still arrive in entityRedirects;
     // only known display aliases are invalidated.
     final rejectedDisplayAliases = <String>{};
+    final sourcePlayers = snapshot.sourcePlayerRowsById;
+    for (final decision in adjudicatedPlayerDisplayAliases) {
+      final alias = sourcePlayers[decision.aliasId];
+      final visible = sourcePlayers[decision.visibleId];
+      if (alias != null &&
+          visible != null &&
+          !adjudicatedPairCompatible(alias, visible)) {
+        rejectedDisplayAliases.add(decision.aliasId);
+      }
+    }
     final sourceAliasGuards = <String, ({String country, String position})>{};
     for (final entry in snapshot.presentationSourceAliases.entries) {
       final decision = adjudicationForAlias(entry.key);

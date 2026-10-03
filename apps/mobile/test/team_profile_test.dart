@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
@@ -105,6 +106,7 @@ Future<void> _pumpTeam(
   Map<String, dynamic> payload, {
   Size size = const Size(360, 780),
   String teamId = 'fb_team',
+  EntityMediaMemory? media,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -137,6 +139,7 @@ Future<void> _pumpTeam(
   final container = ProviderContainer(
     overrides: [
       databaseProvider.overrideWithValue(db),
+      if (media != null) entityMediaProvider.overrideWithValue(media),
       entitySnapshotProvider.overrideWith(
         (ref, request) async => Snapshot(payload),
       ),
@@ -309,6 +312,50 @@ void main() {
     expect(find.text('1 jugador'), findsOneWidget);
     expect(find.text('Jamaal Waston Manley Kendall'), findsOneWidget);
     expect(find.text('Waston Kendall'), findsNothing);
+  });
+
+  testWidgets('revoked alias remains two players in summary and Plantilla', (
+    tester,
+  ) async {
+    const team = 'fb_team_7d7cf628b4cb43e3a30cfade12eb0cf6';
+    const richId = 'fb_player_333ccb5b7044465497e7888298dc7f87';
+    const aliasId = 'fb_player_a7a7c8d3a8474ef68c968dca80d2e975';
+    final rich = {
+      ..._player(
+        richId,
+        'Jamaal Waston Manley Kendall',
+        'Defender',
+        number: 4,
+        photo: true,
+      ),
+      'teamId': team,
+      'dateOfBirth': '1988-01-01',
+    };
+    final alias = {
+      ..._player(aliasId, 'Waston Kendall', 'Defender', number: 4),
+      'teamId': team,
+    };
+    final payload = _payload(players: [rich, alias]);
+    (payload['teams'] as List)[0]['id'] = team;
+    final memory = EntityMediaMemory();
+    addTearDown(memory.dispose);
+    memory.absorb(Snapshot(payload));
+    memory.absorb(
+      Snapshot(
+        _payload(
+          players: [
+            {...rich, 'dateOfBirth': '1990-01-01'},
+          ],
+        ),
+      ),
+    );
+    expect(memory.revokedDisplayAliases, contains(aliasId));
+    await _pumpTeam(tester, payload, teamId: team, media: memory);
+    expect(find.text('2 jugadores'), findsOneWidget);
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('2 jugadores'), findsOneWidget);
+    expect(find.text('Jamaal Waston Manley Kendall'), findsOneWidget);
+    expect(find.text('Waston Kendall'), findsOneWidget);
   });
 
   testWidgets('team with squad shows header and grouped Plantilla', (
