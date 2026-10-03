@@ -10,7 +10,7 @@ create table futbeat_private.goal_standings_shape_samples (
   source text not null check (source in ('scheduled', 'demand')),
   shape jsonb not null check (
     jsonb_typeof(shape) = 'object'
-    and shape->>'version' = '1'
+    and (shape->>'version') is not distinct from '1'
     and octet_length(shape::text) <= 4096
   ),
   captured_at timestamptz not null default now(),
@@ -35,7 +35,7 @@ create function public.futbeat_record_goal_standings_shape(
 begin
   if p_competition_id !~ '^fb_comp' or p_source not in ('scheduled', 'demand')
     or p_shape is null or jsonb_typeof(p_shape) <> 'object'
-    or p_shape->>'version' <> '1'
+    or (p_shape->>'version') is distinct from '1'
     or octet_length(p_shape::text) > 4096 then
     raise exception 'Invalid standings shape sample';
   end if;

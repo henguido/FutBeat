@@ -8,4 +8,5 @@ delete from futbeat_private.goal_standings_shape_samples;
 drop function public.futbeat_record_goal_standings_shape(text, text, jsonb);
 drop table futbeat_private.goal_standings_shape_samples;
 
+notify pgrst,'reload schema';
 commit;

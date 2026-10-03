@@ -19,6 +19,8 @@ const adversarialRows = () => Array.from({ length: 8 }, (_, i) => {
 test('shape RPC migration reloads the PostgREST schema cache', () => {
   const migration = readFileSync(new URL('../../supabase/migrations/20261003050020_goal_standings_shape_sample.sql', import.meta.url), 'utf8');
   assert.match(migration, /notify pgrst\s*,\s*'reload schema'\s*;\s*$/i);
+  const retirement = readFileSync(new URL('../../supabase/manual/20261003050020_goal_standings_shape_sample_retire.sql', import.meta.url), 'utf8');
+  assert.match(retirement, /notify pgrst\s*,\s*'reload schema'\s*;\s*commit\s*;\s*$/i);
 });
 
 test('shape capture retains only bounded stage/group field paths and numeric/UUID IDs', () => {
@@ -81,6 +83,20 @@ test('private shape sample is service-only, expires and prunes on subsequent wri
       has_table_privilege('anon','futbeat_private.goal_standings_shape_samples','SELECT') anon_read`);
     assert.deepEqual(privileges.rows[0], { service_exec: true, anon_exec: false, anon_read: false });
     const shape = goalStandingsShape([{ stageId: 42 }, { stageId: 43 }]);
+    for (const invalid of [{ fields: [], ids: {}, sampledRows: 2 },
+      { version: null, fields: [], ids: {}, sampledRows: 2 }]) {
+      await assert.rejects(
+        db.query('select public.futbeat_record_goal_standings_shape($1,$2,$3)',
+          ['fb_comp_invalid', 'demand', JSON.stringify(invalid)]),
+        /Invalid standings shape sample/,
+      );
+      await assert.rejects(
+        db.query(`insert into futbeat_private.goal_standings_shape_samples
+          (competition_id, source, shape) values ($1, 'demand', $2)`,
+          ['fb_comp_invalid', JSON.stringify(invalid)]),
+        /check constraint/i,
+      );
+    }
     // PGlite's test role lacks Supabase's built-in BYPASSRLS until mirrored here.
     await db.exec('alter role service_role bypassrls; set role service_role');
     try {
