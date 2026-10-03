@@ -146,6 +146,13 @@ String _dateContextLabel(DateTime value, DateTime today) {
   return weekdays[date.weekday - 1];
 }
 
+/// Only the LIVE status is date-dependent; all other user filters survive.
+String matchFilterForDate(String filter, DateTime selected, DateTime today) =>
+    filter == 'En vivo' &&
+        DateUtils.dateOnly(selected) != DateUtils.dateOnly(today)
+    ? 'Todos'
+    : filter;
+
 /// Orders visible competitions without ever filtering the daily catalog.
 ///
 /// The selected country (or the detected one) only REORDERS; every
@@ -196,7 +203,9 @@ List<Entity> orderMatchCompetitions({
 }
 
 class MatchesScreen extends ConsumerStatefulWidget {
-  const MatchesScreen({super.key});
+  const MatchesScreen({super.key, this.now = costaRicaNow});
+
+  final DateTime Function() now;
 
   @override
   ConsumerState<MatchesScreen> createState() => _MatchesScreenState();
@@ -229,7 +238,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   }
 
   void _setDate(DateTime value) {
-    final today = _today ?? DateUtils.dateOnly(costaRicaNow());
+    final today = _today ?? DateUtils.dateOnly(widget.now());
     // With no date picked yet the feed shows its own "today" (the anchor).
     final previous = DateUtils.dateOnly(date ?? today);
     final next = DateUtils.dateOnly(value);
@@ -239,7 +248,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       if (next != previous) _dayDirection = next.isAfter(previous) ? 1 : -1;
       // #168: "En vivo" only makes sense today. On any other day it would
       // leave an empty screen although that day has matches.
-      if (filter == 'En vivo' && next != today) filter = 'Todos';
+      filter = matchFilterForDate(filter, next, today);
     });
     if (next == previous) return;
     if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
@@ -280,7 +289,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
 
   @override
   Widget build(BuildContext context) {
-    final requestDate = DateUtils.dateOnly(date ?? costaRicaNow());
+    final requestDate = DateUtils.dateOnly(date ?? widget.now());
 
     return Scaffold(
       appBar: AppBar(
@@ -308,13 +317,29 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
         builder: (data, loading, failed) {
           final anchor = data.demo
               ? DateTime(2026, 9, 15)
-              : DateUtils.dateOnly(costaRicaNow());
+              : DateUtils.dateOnly(widget.now());
           final selected = DateUtils.dateOnly(date ?? anchor);
           _today = anchor;
+          final effectiveFilter = matchFilterForDate(filter, selected, anchor);
+          if (effectiveFilter != filter) {
+            // The anchor can roll over at midnight without a date tap. Render
+            // coherently now and persist the normalized state after the frame.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              final currentToday = _today ?? DateUtils.dateOnly(widget.now());
+              final currentSelected = DateUtils.dateOnly(date ?? currentToday);
+              final normalized = matchFilterForDate(
+                filter,
+                currentSelected,
+                currentToday,
+              );
+              if (normalized != filter) setState(() => filter = normalized);
+            });
+          }
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
-          final games = dedupeFixtures(data.onDate(selected, filter));
+          final games = dedupeFixtures(data.onDate(selected, effectiveFilter));
 
           final followedGames =
               games
@@ -358,7 +383,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
 
             // The live filter always shows its rows.
             final collapsed =
-                filter != 'En vivo' && _collapsed.contains(competition.id);
+                effectiveFilter != 'En vivo' &&
+                _collapsed.contains(competition.id);
             feedItems.add(
               () => _CompetitionHeader(
                 competition: competition,
@@ -367,7 +393,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                 collapsed: collapsed,
                 onOpen: () => context.push('/competition/${competition.id}'),
                 onToggle: () => _toggleCollapsed(competition.id),
-                canToggle: filter != 'En vivo',
+                canToggle: effectiveFilter != 'En vivo',
               ),
             );
             if (!collapsed) {
@@ -427,13 +453,18 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                           label: Text(
                             value,
                             style: TextStyle(
-                              color: filter == value
+                              color: effectiveFilter == value
                                   ? const Color(0xFF0B1114)
                                   : Colors.white,
                             ),
                           ),
-                          selected: filter == value,
-                          onSelected: (_) => setState(() => filter = value),
+                          selected: effectiveFilter == value,
+                          // A non-today date cannot contain an in-progress
+                          // match. Keep the option visible for orientation,
+                          // but do not allow an artificial empty LIVE view.
+                          onSelected: value == 'En vivo' && selected != anchor
+                              ? null
+                              : (_) => setState(() => filter = value),
                         ),
                       ),
                   ],

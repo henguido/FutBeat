@@ -334,11 +334,27 @@ void main() {
     await openApp(tester);
     await tester.tap(find.text('MAÑANA'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('En vivo'));
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Todos'))
+          .selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'En vivo'))
+          .onSelected,
+      isNull,
+    );
+    // Demo has a scheduled fixture tomorrow; continue to the genuinely empty
+    // day instead of manufacturing an empty view with an invalid LIVE filter.
+    final swipe = find.byKey(const ValueKey('matches-date-swipe'));
+    await tester.fling(swipe, const Offset(-300, 0), 1200);
     await tester.pumpAndSettle();
     expect(find.text('Sin partidos'), findsOneWidget);
+    await tester.fling(swipe, const Offset(300, 0), 1200);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('HOY'));
-    await tester.tap(find.text('Todos'));
     await tester.pumpAndSettle();
     expect(find.text('2 - 1'), findsOneWidget);
   });
