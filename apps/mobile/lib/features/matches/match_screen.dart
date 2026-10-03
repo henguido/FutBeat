@@ -2909,13 +2909,24 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
   for (final incident in incidents) {
     final incidentSide =
         incident['side']?.toString() ?? incident['team']?.toString() ?? '';
-    if (incidentSide.isNotEmpty && incidentSide != side) continue;
     final type = incident['type']?.toString() ?? 'OTHER';
+    final ownGoal = type == 'GOAL' && incident['ownGoal'] == true;
+    // The normalizer credits an own goal to the beneficiary. Its playerId
+    // still identifies the scorer, who belongs to the opposite lineup.
+    // With no side, the explicit provider playerId still identifies the
+    // scorer; do not discard that evidence just because the name is absent.
+    final playerSide =
+        ownGoal && (incidentSide == 'home' || incidentSide == 'away')
+        ? (incidentSide == 'home' ? 'away' : 'home')
+        : incidentSide;
+    if (playerSide.isNotEmpty && playerSide != side) continue;
     final minute = incident['minute'] as int?;
     if (incident['playerId']?.toString() == id) {
-      result.add(LineupPlayerEvent(type, minute));
+      result.add(LineupPlayerEvent(ownGoal ? 'OWN_GOAL' : type, minute));
     }
-    if (incident['assistPlayerId']?.toString() == id) {
+    if (type == 'GOAL' &&
+        !ownGoal &&
+        incident['assistPlayerId']?.toString() == id) {
       result.add(LineupPlayerEvent('ASSIST', minute));
     }
     if (incident['outPlayerId']?.toString() == id) {
@@ -3419,6 +3430,7 @@ class _LineupEventIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final (icon, color) = switch (event.type) {
       'GOAL' => (Icons.sports_soccer, Colors.white),
+      'OWN_GOAL' => (Icons.sports_soccer, Colors.orangeAccent),
       'ASSIST' => (Icons.assistant_rounded, lime),
       'YELLOW_CARD' => (Icons.square_rounded, Colors.amber),
       'RED_CARD' => (Icons.square_rounded, Colors.redAccent),
@@ -3494,6 +3506,7 @@ Color eventColor(String type) => switch (type) {
 
 String eventLabel(String type) => switch (type) {
   'GOAL' => 'Gol',
+  'OWN_GOAL' => 'Autogol',
   'YELLOW_CARD' => 'Tarjeta amarilla',
   'RED_CARD' => 'Tarjeta roja',
   'SUBSTITUTION' => 'Sustitución',
@@ -3548,6 +3561,7 @@ class PlayerMatchSummary {
     this.rating,
     this.minutes,
     this.goals = 0,
+    this.ownGoals = 0,
     this.assists = 0,
     this.yellowCards = 0,
     this.redCards = 0,
@@ -3558,13 +3572,14 @@ class PlayerMatchSummary {
   /// Minutes on the pitch; null unless both ends are anchored by real events
   /// (see [playerMinutesPlayed]).
   final int? minutes;
-  final int goals, assists, yellowCards, redCards;
+  final int goals, ownGoals, assists, yellowCards, redCards;
 
   /// Label/value pairs to show, in order; empty when there is nothing real.
   List<(String, String)> get entries => [
     if (rating != null) ('Rating', rating!.toDouble().toStringAsFixed(1)),
     if (minutes != null) ('Minutos', '$minutes′'),
     if (goals > 0) (goals == 1 ? 'Gol' : 'Goles', '$goals'),
+    if (ownGoals > 0) (ownGoals == 1 ? 'Autogol' : 'Autogoles', '$ownGoals'),
     if (assists > 0) (assists == 1 ? 'Asistencia' : 'Asistencias', '$assists'),
     if (yellowCards > 0) ('Amarillas', '$yellowCards'),
     if (redCards > 0) ('Rojas', '$redCards'),
@@ -3582,6 +3597,7 @@ PlayerMatchSummary playerMatchSummary(
     rating: rating is num && rating > 0 ? rating : null,
     minutes: minutes,
     goals: count('GOAL'),
+    ownGoals: count('OWN_GOAL'),
     assists: count('ASSIST'),
     yellowCards: count('YELLOW_CARD'),
     redCards: count('RED_CARD'),
