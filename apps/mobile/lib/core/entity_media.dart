@@ -14,6 +14,12 @@ class EntityMediaMemory extends ChangeNotifier {
   final Map<String, ({String country, String position})> _displayTargetGuards =
       {};
   final Set<String> _authoritativePlayerAliases = {};
+  // A contradiction is sticky for this session. Older cached responses must
+  // never reinstate an adjudication; a fresh session can evaluate it again.
+  final Set<String> _revokedDisplayAliases = {};
+
+  Set<String> get revokedDisplayAliases =>
+      Set.unmodifiable(_revokedDisplayAliases);
 
   /// Alias -> canonical ids seen in every snapshot read this session. A
   /// separate notifier: redirect changes (not image changes) notify.
@@ -31,25 +37,43 @@ class EntityMediaMemory extends ChangeNotifier {
   }
 
   void absorb(Snapshot snapshot) {
+    final newlyAuthoritative = <String>{};
     for (final entry in snapshot.entityRedirects.entries) {
       final decision = adjudicationForAlias(entry.key);
-      if (decision != null && entry.value != decision.visibleId) {
+      if (decision != null &&
+          !snapshot.presentationRedirectIds.contains(entry.key)) {
         // A server-side canonical redirect to another entity supersedes the
         // local presentation decision for the rest of this session.
         _authoritativePlayerAliases.add(entry.key);
+        newlyAuthoritative.add(entry.key);
         _displayTargetGuards.remove(entry.key);
       }
     }
     // Presentation adjudications can be revoked by a later contradictory
     // payload. Canonical database redirects still arrive in entityRedirects;
     // only known display aliases are invalidated.
-    final rejectedDisplayAliases = {
-      for (final player in snapshot.players)
-        if (adjudicationForAlias(player.id) != null &&
-            !_authoritativePlayerAliases.contains(player.id) &&
-            !snapshot.entityRedirects.containsKey(player.id))
-          player.id,
-    };
+    final rejectedDisplayAliases = <String>{};
+    for (final player in snapshot.players) {
+      final decision = adjudicationForAlias(player.id);
+      if (decision == null ||
+          _authoritativePlayerAliases.contains(player.id) ||
+          snapshot.entityRedirects.containsKey(player.id)) {
+        continue;
+      }
+      final prior = _displayTargetGuards[player.id];
+      if (!adjudicatedAliasMatches(decision, player.json) ||
+          (prior != null &&
+              (_displayGuardConflict(
+                    prior.country,
+                    _displayGuardValue(player.json['country']),
+                  ) ||
+                  _displayGuardConflict(
+                    prior.position,
+                    _displayGuardValue(player.json['position']),
+                  )))) {
+        rejectedDisplayAliases.add(player.id);
+      }
+    }
     for (final player in snapshot.players) {
       final decision = adjudicationForVisible(player.id);
       if (decision == null ||
@@ -84,15 +108,21 @@ class EntityMediaMemory extends ChangeNotifier {
         rejectedDisplayAliases.add(decision.aliasId);
       }
     }
+    _revokedDisplayAliases.addAll(rejectedDisplayAliases);
+    final invalidatedAliases = _revokedDisplayAliases.difference(
+      _authoritativePlayerAliases,
+    );
     final effectiveRedirects =
         Map<String, String>.from(snapshot.entityRedirects)..removeWhere(
           (alias, target) =>
-              _authoritativePlayerAliases.contains(alias) &&
+              snapshot.presentationRedirectIds.contains(alias) &&
+              (_authoritativePlayerAliases.contains(alias) ||
+                  invalidatedAliases.contains(alias)) &&
               adjudicationForAlias(alias)?.visibleId == target,
         );
     redirects.absorb(
       effectiveRedirects,
-      invalidatedAliases: rejectedDisplayAliases,
+      invalidatedAliases: invalidatedAliases,
     );
     for (final alias in rejectedDisplayAliases) {
       _displayTargetGuards.remove(alias);
@@ -101,7 +131,7 @@ class EntityMediaMemory extends ChangeNotifier {
       final decision = adjudicationForVisible(player.id);
       if (decision == null ||
           _authoritativePlayerAliases.contains(decision.aliasId) ||
-          rejectedDisplayAliases.contains(decision.aliasId) ||
+          invalidatedAliases.contains(decision.aliasId) ||
           redirects.resolve(decision.aliasId) != decision.visibleId) {
         continue;
       }
@@ -115,22 +145,31 @@ class EntityMediaMemory extends ChangeNotifier {
       );
     }
     final next = {..._images};
-    for (final alias in rejectedDisplayAliases) {
+    for (final alias in {...invalidatedAliases, ...newlyAuthoritative}) {
       next.remove(alias);
     }
+    final freshPlayerImages = <String>{};
     for (final entity in [
       ...snapshot.teams,
       ...snapshot.competitions,
       ...snapshot.players,
     ]) {
       final image = entity.imageUrl;
-      if (image != null) next[entity.id] = image;
+      if (image != null && !invalidatedAliases.contains(entity.id)) {
+        next[entity.id] = image;
+        if (snapshot.players.contains(entity)) freshPlayerImages.add(entity.id);
+      }
     }
     // An alias id shows the same image as its canonical entity.
     for (final MapEntry(key: alias, value: canonical)
         in effectiveRedirects.entries) {
-      if (rejectedDisplayAliases.contains(alias)) continue;
-      final image = next[canonical] ?? next[alias];
+      if (invalidatedAliases.contains(alias)) continue;
+      final image =
+          next[canonical] ??
+          (newlyAuthoritative.contains(alias) &&
+                  !freshPlayerImages.contains(alias)
+              ? null
+              : next[alias]);
       if (image == null) continue;
       next[canonical] ??= image;
       next[alias] = next[canonical]!;

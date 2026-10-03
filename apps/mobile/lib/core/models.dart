@@ -550,7 +550,14 @@ class LiveMatchUpdate {
 }
 
 class MatchDetail {
-  MatchDetail(Json json) : json = presentPlayerMatchDetail(json);
+  MatchDetail(Json json, {Set<String> blockedAliasIds = const {}})
+    : _sourceJson = json,
+      json = presentPlayerMatchDetail(json, blockedAliasIds: blockedAliasIds);
+
+  final Json _sourceJson;
+
+  MatchDetail withBlockedAliases(Set<String> blockedAliasIds) =>
+      MatchDetail(_sourceJson, blockedAliasIds: blockedAliasIds);
 
   factory MatchDetail.waiting(String matchId) =>
       MatchDetail({...MatchDetail.empty(matchId).json, 'pending': true});
@@ -923,13 +930,17 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
 }
 
 class Snapshot {
-  Snapshot(Json json) : this._present(presentPlayerSnapshot(json));
+  Snapshot(Json json, {Set<String> blockedAliasIds = const {}})
+    : this._present(
+        presentPlayerSnapshot(json, blockedAliasIds: blockedAliasIds),
+        json,
+      );
 
   /// Used only when an adjudicated profile guard fails: show the two source
   /// records rather than applying a stale display decision.
-  Snapshot.unpresented(Json json) : this._present(json);
+  Snapshot.unpresented(Json json) : this._present(json, json);
 
-  Snapshot._present(Json json)
+  Snapshot._present(Json json, this._sourceJson)
     : demo = json['demo'] as bool,
       coverage = json['coverage'] as Json?,
       stale = (json['freshness'] as Json?)?['stale'] == true,
@@ -938,6 +949,10 @@ class Snapshot {
       entityRedirects = (json['entityRedirects'] as Map? ?? const {}).map(
         (key, value) => MapEntry(key.toString(), value.toString()),
       ),
+      presentationRedirectIds =
+          (json['_futbeatDisplayRedirectIds'] as List? ?? const [])
+              .map((id) => id.toString())
+              .toSet(),
       teams = (json['teams'] as List).map((e) => Entity(e as Json)).toList(),
       players = (json['players'] as List)
           .map((e) => Entity(e as Json))
@@ -969,6 +984,13 @@ class Snapshot {
     _matchesById = {for (final match in matches) match.id: match};
   }
   final bool demo;
+  final Json _sourceJson;
+
+  /// Rebuilds a cached response from its untouched source after an alias is
+  /// revoked. Merely reprocessing its already-collapsed rows could not
+  /// restore the second person or the original squad count.
+  Snapshot withBlockedAliases(Set<String> blockedAliasIds) =>
+      Snapshot(_sourceJson, blockedAliasIds: blockedAliasIds);
   final Json? coverage;
 
   /// The server launched a remote player discovery for this search; results
@@ -1001,6 +1023,7 @@ class Snapshot {
   final bool revalidating;
   final DateTime updatedAt;
   final Map<String, String> entityRedirects;
+  final Set<String> presentationRedirectIds;
   final List<Entity> teams, players, competitions;
   final List<FootballMatch> matches;
   final List<Json> standings, news, transfers;
@@ -1028,6 +1051,10 @@ class Snapshot {
     'freshness': {'stale': stale, 'revalidating': revalidating},
     'updatedAt': updatedAt.toIso8601String(),
     'entityRedirects': {...entityRedirects, aliasId: visibleId},
+    '_futbeatDisplayRedirectIds': {
+      ...presentationRedirectIds,
+      aliasId,
+    }.toList(),
     'teams': teams.map((entity) => entity.json).toList(),
     'players': players.map((entity) => entity.json).toList(),
     'competitions': competitions.map((entity) => entity.json).toList(),
@@ -1078,6 +1105,7 @@ class Snapshot {
       'freshness': {'stale': stale},
       'updatedAt': updatedAt.toIso8601String(),
       'entityRedirects': entityRedirects,
+      '_futbeatDisplayRedirectIds': presentationRedirectIds.toList(),
       'teams': contextTeams,
       'players': contextPlayers,
       'competitions': [if (competitionEntity != null) competitionEntity.json],
@@ -1100,6 +1128,7 @@ class Snapshot {
       'freshness': {'stale': stale, 'revalidating': revalidating},
       'updatedAt': updatedAt.toIso8601String(),
       'entityRedirects': entityRedirects,
+      '_futbeatDisplayRedirectIds': presentationRedirectIds.toList(),
       'teams': teams.map((entity) => entity.json).toList(),
       'players': players.map((entity) => entity.json).toList(),
       'competitions': competitions.map((entity) => entity.json).toList(),

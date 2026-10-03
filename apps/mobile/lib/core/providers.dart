@@ -158,11 +158,20 @@ class ApiRepository implements FootballRepository {
       '${date.day.toString().padLeft(2, '0')}';
 
   Snapshot _canonical(Json json) {
-    final snapshot = Snapshot(json);
+    final snapshot = Snapshot(
+      json,
+      blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+    );
     if (snapshot.demo) {
       throw StateError('Cloud endpoint returned demo data');
     }
+    final before = media?.revokedDisplayAliases ?? const <String>{};
     media?.absorb(snapshot);
+    final after = media?.revokedDisplayAliases ?? const <String>{};
+    if (before.length != after.length) {
+      _snapshotCache.updateAll((_, cached) => cached.withBlockedAliases(after));
+      return snapshot.withBlockedAliases(after);
+    }
     return snapshot;
   }
 
@@ -576,7 +585,7 @@ class ApiRepository implements FootballRepository {
 
   Future<Snapshot> loadEntity(String type, String id) async {
     final decision = type == 'player' ? adjudicationForAlias(id) : null;
-    if (decision == null) {
+    if (decision == null || media?.revokedDisplayAliases.contains(id) == true) {
       return _loadSnapshot(
         'entity:$type:$id',
         '/v1/entity',
@@ -597,6 +606,11 @@ class ApiRepository implements FootballRepository {
     }
     if (raw['schemaVersion'] != 1 || raw['demo'] != false) {
       throw const FormatException('Versión de datos incompatible');
+    }
+    if ((raw['entityRedirects'] as Map?)?.containsKey(id) == true) {
+      final canonical = _canonical(raw);
+      _remember(key, canonical);
+      return canonical;
     }
     final source = (raw['players'] as List? ?? const [])
         .whereType<Map>()
@@ -619,6 +633,9 @@ class ApiRepository implements FootballRepository {
         '/v1/entity',
         queryParameters: {'type': 'player', 'id': decision.visibleId},
       );
+      if (media?.revokedDisplayAliases.contains(id) == true) {
+        return fallback();
+      }
       final visible = target.player(decision.visibleId);
       if (visible == null ||
           !adjudicatedVisibleMatches(decision, visible.json) ||
@@ -952,6 +969,7 @@ class ApiRepository implements FootballRepository {
             maxAttempts: 1,
             cancelToken: cancelToken,
           ),
+          blockedAliasIds: media?.revokedDisplayAliases ?? const {},
         );
         // Remember accepted requests only. Errors/timeouts remain retryable.
         _detailRequested.add(id);
@@ -972,6 +990,7 @@ class ApiRepository implements FootballRepository {
       maxAttempts: 1,
       cancelToken: cancelToken,
     ),
+    blockedAliasIds: media?.revokedDisplayAliases ?? const {},
   );
 
   /// Tabla v2 "Forma" (#158), loaded only when the user opens it. DB-only on
@@ -1534,7 +1553,12 @@ final matchDetailProvider = StreamProvider.autoDispose
       }
 
       // Cache-first: the last good detail (if any) is shown immediately.
-      var current = memory[id] ?? MatchDetail.waiting(id);
+      final blockedAliases = repository is ApiRepository
+          ? repository.media?.revokedDisplayAliases ?? const <String>{}
+          : const <String>{};
+      var current =
+          memory[id]?.withBlockedAliases(blockedAliases) ??
+          MatchDetail.waiting(id);
       yield current;
       if (disposed) return;
       try {

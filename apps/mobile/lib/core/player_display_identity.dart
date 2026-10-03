@@ -175,7 +175,10 @@ List<Map<String, dynamic>> presentPlayers(
 /// Normalizes every cloud snapshot at its model boundary. This is shared by
 /// Plantilla, profile, Explore/search, favorites, and match context. Provider
 /// rows and stored follow keys are untouched; redirects are presentation-only.
-Map<String, dynamic> presentPlayerSnapshot(Map<String, dynamic> snapshot) {
+Map<String, dynamic> presentPlayerSnapshot(
+  Map<String, dynamic> snapshot, {
+  Set<String> blockedAliasIds = const {},
+}) {
   final raw = snapshot['players'];
   if (raw is! List) return snapshot;
   if (raw.any((row) => row is! Map)) return snapshot;
@@ -189,10 +192,13 @@ Map<String, dynamic> presentPlayerSnapshot(Map<String, dynamic> snapshot) {
       : <String>{};
   final aliases = visiblePlayerAliases(
     players,
-    blockedAliasIds: authoritativeAliases,
+    blockedAliasIds: {...authoritativeAliases, ...blockedAliasIds},
   );
   if (aliases.isEmpty) return snapshot;
-  final shown = presentPlayers(players, blockedAliasIds: authoritativeAliases);
+  final shown = presentPlayers(
+    players,
+    blockedAliasIds: {...authoritativeAliases, ...blockedAliasIds},
+  );
   final redirects = <String, dynamic>{
     if (originalRedirects is Map) ...originalRedirects.cast<String, dynamic>(),
     ...aliases,
@@ -244,6 +250,7 @@ Map<String, dynamic> presentPlayerSnapshot(Map<String, dynamic> snapshot) {
     ...snapshot,
     'players': shown,
     'entityRedirects': redirects,
+    '_futbeatDisplayRedirectIds': aliases.keys.toList(),
     'coverage': ?nextCoverage,
     'matches': ?shownMatches,
   };
@@ -252,8 +259,21 @@ Map<String, dynamic> presentPlayerSnapshot(Map<String, dynamic> snapshot) {
 /// A lineup row may carry a GOAL player ID independently of a squad snapshot.
 /// Its individually adjudicated ID is enough to show one navigable identity;
 /// a conflicting observed name/number keeps the original row visible.
-Map<String, dynamic> presentLineupPlayer(Map<String, dynamic> row) {
+Map<String, dynamic> presentLineupPlayer(
+  Map<String, dynamic> row, {
+  Set<String> blockedAliasIds = const {},
+}) {
   final id = row['canonicalId']?.toString() ?? '';
+  final sourceAliasId = row['displaySourceAliasId']?.toString();
+  if (sourceAliasId != null && blockedAliasIds.contains(sourceAliasId)) {
+    final restored = {...row};
+    restored['canonicalId'] = sourceAliasId;
+    restored['name'] = row['displaySourceAliasName'];
+    restored.remove('displaySourceAliasId');
+    restored.remove('displaySourceAliasName');
+    return restored;
+  }
+  if (blockedAliasIds.contains(id)) return row;
   final decision = adjudicationForAlias(id);
   if (decision == null) return row;
   final name = row['name']?.toString().trim() ?? '';
@@ -268,6 +288,8 @@ Map<String, dynamic> presentLineupPlayer(Map<String, dynamic> row) {
     ...row,
     'canonicalId': decision.visibleId,
     'name': decision.visibleName,
+    'displaySourceAliasId': id,
+    'displaySourceAliasName': row['name'],
   };
 }
 
@@ -288,7 +310,10 @@ bool _sameNameTokens(String left, String right) {
 }
 
 /// Match details have no squad list, so only explicit adjudications are used.
-Map<String, dynamic> presentPlayerMatchDetail(Map<String, dynamic> detail) {
+Map<String, dynamic> presentPlayerMatchDetail(
+  Map<String, dynamic> detail, {
+  Set<String> blockedAliasIds = const {},
+}) {
   var changed = false;
   final adjudicatedTargets = {
     for (final decision in adjudicatedPlayerDisplayAliases) decision.visibleId,
@@ -312,7 +337,10 @@ Map<String, dynamic> presentPlayerMatchDetail(Map<String, dynamic> detail) {
           shown.add(row);
           continue;
         }
-        final presented = presentLineupPlayer(Map<String, dynamic>.from(row));
+        final presented = presentLineupPlayer(
+          Map<String, dynamic>.from(row),
+          blockedAliasIds: blockedAliasIds,
+        );
         final id = presented['canonicalId']?.toString();
         if (id != null &&
             id != row['canonicalId']?.toString() &&

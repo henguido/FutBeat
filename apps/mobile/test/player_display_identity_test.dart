@@ -212,6 +212,101 @@ void main() {
     memory.dispose();
   });
 
+  test('a valid alias-only profile is not contradictory evidence', () {
+    final memory = EntityMediaMemory();
+    memory.absorb(Snapshot(_snapshot([sparseWaston, richWaston])));
+    memory.absorb(Snapshot.unpresented(_snapshot([sparseWaston])));
+    expect(memory.revokedDisplayAliases, isEmpty);
+    expect(memory.redirects.resolve(_wastonAlias), _waston);
+    memory.dispose();
+  });
+
+  test('older valid snapshot cannot reinstate a revoked display alias', () {
+    final memory = EntityMediaMemory();
+    final valid = Snapshot(_snapshot([sparseWaston, richWaston]));
+    memory.absorb(valid);
+    memory.absorb(
+      Snapshot(
+        _snapshot([
+          {...richWaston, 'dateOfBirth': '1990-01-01'},
+        ]),
+      ),
+    );
+    expect(memory.revokedDisplayAliases, contains(_wastonAlias));
+    memory.absorb(valid);
+    expect(memory.redirects.resolve(_wastonAlias), _wastonAlias);
+    expect(memory.imageFor(_wastonAlias), isNull);
+    final restored = valid.withBlockedAliases(memory.revokedDisplayAliases);
+    expect(restored.players, hasLength(2));
+    expect(restored.coverage?['squad']['playerCount'], 2);
+    expect(
+      Snapshot(
+        _snapshot([sparseWaston, richWaston]),
+        blockedAliasIds: memory.revokedDisplayAliases,
+      ).players,
+      hasLength(2),
+    );
+    memory.dispose();
+  });
+
+  test('revoked aliases remain distinct in subsequent match lineups', () {
+    final memory = EntityMediaMemory();
+    memory.absorb(Snapshot(_snapshot([sparseWaston, richWaston])));
+    memory.absorb(
+      Snapshot(
+        _snapshot([
+          {...richWaston, 'dateOfBirth': '1990-01-01'},
+        ]),
+      ),
+    );
+    final detail = MatchDetail({
+      'home': {
+        'starters': [
+          {'canonicalId': _wastonAlias, 'name': 'Waston Kendall', 'number': 4},
+          {
+            'canonicalId': _waston,
+            'name': 'Jamaal Waston Manley Kendall',
+            'number': 4,
+          },
+        ],
+      },
+      'away': {'starters': <dynamic>[]},
+    }, blockedAliasIds: memory.revokedDisplayAliases);
+    expect(detail.homeStarters, hasLength(2));
+    expect(detail.homeStarters.first['canonicalId'], _wastonAlias);
+    final previouslyPresented = MatchDetail({
+      'home': {
+        'starters': [
+          {'canonicalId': _wastonAlias, 'name': 'Waston Kendall', 'number': 4},
+        ],
+      },
+      'away': {'starters': <dynamic>[]},
+    });
+    expect(previouslyPresented.homeStarters.single['canonicalId'], _waston);
+    expect(
+      previouslyPresented
+          .withBlockedAliases(memory.revokedDisplayAliases)
+          .homeStarters
+          .single['canonicalId'],
+      _wastonAlias,
+    );
+    memory.dispose();
+  });
+
+  test('authoritative redirect never inherits an old display photo', () {
+    const other = 'fb_player_authoritative_other';
+    final memory = EntityMediaMemory();
+    memory.absorb(Snapshot(_snapshot([sparseWaston, richWaston])));
+    expect(memory.imageFor(_wastonAlias), isNotNull);
+    final raw = _snapshot([sparseWaston]);
+    raw['entityRedirects'] = {_wastonAlias: other};
+    memory.absorb(Snapshot(raw));
+    expect(memory.redirects.resolve(_wastonAlias), other);
+    expect(memory.imageFor(other), isNull);
+    expect(memory.imageFor(_wastonAlias), isNull);
+    memory.dispose();
+  });
+
   test('server canonical redirect outranks the display adjudication', () {
     const mergedElsewhere = 'fb_player_authoritative_other';
     final raw = _snapshot([sparseWaston, richWaston]);
@@ -249,6 +344,38 @@ void main() {
     );
     memory.dispose();
   });
+
+  test(
+    'an explicit server redirect to the same target survives revocation',
+    () {
+      final memory = EntityMediaMemory();
+      memory.absorb(Snapshot(_snapshot([sparseWaston, richWaston])));
+      memory.absorb(
+        Snapshot(
+          _snapshot([
+            {...richWaston, 'dateOfBirth': '1990-01-01'},
+          ]),
+        ),
+      );
+      final raw = _snapshot([sparseWaston, richWaston]);
+      raw['entityRedirects'] = {_wastonAlias: _waston};
+      final serverSnapshot = Snapshot(
+        raw,
+        blockedAliasIds: memory.revokedDisplayAliases,
+      );
+      expect(serverSnapshot.presentationRedirectIds, isEmpty);
+      memory.absorb(serverSnapshot);
+      expect(memory.redirects.resolve(_wastonAlias), _waston);
+      expect(
+        Snapshot(
+          _snapshot([sparseWaston, richWaston]),
+          blockedAliasIds: memory.revokedDisplayAliases,
+        ).players,
+        hasLength(2),
+      );
+      memory.dispose();
+    },
+  );
 
   test('snapshot keeps counts, search identity, and navigation coherent', () {
     final squad = Snapshot(
