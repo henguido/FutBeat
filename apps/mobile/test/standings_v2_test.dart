@@ -49,6 +49,7 @@ Snapshot _snapshot({
   String? updatedAt,
   bool? provisional,
   List<Map<String, dynamic>> extraRows = const [],
+  Set<String> omittedStandingTeamIds = const {},
   Map<String, String> rowAliases = const {},
   List<Map<String, dynamic>> matches = const [],
 }) {
@@ -92,7 +93,8 @@ Snapshot _snapshot({
                 _row(stored(id), i + 1, group: 'Grupo $g', points: 12 - 3 * i)
           else
             for (final (i, id) in _teamsOf('A').indexed)
-              _row(stored(id), i + 1, points: 12 - 3 * i),
+              if (!omittedStandingTeamIds.contains(id))
+                _row(stored(id), i + 1, points: 12 - 3 * i),
           ...extraRows,
         ],
       },
@@ -517,6 +519,56 @@ void main() {
       )!.single.label,
       'Grupo A',
     );
+  });
+
+  test('single standings group requires every focus team', () {
+    final data = _snapshot();
+    final table = standingsTableFor(data, _comp)!;
+    final rows = (table['rows'] as List).cast<Json>();
+    final bothPresent = {'fb_team_tv2_a1', 'fb_team_tv2_a2'};
+    final oneMissing = {
+      ...table,
+      'rows': [
+        for (final row in rows)
+          if (row['teamId'] != 'fb_team_tv2_a2') row,
+      ],
+    };
+    final bothMissing = {
+      ...table,
+      'rows': [
+        for (final row in rows)
+          if (!bothPresent.contains(row['teamId'])) row,
+      ],
+    };
+
+    expect(
+      standingsGroups(table, data, focusTeamIds: bothPresent)!.single.rows,
+      hasLength(4),
+    );
+    expect(
+      standingsGroups(oneMissing, data, focusTeamIds: bothPresent),
+      isNull,
+    );
+    expect(
+      standingsGroups(bothMissing, data, focusTeamIds: bothPresent),
+      isNull,
+    );
+    expect(standingsGroups(oneMissing, data)!.single.rows, hasLength(3));
+  });
+
+  testWidgets('Match Center hides a partial single-group table', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _matchTab(
+        _snapshot(omittedStandingTeamIds: {'fb_team_tv2_a2'}),
+        home: 'fb_team_tv2_a1',
+        away: 'fb_team_tv2_a2',
+      ),
+    );
+    expect(find.text('Tabla no disponible'), findsOneWidget);
+    expect(find.byKey(const ValueKey('standings-compact')), findsNothing);
   });
 
   testWidgets('unresolved groups: Tabla no disponible (no switch)', (
