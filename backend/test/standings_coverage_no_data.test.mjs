@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import { openDatabase } from '../storage/database.mjs';
 import {
   classifyGoalStandingsResponse,
+  goalStandingsShape,
   isGoalStandingsNoData,
 } from '../../supabase/functions/_shared/goal_standings.ts';
 
@@ -188,12 +189,15 @@ test('workflow: malformed success payload -> standings-fail, run fails (never hi
 // Backend: the real futbeat-global-ingest handler against the real SQL.
 // ---------------------------------------------------------------------------
 const stripImports = (source) => source.replace(/^import\s[\s\S]*?;\r?\n/gm, '');
-function ingest(db) {
+function ingest(db, { rejectShapeCapture = false } = {}) {
   let handler;
   const fetch = async (input, init = {}) => {
     const url = new URL(input);
     if (url.origin !== 'https://supabase.test' || !url.pathname.startsWith('/rest/v1/rpc/')) throw new Error(`Unexpected request ${url.href}`);
     const name = url.pathname.split('/').at(-1);
+    if (rejectShapeCapture && name === 'futbeat_record_goal_standings_shape') {
+      return new Response('shape storage unavailable', { status: 503 });
+    }
     const body = init.body ? JSON.parse(init.body) : {};
     const keys = Object.keys(body);
     const values = keys.map((k) => (body[k] !== null && typeof body[k] === 'object' ? JSON.stringify(body[k]) : body[k]));
@@ -212,6 +216,7 @@ function ingest(db) {
     jwtVerify: async () => ({ payload: { repository: 'henguido/FutBeat', ref: 'refs/heads/main', event_name: 'schedule',
       workflow_ref: 'henguido/FutBeat/.github/workflows/standings.yml@refs/heads/main' } }),
     isGoalStandingsNoData,
+    goalStandingsShape,
   });
   vm.runInContext(stripTypeScriptTypes(stripImports(ingestSource)), context);
   return async (body) => {
@@ -298,6 +303,19 @@ test('4. a table that appears later is stored and clears the negative cache', ()
   const ctx = (await db.query('select public.futbeat_read_match_context($1) v', [comp.match])).rows[0].v;
   assert.equal(ctx.standings.length, 1, 'future reads show the table');
   assert.equal((await call({ action: 'standings-plan' })).value.status, 'skipped', 'fresh table: coverage back to normal');
+}));
+
+test('shape capture failure does not fail an already stored standings table', () => withDb(async (db) => {
+  await remaining(db);
+  const comp = await competition(db);
+  const call = ingest(db, { rejectShapeCapture: true });
+  const plan = (await call({ action: 'standings-plan' })).value;
+  const res = await call({ action: 'standings-ingest', reservationId: plan.reservation.reservationId,
+    competitionId: comp.id, externalLeagueId: comp.ext, season: '2026', providerRemaining: 400,
+    rows: goalRows().map((row) => ({ ...row, groupId: 42 })) });
+  assert.equal(res.status, 200);
+  assert.equal((await ledger(db, plan.reservation.reservationId)).status, 'SUCCEEDED');
+  assert.equal((await db.query('select count(*)::integer n from futbeat_private.standings_cache where competition_id=$1', [comp.id])).rows[0].n, 1);
 }));
 
 test('6/7/8. real failures stay FAILED with no negative cache; no-data reports for them are refused', () => withDb(async (db) => {
