@@ -112,7 +112,7 @@ cliente también acepta snake_case.
   `getInitialMessage`): abre el destino. Si la app aún está en `/start` u
   onboarding, espera a llegar al shell.
 - Destino desde `data`: `matchId` → `/match/<id>`, si no `playerId` →
-  `/player/<id>`, si no `teamId` → `/team/<id>`.
+  `/player/<id>`, si no `teamId` → `/team/<id>`; `NEWS` abre `/news`.
 
 Todo está en `lib/core/push_messages.dart` y sólo se crea cuando
 `PushService.configured`.

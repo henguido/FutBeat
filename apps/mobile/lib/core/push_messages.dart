@@ -29,7 +29,7 @@ class PushMessage {
 }
 
 /// `data.matchId` → match, else `data.playerId` → player, else
-/// `data.teamId` → team. Ids are path segments, so they are encoded.
+/// `data.teamId` → team, news → News. Ids are path segments, so they are encoded.
 String? pushRouteFor(Map<String, dynamic> data) {
   String? id(String key) {
     final value = data[key]?.toString().trim();
@@ -42,6 +42,7 @@ String? pushRouteFor(Map<String, dynamic> data) {
   if (player != null) return '/player/$player';
   final team = id('teamId');
   if (team != null) return '/team/$team';
+  if (data['type']?.toString().toUpperCase() == 'NEWS') return '/news';
   return null;
 }
 

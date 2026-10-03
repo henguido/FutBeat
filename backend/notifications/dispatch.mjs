@@ -5,11 +5,32 @@
 export const DISPATCH_DEFAULTS = Object.freeze({ batchSize:50, concurrency:10, budgetMs:45000 });
 
 async function sendOne({ row, rpc, transport }) {
+ let valid;
+ try {
+  valid = await rpc('futbeat_notification_attempt_valid',{
+   p_id:row.id,p_attempt:row.attemptId,p_token:row.token,
+  });
+ } catch {
+  let recorded = false;
+  try { recorded = await rpc('futbeat_finish_notification',{
+   p_id:row.id,p_attempt:row.attemptId,p_state:'uncertain',p_receipt:'VALIDATION_UNAVAILABLE',
+  }); } catch { /* the stale-attempt guard will settle it */ }
+  return { id:row.id, state:'uncertain', receipt:'VALIDATION_UNAVAILABLE', recorded };
+ }
+ if (!valid) {
+  let recorded = false;
+  try { recorded = await rpc('futbeat_cancel_notification_attempt',{
+   p_id:row.id,p_attempt:row.attemptId,p_reason:'PRE_SEND_INVALID',
+  }); } catch { /* the stale-attempt guard will settle it */ }
+  return { id:row.id, state:'cancelled', receipt:'attempt_invalid', recorded };
+ }
  let outcome;
  try { outcome = await transport.send(row); }
  catch { outcome = { state:'uncertain', receipt:'TRANSPORT_FAILURE' }; }
- const recorded = await rpc('futbeat_finish_notification',{p_id:row.id,p_attempt:row.attemptId,
-  p_state:outcome.state,p_receipt:outcome.receipt ?? null});
+ let recorded = false;
+ try { recorded = await rpc('futbeat_finish_notification',{p_id:row.id,p_attempt:row.attemptId,
+  p_state:outcome.state,p_receipt:outcome.receipt ?? null}); }
+ catch { /* no transport retry after an ambiguous receipt */ }
  return { id:row.id, state:outcome.state, receipt:outcome.receipt ?? null, recorded };
 }
 
@@ -32,8 +53,11 @@ export async function dispatchNotifications({ rpc, transport, mode = 'dry_run',
  const started = clock();
  const results = [];
  for (let batch = 0; batch < maxBatches && clock() - started < budgetMs; batch++) {
-  const rows = await rpc('futbeat_claim_notifications',{p_mode:mode,p_limit:batchSize});
-  if (!Array.isArray(rows) || !rows.length) break;
+  const claim = await rpc('futbeat_claim_notifications_v2',{p_mode:mode,p_limit:batchSize});
+  if (!claim || !Array.isArray(claim.rows) || !Number.isInteger(claim.scanned))
+   throw new Error('Invalid notification claim response');
+  if (claim.scanned === 0) break;
+  const rows = claim.rows;
   for (const result of await pool(rows, concurrency, row => sendOne({ row, rpc, transport }))) results.push(result);
   // A short batch drained the queue (rows cancelled at claim are not returned,
   // so only an empty claim is conclusive; one more claim is cheap).

@@ -38,7 +38,9 @@ async function fcmFailure(response) {
   const body = await response.json();
   code = body?.error?.details?.find(d => d?.errorCode)?.errorCode ?? body?.error?.status ?? null;
  } catch { /* no body */ }
- if (response.status === 404 || code === 'UNREGISTERED') return { state:'failed', receipt:'FCM_UNREGISTERED' };
+ // A generic 404 can mean the FCM project or endpoint is misconfigured.
+ // Only the token-specific FcmError is evidence that this device is dead.
+ if (code === 'UNREGISTERED') return { state:'failed', receipt:'FCM_UNREGISTERED' };
  return { state: response.status >= 500 ? 'uncertain' : 'failed', receipt:'FCM_HTTP_' + response.status + (code ? ':' + code : '') };
 }
 async function apnsFailure(response) {
@@ -101,6 +103,7 @@ export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, c
  };
 
  return { async send(row) {
+  if (row.transport === 'test') return { state:'simulated', receipt:'dry-run:' + row.id };
   let url,headers,body;
   const title = row.message?.title;
   const text = row.message?.body ?? undefined;

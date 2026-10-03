@@ -61,6 +61,9 @@ test('FCM / APNs dead tokens are classified; server errors stay uncertain; auth 
   assert.equal((await transport.send(fcmRow())).receipt, 'FCM_UNREGISTERED');
   status = 400; json = { error: { status: 'INVALID_ARGUMENT', details: [{ errorCode: 'INVALID_ARGUMENT' }] } };
   assert.deepEqual(await transport.send(fcmRow()), { state: 'failed', receipt: 'FCM_HTTP_400:INVALID_ARGUMENT' });
+  status = 404; json = { error: { status: 'NOT_FOUND' } };
+  assert.deepEqual(await transport.send(fcmRow()), { state: 'failed', receipt: 'FCM_HTTP_404:NOT_FOUND' },
+    'a missing project or endpoint must not disable a valid device');
   status = 503; json = {};
   assert.equal((await transport.send(fcmRow())).state, 'uncertain');
   assert.equal(calls.filter((c) => c.url.includes('oauth2')).length, 2);
@@ -86,7 +89,12 @@ function fakeQueue(total, { sendMs = 5 } = {}) {
   const claims = [];
   let inFlight = 0, maxInFlight = 0;
   const rpc = async (name, args) => {
-    if (name === 'futbeat_claim_notifications') { claims.push(args.p_limit); return pending.splice(0, args.p_limit); }
+    if (name === 'futbeat_claim_notifications_v2') {
+      claims.push(args.p_limit);
+      const rows = pending.splice(0, args.p_limit);
+      return { rows, scanned: rows.length };
+    }
+    if (name === 'futbeat_notification_attempt_valid') return true;
     finished.push(args); return true;
   };
   const transport = { async send(row) {
@@ -108,6 +116,40 @@ test('dispatcher drains in batches of 50 with at most 10 concurrent sends', asyn
   assert.equal(q.finished.length, 120, 'every claimed row is finished');
   assert.equal(results.find((r) => r.id === 'row-3').state, 'uncertain', 'a transport exception is uncertain, never retried');
   assert.deepEqual(summarize(results).counts, { simulated: 119, uncertain: 1 });
+});
+
+test('dispatcher advances past cancelled claim batches to a valid alert', async () => {
+  let claims = 0, sends = 0;
+  const rpc = async (name) => {
+    if (name === 'futbeat_claim_notifications_v2') {
+      claims++;
+      if (claims <= 2) return { rows: [], scanned: 50 };
+      if (claims === 3) return { rows: [{ id: 'goal', attemptId: 'a', token: 'tok', transport: 'test', message: {} }], scanned: 1 };
+      return { rows: [], scanned: 0 };
+    }
+    if (name === 'futbeat_notification_attempt_valid') return true;
+    return true;
+  };
+  const results = await dispatchNotifications({ rpc, transport: { send: async () => {
+    sends++;
+    return { state: 'simulated' };
+  } } });
+  assert.equal(claims, 4);
+  assert.equal(sends, 1);
+  assert.equal(results[0].id, 'goal');
+});
+
+test('one validation failure does not abandon the rest of a claimed batch', async () => {
+  const q=fakeQueue(50);
+  const base=q.rpc;
+  const rpc=async (name,args) => {
+    if (name==='futbeat_notification_attempt_valid' && args.p_id==='row-3') throw new Error('temporary RPC failure');
+    return base(name,args);
+  };
+  const results=await dispatchNotifications({rpc,transport:q.transport,maxBatches:1});
+  assert.equal(results.length,50);
+  assert.equal(results.find((r)=>r.id==='row-3').receipt,'VALIDATION_UNAVAILABLE');
+  assert.equal(q.finished.length,50);
 });
 
 test('dispatcher stops claiming when the time budget is spent but finishes the claimed batch', async () => {
@@ -296,7 +338,7 @@ test('send-time age: a match push older than matchPushMaxDelayMinutes and a line
   await record(db, fixture(s, { home: 1, minute: 20, events: [goalRow(s, { id: '9001', time: '19' })] }));
   await db.query("update futbeat_private.notification_outbox set created_at=now()-interval '11 minutes' where user_id=$1", [s.uid]);
   await db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message)
-    values($1,$2,$3,jsonb_build_object('type','LINEUP','title','t','matchId',$4::text,
+    values($1,$2,$3,jsonb_build_object('type','LINEUP','title','t','playerRole','starter','matchId',$4::text,
       'subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$4::text))))`,
     [`lineup:${s.match}:x:starter`, s.device, s.uid, s.match]);
   assert.equal((await dryRun(db)).length, 0);
@@ -305,6 +347,79 @@ test('send-time age: a match push older than matchPushMaxDelayMinutes and a line
   // A fresh one still goes out.
   await record(db, fixture(s, { home: 2, minute: 24, events: [goalRow(s, { id: '9001', time: '19' }), goalRow(s, { id: '9002', time: '23' })] }));
   assert.equal((await dryRun(db)).length, 1);
+}));
+
+test('claim progress reaches valid news behind 100 disabled alerts', () => withDb(async (db) => {
+  const s = await seed(db);
+  await db.query('insert into futbeat_private.user_preferences(user_id,notify_goals) values($1,false)', [s.uid]);
+  await db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message,created_at)
+    select 'old:'||g,$1,$2,jsonb_build_object('type','GOAL','title','old',
+      'subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$3::text))),
+      now()-interval '1 minute' from generate_series(1,100) g`, [s.device,s.uid,s.match]);
+  await db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message)
+    values('news:valid',$1,$2,jsonb_build_object('type','NEWS','title','news',
+      'subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$3::text))))`, [s.device,s.uid,s.match]);
+  const result = await dryRun(db);
+  assert.deepEqual(result.map((r) => r.state), ['simulated']);
+  const rows = await outbox(db,s.uid);
+  assert.equal(rows.filter((r) => r.provider_receipt === 'preference_disabled').length, 100);
+  assert.equal(rows.find((r) => r.notification_key === 'news:valid').state, 'simulated');
+}));
+
+test('database dry_run blocks real devices even when dispatcher requests live', () => withDb(async (db) => {
+  const s = await seed(db);
+  const fcm = (await db.query(`insert into futbeat_private.push_devices(user_id,installation_id,platform,transport,token)
+    values($1,$2,'android','fcm','real-token') returning id`, [s.uid,randomUUID()])).rows[0].id;
+  for (const [device,key] of [[s.device,'test-alert'],[fcm,'real-alert']])
+    await db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message)
+      values($1,$2,$3,jsonb_build_object('type','NEWS','title','news',
+      'subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$4::text))))`, [key,device,s.uid,s.match]);
+  const noNetwork={send:async (row)=>{
+    if(row.transport!=='test') throw new Error('real push was attempted');
+    return createTransport({mode:'live'}).send(row);
+  }};
+  const sent=await dispatchNotifications({rpc:rpc(db),transport:noNetwork,mode:'live'});
+  assert.deepEqual(sent.map((r)=>r.state),['simulated']);
+  assert.equal((await outbox(db,s.uid)).find((r)=>r.notification_key==='real-alert').state,'pending');
+  await db.query("update futbeat_private.push_settings set mode='live' where id=true");
+  const claim = (await db.query("select public.futbeat_claim_notifications_v2('live',50) v")).rows[0].v;
+  assert.deepEqual(claim.rows.map((r) => r.transport), ['fcm']);
+  await db.query("update futbeat_private.push_settings set mode='dry_run' where id=true");
+  assert.equal((await db.query('select public.futbeat_notification_attempt_valid($1,$2,$3) v',
+    [claim.rows[0].id,claim.rows[0].attemptId,claim.rows[0].token])).rows[0].v,false);
+  let transportCalls=0, first=true;
+  const databaseRpc=rpc(db);
+  const guardedRpc=async (name,args) => name==='futbeat_claim_notifications_v2'
+    ? (first ? (first=false,{rows:claim.rows,scanned:1}) : {rows:[],scanned:0})
+    : databaseRpc(name,args);
+  const guarded=await dispatchNotifications({rpc:guardedRpc,mode:'live',transport:{send:async()=>{
+    transportCalls++;
+    throw new Error('FCM must stay off');
+  }}});
+  assert.equal(transportCalls,0);
+  assert.deepEqual(guarded.map((r)=>r.state),['cancelled']);
+}));
+
+test('claim cancels pending alerts when switches are disabled after enqueue', () => withDb(async (db) => {
+  const s = await seed(db);
+  const variants = [
+    ['KICKOFF',null],['GOAL',null],['FULL_TIME',null],['RED_CARD',null],
+    ['SUBSTITUTION','primary'],['SUBSTITUTION','assist'],['LINEUP','starter'],
+    ['LINEUP','bench'],['GOAL_ANNULLED',null],['NEWS',null],['TRANSFER',null],
+  ];
+  for (const [index,[type,role]] of variants.entries())
+    await db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message)
+      values($1,$2,$3,jsonb_strip_nulls(jsonb_build_object('type',$4::text,'playerRole',$5::text,
+      'title','alert','subjectRefs',jsonb_build_array(jsonb_build_object('type','match','id',$6::text)))))`,
+      [`pref:${index}`,s.device,s.uid,type,role,s.match]);
+  await db.query(`insert into futbeat_private.user_preferences(user_id,notify_kickoff,notify_goals,notify_final,
+      notify_cards,notify_red_cards,notify_player_sub_out,notify_player_sub_in,notify_lineups,
+      notify_player_starter,notify_player_bench,notify_goal_annulled,notify_news,notify_transfers)
+    values($1,false,false,false,false,false,false,false,false,false,false,false,false,false)`, [s.uid]);
+  const claim = (await db.query("select public.futbeat_claim_notifications_v2('dry_run',50) v")).rows[0].v;
+  assert.equal(claim.scanned,variants.length);
+  assert.equal(claim.rows.length,0);
+  assert.equal((await outbox(db,s.uid)).filter((r) => r.provider_receipt === 'preference_disabled').length,variants.length);
 }));
 
 test('dead token receipt disables the device and cancels its pending pushes; re-registering re-enables', () => withDb(async (db) => {
@@ -356,10 +471,44 @@ test('shared phone: registering a token owned by another user moves it; profile 
   assert.equal(profile.preferences.notifyGoalAnnulled, true);
   assert.equal(profile.preferences.notifyGoals, true, 'absent keys never change');
   assert.equal(profile.preferences.hourFormat, '24h');
+  await db.query(`select public.futbeat_sync_user_profile_v2('QA','es','America/Costa_Rica','24h',
+    true,true,true,true,true,true,true)`);
+  const legacyRead = (await db.query('select public.futbeat_read_user_profile() v')).rows[0].v;
+  assert.equal(legacyRead.preferences.notifyCards, true);
+  assert.equal(legacyRead.preferences.notifyRedCards, true,
+    'a v2 client re-enabling cards also re-enables the v3 red-card switch');
   await assert.rejects(db.query(`select public.futbeat_sync_user_profile_v3('{"notifyGoals":"no"}'::jsonb)`), /Invalid preference/);
   await assert.rejects(db.query(`select public.futbeat_sync_user_profile_v3('{"hourFormat":"13h"}'::jsonb)`), /Invalid hour format/);
   const read = (await db.query('select public.futbeat_read_user_profile() v')).rows[0].v;
   assert.equal(read.preferences.notifyPlayerStarter, true);
+}));
+
+test('moving a claimed token cancels the old attempt before transport', () => withDb(async (db) => {
+  await db.exec("create schema auth; create function auth.uid() returns uuid language sql as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;");
+  const a=randomUUID(), b=randomUUID(), installA=randomUUID(), installB=randomUUID();
+  await db.query("select set_config('request.jwt.claim.sub',$1,false)",[a]);
+  const device=(await db.query("select public.futbeat_register_push($1,'android','fcm','shared-token',true) id",[installA])).rows[0].id;
+  await db.query("insert into futbeat_private.entities(id,kind,payload) values('fb_team_x','team','{\"name\":\"Equipo\"}'::jsonb)");
+  await db.query("insert into futbeat_private.push_follows(user_id,entity_type,entity_id) values($1,'team','fb_team_x')",[a]);
+  await db.query(`insert into futbeat_private.notification_outbox(notification_key,device_id,user_id,message)
+    values('shared:old',$1,$2,'{"type":"NEWS","title":"private A","subjectRefs":[{"type":"team","id":"fb_team_x"}]}'::jsonb)`,[device,a]);
+  await db.query("update futbeat_private.push_settings set mode='live' where id=true");
+  const claimed=(await db.query("select public.futbeat_claim_notifications_v2('live',50) v")).rows[0].v.rows[0];
+  assert.equal(claimed.token,'shared-token');
+  await db.query("select set_config('request.jwt.claim.sub',$1,false)",[b]);
+  await db.query("select public.futbeat_register_push($1,'android','fcm','shared-token',true)",[installB]);
+  assert.equal((await db.query('select public.futbeat_notification_attempt_valid($1,$2,$3) v',
+    [claimed.id,claimed.attemptId,claimed.token])).rows[0].v,false);
+  let sendCount=0, first=true;
+  const databaseRpc=rpc(db);
+  const guardedRpc=async (name,args) => name==='futbeat_claim_notifications_v2'
+    ? (first ? (first=false,{rows:[claimed],scanned:1}) : {rows:[],scanned:0})
+    : databaseRpc(name,args);
+  const results=await dispatchNotifications({rpc:guardedRpc,transport:{send:async()=>{sendCount++;return {state:'sent'};}}});
+  assert.equal(sendCount,0);
+  assert.deepEqual(results.map((r)=>r.state),['cancelled']);
+  assert.deepEqual((await db.query('select state,provider_receipt from futbeat_private.notification_outbox where id=$1',
+    [claimed.id])).rows[0],{state:'cancelled',provider_receipt:'token_moved'});
 }));
 
 test('new helpers are private; the profile RPC is for signed-in users only', () => withDb(async (db) => {
@@ -367,11 +516,14 @@ test('new helpers are private; the profile RPC is for signed-in users only', () 
       has_function_privilege('authenticated',p.oid,'execute') auth,has_function_privilege('service_role',p.oid,'execute') svc
     from pg_proc p join pg_namespace n on n.oid=p.pronamespace
     where p.proname in ('enqueue_goal_annulled','goal_annulled_push_trigger','kickoff_push_is_fresh','futbeat_sync_user_profile_v3',
-      'futbeat_claim_notifications','futbeat_finish_notification')`)).rows;
+      'futbeat_claim_notifications','futbeat_claim_notifications_v2','futbeat_notification_attempt_valid',
+      'futbeat_cancel_notification_attempt','futbeat_finish_notification')`)).rows;
   const by = Object.fromEntries(rows.map((r) => [r.f, r]));
   for (const f of ['futbeat_private.enqueue_goal_annulled', 'futbeat_private.goal_annulled_push_trigger', 'futbeat_private.kickoff_push_is_fresh'])
     assert.ok(!by[f].anon && !by[f].auth, f);
   assert.ok(by['public.futbeat_sync_user_profile_v3'].auth && !by['public.futbeat_sync_user_profile_v3'].anon);
-  for (const f of ['public.futbeat_claim_notifications', 'public.futbeat_finish_notification'])
+  for (const f of ['public.futbeat_claim_notifications', 'public.futbeat_claim_notifications_v2',
+    'public.futbeat_notification_attempt_valid', 'public.futbeat_cancel_notification_attempt',
+    'public.futbeat_finish_notification'])
     assert.ok(by[f].svc && !by[f].auth && !by[f].anon, f);
 }));

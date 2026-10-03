@@ -13,8 +13,7 @@
 --   (NEWS, TRANSFER) are unchanged.
 --   A goal correction (correction twin) keeps the original push: no new one.
 --
--- Changes (every redefined function is copied verbatim from its LATEST
--- definition; changed lines are marked "NOTIFICATIONS V2"):
+-- Changes (existing definitions are based on their latest migration):
 --   1. event_message (20260916161141): body, collapseKey, "Local vs Visitante"
 --      match start title.
 --   2. store_canonical_event (20260930100000): approved types and the new
@@ -23,19 +22,20 @@
 --      observation when fresh (kickoff_push_is_fresh), and only when fresh.
 --   4. note_lineup_alerts (20260928100000): notify_player_starter /
 --      notify_player_bench; body + collapseKey.
---   5. futbeat_claim_notifications (20260930100000): send-time age check
+--   5. futbeat_claim_notifications_v2 (20260930100000): send-time age check
 --      (matchPushMaxDelayMinutes, lineups after kickoff +
 --      lineupAlertLateMinutes), types no longer approved are cancelled,
---      GOAL_ANNULLED revalidation.
+--      GOAL_ANNULLED and preference revalidation; claim reports scanned rows.
 --   6. futbeat_finish_notification (20260916161141): a dead token receipt
---      (FCM 404/UNREGISTERED, APNs 410) disables the device.
+--      (FCM UNREGISTERED, APNs 410) disables the device.
 --   7. GOAL_ANNULLED: deferred constraint trigger on canonical_events ->
 --      enqueue_goal_annulled (only devices whose goal push was delivered).
 --   8. futbeat_register_push (20260916161141): a token owned by another
 --      user / installation moves to the caller (shared phone).
 --   9. Preferences: 6 new columns (default true), read_user_profile
 --      (20260918134500) returns them, futbeat_sync_user_profile_v3(jsonb)
---      partial update. Older RPCs keep working unchanged.
+--      partial update. Older RPCs retain their signature; a preference trigger
+--      keeps the legacy cards switch and red-card switch aligned.
 
 -- ---------------------------------------------------------------------------
 -- Schema
@@ -632,10 +632,10 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- 5. Pre-send revalidation (copied verbatim from 20260930100000_event_reconciliation.sql).
+-- 5. Pre-send revalidation (based on 20260930100000_event_reconciliation.sql).
 -- NOTIFICATIONS V2: send-time age, approved types, GOAL_ANNULLED rows.
 -- ---------------------------------------------------------------------------
-create or replace function public.futbeat_claim_notifications(
+create or replace function public.futbeat_claim_notifications_v2(
   p_mode text default 'dry_run',
   p_limit int default 20
 ) returns jsonb
@@ -653,12 +653,15 @@ declare
   -- NOTIFICATIONS V2
   v_reason text;
   v_annul boolean;
+  v_scanned integer:=0;
+  v_push_mode text;
   v_delay interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','matchPushMaxDelayMinutes',10)::integer);
   v_late interval:=make_interval(mins=>futbeat_private.quota_setting('goal_api','lineupAlertLateMinutes',20)::integer);
 begin
   if p_mode not in ('dry_run','live') then
     raise exception 'Invalid mode';
   end if;
+  select mode into v_push_mode from futbeat_private.push_settings where id=true;
 
   update futbeat_private.notification_outbox
   set state='uncertain',finished_at=now()
@@ -671,23 +674,29 @@ begin
       d.transport,
       d.token,
       d.enabled,
+      p.notify_kickoff,p.notify_goals,p.notify_final,p.notify_cards,p.notify_red_cards,
+      p.notify_player_sub_out,p.notify_player_sub_in,p.notify_lineups,
+      p.notify_player_starter,p.notify_player_bench,p.notify_goal_annulled,
+      p.notify_news,p.notify_transfers,
       m.payload as match,
       e.retracted_at as event_retracted_at,
       e.retraction_reason as event_retraction_reason
     from futbeat_private.notification_outbox o
     join futbeat_private.push_devices d
       on d.id=o.device_id and d.user_id=o.user_id
+    left join futbeat_private.user_preferences p on p.user_id=o.user_id
     left join futbeat_private.canonical_events e
       -- NOTIFICATIONS V2: a GOAL_ANNULLED row reads its goal.
       on e.id=coalesce(o.event_id,o.message->>'annulsEventId')
     left join futbeat_private.entities m
       on m.id=e.match_id
     where o.state='pending'
-      and (p_mode='live' or d.transport='test')
+      and (d.transport='test' or (p_mode='live' and v_push_mode='live'))
     order by o.created_at
     for update of o skip locked
     limit least(greatest(p_limit,1),100)
   loop
+    v_scanned:=v_scanned+1;
     -- Any subject carried by the message (#106 player alerts, news,
     -- transfers, lineups) that is still followed keeps the row.
     select exists(
@@ -729,6 +738,20 @@ begin
     v_reason:=case
       when not row.enabled then 'device_disabled'
       when not coalesce(still_following,false) then 'unfollowed'
+      when row.message->>'type'='KICKOFF' and not coalesce(row.notify_kickoff,true) then 'preference_disabled'
+      when row.message->>'type'='GOAL' and not coalesce(row.notify_goals,true) then 'preference_disabled'
+      when row.message->>'type'='FULL_TIME' and not coalesce(row.notify_final,true) then 'preference_disabled'
+      when row.message->>'type'='RED_CARD' and not (coalesce(row.notify_red_cards,true) and coalesce(row.notify_cards,true)) then 'preference_disabled'
+      when row.message->>'type'='SUBSTITUTION' and row.message->>'playerRole'='primary'
+        and not coalesce(row.notify_player_sub_out,true) then 'preference_disabled'
+      when row.message->>'type'='SUBSTITUTION' and row.message->>'playerRole'='assist'
+        and not coalesce(row.notify_player_sub_in,true) then 'preference_disabled'
+      when row.message->>'type'='LINEUP' and not (coalesce(row.notify_lineups,true)
+        and case row.message->>'playerRole' when 'starter' then coalesce(row.notify_player_starter,true)
+          when 'bench' then coalesce(row.notify_player_bench,true) else false end) then 'preference_disabled'
+      when row.message->>'type'='GOAL_ANNULLED' and not coalesce(row.notify_goal_annulled,true) then 'preference_disabled'
+      when row.message->>'type'='NEWS' and not coalesce(row.notify_news,true) then 'preference_disabled'
+      when row.message->>'type'='TRANSFER' and not coalesce(row.notify_transfers,true) then 'preference_disabled'
       when row.event_id is not null and row.event_retracted_at is not null
          and coalesce(row.event_retraction_reason,'') not in ('corrected','superseded','legacy_superseded') then 'retracted'
       -- Types no longer pushed (rows queued before this migration).
@@ -770,13 +793,40 @@ begin
     );
   end loop;
 
-  return rows;
+  return jsonb_build_object('rows',rows,'scanned',v_scanned);
 end
 $$;
 
+-- Keep the original array contract for older dispatchers during rollout.
+create or replace function public.futbeat_claim_notifications(p_mode text default 'dry_run',p_limit int default 20)
+returns jsonb language sql security invoker set search_path='' as $$
+  select public.futbeat_claim_notifications_v2(p_mode,p_limit)->'rows'
+$$;
+
+-- A claimed row may have been cancelled because its device was reassigned.
+create or replace function public.futbeat_notification_attempt_valid(p_id uuid,p_attempt uuid,p_token text)
+returns boolean language sql security definer set search_path='' as $$
+  select exists(select 1 from futbeat_private.notification_outbox o
+    join futbeat_private.push_devices d on d.id=o.device_id and d.user_id=o.user_id
+    where o.id=p_id and o.attempt_id=p_attempt and o.state='sending'
+      and d.enabled and d.token=p_token
+      and (d.transport='test' or (select mode from futbeat_private.push_settings where id=true)='live'))
+$$;
+
+create or replace function public.futbeat_cancel_notification_attempt(p_id uuid,p_attempt uuid,p_reason text)
+returns boolean language plpgsql security definer set search_path='' as $$
+declare affected integer;
+begin
+  update futbeat_private.notification_outbox
+  set state='cancelled',finished_at=now(),provider_receipt=left(p_reason,200)
+  where id=p_id and attempt_id=p_attempt and state='sending';
+  get diagnostics affected=row_count;
+  return affected=1;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- 6. Delivery receipt (copied from 20260916161141). NOTIFICATIONS V2: a dead
--- token (FCM 404 / UNREGISTERED, APNs 410, as classified by
+-- token (FCM UNREGISTERED, APNs 410, as classified by
 -- backend/notifications/transports.mjs) disables the device; the app
 -- re-enables it by registering a fresh token. Security definer so the
 -- service role needs no write grant on push_devices.
@@ -901,7 +951,7 @@ begin
      and not (d.user_id=uid and d.installation_id=p_installation)
    for update loop
   update futbeat_private.notification_outbox set state='cancelled',finished_at=now(),provider_receipt='token_moved'
-  where device_id=v_prev and state='pending';
+  where device_id=v_prev and state in ('pending','sending');
   update futbeat_private.push_devices set token='moved:'||id::text,enabled=false,disabled_at=now(),disabled_reason='token_moved'
   where id=v_prev;
  end loop;
@@ -1047,6 +1097,22 @@ returns jsonb language sql security invoker set search_path='' as $$
   select futbeat_private.sync_user_profile_v3(p_profile)
 $$;
 
+-- Legacy v1/v2 clients still write notify_cards. Keep the new red-card switch
+-- in step when those clients change the old switch after a v3 client.
+create or replace function futbeat_private.sync_legacy_red_card_preference()
+returns trigger language plpgsql set search_path='' as $$
+begin
+  if tg_op='INSERT' or (new.notify_cards is distinct from old.notify_cards
+    and new.notify_red_cards is not distinct from old.notify_red_cards) then
+    new.notify_red_cards:=new.notify_cards;
+  end if;
+  return new;
+end $$;
+drop trigger if exists futbeat_sync_legacy_red_card_preference on futbeat_private.user_preferences;
+create trigger futbeat_sync_legacy_red_card_preference
+before insert or update on futbeat_private.user_preferences
+for each row execute function futbeat_private.sync_legacy_red_card_preference();
+
 -- ---------------------------------------------------------------------------
 -- Privileges (create or replace keeps existing grants; restated).
 -- ---------------------------------------------------------------------------
@@ -1054,8 +1120,9 @@ do $$ declare fn regprocedure; role_name text; begin
  for fn in select p.oid::regprocedure from pg_proc p join pg_namespace n on n.oid=p.pronamespace
  where (n.nspname='futbeat_private' and p.proname in ('event_message','kickoff_push_is_fresh','store_canonical_event',
      'record_live_events','note_lineup_alerts','enqueue_goal_annulled','goal_annulled_push_trigger',
-     'futbeat_register_push','read_user_profile','sync_user_profile_v3'))
-   or (n.nspname='public' and p.proname in ('futbeat_claim_notifications','futbeat_finish_notification',
+     'futbeat_register_push','read_user_profile','sync_user_profile_v3','sync_legacy_red_card_preference'))
+   or (n.nspname='public' and p.proname in ('futbeat_claim_notifications','futbeat_claim_notifications_v2',
+     'futbeat_notification_attempt_valid','futbeat_cancel_notification_attempt','futbeat_finish_notification',
      'futbeat_sync_user_profile_v3'))
  loop
   execute format('revoke all on function %s from public',fn);
@@ -1065,6 +1132,9 @@ do $$ declare fn regprocedure; role_name text; begin
  end loop;
  if exists(select 1 from pg_roles where rolname='service_role') then
   grant execute on function public.futbeat_claim_notifications(text,int),
+    public.futbeat_claim_notifications_v2(text,int),
+    public.futbeat_notification_attempt_valid(uuid,uuid,text),
+    public.futbeat_cancel_notification_attempt(uuid,uuid,text),
     public.futbeat_finish_notification(uuid,uuid,text,text) to service_role;
  end if;
  if exists(select 1 from pg_roles where rolname='authenticated') then

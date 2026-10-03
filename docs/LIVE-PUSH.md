@@ -35,6 +35,15 @@ El despachador empieza en `dry_run`. En ese modo procesa únicamente tokens
 modo real, un resultado de red ambiguo queda `uncertain` y no se reenvía a
 ciegas, evitando duplicados visibles.
 
+El envío real requiere que el modo de la Edge Function y
+`futbeat_private.push_settings.mode` sean ambos `live`. El modo de la base
+se vuelve a consultar inmediatamente antes de cada envío. Los dispositivos
+`test` siempre producen un recibo simulado. Cada intento también valida que
+el dispositivo conserve el token y propietario con que se reclamó la fila;
+registrar el mismo token para otra cuenta cancela los intentos pendientes o
+reclamados del propietario anterior. Un mensaje que FCM/APNs ya aceptó antes
+del cambio de cuenta puede entregarse después: el servidor no puede revocarlo.
+
 La outbox garantiza idempotencia de procesamiento. Ningún proveedor externo
 puede prometer entrega exactamente una vez: FCM/APNs pueden entregar tarde o
 no entregar. FutBeat prioriza no repetir una notificación cuando el resultado
