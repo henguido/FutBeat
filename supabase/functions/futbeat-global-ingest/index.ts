@@ -10,7 +10,7 @@ import {
   collectGoalApiPlayerIdentities,
   normalizeGoalApiSquad,
 } from "../../../backend/providers/goal_api_players.mjs";
-import { isGoalStandingsNoData } from "../_shared/goal_standings.ts";
+import { goalStandingsShape, isGoalStandingsNoData } from "../_shared/goal_standings.ts";
 
 const url = Deno.env.get("SUPABASE_URL")!;
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -892,6 +892,20 @@ Deno.serve(async (request) => {
         p_season: typeof input.season === "string" ? input.season : "",
         p_rows: input.rows,
       }, 30000);
+
+      const shape = goalStandingsShape(input.rows);
+      if (shape) {
+        try {
+          await rpc("futbeat_record_goal_standings_shape", {
+            p_competition_id: input.competitionId,
+            p_source: "scheduled",
+            p_shape: shape,
+          }, 3000);
+        } catch {
+          // Observability must not fail a successfully stored standings table.
+          console.warn("standings shape capture unavailable");
+        }
+      }
 
       await rpc("futbeat_complete_provider_call", {
         p_reservation_id: input.reservationId,

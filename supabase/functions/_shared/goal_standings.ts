@@ -31,6 +31,84 @@ export function goalStandingsSeason(rows: unknown[]): string {
   return '';
 }
 
+// Temporary, private contract discovery from an existing provider response.
+// Never retain row values except bounded, numeric/UUID phase identifiers.
+const shapeField = /^(?:stage|group|phase|round|overallLeague)/i;
+const safeField = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+const safeId = /^(?:[0-9]{1,18}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+// Below the SQL octet_length(shape::text) ceiling of 4096: jsonb::text can
+// add spaces that are absent from JSON.stringify. Field names always win over
+// ID examples, and their existing count/length bounds fit this budget alone.
+const maxShapeJsonBytes = 3200;
+const idFields = new Set([
+  'stageId', 'stage_id', 'groupId', 'group_id',
+  'phaseId', 'phase_id', 'roundId', 'round_id',
+]);
+
+export type GoalStandingsShape = {
+  version: 1;
+  sampledRows: number;
+  fields: string[];
+  ids: Record<string, string[]>;
+};
+
+export function goalStandingsShape(rows: unknown[]): GoalStandingsShape | null {
+  if (!Array.isArray(rows) || rows.length < 2) return null;
+  const fields = new Set<string>();
+  const ids = new Map<string, Set<string>>();
+  const addId = (path: string, value: unknown) => {
+    const id = typeof value === 'number' && Number.isSafeInteger(value)
+      ? String(value)
+      : typeof value === 'string' ? value.trim() : '';
+    if (!safeId.test(id)) return;
+    if (!ids.has(path)) ids.set(path, new Set());
+    const found = ids.get(path)!;
+    if (found.size < 8) found.add(id);
+  };
+  for (const row of rows.slice(0, 100)) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    for (const [key, value] of Object.entries(row)) {
+      if (!shapeField.test(key) || !safeField.test(key)) continue;
+      if (fields.size < 32) fields.add(key);
+      if (fields.has(key) && idFields.has(key)) addId(key, value);
+      if (!['stage', 'group', 'phase', 'round'].includes(key.toLowerCase()) ||
+          !value || typeof value !== 'object' || Array.isArray(value)) continue;
+      for (const [nestedKey, nestedValue] of Object.entries(value)) {
+        if (!safeField.test(nestedKey)) continue;
+        const path = `${key}.${nestedKey}`;
+        if (fields.size < 32) fields.add(path);
+        if (fields.has(path) && nestedKey === 'id') addId(path, nestedValue);
+      }
+    }
+  }
+  if (fields.size === 0) return null;
+  const shape: GoalStandingsShape = {
+    version: 1,
+    sampledRows: Math.min(rows.length, 100),
+    fields: [...fields].sort(),
+    ids: {},
+  };
+  const sortedIds = [...ids].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([path, values]) => [path, [...values].sort()] as const);
+  const encoder = new TextEncoder();
+  // Round-robin: retain a sample from more field paths before extra examples
+  // from one path. The candidate is included only if the entire serialized
+  // shape remains inside the global budget; field names are never removed.
+  for (let index = 0; index < 8; index++) {
+    for (const [path, values] of sortedIds) {
+      const value = values[index];
+      if (value === undefined) continue;
+      const examples = shape.ids[path] ?? (shape.ids[path] = []);
+      examples.push(value);
+      if (encoder.encode(JSON.stringify(shape)).length > maxShapeJsonBytes) {
+        examples.pop();
+        if (examples.length === 0) delete shape.ids[path];
+      }
+    }
+  }
+  return shape;
+}
+
 // ---------------------------------------------------------------------------
 // Provider answer classification (#116). Pure and generic: no league id or
 // name is special-cased. The standings workflow (PowerShell) mirrors these
