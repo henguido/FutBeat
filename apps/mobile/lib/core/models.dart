@@ -600,6 +600,10 @@ class MatchDetail {
   String? get stadium => _optional(json['stadium']);
   String? get round => _optional(json['round']);
 
+  /// Raw provider-backed periods. Presentation validates these against the
+  /// canonical match score before displaying any row.
+  Json? get periodScores => _nullableMap(json['periodScores']);
+
   /// Provider stage of the match (e.g. a season phase), null when not sent.
   String? get stage => _optional(json['stage']);
   Json? get coverage => _nullableMap(json['coverage']);
@@ -735,6 +739,74 @@ class MatchDetail {
             .map((item) => Map<String, dynamic>.from(item))
             .toList()
       : <Json>[];
+}
+
+/// One verified pair of goals in a match period. Shootout goals are kept
+/// separate from the canonical match score.
+class MatchPeriodScore {
+  const MatchPeriodScore(this.home, this.away);
+
+  final int home;
+  final int away;
+
+  String get label => '$home - $away';
+}
+
+/// A display-safe finished-match breakdown. The server may return partial or
+/// stale periods, so the phone fails closed instead of suggesting a false
+/// chronology. `fullTime` is the score after 90 minutes; `extraTime` is goals
+/// scored during extra time, not a second cumulative score.
+class MatchPeriodScores {
+  const MatchPeriodScores({
+    this.halfTime,
+    required this.fullTime,
+    this.extraTime,
+    this.penalties,
+  });
+
+  final MatchPeriodScore? halfTime;
+  final MatchPeriodScore fullTime;
+  final MatchPeriodScore? extraTime;
+  final MatchPeriodScore? penalties;
+
+  static MatchPeriodScores? fromMatch(FootballMatch match, MatchDetail detail) {
+    if (!match.isFinished) return null;
+    final periods = detail.periodScores;
+    final score = match.json['score'];
+    if (periods == null || score is! Map) return null;
+
+    MatchPeriodScore? parse(Object? value) {
+      if (value is! Map) return null;
+      final home = value['home'];
+      final away = value['away'];
+      if (home is! int || away is! int || home < 0 || away < 0) return null;
+      return MatchPeriodScore(home, away);
+    }
+
+    final fullTime = parse(periods['fullTime']);
+    final canonical = parse(score);
+    if (fullTime == null || canonical == null) return null;
+    for (final key in ['halfTime', 'extraTime', 'penalties']) {
+      if (periods.containsKey(key) && parse(periods[key]) == null) return null;
+    }
+    final halfTime = parse(periods['halfTime']);
+    final extraTime = parse(periods['extraTime']);
+    final penalties = parse(periods['penalties']);
+    if (halfTime != null &&
+        (halfTime.home > fullTime.home || halfTime.away > fullTime.away)) {
+      return null;
+    }
+    if (fullTime.home + (extraTime?.home ?? 0) != canonical.home ||
+        fullTime.away + (extraTime?.away ?? 0) != canonical.away) {
+      return null;
+    }
+    return MatchPeriodScores(
+      halfTime: halfTime,
+      fullTime: fullTime,
+      extraTime: extraTime,
+      penalties: penalties,
+    );
+  }
 }
 
 class FootballMatch {

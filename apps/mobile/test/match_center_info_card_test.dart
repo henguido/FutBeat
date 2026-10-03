@@ -76,6 +76,7 @@ Map<String, dynamic> _detail({
   String? stadium = 'Estadio Info',
   String? referee = 'Árbitro Info',
   String? stage,
+  Object? periodScores,
 }) => {
   'matchId': _match,
   'available': true,
@@ -86,6 +87,7 @@ Map<String, dynamic> _detail({
   'stadium': stadium,
   'referee': referee,
   'stage': ?stage,
+  'periodScores': ?periodScores,
   'home': <String, dynamic>{},
   'away': <String, dynamic>{},
   'statistics': const <dynamic>[],
@@ -367,6 +369,55 @@ void main() {
   });
 
   group('card', () {
+    testWidgets('Hechos shows verified periods only after the final', (
+      tester,
+    ) async {
+      const periods = {
+        'halfTime': {'home': 1, 'away': 0},
+        'fullTime': {'home': 1, 'away': 0},
+      };
+      await _open(tester, detail: _detail(periodScores: periods));
+      final card = find.byKey(const ValueKey('match-period-scores'));
+      await tester.scrollUntilVisible(
+        card,
+        150,
+        scrollable: find.byType(Scrollable).last,
+      );
+      expect(card, findsOneWidget);
+      expect(find.text('Marcador por período'), findsOneWidget);
+      expect(find.text('Descanso'), findsOneWidget);
+      expect(find.text("90'"), findsOneWidget);
+      await _close(tester);
+    });
+
+    testWidgets('Previa never shows a final-score breakdown', (
+      tester,
+    ) async {
+      const periods = {
+        'fullTime': {'home': 1, 'away': 0},
+      };
+      await _open(
+        tester,
+        snapshot: _snapshot(status: 'SCHEDULED'),
+        detail: _detail(periodScores: periods),
+      );
+      expect(find.byKey(const ValueKey('match-period-scores')), findsNothing);
+      await _close(tester);
+    });
+
+    testWidgets('Hechos hides a breakdown that disagrees with the score', (
+      tester,
+    ) async {
+      await _open(
+        tester,
+        detail: _detail(periodScores: const {
+          'fullTime': {'home': 2, 'away': 0},
+        }),
+      );
+      expect(find.byKey(const ValueKey('match-period-scores')), findsNothing);
+      await _close(tester);
+    });
+
     testWidgets('11. before kickoff: every present fact is shown', (
       tester,
     ) async {

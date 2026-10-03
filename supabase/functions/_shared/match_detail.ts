@@ -1,7 +1,12 @@
 // Pure normalizers for stored GOAL match detail (lineups, statistics). Shared
 // by the futbeat-api edge function and node tests; no I/O here.
 
-import { isOwnGoalRow, isShootoutKickRow, parseEventMinute } from './live_events.ts';
+import {
+  goalFixtureScore,
+  isOwnGoalRow,
+  isShootoutKickRow,
+  parseEventMinute,
+} from './live_events.ts';
 
 export type PlayerMedia = Record<string, { canonicalId?: unknown; image?: unknown }>;
 
@@ -240,6 +245,71 @@ const minuteParts = parseEventMinute;
 const minuteValue = (value: unknown) => minuteParts(value).minute;
 const extraMinuteValue = (value: unknown) => minuteParts(value).extraMinute;
 
+type PeriodScore = { home: number; away: number };
+
+// The stored GOAL values are cumulative at half-time/full-time, but extra
+// time and shoot-out scores are separate periods. Match the strict score
+// parser used by goalFixtureScore: incomplete pairs never become 0-0.
+function storedPeriodScore(fixture: Record<string, unknown>, suffix: string): PeriodScore | null {
+  const score = (value: unknown) => {
+    if (typeof value === 'number') {
+      return Number.isInteger(value) && value >= 0 && value <= 999 ? value : null;
+    }
+    return typeof value === 'string' && /^\s*\d{1,3}\s*$/.test(value)
+      ? Number(value)
+      : null;
+  };
+  const home = score(fixture[`homeTeam${suffix}`]);
+  const away = score(fixture[`awayTeam${suffix}`]);
+  return home == null || away == null ? null : { home, away };
+}
+
+export function normalizePeriodScores(fixture: Record<string, unknown>) {
+  const periods: {
+    halfTime?: PeriodScore;
+    fullTime?: PeriodScore;
+    extraTime?: PeriodScore;
+    penalties?: PeriodScore;
+  } = {};
+  const status = cleanText(fixture.matchStatus).toUpperCase();
+  if (!['FINISHED', 'AFTER_ET', 'AFTER_PEN'].includes(status)) return periods;
+  const final = goalFixtureScore(fixture);
+  if (final.home == null || final.away == null) return periods;
+
+  const halfTime = storedPeriodScore(fixture, 'HalftimeScore');
+  const fullTime = storedPeriodScore(fixture, 'FtScore');
+  // A period breakdown without the regulation anchor is misleading even
+  // when the terminal running total itself is valid.
+  if (!fullTime) return periods;
+  // A half-time tally cannot exceed the regulation (90') score.
+  if (
+    halfTime &&
+    halfTime.home <= fullTime.home &&
+    halfTime.away <= fullTime.away
+  ) periods.halfTime = halfTime;
+  periods.fullTime = fullTime;
+
+  if (status === 'AFTER_ET' || status === 'AFTER_PEN') {
+    const extraTime = storedPeriodScore(fixture, 'ExtraScore');
+    if (
+      extraTime &&
+      fullTime.home + extraTime.home === final.home &&
+      fullTime.away + extraTime.away === final.away
+    ) {
+      periods.extraTime = extraTime;
+      if (status === 'AFTER_PEN') {
+        const penalties = storedPeriodScore(fixture, 'PenaltyScore');
+        // A two-legged aggregate tie can have a non-tied single-match total;
+        // provider AFTER_PEN and a coherent, non-tied shoot-out are enough.
+        if (penalties && penalties.home !== penalties.away) {
+          periods.penalties = penalties;
+        }
+      }
+    }
+  }
+  return periods;
+}
+
 export function normalizeMatchDetail(
   raw: unknown,
   rawVideos: unknown = [],
@@ -415,6 +485,7 @@ export function normalizeMatchDetail(
     // Provider stage of this match (e.g. a season phase); the app uses it to
     // show the table group of that phase. Additive: older apps ignore it.
     stage: cleanText(payload.stageName) || null,
+    periodScores: normalizePeriodScores(payload),
     home,
     away,
     statistics: fullTime,
