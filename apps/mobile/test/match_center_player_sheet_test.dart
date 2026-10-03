@@ -307,6 +307,52 @@ void main() {
       expect(playerMatchSummary({'rating': null}, const []).entries, isEmpty);
       expect(playerMatchSummary({'rating': 0}, const []).entries, isEmpty);
     });
+
+    test('own goal belongs to its scorer but is not a regular goal', () {
+      final events = lineupEventsForPlayer(
+        {'id': 'home-player'},
+        [
+          {
+            'type': 'GOAL',
+            'side': 'away', // credited team, not the scorer's team
+            'ownGoal': true,
+            'playerId': 'home-player',
+            'minute': 32,
+          },
+        ],
+        'home',
+      );
+      expect(events.map((e) => e.type), ['OWN_GOAL']);
+      expect(playerMatchSummary({}, events).entries, [('Autogol', '1')]);
+      expect(
+        lineupEventsForPlayer(
+          {'id': 'home-player'},
+          [
+            {'type': 'GOAL', 'side': 'away', 'playerId': 'home-player'},
+          ],
+          'home',
+        ),
+        isEmpty,
+      );
+    });
+
+    test('only a regular goal can credit an assist', () {
+      final events = lineupEventsForPlayer(
+        {'id': 'assister'},
+        [
+          {'type': 'VAR', 'side': 'home', 'assistPlayerId': 'assister'},
+          {
+            'type': 'GOAL',
+            'side': 'home',
+            'ownGoal': true,
+            'assistPlayerId': 'assister',
+          },
+          {'type': 'GOAL', 'side': 'home', 'assistPlayerId': 'assister'},
+        ],
+        'home',
+      );
+      expect(events.map((e) => e.type), ['ASSIST']);
+    });
   });
 
   testWidgets('1/5/6/7/10. a starter opens the sheet with its real data', (
@@ -669,6 +715,37 @@ void main() {
     expect(_sheet, findsOneWidget);
     expect(_inSheet(find.text('Minutos')), findsNothing);
     expect(_inSheet(find.text('0′')), findsNothing);
+    await _close(tester);
+  });
+
+  testWidgets('an own goal is visible on the scorer sheet, never as a goal', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      detail:
+          _detail(
+              starters: [_player('p9', 'Defensor Local', position: 'Defender')],
+              substitutes: const [],
+            )
+            ..['incidents'] = [
+              {
+                'type': 'GOAL',
+                'side': 'away',
+                'ownGoal': true,
+                'playerId': 'p9',
+                'minute': 32,
+              },
+            ],
+    );
+    await _tab(tester, 'Alineación');
+    await _tapPlayer(tester, find.text('Local').first);
+    expect(_inSheet(find.text('Autogol')), findsWidgets);
+    expect(_inSheet(find.text('Gol')), findsNothing);
+    expect(
+      _inSheet(find.byKey(const ValueKey('player-sheet-event-OWN_GOAL-32'))),
+      findsOneWidget,
+    );
     await _close(tester);
   });
 
