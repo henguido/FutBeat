@@ -129,8 +129,9 @@ Map<String, dynamic> _item(
   'score': homeGoals == null ? null : {'home': homeGoals, 'away': awayGoals},
 };
 
-/// Home form newest first: W (home 2-0), L (away 3-1), D (1-1), W (away 0-2),
-/// no score, and a 6th that must not be shown. Away form: D, L.
+/// Synthetic legacy preview: home form includes a scoreless row before an
+/// older scored result, so the client also fails closed if an older server
+/// sends incomplete candidates. Away form: D, L.
 /// H2H: home wins 2, draw 1, away wins 1.
 Map<String, dynamic> _preview({bool h2h = true, bool longNames = false}) {
   final items = [

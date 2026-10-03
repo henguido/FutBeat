@@ -48,18 +48,19 @@ async function scenario(db) {
   return { comp, cup, H, A, O, K, target };
 }
 
-test('A/B/C/D/E/F. last 5 terminal matches per side before the TARGET kickoff, team perspective, no false results', () => withDb(async (db) => {
+test('A/B/C/D/E/F. last 5 scored terminal matches per side before TARGET kickoff, team perspective', () => withDb(async (db) => {
   const s = await scenario(db);
   const { comp, H, A, O, K } = s;
-  // Home: 7 terminal before K (days -1..-7), H wins/draws/loses from both orientations.
+  // Home: 7 terminal before K (days -1..-7), one scoreless. The sixth
+  // stored terminal must not displace the fifth real result.
   const homeIds = [];
   homeIds.push(await match(db, { comp, home: H, away: O, at: K - 1 * DAY, score: [3, 1] })); // WIN
   homeIds.push(await match(db, { comp, home: O, away: H, at: K - 2 * DAY, score: [0, 2] })); // WIN (away)
   homeIds.push(await match(db, { comp, home: H, away: O, at: K - 3 * DAY, score: [1, 1], status: 'FINISHED_PENDING_VERIFICATION' })); // DRAW
   homeIds.push(await match(db, { comp, home: O, away: H, at: K - 4 * DAY, score: [2, 0] })); // LOSS (away)
-  homeIds.push(await match(db, { comp, home: H, away: O, at: K - 5 * DAY, score: null })); // terminal, no score
-  await match(db, { comp, home: H, away: O, at: K - 6 * DAY });
-  await match(db, { comp, home: H, away: O, at: K - 7 * DAY });
+  const scoreless = await match(db, { comp, home: H, away: O, at: K - 5 * DAY, score: null });
+  homeIds.push(await match(db, { comp, home: H, away: O, at: K - 6 * DAY }));
+  homeIds.push(await match(db, { comp, home: H, away: O, at: K - 7 * DAY }));
   // Never: after the target (results that happened later), non-terminal.
   await match(db, { comp, home: H, away: O, at: K + 2 * DAY, score: [9, 0] });
   await match(db, { comp, home: H, away: O, at: K - 0.5 * DAY, status: 'SCHEDULED', score: null });
@@ -72,8 +73,8 @@ test('A/B/C/D/E/F. last 5 terminal matches per side before the TARGET kickoff, t
   ];
   await match(db, { comp, home: A, away: O, at: K + 1 * DAY, score: [5, 0] });
   const p = await preview(db, s.target);
-  assert.deepEqual(p.form.home.matchIds, homeIds, 'newest first, terminal, before kickoff');
-  assert.deepEqual(p.form.home.results, ['WIN', 'WIN', 'DRAW', 'LOSS', null]);
+  assert.deepEqual(p.form.home.matchIds, homeIds.slice(0, 5), 'newest five real results, before kickoff');
+  assert.deepEqual(p.form.home.results, ['WIN', 'WIN', 'DRAW', 'LOSS', 'WIN']);
   assert.equal(p.form.home.state, 'available');
   assert.deepEqual(p.form.away.matchIds, awayIds);
   assert.deepEqual(p.form.away.results, ['LOSS', 'DRAW']);
@@ -84,7 +85,30 @@ test('A/B/C/D/E/F. last 5 terminal matches per side before the TARGET kickoff, t
     assert.ok(['VERIFIED', 'FINISHED_PENDING_VERIFICATION'].includes(m.status));
   }
   assert.equal(all.has(s.target), false);
-  assert.equal(p.matches.find((m) => m.matchId === homeIds[4]).score, null, 'no invented score');
+  assert.equal(all.has(scoreless), false, 'scoreless terminal is not visible as form');
+}));
+
+test('form skips incomplete, negative, fractional and text scores before LIMIT; backfills older results', () => withDb(async (db) => {
+  const s = await scenario(db);
+  const { comp, H, A, O, K } = s;
+  const invalid = [null, [1, null], [-1, 0], [1.5, 0], ['2', 0]];
+  for (let i = 0; i < invalid.length; i++) {
+    await match(db, { comp, home: H, away: O, at: K - (i + 1) * DAY, score: invalid[i] });
+  }
+  const scored = [];
+  for (let i = 0; i < 6; i++) {
+    scored.push(await match(db, { comp, home: i % 2 ? O : H, away: i % 2 ? H : O,
+      at: K - (i + 6) * DAY, score: [i % 2, (i + 1) % 2] }));
+  }
+  const away = await match(db, { comp, home: A, away: O, at: K - 13 * DAY, score: [0, 0] });
+  const p = await preview(db, s.target);
+  assert.deepEqual(p.form.home.matchIds, scored.slice(0, 5));
+  assert.equal(p.form.home.state, 'available');
+  assert.equal(p.form.home.results.length, 5);
+  assert.ok(p.form.home.results.every((result) => result !== null));
+  assert.deepEqual(p.form.away.matchIds, [away]);
+  assert.equal(p.form.away.state, 'partial');
+  assert.ok(p.matches.every((m) => m.score && Number.isInteger(m.score.home) && Number.isInteger(m.score.away)));
 }));
 
 test('A. no terminal history: state none (not pending)', () => withDb(async (db) => {
