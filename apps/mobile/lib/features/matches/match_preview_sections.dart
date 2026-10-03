@@ -87,41 +87,67 @@ class RecentFormSection extends StatelessWidget {
   final Snapshot data;
   final FootballMatch match;
 
+  static List<Json> scoredMatches(
+    MatchPreview value,
+    String side,
+    String teamId,
+  ) => [
+    for (final item in value.formMatches(side))
+      if (_hasRealFormResult(item, teamId)) item,
+  ];
+
   @override
   Widget build(BuildContext context) => preview.when(
     loading: () => const _Skeleton(key: ValueKey('form-loading'), lines: 2),
-    error: (_, _) => const _Card(
-      key: ValueKey('form-unavailable'),
-      child: Text(
-        'Forma reciente no disponible por ahora.',
-        style: TextStyle(color: muted),
-      ),
-    ),
-    data: (value) => _Card(
-      key: const ValueKey('recent-form'),
-      child: Column(
-        children: [
-          _FormRow(
-            key: const ValueKey('form-home'),
-            team: data.team(match.homeId) ?? value.team(match.homeId),
-            teamId: match.homeId,
-            accent: lime,
-            matches: value.formMatches('home'),
-            preview: value,
-          ),
-          const SizedBox(height: 12),
-          _FormRow(
-            key: const ValueKey('form-away'),
-            team: data.team(match.awayId) ?? value.team(match.awayId),
-            teamId: match.awayId,
-            accent: awaySideColor,
-            matches: value.formMatches('away'),
-            preview: value,
-          ),
-        ],
-      ),
-    ),
+    error: (_, _) => const SizedBox.shrink(),
+    data: (value) {
+      final homeMatches = scoredMatches(value, 'home', match.homeId);
+      final awayMatches = scoredMatches(value, 'away', match.awayId);
+      if (homeMatches.isEmpty && awayMatches.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return _Card(
+        key: const ValueKey('recent-form'),
+        child: Column(
+          children: [
+            if (homeMatches.isNotEmpty)
+              _FormRow(
+                key: const ValueKey('form-home'),
+                team: data.team(match.homeId) ?? value.team(match.homeId),
+                teamId: match.homeId,
+                accent: lime,
+                matches: homeMatches,
+                preview: value,
+              ),
+            if (homeMatches.isNotEmpty && awayMatches.isNotEmpty)
+              const SizedBox(height: 12),
+            if (awayMatches.isNotEmpty)
+              _FormRow(
+                key: const ValueKey('form-away'),
+                team: data.team(match.awayId) ?? value.team(match.awayId),
+                teamId: match.awayId,
+                accent: awaySideColor,
+                matches: awayMatches,
+                preview: value,
+              ),
+          ],
+        ),
+      );
+    },
   );
+}
+
+bool _hasRealFormResult(Json item, String teamId) {
+  final score = item['score'];
+  if (score is! Map) return false;
+  bool validGoal(Object? value) =>
+      value is num &&
+      value.isFinite &&
+      value >= 0 &&
+      value == value.roundToDouble();
+  return validGoal(score['home']) &&
+      validGoal(score['away']) &&
+      teamMatchResult(item, teamId) != null;
 }
 
 class _FormRow extends StatelessWidget {
@@ -162,19 +188,8 @@ class _FormRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        if (chronological.isEmpty)
-          const Flexible(
-            child: Text(
-              'Sin partidos recientes',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.end,
-              style: TextStyle(color: muted, fontSize: 12),
-            ),
-          )
-        else
-          for (final item in chronological)
-            _ResultChip(item: item, teamId: teamId, preview: preview),
+        for (final item in chronological)
+          _ResultChip(item: item, teamId: teamId, preview: preview),
       ],
     );
   }
@@ -198,13 +213,13 @@ class _ResultChip extends StatelessWidget {
         preview.team(item['homeTeamId'] as String?)?.displayName ?? 'Local';
     final away =
         preview.team(item['awayTeamId'] as String?)?.displayName ?? 'Visita';
-    final score = item['score'] is Map
-        ? '${item['score']['home']} - ${item['score']['away']}'
-        : '–';
+    final score = item['score'] as Map;
+    final scoreLabel =
+        '${(score['home'] as num).toInt()} - ${(score['away'] as num).toInt()}';
     final date = DateTime.tryParse(item['startTime'] as String? ?? '');
     return Tooltip(
       message: [
-        '$home $score $away',
+        '$home $scoreLabel $away',
         if (date != null) matchDateLabel(costaRicaTime(date)),
       ].join(' · '),
       child: Container(

@@ -317,6 +317,20 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     // Recent form + head-to-head: a separate read, never blocking the header
     // or the tabs, failing on its own, read once per open.
     final preview = ref.watch(matchPreviewProvider(widget.id));
+    final previewValue = preview.asData?.value;
+    final showRecentForm =
+        preview.isLoading ||
+        (previewValue != null &&
+            (RecentFormSection.scoredMatches(
+                  previewValue,
+                  'home',
+                  match.homeId,
+                ).isNotEmpty ||
+                RecentFormSection.scoredMatches(
+                  previewValue,
+                  'away',
+                  match.awayId,
+                ).isNotEmpty));
     // Before kickoff an empty events card adds nothing; real events, a
     // started/finished match or a pending detail of a started one show it.
     final showEvents =
@@ -326,8 +340,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final factsTabLabel = match.showKickoff ? 'Previa' : 'Hechos';
     final periodScores = MatchPeriodScores.fromMatch(match, detail);
     final previewSections = [
-      const _SectionTitle('Forma reciente'),
-      RecentFormSection(preview: preview, data: data, match: match),
+      if (showRecentForm) ...[
+        const _SectionTitle('Forma reciente'),
+        RecentFormSection(preview: preview, data: data, match: match),
+      ],
       StandingsSnapshotCard(data: data, match: match, stage: detail.stage),
     ];
 
