@@ -185,7 +185,7 @@ void main() {
     await db.close();
   });
   testWidgets(
-    'stale banner clears on success without hiding calendar content',
+    'stale calendar content has no technical banner; active refresh has a thin indicator',
     (tester) async {
       final stream = StreamController<Snapshot>();
       await tester.pumpWidget(
@@ -210,19 +210,53 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.textContaining('Los datos pueden estar desactualizados'),
-        findsOneWidget,
+        findsNothing,
       );
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      stream.add(
+        Snapshot(calendarPayload())
+            .withFreshness(stale: true, revalidating: true),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.textContaining('Desliza para actualizar'), findsNothing);
       stream.add(Snapshot(calendarPayload(score: true)));
       await tester.pumpAndSettle();
       expect(
         find.textContaining('Los datos pueden estar desactualizados'),
         findsNothing,
       );
+      expect(find.byType(LinearProgressIndicator), findsNothing);
       expect(find.text('1 - 1'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.runAsync(stream.close);
     },
   );
+  testWidgets('DataView keeps stale content without technical copy', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          effectiveSnapshotProvider.overrideWith(
+            (ref) => AsyncData(Snapshot(calendarPayload()).asStale()),
+          ),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: DataView(builder: (data) => Text(data.matches.single.id)),
+          ),
+        ),
+      ),
+    );
+    expect(
+      find.textContaining('Los datos pueden estar desactualizados'),
+      findsNothing,
+    );
+    expect(find.textContaining('Desliza para actualizar'), findsNothing);
+    expect(find.text('fb_match_test'), findsOneWidget);
+  });
   testWidgets(
     'future scheduled card shows kickoff, historical score partial and terminal final',
     (tester) async {
