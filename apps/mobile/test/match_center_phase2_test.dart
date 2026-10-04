@@ -8,7 +8,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/features/matches/match_preview_sections.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
+import 'package:go_router/go_router.dart';
 
 // Issue #99 phase 2: recent form + head-to-head from a separate read
 // (/v1/match-preview) that never blocks the Match Center, fails on its own
@@ -426,6 +428,76 @@ void main() {
     // Away newest first: D (0-0 home), L (lost 2-1 away).
     expect(_chips(tester, 'form-away'), ['D', 'E']);
     await _close(tester, container);
+  });
+
+  testWidgets(
+    'form result opens its canonical match with real preview context',
+    (tester) async {
+      final data = Snapshot(_context());
+      final match = data.match(_match)!;
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, _) => Scaffold(
+              body: RecentFormSection(
+                preview: AsyncValue.data(MatchPreview(_preview())),
+                data: data,
+                match: match,
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/match/:id',
+            builder: (_, state) {
+              final id = state.pathParameters['id']!;
+              final contextMatch = (state.extra as Snapshot?)?.match(id);
+              return Scaffold(
+                body: Text('$id:${contextMatch?.json['score']?['home']}'),
+              );
+            },
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.tap(find.byKey(const ValueKey('form-match-fb_match_f1')));
+      await tester.pumpAndSettle();
+      expect(find.text('fb_match_f1:2'), findsOneWidget);
+    },
+  );
+
+  testWidgets('form result without a canonical match ID is not a link', (
+    tester,
+  ) async {
+    final data = Snapshot(_context());
+    final preview = _preview();
+    final item = _item('external/id', _home, _other, 2, 0, 5);
+    preview['matches'] = [item];
+    (preview['form'] as Map)['home'] = {
+      'state': 'available',
+      'matchIds': ['external/id'],
+    };
+    (preview['form'] as Map)['away'] = {
+      'state': 'none',
+      'matchIds': <String>[],
+    };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RecentFormSection(
+            preview: AsyncValue.data(MatchPreview(preview)),
+            data: data,
+            match: data.match(_match)!,
+          ),
+        ),
+      ),
+    );
+    expect(find.text('V'), findsOneWidget);
+    final link = tester.widget<InkWell>(
+      find.ancestor(of: find.text('V'), matching: find.byType(InkWell)).first,
+    );
+    expect(link.onTap, isNull);
   });
 
   testWidgets('8. no empty events card before kickoff', (tester) async {
