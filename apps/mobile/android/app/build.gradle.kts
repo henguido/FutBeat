@@ -43,6 +43,11 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // AdMob App ID: real one only from the build environment, never
+        // committed. Fallback = Google's documented test App ID.
+        manifestPlaceholders["admobAppId"] =
+            System.getenv("FUTBEAT_ADMOB_APP_ID")?.takeIf { it.isNotBlank() }
+                ?: "ca-app-pub-3940256099942544~3347511713"
     }
 
     signingConfigs {

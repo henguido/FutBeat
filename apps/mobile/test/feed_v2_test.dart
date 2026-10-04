@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:futbeat/core/ads.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/models.dart';
@@ -317,6 +318,21 @@ void main() {
       isTrue,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  test('the feed ad goes after the third group, never in LIVE', () {
+    expect(feedAdAfterGroup(1, 'Todos'), isFalse);
+    expect(feedAdAfterGroup(2, 'Todos'), isFalse);
+    expect(feedAdAfterGroup(3, 'Todos'), isTrue);
+    expect(feedAdAfterGroup(3, 'Próximos'), isTrue);
+    expect(feedAdAfterGroup(4, 'Todos'), isFalse);
+    expect(feedAdAfterGroup(3, 'En vivo'), isFalse);
+  });
+
+  testWidgets('a feed with fewer groups has no ad slot', (tester) async {
+    await _pump(tester);
+    expect(find.byType(AdSlot), findsNothing);
+    expect(find.byType(MatchCard), findsNWidgets(6));
   });
 
   testWidgets('every match of the day is a row, once, without follows', (
