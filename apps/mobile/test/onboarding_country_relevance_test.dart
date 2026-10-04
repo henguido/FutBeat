@@ -335,16 +335,16 @@ void main() {
       addTearDown(db.close);
       await _pumpOnboarding(tester, db);
       await tester.tap(find.text('Continuar'));
-      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.text('Continuar'));
-      await tester.pump(const Duration(milliseconds: 20));
-      expect(find.text('Competiciones'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Ligas'), findsOneWidget);
       for (final raw in ['eurocups', 'intl', 'England', 'Spain']) {
         expect(find.text(raw), findsNothing, reason: raw);
       }
-      expect(find.text('Europa'), findsOneWidget);
+      expect(find.text('Europa'), findsWidgets);
       expect(find.text('Inglaterra'), findsOneWidget);
-      expect(find.text('España'), findsOneWidget);
+      expect(find.text('España'), findsWidgets);
       expect(find.text('Internacional'), findsOneWidget);
     });
 
@@ -382,7 +382,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('UEFA Nations League'), findsOneWidget);
       expect(find.text('eurocups'), findsNothing);
-      expect(find.text('Europa'), findsOneWidget);
+      expect(find.text('Europa'), findsWidgets);
       expect(find.text('intl'), findsNothing);
       await tester.pumpWidget(const SizedBox());
     });
@@ -447,17 +447,27 @@ void main() {
     testWidgets('onboarding lists the primary league first', (tester) async {
       final db = AppDatabase(NativeDatabase.memory());
       addTearDown(db.close);
+      // Grid reading order: row first, then column.
+      bool before(Finder a, Finder b) {
+        final pa = tester.getTopLeft(a);
+        final pb = tester.getTopLeft(b);
+        return pa.dy < pb.dy - 1 ||
+            ((pa.dy - pb.dy).abs() <= 1 && pa.dx < pb.dx);
+      }
+
       await _pumpOnboarding(tester, db);
       await tester.tap(find.text('Continuar'));
-      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 300));
       // Teams step: the national team leads, foreign national teams follow.
-      final nation = tester.getTopLeft(find.text('Costa Rica').first).dy;
-      expect(nation, lessThan(tester.getTopLeft(find.text('Azerbaijan')).dy));
-      await tester.tap(find.text('Continuar'));
-      await tester.pump(const Duration(milliseconds: 20));
       expect(
-        tester.getTopLeft(find.text('Local First Division')).dy,
-        lessThan(tester.getTopLeft(find.text('Premier League')).dy),
+        before(find.text('Costa Rica').first, find.text('Azerbaijan')),
+        isTrue,
+      );
+      await tester.tap(find.text('Continuar'));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        before(find.text('Local First Division'), find.text('Premier League')),
+        isTrue,
       );
     });
   });
@@ -487,12 +497,26 @@ Future<void> _pumpOnboarding(WidgetTester tester, AppDatabase database) async {
         profileSettingsProvider.overrideWith(
           (ref) async => const UserProfileSettings(),
         ),
+        onboardingProgressStoreProvider.overrideWithValue(_MemoryProgress()),
       ],
       child: const MaterialApp(home: OnboardingScreen()),
     ),
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 20));
+  await tester.tap(find.byKey(const ValueKey('onboarding-quick-setup')));
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
+class _MemoryProgress implements OnboardingProgressStore {
+  @override
+  Future<int?> read() async => null;
+
+  @override
+  Future<void> write(int step) async {}
+
+  @override
+  Future<void> clear() async {}
 }
 
 class _FeedRepository implements FootballRepository {
