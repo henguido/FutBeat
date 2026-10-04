@@ -322,7 +322,28 @@ class PushService {
   bool _preferencesRpcMissing = false;
   final storage = const FlutterSecureStorage();
 
-  Map<String, dynamic>? session;
+  Map<String, dynamic>? _session;
+  Map<String, dynamic>? get session => _session;
+
+  /// Every session change goes through here, so [accountChanges] sees
+  /// sign-in, restore, sign-out, deletion and dropped sessions alike.
+  set session(Map<String, dynamic>? value) {
+    final before = accountId;
+    _session = value;
+    final after = accountId;
+    if (before != after && !_accountChanges.isClosed) {
+      _accountChanges.add(after);
+    }
+  }
+
+  final _accountChanges = StreamController<String?>.broadcast();
+
+  /// Emits the signed-in account id (null = guest) whenever it changes.
+  Stream<String?> get accountChanges => _accountChanges.stream;
+
+  /// Signed-in account id, or null for a guest.
+  String? get accountId => authenticated ? userId : null;
+
   String? pendingConfirmationEmail;
   String? token;
   StreamSubscription<String>? rotation;
@@ -1328,6 +1349,7 @@ class PushService {
     renewal?.cancel();
     unawaited(rotation?.cancel());
     unawaited(follows?.cancel());
+    unawaited(_accountChanges.close());
     dio.close(force: true);
   }
 }

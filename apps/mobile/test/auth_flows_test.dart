@@ -721,6 +721,35 @@ void main() {
     expect(value.http.called('futbeat_read_user_profile'), isTrue);
   });
 
+  test('accountChanges follows sign in, refresh and sign out', () async {
+    final value = await _service();
+    value.http.routes['/auth/v1/signup'] = (_) => value.http.issue('user-a');
+    final seen = <String?>[];
+    final subscription = value.service.accountChanges.listen(seen.add);
+    addTearDown(subscription.cancel);
+    expect(value.service.accountId, isNull);
+
+    await value.service.signUp('user@example.com', 'password-test');
+    await _settle(value.service);
+    expect(value.service.accountId, 'user-a');
+
+    await value.service.signOut();
+    await Future<void>.delayed(Duration.zero);
+    // A token refresh of the same account emits nothing.
+    expect(seen, ['user-a', null]);
+    expect(value.service.accountId, isNull);
+  });
+
+  test('accountChanges reports a restored session', () async {
+    final value = await _stored();
+    final seen = <String?>[];
+    final subscription = value.service.accountChanges.listen(seen.add);
+    addTearDown(subscription.cancel);
+    await value.service.restore();
+    await Future<void>.delayed(Duration.zero);
+    expect(seen, ['user-a']);
+  });
+
   test(
     'sign up without a session keeps the pending confirmation flow',
     () async {
