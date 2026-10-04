@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/ads.dart';
 import 'package:futbeat/core/entitlements.dart';
+import 'package:futbeat/features/profile/ads_privacy_tile.dart';
 
 class _MemoryStore implements EntitlementStore {
   final values = <String, String>{};
@@ -101,6 +102,8 @@ class _Ump implements UmpPlatform {
   final bool formFails;
   final bool updateHangs;
   bool privacyRequired = false;
+  bool privacyStatusFails = false;
+  bool privacyFormFails = false;
   bool _consented = false;
   int updates = 0;
   int forms = 0;
@@ -125,11 +128,15 @@ class _Ump implements UmpPlatform {
   Future<bool> canRequestAds() async => !required || _consented;
 
   @override
-  Future<bool> privacyOptionsRequired() async => privacyRequired;
+  Future<bool> privacyOptionsRequired() async {
+    if (privacyStatusFails) throw StateError('UMP status failed');
+    return privacyRequired;
+  }
 
   @override
   Future<void> showPrivacyOptionsForm() async {
     privacyForms++;
+    if (privacyFormFails) throw StateError('UMP privacy form failed');
     _consented = accepts;
   }
 }
@@ -170,6 +177,7 @@ class _Harness {
                 Text('Antes'),
                 AdSlot(AdPlacement.matchesFeed),
                 Text('Después'),
+                AdsPrivacyOptionsTile(),
               ],
             ),
           ),
@@ -590,6 +598,75 @@ void main() {
         ..dispose()
         ..dispose();
       expect(g.banners.last.disposed, 1);
+    });
+  });
+
+  group('privacy options entry point (Perfil)', () {
+    final tile = find.byKey(const ValueKey('ads-privacy-options'));
+
+    testWidgets('required: "Opciones de privacidad" is shown', (tester) async {
+      final h = _Harness();
+      await h.pump(tester, ump: _Ump(required: true)..privacyRequired = true);
+      await h.account(tester, null);
+      expect(tile, findsOneWidget);
+      expect(find.text('Opciones de privacidad'), findsOneWidget);
+    });
+
+    testWidgets('not required: hidden', (tester) async {
+      final h = _Harness();
+      await h.pump(tester, ump: _Ump(required: true));
+      await h.account(tester, null);
+      expect(tile, findsNothing);
+    });
+
+    testWidgets('tap opens Google\'s form once; withdrawing removes the ad', (
+      tester,
+    ) async {
+      final ump = _Ump(required: true)..privacyRequired = true;
+      final h = _Harness();
+      await h.pump(tester, ump: ump);
+      await h.account(tester, null);
+      expect(find.byKey(const ValueKey('fake-ad')), findsOneWidget);
+
+      ump.accepts = false;
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+      expect(ump.privacyForms, 1);
+      expect(h.container.read(adsAllowedProvider), isFalse);
+      expect(find.byKey(const ValueKey('fake-ad')), findsNothing);
+      expect(h.loader.loaded.single.disposed, isTrue);
+    });
+
+    testWidgets('form error: Perfil keeps working and ads stay blocked', (
+      tester,
+    ) async {
+      final ump = _Ump(required: true)
+        ..privacyRequired = true
+        ..privacyFormFails = true;
+      final h = _Harness();
+      await h.pump(tester, ump: ump);
+      await h.account(tester, null);
+      expect(find.byKey(const ValueKey('fake-ad')), findsOneWidget);
+
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(h.container.read(adsConsentProvider), AdsConsentState.unresolved);
+      expect(find.byKey(const ValueKey('fake-ad')), findsNothing);
+      expect(find.text('Antes'), findsOneWidget);
+      expect(h.loader.requests, hasLength(1));
+    });
+
+    testWidgets('status error: entry point hidden, nothing breaks', (
+      tester,
+    ) async {
+      final ump = _Ump()..privacyStatusFails = true;
+      final h = _Harness();
+      await h.pump(tester, ump: ump);
+      await h.account(tester, null);
+      expect(tester.takeException(), isNull);
+      expect(tile, findsNothing);
+      expect(find.text('Después'), findsOneWidget);
     });
   });
 }

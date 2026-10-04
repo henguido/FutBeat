@@ -355,6 +355,13 @@ final adsConfigProvider = Provider<AdsConfig>(
 final adLoaderProvider = Provider<AdLoader>((ref) => GoogleAdLoader());
 
 /// Production consent; fails closed until a real CMP is wired here.
+/// Google requires a privacy options entry point for this user. Re-read
+/// whenever the consent decision changes; unknown or any error = hidden.
+final adsPrivacyOptionsRequiredProvider = FutureProvider<bool>((ref) {
+  ref.watch(adsConsentProvider);
+  return ref.read(adsConsentProvider.notifier).privacyOptionsRequired();
+});
+
 /// The plan wants ads: configured units, a settled plan for a resolved
 /// account, and `showsAds` (FREE). Premium is never eligible, so it never
 /// sees a consent form, initializes the SDK or requests an ad.
