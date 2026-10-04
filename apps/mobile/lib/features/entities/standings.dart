@@ -541,7 +541,17 @@ class _Entry {
 
   factory _Entry.from(Json row, int index, Snapshot data) {
     final teamId = row['teamId']?.toString() ?? '';
-    int value(String key) => (row[key] as num?)?.toInt() ?? 0;
+    int? value(String key) {
+      final raw = row[key];
+      if (raw is! num ||
+          !raw.isFinite ||
+          raw != raw.roundToDouble() ||
+          (key != 'points' && raw < 0)) {
+        return null;
+      }
+      return raw.toInt();
+    }
+
     final gf = value('gf');
     final ga = value('ga');
     return _Entry(
@@ -557,7 +567,7 @@ class _Entry {
         'lost': value('lost'),
         'gf': gf,
         'ga': ga,
-        'diff': gf - ga,
+        'diff': gf != null && ga != null ? gf - ga : null,
         'points': value('points'),
       },
     );
@@ -569,7 +579,7 @@ class _Entry {
   final String formTeamId;
   final Entity team;
   final int position;
-  final Map<String, int> values;
+  final Map<String, int?> values;
 
   String get name => team.displayName;
 }
@@ -730,16 +740,23 @@ class _TeamRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final highlighted = accent != null;
     final team = entry.team;
-    String number(_Column column) {
-      final value = entry.values[column.key] ?? 0;
+    String? number(_Column column) {
+      final value = entry.values[column.key];
+      if (value == null) return null;
       return column.key == 'diff' && value > 0 ? '+$value' : '$value';
     }
 
-    String semantic(_Column column) => column.key != 'form'
-        ? '${number(column)} ${column.semantic ?? column.label}'
-        : form.isEmpty
-        ? 'forma sin datos'
-        : 'forma ${form.map((r) => _formWords[r]).join(' ')}';
+    String? semantic(_Column column) {
+      if (column.key != 'form') {
+        final value = number(column);
+        return value == null
+            ? null
+            : '$value ${column.semantic ?? column.label}';
+      }
+      return form.isEmpty
+          ? 'forma sin datos'
+          : 'forma ${form.map((r) => _formWords[r]).join(' ')}';
+    }
 
     return Semantics(
       container: true,
@@ -748,7 +765,7 @@ class _TeamRow extends StatelessWidget {
         'Posición ${entry.position}',
         entry.name,
         if (live) 'en vivo',
-        for (final column in columns) semantic(column),
+        for (final column in columns) ?semantic(column),
       ].join(', '),
       excludeSemantics: true,
       child: InkWell(
@@ -803,7 +820,7 @@ class _TeamRow extends StatelessWidget {
                   child: column.key == 'form'
                       ? _FormChips(entry.teamId, form)
                       : Text(
-                          number(column),
+                          number(column) ?? '',
                           textAlign: TextAlign.center,
                           style: column.key == 'points'
                               ? _numberStyle.copyWith(

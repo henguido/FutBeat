@@ -49,6 +49,7 @@ Snapshot _snapshot({
   String? updatedAt,
   bool? provisional,
   List<Map<String, dynamic>> extraRows = const [],
+  Map<String, dynamic> firstRowOverrides = const {},
   Set<String> omittedStandingTeamIds = const {},
   Map<String, String> rowAliases = const {},
   List<Map<String, dynamic>> matches = const [],
@@ -94,7 +95,10 @@ Snapshot _snapshot({
           else
             for (final (i, id) in _teamsOf('A').indexed)
               if (!omittedStandingTeamIds.contains(id))
-                _row(stored(id), i + 1, points: 12 - 3 * i),
+                {
+                  ..._row(stored(id), i + 1, points: 12 - 3 * i),
+                  if (i == 0) ...firstRowOverrides,
+                },
           ...extraRows,
         ],
       },
@@ -234,6 +238,50 @@ List<String> _chipLetters(WidgetTester tester, String teamId) => [
 ];
 
 void main() {
+  testWidgets('missing table metrics do not become invented zeroes', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _matchTab(
+        _snapshot(
+          firstRowOverrides: {'played': null, 'gf': null, 'points': null},
+        ),
+      ),
+    );
+    final row = find.byKey(const ValueKey('standings-row-fb_team_tv2_a1'));
+    expect(find.descendant(of: row, matching: find.text('0')), findsNothing);
+    expect(find.descendant(of: row, matching: find.text('-4')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('standings-view-full')));
+    await _settle(tester);
+    expect(find.descendant(of: row, matching: find.text('4')), findsOneWidget);
+    expect(find.descendant(of: row, matching: find.text('0')), findsNothing);
+  });
+
+  testWidgets(
+    'real zero and deducted points remain visible; invalid counts hide',
+    (tester) async {
+      await _pump(
+        tester,
+        _matchTab(
+          _snapshot(
+            firstRowOverrides: {'played': 0, 'gf': double.nan, 'points': -2},
+          ),
+        ),
+      );
+      final row = find.byKey(const ValueKey('standings-row-fb_team_tv2_a1'));
+      expect(
+        find.descendant(of: row, matching: find.text('0')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: row, matching: find.text('-2')),
+        findsOneWidget,
+      );
+      expect(find.descendant(of: row, matching: find.text('-4')), findsNothing);
+    },
+  );
+
   testWidgets('three views: Resumida (J header) by default, Completa, Forma', (
     tester,
   ) async {
