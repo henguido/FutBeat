@@ -555,6 +555,40 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('mini table never turns missing points into zero', (
+    tester,
+  ) async {
+    final context = _context();
+    final rows = ((context['standings'] as List).first['rows'] as List);
+    (rows[1] as Map).remove('points');
+    final container = await _open(tester, _Server((_) => context));
+    await _scrollTo(tester, find.byKey(const ValueKey('standings-snapshot')));
+    final text = _textIn(tester, 'standings-snapshot');
+    expect(text, contains('Local Dos'));
+    expect(text, contains('5 pts'));
+    expect(text, isNot(contains('0 pts')));
+    expect(
+      tester.getRect(find.text('#2')).right,
+      moreOrLessEquals(tester.getRect(find.text('#3')).right),
+    );
+    await _close(tester, container);
+  });
+
+  testWidgets('mini table keeps real zero but hides invalid points', (
+    tester,
+  ) async {
+    final context = _context();
+    final rows = ((context['standings'] as List).first['rows'] as List);
+    (rows[1] as Map)['points'] = 0;
+    (rows[2] as Map)['points'] = -1;
+    final container = await _open(tester, _Server((_) => context));
+    await _scrollTo(tester, find.byKey(const ValueKey('standings-snapshot')));
+    final text = _textIn(tester, 'standings-snapshot');
+    expect(text, contains('0 pts'));
+    expect(text, isNot(contains('-1 pts')));
+    await _close(tester, container);
+  });
+
   testWidgets('10. finished match: labelled as the season table', (
     tester,
   ) async {
