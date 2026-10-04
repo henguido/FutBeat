@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'billing.dart';
 import 'providers.dart';
 import 'push.dart';
 
@@ -191,9 +192,17 @@ class SecureEntitlementStore implements EntitlementStore {
 String entitlementStorageKey(String accountKey) =>
     'futbeat.entitlement.$accountKey';
 
-final entitlementSourceProvider = Provider<EntitlementSource>(
-  (ref) => const UnavailableEntitlementSource(),
-);
+/// Google Play Billing when it is configured; otherwise nothing verifies
+/// and everyone stays FREE.
+final entitlementSourceProvider = Provider<EntitlementSource>((ref) {
+  final gateway = ref.watch(billingGatewayProvider);
+  if (gateway == null) return const UnavailableEntitlementSource();
+  return PlayBillingEntitlementSource(
+    gateway,
+    products: ref.watch(premiumProductsProvider),
+    clock: ref.watch(entitlementClockProvider),
+  );
+});
 
 final entitlementStoreProvider = Provider<EntitlementStore>(
   (ref) => const SecureEntitlementStore(),
