@@ -3,10 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'auth_errors.dart';
@@ -284,6 +287,42 @@ class FirebasePushTokens implements PushTokenSource {
   Stream<String> get rotations => FirebaseMessaging.instance.onTokenRefresh;
 }
 
+/// Social providers FutBeat signs in with through Supabase Auth.
+enum OAuthProvider {
+  google('google'),
+  facebook('facebook');
+
+  const OAuthProvider(this.id);
+  final String id;
+}
+
+/// Opens [url] in a browser tab and completes with the redirect URL once it
+/// reaches [callbackScheme]. Throws [OAuthCancelled] when the user closes it.
+typedef OAuthBrowser = Future<String> Function(Uri url, String callbackScheme);
+
+/// The user closed the provider page: not an error to show.
+class OAuthCancelled implements Exception {
+  const OAuthCancelled();
+}
+
+/// The provider or Supabase refused the sign-in (redirect error).
+class OAuthFailed implements Exception {
+  const OAuthFailed(this.code);
+  final String code;
+}
+
+Future<String> _customTabBrowser(Uri url, String callbackScheme) async {
+  try {
+    return await FlutterWebAuth2.authenticate(
+      url: url.toString(),
+      callbackUrlScheme: callbackScheme,
+    );
+  } on PlatformException catch (error) {
+    if (error.code == 'CANCELED') throw const OAuthCancelled();
+    rethrow;
+  }
+}
+
 class PushService {
   PushService(
     this.config,
@@ -293,7 +332,11 @@ class PushService {
     DateTime Function()? clock,
     this.signOutCleanupTimeout = const Duration(seconds: 5),
     bool? pushConfigured,
+    OAuthBrowser? oauthBrowser,
+    bool? oauthEnabled,
   }) : clock = clock ?? DateTime.now,
+       oauthBrowser = oauthBrowser ?? _customTabBrowser,
+       oauthEnabled = oauthEnabled ?? oauthConfigured,
        pushConfigured = pushConfigured ?? configured,
        dio =
            dio ??
@@ -316,6 +359,20 @@ class PushService {
 
   /// [configured] unless a test overrides it.
   final bool pushConfigured;
+
+  final OAuthBrowser oauthBrowser;
+
+  /// [oauthConfigured] unless a test overrides it.
+  final bool oauthEnabled;
+
+  /// Social sign-in needs `com.futbeat.futbeat://login-callback` in the
+  /// Supabase redirect allow list, which the app cannot check: builds opt
+  /// in with FUTBEAT_OAUTH_ENABLED once it is configured.
+  static const oauthConfigured = bool.fromEnvironment('FUTBEAT_OAUTH_ENABLED');
+  static const oauthCallbackScheme = 'com.futbeat.futbeat';
+  static const oauthRedirect = '$oauthCallbackScheme://login-callback';
+
+  Set<OAuthProvider>? _oauthProviders;
 
   /// `futbeat_sync_user_profile_v3` answered "not found" on this
   /// server; later saves go straight to the legacy RPC.
@@ -481,6 +538,89 @@ class PushService {
     await _startSession(next);
   }
 
+  /// Social providers enabled in Supabase Auth (public `/settings`), empty
+  /// when social sign-in is off for this build or the answer is unknown.
+  Future<Set<OAuthProvider>> oauthProviders() async {
+    if (!accountConfigured || !oauthEnabled) return const {};
+    final known = _oauthProviders;
+    if (known != null) return known;
+    try {
+      final response = await dio.get<dynamic>(
+        '${config.supabaseUrl}/auth/v1/settings',
+        options: Options(headers: {'apikey': config.publicKey}),
+      );
+      final external = response.data is Map
+          ? (response.data as Map)['external']
+          : null;
+      return _oauthProviders = {
+        for (final provider in OAuthProvider.values)
+          if (external is Map && external[provider.id] == true) provider,
+      };
+    } catch (_) {
+      // Not cached: the next auth screen asks again.
+      return const {};
+    }
+  }
+
+  /// Google / Facebook through Supabase Auth with PKCE: the provider page
+  /// opens in a browser tab, the redirect brings back a one-time code and
+  /// only the code exchange creates the session. No provider secret lives
+  /// in the app.
+  Future<void> signInWithOAuth(OAuthProvider provider) async {
+    if (!accountConfigured || !oauthEnabled) {
+      throw StateError('Social sign-in is not configured');
+    }
+    await _awaitSignOutCleanup();
+    final random = Random.secure();
+    final verifier = base64Url
+        .encode(List<int>.generate(48, (_) => random.nextInt(256)))
+        .replaceAll('=', '');
+    final challenge = base64Url
+        .encode(sha256.convert(ascii.encode(verifier)).bytes)
+        .replaceAll('=', '');
+    final url = Uri.parse('${config.supabaseUrl}/auth/v1/authorize').replace(
+      queryParameters: {
+        'provider': provider.id,
+        'redirect_to': oauthRedirect,
+        'code_challenge': challenge,
+        'code_challenge_method': 's256',
+      },
+    );
+    final callback = Uri.parse(await oauthBrowser(url, oauthCallbackScheme));
+    // GoTrue reports failures in the query or, for implicit errors, the
+    // fragment.
+    final params = {
+      ...Uri.splitQueryString(callback.fragment),
+      ...callback.queryParameters,
+    };
+    final error = params['error_code'] ?? params['error'];
+    if (error != null) {
+      if (error == 'access_denied') throw const OAuthCancelled();
+      throw OAuthFailed(error);
+    }
+    final code = params['code'];
+    if (code == null || code.isEmpty) throw const OAuthFailed('missing_code');
+    final result = await dio.post<dynamic>(
+      '${config.supabaseUrl}/auth/v1/token?grant_type=pkce',
+      data: {'auth_code': code, 'code_verifier': verifier},
+      options: Options(headers: {'apikey': config.publicKey}),
+    );
+    final next = _validSession(result.data);
+    if (next == null) throw _invalidSession(result.requestOptions);
+    await _startSession(next);
+  }
+
+  /// Provider of the current session ('email', 'google', 'facebook'), from
+  /// the user's app metadata; null when unknown.
+  String? get authProvider {
+    final user = session?['user'];
+    if (user is! Map) return null;
+    final metadata = user['app_metadata'];
+    if (metadata is! Map) return null;
+    final value = metadata['provider']?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
   /// Stores a fresh GoTrue session and starts account sync. A failed first
   /// reconcile (offline) is retried by the renewal tick; the session stays.
   Future<void> _startSession(Map<String, dynamic> value) async {
@@ -557,11 +697,16 @@ class PushService {
     );
   }
 
-  Future<void> resendEmailConfirmation() async {
+  /// Signed out, [emailAddress] (e.g. a sign-in refused with "confirm your
+  /// email") takes precedence over the address of the last sign-up.
+  Future<void> resendEmailConfirmation({String? emailAddress}) async {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
-    final currentEmail = authenticated ? email : pendingConfirmationEmail;
+    final typed = emailAddress?.trim();
+    final currentEmail = authenticated
+        ? email
+        : (typed == null || typed.isEmpty ? pendingConfirmationEmail : typed);
     if (currentEmail == null || (authenticated && emailVerified != false)) {
       throw StateError('Email confirmation is not pending');
     }

@@ -28,6 +28,22 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Receives the Supabase OAuth redirect
+             (com.futbeat.futbeat://login-callback) for Google / Facebook
+             sign-in; see PushService.signInWithOAuth. -->
+        <activity
+            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:exported="true"
+            android:taskAffinity="">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="com.futbeat.futbeat"
+                    android:host="login-callback" />
+            </intent-filter>
+        </activity>
         <!-- Channel FCM uses for notifications without an explicit channel.
              The server sends channel_id futbeat_match_alerts; the app creates
              it at start when push is configured (MainActivity). Inert in

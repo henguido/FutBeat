@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/ads.dart';
 import '../../core/interests.dart';
 import '../../core/database.dart';
+import '../../core/load_errors.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../core/relevance.dart';
@@ -494,7 +495,16 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
               );
             }
           } else if (failed) {
-            feedItems.add(() => const Text('No pudimos cargar esta fecha'));
+            final error = ref
+                .read(effectiveCalendarSnapshotProvider(requestDate))
+                .error;
+            feedItems.add(
+              () => Text(
+                classifyLoadError(error) == LoadFailure.other
+                    ? 'No pudimos cargar esta fecha'
+                    : loadErrorMessage(error),
+              ),
+            );
             feedItems.add(
               () => TextButton(
                 onPressed: () =>

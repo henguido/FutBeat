@@ -8,6 +8,7 @@ import '../../core/auth_errors.dart';
 import '../../core/providers.dart';
 import '../../core/push.dart';
 import '../../core/push_messages.dart';
+import '../auth/auth_sheet.dart';
 import 'competition_order_preferences.dart';
 import 'ads_privacy_tile.dart';
 import 'notification_options.dart';
@@ -97,6 +98,27 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       await service.signIn(email.text, password.text);
       password.clear();
     }, 'Sesión iniciada.');
+    await _offerNotifications(service);
+  }
+
+  Future<void> _oauth(PushService service, OAuthProvider provider) async {
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      await service.signInWithOAuth(provider);
+      await _load();
+      if (mounted) setState(() => message = 'Sesión iniciada.');
+    } on OAuthCancelled {
+      // Closing the provider page changes nothing.
+    } on OAuthFailed {
+      if (mounted) setState(() => message = 'No se pudo iniciar sesión.');
+    } catch (error) {
+      if (mounted) setState(() => message = authErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
     await _offerNotifications(service);
   }
 
@@ -367,6 +389,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                 ),
               ),
+            for (final provider in OAuthProvider.values)
+              if (ref
+                      .watch(oauthProvidersProvider)
+                      .asData
+                      ?.value
+                      .contains(provider) ==
+                  true) ...[
+                OAuthProviderButton(
+                  key: ValueKey('profile-${provider.id}'),
+                  provider: provider,
+                  label: 'Continuar con ${oauthProviderName(provider)}',
+                  onPressed: busy ? null : () => _oauth(service, provider),
+                ),
+                const SizedBox(height: 10),
+              ],
             TextField(
               controller: email,
               keyboardType: TextInputType.emailAddress,
@@ -421,10 +458,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       : Icons.verified_user_outlined,
                 ),
                 title: Text(service.email ?? 'Sesión iniciada'),
-                subtitle: switch (service.emailVerified) {
-                  true => const Text('Correo verificado'),
-                  false => const Text('Confirma tu correo'),
-                  null => null,
+                subtitle: switch ((
+                  service.emailVerified,
+                  authProviderLabel(service.authProvider),
+                )) {
+                  (false, _) => const Text('Confirma tu correo'),
+                  (true, final String via) when via != 'Correo' => Text(
+                    'Correo verificado · $via',
+                  ),
+                  (true, _) => const Text('Correo verificado'),
+                  (null, final String via) => Text(via),
+                  (null, null) => null,
                 },
                 trailing: service.emailVerified == false
                     ? TextButton(

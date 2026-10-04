@@ -10,12 +10,14 @@ import '../../core/countries.dart';
 import '../../core/database.dart';
 import '../../core/entity_media.dart';
 import '../../core/interests.dart';
+import '../../core/load_errors.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../core/push.dart';
 import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
+import '../auth/auth_sheet.dart';
 import '../profile/notification_options.dart';
 
 /// Onboarding steps (#107): welcome → country → teams → competitions →
@@ -36,13 +38,26 @@ const onboardingStepCount = 8;
 bool isSelectableCountryCode(String? value) =>
     value != null && RegExp(r'^[A-Z]{2}$').hasMatch(value);
 
-/// Country shown in onboarding: only the user's own choice. The device
-/// locale is not a location, so it never pre-fills the selector. Unknown
-/// codes are never shown raw.
-String? onboardingCountryCode(CountryPreference preference) {
-  final code = preference.selectedCountry;
-  return countryDisplayName(code) == null ? null : code!.trim().toUpperCase();
+String? _displayableCountry(String? value) {
+  final code = value?.trim().toUpperCase();
+  return isSelectableCountryCode(code) && countryDisplayName(code) != null
+      ? code
+      : null;
 }
+
+/// Country shown in onboarding: the user's own choice, else the device
+/// region as a suggestion (see [isSuggestedOnboardingCountry]). The
+/// suggestion is never stored as the choice, so a manual pick always wins
+/// and survives restarts. Unknown codes are never shown raw.
+String? onboardingCountryCode(CountryPreference preference) =>
+    _displayableCountry(preference.selectedCountry) ??
+    _displayableCountry(preference.detectedCountry);
+
+/// True when [onboardingCountryCode] comes from the device region, not
+/// from a manual choice.
+bool isSuggestedOnboardingCountry(CountryPreference preference) =>
+    _displayableCountry(preference.selectedCountry) == null &&
+    _displayableCountry(preference.detectedCountry) != null;
 
 bool isCurrentOnboardingRequest(
   ({String query, String? country}) request, {
@@ -563,15 +578,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (mounted) setState(() => countryBusy = false);
   }
 
-  /// Sign in / create the account in Perfil (one auth screen for the whole
-  /// app); the onboarding updates by itself when the account changes.
-  Future<void> _openProfile() async {
-    // Perfil has the tab bar: leaving through it must not send a first-run
-    // user back into onboarding on the next launch.
-    if (!widget.reentry) {
-      await ref.read(databaseProvider).markBootstrapDismissed();
-    }
-    if (mounted) await context.push('/profile');
+  /// Sign in / create the account in place: the onboarding stays on the
+  /// same step and updates by itself when the account changes.
+  Future<void> _openAuth(AuthMode mode) async {
+    final signedIn = await showAuthSheet(context, mode);
+    if (signedIn && mounted) setState(() {});
   }
 
   static const _searchSteps = {
@@ -863,7 +874,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   SizedBox(
                     height: 52,
                     child: OutlinedButton(
-                      onPressed: busy ? null : _openProfile,
+                      key: const ValueKey('onboarding-welcome-login'),
+                      onPressed: busy ? null : () => _openAuth(AuthMode.login),
                       child: const Text('Iniciar sesión'),
                     ),
                   ),
@@ -1013,6 +1025,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           const LinearProgressIndicator(minHeight: 2),
         if ((searchState ?? catalogState).hasError)
           _catalogError(
+            (searchState ?? catalogState).error,
             () => searchState == null
                 ? ref.invalidate(exploreSnapshotProvider)
                 : ref.invalidate(
@@ -1078,6 +1091,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           ),
         if ((searchState ?? catalogState).hasError)
           _catalogError(
+            (searchState ?? catalogState).error,
             () => searchState == null
                 ? ref.invalidate(exploreSnapshotProvider)
                 : ref.invalidate(
@@ -1221,9 +1235,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
-  Widget _catalogError(VoidCallback retry) => Card(
+  Widget _catalogError(Object? error, VoidCallback retry) => Card(
     child: ListTile(
-      title: const Text('Sin conexión'),
+      title: Text(loadErrorMessage(error)),
       trailing: TextButton(onPressed: retry, child: const Text('Reintentar')),
     ),
   );
@@ -1289,7 +1303,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Widget _accountStep() {
-    // Rebuilds after signing in / creating the account from Perfil.
+    // Rebuilds after signing in / creating the account.
     ref.watch(currentAccountProvider);
     final service = ref.watch(pushServiceProvider);
     if (!service.accountConfigured) {
@@ -1330,7 +1344,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         SizedBox(
           height: 52,
           child: FilledButton.tonal(
-            onPressed: _openProfile,
+            key: const ValueKey('onboarding-account-signup'),
+            onPressed: () => _openAuth(AuthMode.signup),
             child: const Text('Crear cuenta'),
           ),
         ),
@@ -1338,7 +1353,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         SizedBox(
           height: 52,
           child: OutlinedButton(
-            onPressed: _openProfile,
+            key: const ValueKey('onboarding-account-login'),
+            onPressed: () => _openAuth(AuthMode.login),
             child: const Text('Iniciar sesión'),
           ),
         ),

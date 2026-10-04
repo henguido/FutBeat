@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +11,7 @@ import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
+import 'package:futbeat/features/auth/auth_sheet.dart';
 import 'package:futbeat/features/onboarding/onboarding_screen.dart';
 import 'package:futbeat/main.dart';
 
@@ -85,6 +87,7 @@ Future<void> pumpOnboarding(
   bool livePreference = false,
   bool liveFollows = false,
   bool offline = false,
+  Object? catalogError,
   bool atWelcome = false,
   OnboardingProgressStore? progress,
   PushService? pushService,
@@ -111,8 +114,14 @@ Future<void> pumpOnboarding(
               : Stream.value(preference),
         ),
         exploreSnapshotProvider.overrideWith(
-          (ref) => offline
-              ? Stream<Snapshot>.error(Exception('offline'))
+          (ref) => offline || catalogError != null
+              ? Stream<Snapshot>.error(
+                  catalogError ??
+                      DioException(
+                        requestOptions: RequestOptions(path: '/v1/explore'),
+                        type: DioExceptionType.connectionError,
+                      ),
+                )
               : Stream.value(catalog()),
         ),
         profileSettingsProvider.overrideWith(
@@ -359,58 +368,25 @@ void main() {
     expect(countryMatches('ES', 'espana'), isTrue);
   });
 
-  test('only the manual country is shown, never the device locale', () {
+  test('manual country wins; the device region is only a suggestion', () {
+    CountryPreference pref(String? detected, String? selected) =>
+        CountryPreference(
+          detectedCountry: detected,
+          selectedCountry: selected,
+          bootstrapDismissed: false,
+        );
     // Device locale en-US, user chose Costa Rica.
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: 'US',
-          selectedCountry: 'CR',
-          bootstrapDismissed: false,
-        ),
-      ),
-      'CR',
-    );
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: 'US',
-          selectedCountry: null,
-          bootstrapDismissed: false,
-        ),
-      ),
-      isNull,
-    );
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: 'CR',
-          selectedCountry: null,
-          bootstrapDismissed: false,
-        ),
-      ),
-      isNull,
-    );
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: 'ZZ',
-          selectedCountry: null,
-          bootstrapDismissed: false,
-        ),
-      ),
-      isNull,
-    );
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: null,
-          selectedCountry: null,
-          bootstrapDismissed: false,
-        ),
-      ),
-      isNull,
-    );
+    expect(onboardingCountryCode(pref('US', 'CR')), 'CR');
+    expect(isSuggestedOnboardingCountry(pref('US', 'CR')), isFalse);
+    // No choice: the device region is suggested.
+    expect(onboardingCountryCode(pref('CR', null)), 'CR');
+    expect(isSuggestedOnboardingCountry(pref('CR', null)), isTrue);
+    expect(onboardingCountryCode(pref('US', null)), 'US');
+    // Unknown or missing: nothing (the UI shows "Elegir país").
+    expect(onboardingCountryCode(pref('ZZ', null)), isNull);
+    expect(onboardingCountryCode(pref('GB-ENG', null)), isNull);
+    expect(onboardingCountryCode(pref(null, null)), isNull);
+    expect(isSuggestedOnboardingCountry(pref(null, null)), isFalse);
   });
 
   test(
@@ -433,7 +409,8 @@ void main() {
     addTearDown(db.close);
     final first = await refreshDetectedCountry(db, 'US');
     expect(first.selectedCountry, isNull);
-    expect(onboardingCountryCode(first), isNull);
+    expect(onboardingCountryCode(first), 'US');
+    expect(isSuggestedOnboardingCountry(first), isTrue);
     final again = await refreshDetectedCountry(db, 'CR');
     expect(again.selectedCountry, isNull);
   });
@@ -495,10 +472,10 @@ void main() {
     expect(find.byType(NavigationBar), findsNothing);
     await tester.tap(find.byKey(const ValueKey('onboarding-quick-setup')));
     await tester.pump(const Duration(milliseconds: 300));
-    // Even a locale that matches is never auto-selected.
-    expect(find.text('Elegir país'), findsOneWidget);
-    expect(find.text('Costa Rica'), findsNothing);
-    expect(find.text('Cambiar'), findsNothing);
+    // The device region is suggested, ready to change.
+    expect(find.text('Costa Rica'), findsOneWidget);
+    expect(find.text('Cambiar'), findsOneWidget);
+    expect(find.text('Elegir país'), findsNothing);
     expect(find.text('Continuar'), findsOneWidget);
     expect(find.text('Saltar'), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
@@ -524,7 +501,7 @@ void main() {
     final db = AppDatabase(NativeDatabase.memory());
     addTearDown(db.close);
     await pumpOnboarding(tester, database: db, offline: true);
-    expect(find.text('Elegir país'), findsOneWidget);
+    expect(find.text('Costa Rica'), findsOneWidget);
     await tester.tap(find.text('Continuar'));
     await tester.pump(const Duration(milliseconds: 20));
     expect(find.text('Equipos'), findsOneWidget);
@@ -535,7 +512,7 @@ void main() {
     expect(find.text('Ligas'), findsOneWidget);
   });
 
-  testWidgets('device US without a choice shows Elegir país and saves none', (
+  testWidgets('device US without a choice suggests it and saves none', (
     tester,
   ) async {
     final db = AppDatabase(NativeDatabase.memory());
@@ -543,9 +520,9 @@ void main() {
     await db.savePreference(detectedCountry: 'US', selectedCountry: null);
     await pumpOnboarding(tester, database: db, livePreference: true);
     await tester.pump(const Duration(milliseconds: 20));
-    expect(find.text('Elegir país'), findsOneWidget);
-    expect(find.text('Estados Unidos'), findsNothing);
-    expect(find.text('Cambiar'), findsNothing);
+    expect(find.text('Estados Unidos'), findsOneWidget);
+    expect(find.text('Cambiar'), findsOneWidget);
+    expect(visibleTexts(tester).where(isRawCode), isEmpty);
     await tester.tap(find.text('Continuar'));
     await tester.pump(const Duration(milliseconds: 20));
     final saved = await tester.runAsync(() => db.watchPreference().first);
@@ -586,6 +563,45 @@ void main() {
     expect(find.text('Elegir país'), findsOneWidget);
   });
 
+  testWidgets('unknown device region shows Elegir país, never a code', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await pumpOnboarding(
+      tester,
+      database: db,
+      preference: const CountryPreference(
+        detectedCountry: 'ZZ',
+        selectedCountry: null,
+        bootstrapDismissed: false,
+      ),
+    );
+    expect(find.text('Elegir país'), findsOneWidget);
+    expect(find.text('ZZ'), findsNothing);
+  });
+
+  testWidgets('a server error is not shown as "Sin conexión"', (tester) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final options = RequestOptions(path: '/v1/explore');
+    await pumpOnboarding(
+      tester,
+      database: db,
+      catalogError: DioException(
+        requestOptions: options,
+        response: Response(requestOptions: options, statusCode: 503),
+        type: DioExceptionType.badResponse,
+      ),
+    );
+    await tester.tap(find.text('Continuar'));
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('Equipos'), findsOneWidget);
+    expect(find.text('Servicio no disponible por ahora'), findsOneWidget);
+    expect(find.text('Sin conexión'), findsNothing);
+    expect(find.text('Reintentar'), findsOneWidget);
+  });
+
   testWidgets('picker lists localized names and saves a manual choice', (
     tester,
   ) async {
@@ -594,8 +610,7 @@ void main() {
     await db.savePreference(detectedCountry: 'US', selectedCountry: null);
     await pumpOnboarding(tester, database: db, livePreference: true);
     await tester.pump(const Duration(milliseconds: 20));
-    expect(find.text('Elegir país'), findsOneWidget);
-    expect(find.text('Estados Unidos'), findsNothing);
+    expect(find.text('Estados Unidos'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('onboarding-country')));
     await settle(tester);
     expect(find.byKey(const ValueKey('country-picker')), findsOneWidget);
@@ -785,7 +800,7 @@ void main() {
     );
   });
 
-  testWidgets('account step shows the session once signed in from Perfil', (
+  testWidgets('account step shows the session once signed in elsewhere', (
     tester,
   ) async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -822,6 +837,96 @@ void main() {
     expect(find.text('Sesión iniciada · qa@example.com'), findsOneWidget);
     expect(find.text('Crear cuenta'), findsNothing);
     expect(find.text('Continuar'), findsOneWidget);
+  });
+
+  group('auth from onboarding', () {
+    Future<_SheetAuth> start(
+      WidgetTester tester, {
+      bool atWelcome = false,
+    }) async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final db = AppDatabase(NativeDatabase.memory());
+      final service = _SheetAuth(db);
+      addTearDown(() async {
+        service.dispose();
+        await db.close();
+      });
+      await tester.runAsync(service.restore);
+      await pumpOnboarding(
+        tester,
+        database: db,
+        pushService: service,
+        atWelcome: atWelcome,
+      );
+      return service;
+    }
+
+    String sheetTitle(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(const ValueKey('auth-title'))).data!;
+
+    Future<void> toAccount(WidgetTester tester) async {
+      for (var i = 0; i < 5; i++) {
+        await tester.tap(find.text('Continuar'));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+    }
+
+    testWidgets('Welcome > Iniciar sesión opens the login sheet', (
+      tester,
+    ) async {
+      await start(tester, atWelcome: true);
+      await tester.tap(find.byKey(const ValueKey('onboarding-welcome-login')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AuthSheet), findsOneWidget);
+      expect(sheetTitle(tester), 'Iniciar sesión');
+      expect(find.byType(NavigationBar), findsNothing);
+    });
+
+    testWidgets('Account > Crear cuenta opens the signup sheet', (
+      tester,
+    ) async {
+      await start(tester);
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-signup')));
+      await tester.pumpAndSettle();
+      expect(sheetTitle(tester), 'Crear cuenta');
+    });
+
+    testWidgets('Account > Iniciar sesión signs in and stays on the step', (
+      tester,
+    ) async {
+      final service = await start(tester);
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-login')));
+      await tester.pumpAndSettle();
+      expect(sheetTitle(tester), 'Iniciar sesión');
+      await tester.enterText(
+        find.byKey(const ValueKey('auth-email')),
+        'qa@example.com',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('auth-password')),
+        'secreta-1',
+      );
+      await tester.tap(find.byKey(const ValueKey('auth-submit')));
+      await tester.pumpAndSettle();
+      expect(service.authenticated, isTrue);
+      expect(find.byType(AuthSheet), findsNothing);
+      expect(find.text('Sesión iniciada · qa@example.com'), findsOneWidget);
+      expect(find.text('Continuar'), findsOneWidget);
+    });
+
+    testWidgets('closing the sheet keeps the onboarding step', (tester) async {
+      final service = await start(tester);
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-login')));
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.byType(AuthSheet))).pop();
+      await tester.pumpAndSettle();
+      expect(service.authenticated, isFalse);
+      expect(find.text('Crear cuenta'), findsOneWidget);
+      expect(find.text('Continuar sin cuenta'), findsOneWidget);
+    });
   });
 
   group('onboarding v2', () {
@@ -1295,4 +1400,24 @@ class _NoTokens implements PushTokenSource {
 
   @override
   Stream<String> get rotations => const Stream.empty();
+}
+
+/// Configured account service whose sign-in needs no server.
+class _SheetAuth extends PushService {
+  _SheetAuth(AppDatabase db)
+    : super(
+        const LiveRealtimeConfig(
+          supabaseUrl: 'https://supabase.test',
+          publicKey: 'publishable-test-key',
+        ),
+        db,
+        _NoTokens(),
+      );
+
+  @override
+  Future<void> signIn(String email, String password) async => session = {
+    'access_token': 'access',
+    'refresh_token': 'refresh',
+    'user': {'id': 'user-a', 'email': email.trim()},
+  };
 }
