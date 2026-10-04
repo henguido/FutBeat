@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/entitlements.dart' show currentAccountProvider;
 import '../../core/countries.dart';
 import '../../core/database.dart';
 import '../../core/interests.dart';
@@ -690,6 +691,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Widget _accountStep() {
+    // Rebuilds after signing in / creating the account from Perfil.
+    ref.watch(currentAccountProvider);
     final service = ref.watch(pushServiceProvider);
     if (!service.accountConfigured) {
       return const Text('Cuenta no disponible');

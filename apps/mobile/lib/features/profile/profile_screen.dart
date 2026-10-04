@@ -11,6 +11,7 @@ import '../../core/push_messages.dart';
 import 'competition_order_preferences.dart';
 import 'ads_privacy_tile.dart';
 import 'notification_options.dart';
+import 'password_reset_sheet.dart';
 import 'premium_card.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -96,6 +97,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       await service.signIn(email.text, password.text);
       password.clear();
     }, 'Sesión iniciada.');
+    await _offerNotifications(service);
+  }
+
+  Future<void> _recoverPassword(PushService service) async {
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) =>
+          PasswordResetSheet(service: service, initialEmail: email.text.trim()),
+    );
+    if (changed != true || !mounted) return;
+    password.clear();
+    await _load();
+    if (mounted) {
+      setState(() => message = 'Contraseña actualizada. Sesión iniciada.');
+    }
     await _offerNotifications(service);
   }
 
@@ -386,6 +403,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             TextButton(
               onPressed: busy ? null : () => signUp(service),
               child: const Text('Crear cuenta'),
+            ),
+            TextButton(
+              key: const ValueKey('forgot-password'),
+              onPressed: busy ? null : () => _recoverPassword(service),
+              child: const Text('¿Olvidaste tu contraseña?'),
             ),
           ] else ...[
             Card(

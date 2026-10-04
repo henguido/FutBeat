@@ -63,6 +63,13 @@ String authErrorMessage(Object error) {
       codes.contains('over_request_rate_limit')) {
     return 'Demasiados intentos. Espera un momento.';
   }
+  if (codes.contains('otp_expired') ||
+      text.contains('token has expired or is invalid')) {
+    return 'El código no es válido o ya venció.';
+  }
+  if (codes.contains('same_password')) {
+    return 'Usa una contraseña distinta a la anterior.';
+  }
   if (codes.contains('signup_disabled') ||
       codes.contains('email_provider_disabled')) {
     return 'El registro no está disponible.';

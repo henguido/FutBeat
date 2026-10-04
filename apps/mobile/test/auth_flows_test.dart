@@ -14,6 +14,7 @@ import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
+import 'package:futbeat/features/profile/password_reset_sheet.dart';
 import 'package:futbeat/features/profile/profile_screen.dart';
 
 class _Tokens implements PushTokenSource {
@@ -750,6 +751,195 @@ void main() {
     expect(seen, ['user-a']);
   });
 
+  group('password recovery', () {
+    test('asks Supabase for a code without signing in', () async {
+      final value = await _service();
+      await value.service.requestPasswordReset(' user@example.com ');
+      final call = value.http.calls.singleWhere(
+        (c) => c.path.contains('/auth/v1/recover'),
+      );
+      expect(call.data, {'email': 'user@example.com'});
+      expect(call.headers['Authorization'], isNull);
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test('a valid code signs in and sets the new password', () async {
+      final value = await _service(server: {'team:a'});
+      value.http.routes['/auth/v1/verify'] = (_) => value.http.issue('user-a');
+      value.http.routes['/auth/v1/user'] = (_) => {'id': 'user-a'};
+
+      await value.service.resetPassword(
+        'user@example.com',
+        ' 123456 ',
+        'nueva-clave-8',
+      );
+
+      final verify = value.http.calls.singleWhere(
+        (c) => c.path.contains('/auth/v1/verify'),
+      );
+      expect(verify.data, {
+        'type': 'recovery',
+        'email': 'user@example.com',
+        'token': '123456',
+      });
+      final update = value.http.calls.singleWhere(
+        (c) => c.path.contains('/auth/v1/user'),
+      );
+      expect(update.method, 'PUT');
+      expect(update.data, {'password': 'nueva-clave-8'});
+      expect(
+        update.headers['Authorization'],
+        startsWith('Bearer access-user-a-'),
+      );
+      expect(value.service.accountId, 'user-a');
+      expect(await _read('futbeat.push.session'), isNotNull);
+      // Same account sync as a normal sign-in: server follows merge in.
+      await _settle(value.service);
+      expect(await value.db.watchFollows().first, contains('team:a'));
+    });
+
+    test('an invalid or expired code: clear message, no session', () async {
+      final value = await _service();
+      value.http.routes['/auth/v1/verify'] = (_) => const _Fail(403, {
+        'error_code': 'otp_expired',
+        'msg': 'Token has expired or is invalid',
+      });
+      Object? error;
+      try {
+        await value.service.resetPassword(
+          'user@example.com',
+          '000000',
+          'x' * 8,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error, isA<DioException>());
+      expect(authErrorMessage(error!), 'El código no es válido o ya venció.');
+      expect(value.service.authenticated, isFalse);
+      expect(value.http.called('/auth/v1/user'), isFalse);
+    });
+  });
+
+  test('a failed password update signs nobody in and retries without '
+      'spending the code again', () async {
+    final value = await _service();
+    var verifies = 0;
+    value.http.routes['/auth/v1/verify'] = (_) {
+      verifies++;
+      return value.http.issue('user-a');
+    };
+    var fail = true;
+    value.http.routes['/auth/v1/user'] = (_) => fail
+        ? const _Fail(422, {'error_code': 'same_password'})
+        : {'id': 'user-a'};
+    final seen = <String?>[];
+    final subscription = value.service.accountChanges.listen(seen.add);
+    addTearDown(subscription.cancel);
+
+    Object? error;
+    try {
+      await value.service.resetPassword(
+        'user@example.com',
+        '123456',
+        'vieja-123',
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    expect(
+      authErrorMessage(error!),
+      'Usa una contraseña distinta a la anterior.',
+    );
+    expect(value.service.authenticated, isFalse);
+    expect(await _read('futbeat.push.session'), isNull);
+    await Future<void>.delayed(Duration.zero);
+    expect(seen, isEmpty);
+
+    fail = false;
+    await value.service.resetPassword(
+      'user@example.com',
+      '123456',
+      'nueva-123',
+    );
+    expect(verifies, 1);
+    expect(value.service.accountId, 'user-a');
+    expect(await _read('futbeat.push.session'), isNotNull);
+  });
+
+  testWidgets('recovery sheet: email, then code and new password', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final db = AppDatabase(NativeDatabase.memory());
+    final service = _ResetService(db);
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+    });
+    bool? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                result = await showModalBottomSheet<bool>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (_) => PasswordResetSheet(
+                    service: service,
+                    initialEmail: 'user@example.com',
+                  ),
+                );
+              },
+              child: const Text('abrir'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('abrir'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reset-code')), findsNothing);
+
+    await tester.tap(find.text('Enviar código'));
+    await tester.pumpAndSettle();
+    expect(service.requested, ['user@example.com']);
+    expect(find.text('Te enviamos un código a tu correo.'), findsOneWidget);
+
+    // Local validation first: no request with a bad code / short password.
+    await tester.enterText(find.byKey(const ValueKey('reset-code')), '12');
+    await tester.enterText(find.byKey(const ValueKey('reset-password')), 'x');
+    await tester.tap(find.text('Cambiar contraseña'));
+    await tester.pumpAndSettle();
+    expect(find.text('Escribe el código del correo.'), findsOneWidget);
+    expect(service.resets, isEmpty);
+
+    // A rejected code shows the clear message and keeps the sheet open.
+    service.failNext = true;
+    await tester.enterText(find.byKey(const ValueKey('reset-code')), '000000');
+    await tester.enterText(
+      find.byKey(const ValueKey('reset-password')),
+      'nueva-clave-8',
+    );
+    await tester.tap(find.text('Cambiar contraseña'));
+    await tester.pumpAndSettle();
+    expect(find.text('El código no es válido o ya venció.'), findsOneWidget);
+    expect(result, isNull);
+
+    await tester.enterText(find.byKey(const ValueKey('reset-code')), '123456');
+    await tester.tap(find.text('Cambiar contraseña'));
+    await tester.pumpAndSettle();
+    expect(service.resets.last, (
+      'user@example.com',
+      '123456',
+      'nueva-clave-8',
+    ));
+    expect(result, isTrue);
+    expect(find.byType(PasswordResetSheet), findsNothing);
+  });
+
   test(
     'sign up without a session keeps the pending confirmation flow',
     () async {
@@ -1036,4 +1226,47 @@ void main() {
     expect(find.text('Correo o contraseña incorrectos.'), findsOneWidget);
     expect(value.service.authenticated, isFalse);
   });
+}
+
+/// PushService whose recovery calls are recorded (UI tests of the sheet).
+class _ResetService extends PushService {
+  _ResetService(AppDatabase db)
+    : super(
+        const LiveRealtimeConfig(
+          supabaseUrl: 'https://supabase.test',
+          publicKey: 'publishable-test-key',
+        ),
+        db,
+        _Tokens(),
+      );
+
+  final requested = <String>[];
+  final resets = <(String, String, String)>[];
+  bool failNext = false;
+
+  @override
+  Future<void> requestPasswordReset(String emailAddress) async =>
+      requested.add(emailAddress.trim());
+
+  @override
+  Future<void> resetPassword(
+    String emailAddress,
+    String code,
+    String newPassword,
+  ) async {
+    if (failNext) {
+      failNext = false;
+      final options = RequestOptions(path: '/auth/v1/verify');
+      throw DioException(
+        requestOptions: options,
+        type: DioExceptionType.badResponse,
+        response: Response(
+          requestOptions: options,
+          statusCode: 403,
+          data: {'error_code': 'otp_expired'},
+        ),
+      );
+    }
+    resets.add((emailAddress.trim(), code, newPassword));
+  }
 }

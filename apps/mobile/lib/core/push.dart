@@ -572,6 +572,69 @@ class PushService {
     );
   }
 
+  /// "¿Olvidaste tu contraseña?": Supabase emails a one-time code. The
+  /// project's "Reset password" email template must include {{ .Token }}.
+  Future<void> requestPasswordReset(String emailAddress) async {
+    if (!accountConfigured) {
+      throw StateError('Account service is not configured');
+    }
+    await dio.post(
+      '${config.supabaseUrl}/auth/v1/recover',
+      data: {'email': emailAddress.trim()},
+      options: Options(headers: {'apikey': config.publicKey}),
+    );
+  }
+
+  /// Session from a verified recovery code whose password update has not
+  /// succeeded yet. Never published: a retry reuses it instead of spending
+  /// the one-time code again.
+  Map<String, dynamic>? _recoverySession;
+  String? _recoveryEmail;
+
+  /// Verifies the emailed code, sets [newPassword] with that verified
+  /// session and only then signs the account in (like [signIn]). A failed
+  /// update leaves no session behind and can be retried.
+  Future<void> resetPassword(
+    String emailAddress,
+    String code,
+    String newPassword,
+  ) async {
+    if (!accountConfigured) {
+      throw StateError('Account service is not configured');
+    }
+    await _awaitSignOutCleanup();
+    final normalized = emailAddress.trim().toLowerCase();
+    var verified = _recoveryEmail == normalized ? _recoverySession : null;
+    if (verified == null) {
+      final result = await dio.post<dynamic>(
+        '${config.supabaseUrl}/auth/v1/verify',
+        data: {
+          'type': 'recovery',
+          'email': emailAddress.trim(),
+          'token': code.trim(),
+        },
+        options: Options(headers: {'apikey': config.publicKey}),
+      );
+      verified = _validSession(result.data);
+      if (verified == null) throw _invalidSession(result.requestOptions);
+      _recoverySession = verified;
+      _recoveryEmail = normalized;
+    }
+    await dio.put<dynamic>(
+      '${config.supabaseUrl}/auth/v1/user',
+      data: {'password': newPassword},
+      options: Options(
+        headers: {
+          'apikey': config.publicKey,
+          'Authorization': 'Bearer ${verified['access_token']}',
+        },
+      ),
+    );
+    _recoverySession = null;
+    _recoveryEmail = null;
+    await _startSession(verified);
+  }
+
   Future<void> restore() =>
       _restoreFuture ??= _restore().whenComplete(_markAccountKnown);
 

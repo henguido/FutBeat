@@ -106,8 +106,10 @@ Future<void> pumpOnboarding(
         profileSettingsProvider.overrideWith(
           (ref) async => const UserProfileSettings(notifyGoals: false),
         ),
-        if (pushService != null)
+        if (pushService != null) ...[
           pushServiceProvider.overrideWithValue(pushService),
+          liveRealtimeConfigProvider.overrideWithValue(pushService.config),
+        ],
       ],
       child: const MaterialApp(home: OnboardingScreen()),
     ),
@@ -739,6 +741,45 @@ void main() {
       find.textContaining('tus favoritos se guardan en este dispositivo'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('account step shows the session once signed in from Perfil', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final db = AppDatabase(NativeDatabase.memory());
+    final service = PushService(
+      const LiveRealtimeConfig(
+        supabaseUrl: 'https://supabase.test',
+        publicKey: 'publishable-test-key',
+      ),
+      db,
+      _NoTokens(),
+    );
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+    });
+    await tester.runAsync(service.restore);
+    await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+    await pumpOnboarding(tester, database: db, pushService: service);
+    for (var i = 0; i < 5; i++) {
+      await tester.tap(find.text('Continuar'));
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(find.text('Crear cuenta'), findsOneWidget);
+
+    // Signed in (e.g. from Perfil): the step updates by itself.
+    service.session = {
+      'access_token': 'access',
+      'refresh_token': 'refresh',
+      'user': {'id': 'user-a', 'email': 'qa@example.com'},
+    };
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('Sesión iniciada · qa@example.com'), findsOneWidget);
+    expect(find.text('Crear cuenta'), findsNothing);
+    expect(find.text('Ir a Partidos'), findsOneWidget);
   });
 
   for (final width in [320.0, 360.0, 390.0, 430.0]) {
