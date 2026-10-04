@@ -341,8 +341,20 @@ class PushService {
   /// Emits the signed-in account id (null = guest) whenever it changes.
   Stream<String?> get accountChanges => _accountChanges.stream;
 
-  /// Signed-in account id, or null for a guest.
+  /// Signed-in account id, or null for a guest. Only meaningful once
+  /// [accountKnown]: before that a stored session may still be loading.
   String? get accountId => authenticated ? userId : null;
+
+  final _accountKnown = Completer<void>();
+
+  /// True once startup knows whether a stored session exists (or a sign-in
+  /// finished first). Until then "no account" does not mean guest.
+  bool get accountKnown => _accountKnown.isCompleted;
+  Future<void> get accountResolved => _accountKnown.future;
+
+  void _markAccountKnown() {
+    if (!_accountKnown.isCompleted) _accountKnown.complete();
+  }
 
   String? pendingConfirmationEmail;
   String? token;
@@ -474,6 +486,7 @@ class PushService {
   Future<void> _startSession(Map<String, dynamic> value) async {
     _generation++;
     session = value;
+    _markAccountKnown();
     _mergedGeneration = -1;
     _lastPushed = null;
     _lastReconcile = null;
@@ -559,7 +572,8 @@ class PushService {
     );
   }
 
-  Future<void> restore() => _restoreFuture ??= _restore();
+  Future<void> restore() =>
+      _restoreFuture ??= _restore().whenComplete(_markAccountKnown);
 
   Future<void> _restore() async {
     if (!accountConfigured || disposed) return;
@@ -581,6 +595,7 @@ class PushService {
     } catch (_) {
       session = null;
     }
+    if (authenticated) _markAccountKnown();
     if (!authenticated) {
       await _clearLocalSession();
       return;

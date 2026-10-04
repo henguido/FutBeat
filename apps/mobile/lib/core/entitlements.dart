@@ -111,10 +111,17 @@ class Entitlements {
   final DateTime? expiresAt;
 
   bool get isPremium => plan == Plan.premium;
+
+  /// False while the signed-in account is still being restored.
+  bool get accountResolved => accountKey != unresolvedAccountKey;
   bool allows(Feature feature) =>
       plan == Plan.premium || _freeFeatures.contains(feature);
   bool get showsAds => !allows(Feature.adFree);
 }
+
+/// Account key while startup has not yet resolved who is signed in: never
+/// read, cached, verified or used to tag a purchase.
+const unresolvedAccountKey = 'unresolved';
 
 /// Storage key owner: one entitlement per FutBeat account, plus the guest
 /// on this device. An account's plan never applies to another account.
@@ -199,6 +206,7 @@ final entitlementSourceProvider = Provider<EntitlementSource>((ref) {
   if (gateway == null) return const UnavailableEntitlementSource();
   return PlayBillingEntitlementSource(
     gateway,
+    acknowledger: ref.watch(purchaseAcknowledgerProvider),
     products: ref.watch(premiumProductsProvider),
     clock: ref.watch(entitlementClockProvider),
   );
@@ -222,8 +230,18 @@ final currentAccountProvider = StreamProvider<String?>((ref) {
   }
   final service = ref.watch(pushServiceProvider);
   final accounts = StreamController<String?>();
-  final changes = service.accountChanges.listen(accounts.add);
-  accounts.add(service.accountId);
+  // Loading (not guest) until the stored session is known; changes are
+  // listened to from the start and forwarded after the snapshot.
+  var resolved = false;
+  final changes = service.accountChanges.listen((id) {
+    if (resolved) accounts.add(id);
+  });
+  unawaited(
+    service.accountResolved.then((_) {
+      resolved = true;
+      if (!accounts.isClosed) accounts.add(service.accountId);
+    }),
+  );
   ref.onDispose(() {
     unawaited(changes.cancel());
     unawaited(accounts.close());
@@ -247,12 +265,17 @@ class EntitlementsController extends Notifier<Entitlements> {
 
   @override
   Entitlements build() {
-    _accountId = ref.watch(currentAccountProvider).value;
-    final key = entitlementAccountKey(_accountId);
+    final account = ref.watch(currentAccountProvider);
     ref.onDispose(() {
       _expiry?.cancel();
       _expiry = null;
     });
+    if (!account.hasValue) {
+      _accountId = null;
+      return const Entitlements(accountKey: unresolvedAccountKey);
+    }
+    _accountId = account.value;
+    final key = entitlementAccountKey(_accountId);
     unawaited(_loadCache(key));
     return Entitlements(accountKey: key);
   }
@@ -326,6 +349,7 @@ class EntitlementsController extends Notifier<Entitlements> {
   Future<void> _verify(
     Future<EntitlementCheck> Function(EntitlementSource, String?) ask,
   ) async {
+    if (!state.accountResolved) return;
     final key = state.accountKey;
     final accountId = _accountId;
     final ticket = ++_ticket;
@@ -345,8 +369,10 @@ class EntitlementsController extends Notifier<Entitlements> {
 
   /// Records a verified answer for the current account. null = verified
   /// FREE: any cached PREMIUM is dropped. Supersedes pending verifications.
-  Future<void> apply(EntitlementGrant? grant) =>
-      _apply(grant, state.accountKey, ++_ticket);
+  Future<void> apply(EntitlementGrant? grant) async {
+    if (!state.accountResolved) return;
+    await _apply(grant, state.accountKey, ++_ticket);
+  }
 
   /// Answers are written one at a time, and only while [ticket] is the
   /// latest, so an older answer can never replace a newer one.

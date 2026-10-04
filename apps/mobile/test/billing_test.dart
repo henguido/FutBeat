@@ -1,10 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:dio/dio.dart';
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/billing.dart';
+import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/entitlements.dart';
+import 'package:futbeat/core/live_realtime.dart';
+import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/push.dart';
 import 'package:futbeat/features/profile/premium_card.dart';
 
 // Test-only placeholders: the real Play product ids are not defined yet.
@@ -30,7 +38,10 @@ class _Gateway implements BillingGateway {
   final ownedList = <OwnedPurchase>[];
   final ownedGates = <Completer<List<OwnedPurchase>>>[];
   final _events = StreamController<List<PurchaseEvent>>.broadcast();
-  final completed = <String>[];
+
+  /// Handles acknowledged, in call order.
+  final completed = <Object>[];
+  bool acknowledgeFails = false;
   final bought = <({String productId, String accountTag})>[];
 
   /// What Play does after the purchase sheet opens.
@@ -70,8 +81,23 @@ class _Gateway implements BillingGateway {
   Stream<List<PurchaseEvent>> get events => _events.stream;
 
   @override
-  Future<void> complete(PurchaseEvent event) async =>
-      completed.add(event.productId);
+  Future<void> acknowledge(Object handle) async {
+    if (acknowledgeFails) throw const BillingUnavailable();
+    completed.add(handle);
+    // Play now reports it acknowledged.
+    for (var i = 0; i < ownedList.length; i++) {
+      final p = ownedList[i];
+      if (p.handle == handle) {
+        ownedList[i] = OwnedPurchase(
+          productId: p.productId,
+          purchased: p.purchased,
+          accountTag: p.accountTag,
+          token: p.token,
+          handle: p.handle,
+        );
+      }
+    }
+  }
 }
 
 final _now = DateTime.utc(2026, 10, 4, 12);
@@ -160,13 +186,15 @@ void main() {
           productId: offer.productId,
           outcome: PurchaseOutcome.purchased,
           needsCompletion: true,
+          token: 'token-new',
+          handle: 'handle-new',
         ),
       ]);
     };
     final result = await h.billing.buy(_offer(_yearly));
 
     expect(result, PremiumActionResult.premium);
-    expect(h.gateway.completed, [_yearly]);
+    expect(h.gateway.completed, ['handle-new']);
     expect(
       h.gateway.bought.single.accountTag,
       billingAccountTag('account:user-a'),
@@ -389,4 +417,171 @@ void main() {
     expect(find.text('Hazte Premium'), findsNothing);
     expect(find.text('Restaurar compras'), findsNothing);
   });
+
+  test(
+    'a recovered unacknowledged purchase is acknowledged once, then Premium',
+    () async {
+      final h = _Harness();
+      final tag = billingAccountTag('account:user-a');
+      h.gateway.ownedList.add(
+        OwnedPurchase(
+          productId: _monthly,
+          purchased: true,
+          accountTag: tag,
+          token: 'token-recovered',
+          needsCompletion: true, // the app died before the purchase callback
+          handle: 'handle-recovered',
+        ),
+      );
+      // Play cannot acknowledge yet: no Premium without the acknowledgement.
+      h.gateway.acknowledgeFails = true;
+      await h.signIn('user-a');
+      expect(h.gateway.completed, isEmpty);
+      expect(h.plan.plan, Plan.free);
+
+      // Startup check, resume and restore at once: one acknowledgement.
+      h.gateway.acknowledgeFails = false;
+      await Future.wait([h.billing.onResume(), h.billing.restore()]);
+      await h.billing.onResume();
+      expect(h.gateway.completed, ['handle-recovered']);
+      expect(h.plan.isPremium, isTrue);
+      expect(h.plan.origin, EntitlementOrigin.verified);
+    },
+  );
+
+  test(
+    'another account\'s unacknowledged purchase is acknowledged, not granted',
+    () async {
+      final h = _Harness();
+      h.gateway.ownedList.add(
+        OwnedPurchase(
+          productId: _yearly,
+          purchased: true,
+          accountTag: billingAccountTag('account:user-b'),
+          token: 'token-b',
+          needsCompletion: true,
+          handle: 'handle-b',
+        ),
+      );
+      await h.signIn('user-a');
+      expect(h.gateway.completed, ['handle-b']);
+      expect(h.plan.plan, Plan.free);
+    },
+  );
+
+  test(
+    'no purchase while the stored session is still being restored',
+    () async {
+      final session = {
+        'access_token': 'access-a',
+        'refresh_token': 'refresh-a',
+        'expires_at':
+            DateTime.now()
+                .add(const Duration(hours: 1))
+                .millisecondsSinceEpoch ~/
+            1000,
+        'user': {'id': 'user-a', 'email': 'a@example.com'},
+      };
+      FlutterSecureStorage.setMockInitialValues({
+        'futbeat.push.session': jsonEncode(session),
+      });
+      // Offline: every account request fails fast, the stored session stays.
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) =>
+                handler.reject(DioException(requestOptions: options)),
+          ),
+        );
+      final db = AppDatabase(NativeDatabase.memory());
+      const config = LiveRealtimeConfig(
+        supabaseUrl: 'https://supabase.test',
+        publicKey: 'publishable-test-key',
+      );
+      final service = PushService(config, db, _NoTokens(), dio: dio);
+      final gateway = _Gateway();
+      final container = ProviderContainer(
+        overrides: [
+          liveRealtimeConfigProvider.overrideWithValue(config),
+          pushServiceProvider.overrideWithValue(service),
+          billingGatewayProvider.overrideWithValue(gateway),
+          premiumProductsProvider.overrideWithValue(const {_monthly, _yearly}),
+          entitlementStoreProvider.overrideWithValue(_MemoryStore()),
+        ],
+      );
+      final plan = container.listen(entitlementsProvider, (_, _) {});
+      final billing = container.listen(premiumBillingProvider, (_, _) {});
+      addTearDown(() async {
+        plan.close();
+        billing.close();
+        container.dispose();
+        service.dispose();
+        await db.close();
+      });
+
+      // Restore has not resolved the account yet: not guest, no purchase.
+      await pump();
+      expect(container.read(entitlementsProvider).accountResolved, isFalse);
+      final controller = container.read(premiumBillingProvider.notifier);
+      expect(
+        await controller.buy(_offer(_monthly)),
+        PremiumActionResult.unavailable,
+      );
+      expect(await controller.restore(), PremiumActionResult.unavailable);
+      expect(gateway.bought, isEmpty);
+
+      await service.restore();
+      await pump();
+      expect(container.read(entitlementsProvider).accountKey, 'account:user-a');
+      gateway.onBuy = (offer, _) => gateway.emit([
+        PurchaseEvent(
+          productId: offer.productId,
+          outcome: PurchaseOutcome.cancelled,
+        ),
+      ]);
+      await controller.buy(_offer(_monthly));
+      expect(
+        gateway.bought.single.accountTag,
+        billingAccountTag('account:user-a'),
+      );
+    },
+  );
+
+  testWidgets('premium buttons stay disabled while the account resolves', (
+    tester,
+  ) async {
+    final accounts = StreamController<String?>();
+    addTearDown(accounts.close);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentAccountProvider.overrideWith((ref) => accounts.stream),
+          billingGatewayProvider.overrideWithValue(_Gateway()),
+          premiumProductsProvider.overrideWithValue(const {_monthly, _yearly}),
+          entitlementStoreProvider.overrideWithValue(_MemoryStore()),
+        ],
+        child: const MaterialApp(home: Scaffold(body: PremiumCard())),
+      ),
+    );
+    await tester.pump();
+    FilledButton upgrade() =>
+        tester.widget(find.byKey(const ValueKey('premium-upgrade')));
+    TextButton restore() =>
+        tester.widget(find.byKey(const ValueKey('premium-restore')));
+    expect(upgrade().onPressed, isNull);
+    expect(restore().onPressed, isNull);
+
+    accounts.add('user-a');
+    await tester.pumpAndSettle();
+    expect(upgrade().onPressed, isNotNull);
+    expect(restore().onPressed, isNotNull);
+  });
+}
+
+class _NoTokens implements PushTokenSource {
+  @override
+  Future<String?> requestToken() async => null;
+
+  @override
+  Stream<String> get rotations => const Stream.empty();
 }

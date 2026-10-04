@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/entitlements.dart';
@@ -303,7 +304,10 @@ void main() {
         await db.close();
       });
 
-      // The guest snapshot is delivered; a restore lands right after it.
+      // No stored session: startup resolves to guest, and a sign-in lands
+      // right after that snapshot.
+      FlutterSecureStorage.setMockInitialValues({});
+      await service.restore();
       expect(await container.read(currentAccountProvider.future), isNull);
       service.session = {
         'access_token': 'access',

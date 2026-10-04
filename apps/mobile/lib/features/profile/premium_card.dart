@@ -107,12 +107,14 @@ class PremiumCard extends ConsumerWidget {
                   if (!plan.isPremium)
                     FilledButton(
                       key: const ValueKey('premium-upgrade'),
-                      onPressed: billing.busy ? null : upgrade,
+                      onPressed: billing.busy || !plan.accountResolved
+                          ? null
+                          : upgrade,
                       child: const Text('Hazte Premium'),
                     ),
                   TextButton(
                     key: const ValueKey('premium-restore'),
-                    onPressed: billing.busy
+                    onPressed: billing.busy || !plan.accountResolved
                         ? null
                         : () async => show(await controller.restore()),
                     child: const Text('Restaurar compras'),

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_android/billing_client_wrappers.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
+import 'package:in_app_purchase_platform_interface/in_app_purchase_platform_interface.dart';
 
 import 'entitlements.dart';
 
@@ -60,6 +61,9 @@ class OwnedPurchase {
     required this.productId,
     required this.purchased,
     this.accountTag,
+    this.token,
+    this.needsCompletion = false,
+    this.handle,
   });
 
   final String productId;
@@ -67,6 +71,16 @@ class OwnedPurchase {
   /// False while the payment is pending.
   final bool purchased;
   final String? accountTag;
+
+  /// Play purchase token: identifies the purchase across queries/events.
+  final String? token;
+
+  /// Never acknowledged (e.g. the app died before the purchase callback):
+  /// Play refunds it unless it is acknowledged.
+  final bool needsCompletion;
+
+  /// Store object needed to acknowledge it.
+  final Object? handle;
 }
 
 enum PurchaseOutcome { purchased, pending, cancelled, failed, unavailable }
@@ -76,11 +90,13 @@ class PurchaseEvent {
     required this.productId,
     required this.outcome,
     this.needsCompletion = false,
+    this.token,
     this.handle,
   });
 
   final String productId;
   final PurchaseOutcome outcome;
+  final String? token;
 
   /// The purchase must be acknowledged (Play refunds it otherwise).
   final bool needsCompletion;
@@ -102,7 +118,39 @@ abstract interface class BillingGateway {
   /// Opens the Play purchase sheet; the result arrives on [events].
   Future<bool> buy(PremiumOffer offer, {required String accountTag});
   Stream<List<PurchaseEvent>> get events;
-  Future<void> complete(PurchaseEvent event);
+
+  /// Acknowledges a purchase ([OwnedPurchase.handle] /
+  /// [PurchaseEvent.handle]); throws when Play did not confirm it.
+  Future<void> acknowledge(Object handle);
+}
+
+/// The single place purchases are acknowledged, shared by the purchase
+/// stream and recovered purchases: each token at most once per process,
+/// concurrent requests share one call.
+class PurchaseAcknowledger {
+  PurchaseAcknowledger(this.gateway);
+
+  final BillingGateway gateway;
+  final _done = <String>{};
+  final _inFlight = <String, Future<bool>>{};
+
+  Future<bool> acknowledge(String key, Object? handle) {
+    if (_done.contains(key)) return Future.value(true);
+    if (handle == null) return Future.value(false);
+    return _inFlight[key] ??= _run(key, handle);
+  }
+
+  Future<bool> _run(String key, Object handle) async {
+    try {
+      await gateway.acknowledge(handle);
+      _done.add(key);
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      unawaited(_inFlight.remove(key));
+    }
+  }
 }
 
 /// Google Play Billing through `in_app_purchase`. The plugin keeps the
@@ -158,6 +206,9 @@ class PlayBillingGateway implements BillingGateway {
               purchase.billingClientPurchase.purchaseState ==
               PurchaseStateWrapper.purchased,
           accountTag: purchase.billingClientPurchase.obfuscatedAccountId,
+          token: purchase.billingClientPurchase.purchaseToken,
+          needsCompletion: !purchase.billingClientPurchase.isAcknowledged,
+          handle: purchase,
         ),
     ];
   }
@@ -190,14 +241,26 @@ class PlayBillingGateway implements BillingGateway {
             PurchaseStatus.error => PurchaseOutcome.failed,
           },
           needsCompletion: purchase.pendingCompletePurchase,
+          token: purchase.verificationData.serverVerificationData,
           handle: purchase,
         ),
     ],
   );
 
   @override
-  Future<void> complete(PurchaseEvent event) =>
-      _store.completePurchase(event.handle! as PurchaseDetails);
+  Future<void> acknowledge(Object handle) async {
+    final purchase = handle as PurchaseDetails;
+    final platform = InAppPurchasePlatform.instance;
+    if (platform is InAppPurchaseAndroidPlatform) {
+      // The app-facing completePurchase drops the result: check it here.
+      final result = await platform.completePurchase(purchase);
+      if (result.responseCode != BillingResponse.ok) {
+        throw const BillingUnavailable();
+      }
+      return;
+    }
+    await _store.completePurchase(purchase);
+  }
 }
 
 /// Premium is whatever Play reports for THIS account right now: an active
@@ -207,12 +270,15 @@ class PlayBillingGateway implements BillingGateway {
 class PlayBillingEntitlementSource implements EntitlementSource {
   PlayBillingEntitlementSource(
     this.gateway, {
+    PurchaseAcknowledger? acknowledger,
     Set<String>? products,
     DateTime Function()? clock,
-  }) : products = products ?? PremiumProducts.configured,
+  }) : acknowledger = acknowledger ?? PurchaseAcknowledger(gateway),
+       products = products ?? PremiumProducts.configured,
        clock = clock ?? DateTime.now;
 
   final BillingGateway gateway;
+  final PurchaseAcknowledger acknowledger;
   final Set<String> products;
   final DateTime Function() clock;
 
@@ -228,10 +294,22 @@ class PlayBillingEntitlementSource implements EntitlementSource {
       return const EntitlementCheck.unavailable();
     }
     final tag = billingAccountTag(entitlementAccountKey(accountId));
-    final active = owned.where(
-      (p) =>
-          p.purchased && p.accountTag == tag && products.contains(p.productId),
+    final premium = owned.where(
+      (p) => p.purchased && products.contains(p.productId),
     );
+    // Recovered, never-acknowledged purchases are acknowledged before they
+    // count (any account's, so none is refunded). If this account's one
+    // cannot be acknowledged now, Premium stays unverified and is retried.
+    for (final purchase in premium.where((p) => p.needsCompletion)) {
+      final done = await acknowledger.acknowledge(
+        purchase.token ?? '${purchase.productId}:${purchase.accountTag}',
+        purchase.handle,
+      );
+      if (!done && purchase.accountTag == tag) {
+        return const EntitlementCheck.unavailable();
+      }
+    }
+    final active = premium.where((p) => p.accountTag == tag);
     if (active.isEmpty) return const EntitlementCheck.answered(null);
     final now = clock();
     return EntitlementCheck.answered(
@@ -258,6 +336,11 @@ final billingGatewayProvider = Provider<BillingGateway?>((ref) {
 final premiumProductsProvider = Provider<Set<String>>(
   (ref) => PremiumProducts.configured,
 );
+
+final purchaseAcknowledgerProvider = Provider<PurchaseAcknowledger?>((ref) {
+  final gateway = ref.watch(billingGatewayProvider);
+  return gateway == null ? null : PurchaseAcknowledger(gateway);
+});
 
 /// UI-facing billing state; the plan itself is [entitlementsProvider].
 class PremiumBillingState {
@@ -327,11 +410,13 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
     for (final event in events) {
       if (!premium.contains(event.productId)) continue;
       if (event.needsCompletion) {
-        try {
-          await _gateway?.complete(event);
-        } catch (_) {
-          // Retried on the next start: Play re-delivers unfinished ones.
-        }
+        // A failure is retried by the next check (start, resume, restore).
+        await ref
+            .read(purchaseAcknowledgerProvider)
+            ?.acknowledge(
+              event.token ?? '${event.productId}:event',
+              event.handle,
+            );
       }
       if (!ref.mounted) return;
       if (event.outcome == PurchaseOutcome.purchased) changed = true;
@@ -356,15 +441,20 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
     return offers..sort((a, b) => a.period.index.compareTo(b.period.index));
   }
 
-  /// "Hazte Premium" for [offer]. Resolves once Play answers.
+  /// "Hazte Premium" for [offer]. Resolves once Play answers. Refused
+  /// while the signed-in account is still being restored, so a purchase is
+  /// never tagged as guest by mistake.
   Future<PremiumActionResult> buy(PremiumOffer offer) async {
     final gateway = _gateway;
-    if (gateway == null || state.busy) return PremiumActionResult.unavailable;
+    final plan = ref.read(entitlementsProvider);
+    if (gateway == null || state.busy || !plan.accountResolved) {
+      return PremiumActionResult.unavailable;
+    }
     state = PremiumBillingState(busy: true, pending: state.pending);
     final waiting = Completer<PurchaseOutcome>();
     _waiting[offer.productId] = waiting;
     try {
-      final tag = billingAccountTag(ref.read(entitlementsProvider).accountKey);
+      final tag = billingAccountTag(plan.accountKey);
       if (!await gateway.buy(offer, accountTag: tag)) {
         _waiting.remove(offer.productId);
         return PremiumActionResult.failed;
@@ -393,7 +483,11 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
 
   /// "Restaurar compras".
   Future<PremiumActionResult> restore() async {
-    if (!enabled || state.busy) return PremiumActionResult.unavailable;
+    if (!enabled ||
+        state.busy ||
+        !ref.read(entitlementsProvider).accountResolved) {
+      return PremiumActionResult.unavailable;
+    }
     state = PremiumBillingState(busy: true, pending: state.pending);
     try {
       final gateway = _gateway!;
