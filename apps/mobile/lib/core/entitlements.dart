@@ -204,14 +204,22 @@ final entitlementClockProvider = Provider<DateTime Function()>(
 );
 
 /// Signed-in account id (null = guest), following sign-in / sign-out.
-final currentAccountProvider = StreamProvider<String?>((ref) async* {
+///
+/// Subscribes to [PushService.accountChanges] before taking the snapshot,
+/// so a change landing right after it is never lost.
+final currentAccountProvider = StreamProvider<String?>((ref) {
   if (!ref.watch(liveRealtimeConfigProvider).isConfigured) {
-    yield null;
-    return;
+    return Stream.value(null);
   }
   final service = ref.watch(pushServiceProvider);
-  yield service.accountId;
-  yield* service.accountChanges;
+  final accounts = StreamController<String?>();
+  final changes = service.accountChanges.listen(accounts.add);
+  accounts.add(service.accountId);
+  ref.onDispose(() {
+    unawaited(changes.cancel());
+    unawaited(accounts.close());
+  });
+  return accounts.stream;
 });
 
 final entitlementsProvider =
@@ -222,10 +230,20 @@ final entitlementsProvider =
 class EntitlementsController extends Notifier<Entitlements> {
   String? _accountId;
 
+  /// Bumped by every verification request and every applied answer: an
+  /// answer is only applied while its ticket is still the latest.
+  int _ticket = 0;
+  Future<void> _applying = Future.value();
+  Timer? _expiry;
+
   @override
   Entitlements build() {
     _accountId = ref.watch(currentAccountProvider).value;
     final key = entitlementAccountKey(_accountId);
+    ref.onDispose(() {
+      _expiry?.cancel();
+      _expiry = null;
+    });
     unawaited(_loadCache(key));
     return Entitlements(accountKey: key);
   }
@@ -234,6 +252,38 @@ class EntitlementsController extends Notifier<Entitlements> {
   DateTime _now() => ref.read(entitlementClockProvider)();
 
   bool _current(String key) => ref.mounted && state.accountKey == key;
+
+  /// Sets the state and arms the end of its grace period.
+  void _set(Entitlements next) {
+    state = next;
+    _expiry?.cancel();
+    _expiry = null;
+    final expiresAt = next.expiresAt;
+    if (!next.isPremium || expiresAt == null) return;
+    final remaining = expiresAt.add(entitlementGracePeriod).difference(_now());
+    if (remaining <= Duration.zero) {
+      _expireIfDue();
+    } else {
+      _expiry = Timer(remaining, _expireIfDue);
+    }
+  }
+
+  /// PREMIUM whose paid period plus grace has ended becomes FREE, unless a
+  /// newer verification renews it.
+  void _expireIfDue() {
+    if (!ref.mounted) return;
+    final expiresAt = state.expiresAt;
+    if (!state.isPremium || expiresAt == null) return;
+    if (_now().isBefore(expiresAt.add(entitlementGracePeriod))) {
+      _set(state); // Fired early (clock change): re-arm.
+      return;
+    }
+    final key = state.accountKey;
+    _set(Entitlements(accountKey: key));
+    unawaited(
+      _store.delete(entitlementStorageKey(key)).catchError((Object _) {}),
+    );
+  }
 
   Future<void> _loadCache(String key) async {
     EntitlementGrant? grant;
@@ -245,11 +295,13 @@ class EntitlementsController extends Notifier<Entitlements> {
     }
     if (!_current(key) || state.origin == EntitlementOrigin.verified) return;
     if (grant != null && grantActive(grant, _now())) {
-      state = Entitlements(
-        accountKey: key,
-        plan: grant.plan,
-        origin: EntitlementOrigin.cache,
-        expiresAt: grant.expiresAt,
+      _set(
+        Entitlements(
+          accountKey: key,
+          plan: grant.plan,
+          origin: EntitlementOrigin.cache,
+          expiresAt: grant.expiresAt,
+        ),
       );
     }
   }
@@ -267,39 +319,55 @@ class EntitlementsController extends Notifier<Entitlements> {
   ) async {
     final key = state.accountKey;
     final accountId = _accountId;
-    final EntitlementCheck check;
+    final ticket = ++_ticket;
+    EntitlementCheck? check;
     try {
       check = await ask(ref.read(entitlementSourceProvider), accountId);
     } catch (_) {
-      return; // Offline or store error: keep what we have.
+      check = null; // Offline or store error: keep what is still valid.
     }
-    if (!check.available || !_current(key)) return;
-    await apply(check.grant, accountKey: key);
+    if (ticket != _ticket || !_current(key)) return;
+    if (check == null || !check.available) {
+      _expireIfDue();
+      return;
+    }
+    await _apply(check.grant, key, ticket);
   }
 
-  /// Records a verified answer for [accountKey] (default: the current
-  /// account). null = verified FREE: any cached PREMIUM is dropped.
-  Future<void> apply(EntitlementGrant? grant, {String? accountKey}) async {
-    final key = accountKey ?? state.accountKey;
-    final active = grant != null && grantActive(grant, _now());
-    try {
-      if (active) {
-        await _store.write(
-          entitlementStorageKey(key),
-          jsonEncode(grant.toJson()),
-        );
-      } else {
-        await _store.delete(entitlementStorageKey(key));
+  /// Records a verified answer for the current account. null = verified
+  /// FREE: any cached PREMIUM is dropped. Supersedes pending verifications.
+  Future<void> apply(EntitlementGrant? grant) =>
+      _apply(grant, state.accountKey, ++_ticket);
+
+  /// Answers are written one at a time, and only while [ticket] is the
+  /// latest, so an older answer can never replace a newer one.
+  Future<void> _apply(EntitlementGrant? grant, String key, int ticket) {
+    final run = _applying.then((_) async {
+      if (ticket != _ticket) return;
+      final active = grant != null && grantActive(grant, _now());
+      try {
+        if (active) {
+          await _store.write(
+            entitlementStorageKey(key),
+            jsonEncode(grant.toJson()),
+          );
+        } else {
+          await _store.delete(entitlementStorageKey(key));
+        }
+      } catch (_) {
+        // The in-memory answer still applies for this session.
       }
-    } catch (_) {
-      // The in-memory answer still applies for this session.
-    }
-    if (!_current(key)) return;
-    state = Entitlements(
-      accountKey: key,
-      plan: active ? grant.plan : Plan.free,
-      origin: EntitlementOrigin.verified,
-      expiresAt: active ? grant.expiresAt : null,
-    );
+      if (ticket != _ticket || !_current(key)) return;
+      _set(
+        Entitlements(
+          accountKey: key,
+          plan: active ? grant.plan : Plan.free,
+          origin: EntitlementOrigin.verified,
+          expiresAt: active ? grant.expiresAt : null,
+        ),
+      );
+    });
+    _applying = run.catchError((Object _) {});
+    return run;
   }
 }

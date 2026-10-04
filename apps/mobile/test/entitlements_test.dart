@@ -1,9 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/entitlements.dart';
+import 'package:futbeat/core/live_realtime.dart';
+import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/push.dart';
 
 class _MemoryStore implements EntitlementStore {
   final values = <String, String>{};
@@ -28,19 +33,34 @@ class _Source implements EntitlementSource {
   final asked = <String?>[];
   final restored = <String?>[];
 
-  @override
-  Future<EntitlementCheck> check(String? accountId) async {
-    asked.add(accountId);
+  /// When set, each call waits for the next completer in this queue.
+  final gates = <Completer<EntitlementCheck>>[];
+
+  Future<EntitlementCheck> _answer() async {
+    if (gates.isNotEmpty) return gates.removeAt(0).future;
     if (error != null) throw error!;
     return answer;
   }
 
   @override
-  Future<EntitlementCheck> restore(String? accountId) async {
-    restored.add(accountId);
-    if (error != null) throw error!;
-    return answer;
+  Future<EntitlementCheck> check(String? accountId) {
+    asked.add(accountId);
+    return _answer();
   }
+
+  @override
+  Future<EntitlementCheck> restore(String? accountId) {
+    restored.add(accountId);
+    return _answer();
+  }
+}
+
+class _Tokens implements PushTokenSource {
+  @override
+  Future<String?> requestToken() async => null;
+
+  @override
+  Stream<String> get rotations => const Stream.empty();
 }
 
 final _now = DateTime.utc(2026, 10, 4, 12);
@@ -58,7 +78,11 @@ EntitlementGrant _premium({DateTime? expiresAt}) => EntitlementGrant(
   _Source source,
   StreamController<String?> accounts,
 })
-_setup({Map<String, String> stored = const {}, DateTime? now}) {
+_setup({
+  Map<String, String> stored = const {},
+  DateTime? now,
+  DateTime Function()? clock,
+}) {
   final store = _MemoryStore()..values.addAll(stored);
   final source = _Source();
   final accounts = StreamController<String?>();
@@ -67,7 +91,7 @@ _setup({Map<String, String> stored = const {}, DateTime? now}) {
       currentAccountProvider.overrideWith((ref) => accounts.stream),
       entitlementStoreProvider.overrideWithValue(store),
       entitlementSourceProvider.overrideWithValue(source),
-      entitlementClockProvider.overrideWithValue(() => now ?? _now),
+      entitlementClockProvider.overrideWithValue(clock ?? () => now ?? _now),
     ],
   );
   final keepAlive = container.listen(entitlementsProvider, (_, _) {});
@@ -246,5 +270,145 @@ void main() {
     final state = s.container.read(entitlementsProvider);
     expect(state.accountKey, 'account:user-b');
     expect(state.plan, Plan.free);
+  });
+
+  test(
+    'startup: an account change right after the first snapshot is kept',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final service = PushService(
+        const LiveRealtimeConfig(
+          supabaseUrl: 'https://supabase.test',
+          publicKey: 'publishable-test-key',
+        ),
+        db,
+        _Tokens(),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          liveRealtimeConfigProvider.overrideWithValue(service.config),
+          pushServiceProvider.overrideWithValue(service),
+        ],
+      );
+      final seen = <String?>[];
+      final listener = container.listen(
+        currentAccountProvider,
+        (_, next) => seen.add(next.value),
+        fireImmediately: true,
+      );
+      addTearDown(() async {
+        listener.close();
+        container.dispose();
+        service.dispose();
+        await db.close();
+      });
+
+      // The guest snapshot is delivered; a restore lands right after it.
+      expect(await container.read(currentAccountProvider.future), isNull);
+      service.session = {
+        'access_token': 'access',
+        'refresh_token': 'refresh',
+        'user': {'id': 'user-a'},
+      };
+      await _pump();
+      expect(container.read(currentAccountProvider).value, 'user-a');
+      expect(seen.last, 'user-a');
+    },
+  );
+
+  test(
+    'a cached grant drops to FREE when its grace elapses in-process',
+    () async {
+      var now = _now;
+      final s = _setup(
+        clock: () => now,
+        stored: {
+          // Grace ends 80 ms after "now".
+          entitlementStorageKey('guest'): _cached(
+            _premium(
+              expiresAt: _now
+                  .subtract(entitlementGracePeriod)
+                  .add(const Duration(milliseconds: 80)),
+            ),
+          ),
+        },
+      );
+      s.accounts.add(null);
+      await _pump();
+      expect(s.container.read(entitlementsProvider).isPremium, isTrue);
+
+      now = now.add(const Duration(milliseconds: 100));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(s.container.read(entitlementsProvider).plan, Plan.free);
+    },
+  );
+
+  test(
+    'refresh with no verification re-checks the grace (long suspension)',
+    () async {
+      var now = _now;
+      final s = _setup(
+        clock: () => now,
+        stored: {
+          entitlementStorageKey('account:user-a'): _cached(
+            _premium(expiresAt: _now.add(const Duration(days: 1))),
+          ),
+        },
+      );
+      s.accounts.add('user-a');
+      await _pump();
+      expect(s.container.read(entitlementsProvider).isPremium, isTrue);
+
+      // Suspended for a week: the timer never ran; no source is available.
+      now = now.add(const Duration(days: 7));
+      await s.container.read(entitlementsProvider.notifier).refresh();
+      expect(s.container.read(entitlementsProvider).plan, Plan.free);
+
+      // Offline (source throws) behaves the same.
+      final offline = _setup(
+        clock: () => now,
+        stored: {
+          entitlementStorageKey('guest'): _cached(
+            _premium(expiresAt: _now.add(const Duration(days: 1))),
+          ),
+        },
+      );
+      now = _now;
+      offline.accounts.add(null);
+      await _pump();
+      expect(offline.container.read(entitlementsProvider).isPremium, isTrue);
+      now = _now.add(const Duration(days: 7));
+      offline.source.error = StateError('offline');
+      await offline.container.read(entitlementsProvider.notifier).refresh();
+      expect(offline.container.read(entitlementsProvider).plan, Plan.free);
+    },
+  );
+
+  test('an older verification answer never overwrites a newer one', () async {
+    final s = _setup();
+    s.accounts.add('user-a');
+    await _pump();
+    final controller = s.container.read(entitlementsProvider.notifier);
+    final older = Completer<EntitlementCheck>();
+    final newer = Completer<EntitlementCheck>();
+    s.source.gates.addAll([older, newer]);
+
+    final refresh = controller.refresh(); // pre-purchase check
+    final restore = controller.restore(); // confirms the purchase
+    newer.complete(
+      EntitlementCheck.answered(
+        _premium(expiresAt: _now.add(const Duration(days: 30))),
+      ),
+    );
+    await restore;
+    expect(s.container.read(entitlementsProvider).isPremium, isTrue);
+
+    older.complete(const EntitlementCheck.answered(null));
+    await refresh;
+    await _pump();
+    final state = s.container.read(entitlementsProvider);
+    expect(state.isPremium, isTrue);
+    expect(state.origin, EntitlementOrigin.verified);
+    expect(s.store.values.keys, [entitlementStorageKey('account:user-a')]);
   });
 }
