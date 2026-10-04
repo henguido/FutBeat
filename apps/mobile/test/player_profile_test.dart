@@ -179,6 +179,41 @@ const _rich = {
 };
 
 void main() {
+  test(
+    'season stats hide negative, fractional and non-finite counts/rating',
+    () {
+      final season = playerSeason(
+        Entity({
+          'id': 'fb_player_invalid_stats',
+          'name': 'Jugador',
+          'seasonStats': {
+            'matchesPlayed': -1,
+            'starts': 2.5,
+            'minutesPlayed': '-90',
+            'goals': '1.5',
+            'assists': 0,
+            'yellowCards': 3,
+            'rating': double.nan,
+          },
+        }),
+      );
+      expect(season.rows.map((row) => (row.$2, row.$3)).toList(), [
+        ('Asistencias', '0'),
+        ('Amarillas', '3'),
+      ]);
+      expect(
+        playerSeason(
+          Entity({
+            'id': 'fb_player_negative_rating',
+            'name': 'Jugador',
+            'rating': -2,
+          }),
+        ).rows,
+        isEmpty,
+      );
+    },
+  );
+
   testWidgets('rich profile: sheet, position pitch and real season numbers', (
     tester,
   ) async {

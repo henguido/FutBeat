@@ -30,9 +30,11 @@ Object? _pick(Json json, List<String> keys) {
 }
 
 String? _count(Object? value) {
-  if (value is int) return '$value';
-  if (value is num) {
-    return value == value.roundToDouble() ? '${value.toInt()}' : '$value';
+  if (value is num &&
+      value.isFinite &&
+      value >= 0 &&
+      value == value.roundToDouble()) {
+    return '${value.toInt()}';
   }
   if (value is String && RegExp(r'^\d+$').hasMatch(value.trim())) {
     return value.trim();
@@ -57,7 +59,9 @@ PlayerSeason playerSeason(Entity player) {
   String? rating() {
     final value = _pick(json, ['rating']);
     final number = value is num ? value : num.tryParse('${value ?? ''}');
-    return number?.toStringAsFixed(1);
+    return number != null && number.isFinite && number > 0
+        ? number.toStringAsFixed(1)
+        : null;
   }
 
   final rows = <(IconData, String, String)>[
