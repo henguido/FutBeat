@@ -12,7 +12,6 @@ import '../auth/auth_sheet.dart';
 import 'competition_order_preferences.dart';
 import 'ads_privacy_tile.dart';
 import 'notification_options.dart';
-import 'password_reset_sheet.dart';
 import 'premium_card.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -23,16 +22,12 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
-  final email = TextEditingController();
-  final password = TextEditingController();
   final displayName = TextEditingController();
 
   UserProfileSettings settings = const UserProfileSettings();
   bool busy = false;
   bool loaded = false;
   String? message;
-  String? emailError;
-  String? passwordError;
 
   @override
   void initState() {
@@ -42,8 +37,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   @override
   void dispose() {
-    email.dispose();
-    password.dispose();
     displayName.dispose();
     super.dispose();
   }
@@ -80,62 +73,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
   }
 
-  /// Validates the form locally before any request is sent.
-  bool _validCredentials({required bool signUp}) {
-    final nextEmail = validateEmail(email.text);
-    final nextPassword = validatePassword(password.text, signUp: signUp);
-    setState(() {
-      emailError = nextEmail;
-      passwordError = nextPassword;
-      message = null;
-    });
-    return nextEmail == null && nextPassword == null;
-  }
-
-  Future<void> signIn(PushService service) async {
-    if (!_validCredentials(signUp: false)) return;
-    await action(() async {
-      await service.signIn(email.text, password.text);
-      password.clear();
-    }, 'Sesión iniciada.');
-    await _offerNotifications(service);
-  }
-
-  Future<void> _oauth(PushService service, OAuthProvider provider) async {
-    setState(() {
-      busy = true;
-      message = null;
-    });
-    try {
-      await service.signInWithOAuth(provider);
-      await _load();
-      if (mounted) setState(() => message = 'Sesión iniciada.');
-    } on OAuthCancelled {
-      // Closing the provider page changes nothing.
-    } on OAuthFailed {
-      if (mounted) setState(() => message = 'No se pudo iniciar sesión.');
-    } catch (error) {
-      if (mounted) setState(() => message = authErrorMessage(error));
-    } finally {
-      if (mounted) setState(() => busy = false);
-    }
-    await _offerNotifications(service);
-  }
-
-  Future<void> _recoverPassword(PushService service) async {
-    final changed = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) =>
-          PasswordResetSheet(service: service, initialEmail: email.text.trim()),
-    );
-    if (changed != true || !mounted) return;
-    password.clear();
+  /// Sign in / create the account in the shared AuthSheet; Perfil only
+  /// refreshes once there is a session.
+  Future<void> _openAuth(PushService service, AuthMode mode) async {
+    final signedIn = await showAuthSheet(context, mode);
     await _load();
-    if (mounted) {
-      setState(() => message = 'Contraseña actualizada. Sesión iniciada.');
-    }
-    await _offerNotifications(service);
+    if (!mounted) return;
+    setState(() => message = signedIn ? 'Sesión iniciada.' : null);
+    if (signedIn) await _offerNotifications(service);
   }
 
   /// After sign-in: offer push once (only when push is configured).
@@ -143,21 +88,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (!mounted || !service.authenticated) return;
     await maybeOfferNotifications(context, service);
     if (mounted) setState(() {});
-  }
-
-  Future<void> signUp(PushService service) async {
-    if (!_validCredentials(signUp: true)) return;
-    await action(
-      () async {
-        await service.signUp(email.text, password.text);
-        password.clear();
-      },
-      'Cuenta creada. Revisa tu correo para confirmarla.',
-      successFor: () => service.authenticated
-          ? 'Cuenta creada.'
-          : 'Cuenta creada. Revisa tu correo para confirmarla.',
-    );
-    await _offerNotifications(service);
   }
 
   Future<void> saveSettings(UserProfileSettings value) async {
@@ -389,62 +319,26 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                 ),
               ),
-            for (final provider in OAuthProvider.values)
-              if (ref
-                      .watch(oauthProvidersProvider)
-                      .asData
-                      ?.value
-                      .contains(provider) ==
-                  true) ...[
-                OAuthProviderButton(
-                  key: ValueKey('profile-${provider.id}'),
-                  provider: provider,
-                  label: 'Continuar con ${oauthProviderName(provider)}',
-                  onPressed: busy ? null : () => _oauth(service, provider),
-                ),
-                const SizedBox(height: 10),
-              ],
-            TextField(
-              controller: email,
-              keyboardType: TextInputType.emailAddress,
-              autofillHints: const [AutofillHints.email],
-              decoration: InputDecoration(
-                labelText: 'Correo',
-                errorText: emailError,
+            SizedBox(
+              height: 52,
+              child: FilledButton(
+                key: const ValueKey('profile-login'),
+                onPressed: busy
+                    ? null
+                    : () => _openAuth(service, AuthMode.login),
+                child: const Text('Iniciar sesión'),
               ),
-              onChanged: (_) {
-                if (emailError != null) setState(() => emailError = null);
-              },
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: password,
-              obscureText: true,
-              autofillHints: const [AutofillHints.password],
-              decoration: InputDecoration(
-                labelText: 'Contraseña',
-                helperText: 'Mínimo 8 caracteres para crear cuenta.',
-                errorText: passwordError,
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 52,
+              child: OutlinedButton(
+                key: const ValueKey('profile-signup'),
+                onPressed: busy
+                    ? null
+                    : () => _openAuth(service, AuthMode.signup),
+                child: const Text('Crear cuenta'),
               ),
-              onChanged: (_) {
-                if (passwordError != null) {
-                  setState(() => passwordError = null);
-                }
-              },
-            ),
-            const SizedBox(height: 10),
-            FilledButton(
-              onPressed: busy ? null : () => signIn(service),
-              child: const Text('Iniciar sesión'),
-            ),
-            TextButton(
-              onPressed: busy ? null : () => signUp(service),
-              child: const Text('Crear cuenta'),
-            ),
-            TextButton(
-              key: const ValueKey('forgot-password'),
-              onPressed: busy ? null : () => _recoverPassword(service),
-              child: const Text('¿Olvidaste tu contraseña?'),
             ),
           ] else ...[
             Card(

@@ -70,6 +70,17 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
       // Closing the provider page leaves everything as it was.
     } on OAuthFailed {
       if (mounted) setState(() => message = 'No se pudo iniciar sesión.');
+    } on AccountAlreadyExists {
+      // No email was sent: send the user to sign in (or recover).
+      if (mounted) {
+        setState(() {
+          mode = AuthMode.login;
+          confirmationEmail = null;
+          message =
+              'Ese correo ya tiene una cuenta. Inicia sesión o '
+              'recupera tu contraseña.';
+        });
+      }
     } catch (error) {
       final text = authErrorMessage(error);
       if (mounted) {
@@ -139,8 +150,11 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
     if (changed == true) _closeIfSignedIn();
   }
 
-  void _switchMode() => setState(() {
-    mode = signup ? AuthMode.login : AuthMode.signup;
+  void _switchMode() => _setMode(signup ? AuthMode.login : AuthMode.signup);
+
+  /// Same sheet, other mode; the typed email stays.
+  void _setMode(AuthMode next) => setState(() {
+    mode = next;
     message = null;
     emailError = null;
     passwordError = null;
@@ -152,7 +166,7 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
     final providers =
         ref.watch(oauthProvidersProvider).asData?.value ??
         const <OAuthProvider>{};
-    final verb = signup ? 'Crear cuenta' : 'Continuar';
+    final verb = signup ? 'Crear cuenta' : 'Iniciar sesión';
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SingleChildScrollView(
@@ -175,6 +189,8 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
             if (confirmationEmail != null)
               _ConfirmationCard(
                 email: confirmationEmail!,
+                onChangeEmail: () => _setMode(AuthMode.signup),
+                onLogin: () => _setMode(AuthMode.login),
                 busy: busy,
                 onResend: _resend,
               )
@@ -185,7 +201,7 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
                     key: ValueKey('auth-${provider.id}'),
                     provider: provider,
                     label:
-                        '${signup ? 'Crear cuenta' : 'Continuar'} con '
+                        'Continuar con '
                         '${oauthProviderName(provider)}',
                     onPressed: busy ? null : () => _oauth(provider),
                   ),
@@ -274,15 +290,16 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
                   textAlign: TextAlign.center,
                 ),
               ),
-            TextButton(
-              key: const ValueKey('auth-switch'),
-              onPressed: busy ? null : _switchMode,
-              child: Text(
-                signup
-                    ? '¿Ya tienes cuenta? Inicia sesión'
-                    : '¿No tienes cuenta? Crea una',
+            if (confirmationEmail == null)
+              TextButton(
+                key: const ValueKey('auth-switch'),
+                onPressed: busy ? null : _switchMode,
+                child: Text(
+                  signup
+                      ? '¿Ya tienes cuenta? Iniciar sesión'
+                      : '¿No tienes cuenta? Crear cuenta',
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -290,19 +307,26 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
   }
 }
 
+/// After an email sign-up (or a sign-in refused as unconfirmed): there is
+/// no session yet, only a confirmation email to open.
 class _ConfirmationCard extends StatelessWidget {
   const _ConfirmationCard({
     required this.email,
     required this.busy,
     required this.onResend,
+    required this.onChangeEmail,
+    required this.onLogin,
   });
 
   final String email;
   final bool busy;
   final VoidCallback onResend;
+  final VoidCallback onChangeEmail;
+  final VoidCallback onLogin;
 
   @override
   Widget build(BuildContext context) => Container(
+    key: const ValueKey('auth-confirmation'),
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
       color: panel,
@@ -310,30 +334,52 @@ class _ConfirmationCard extends StatelessWidget {
       border: Border.all(color: lime.withValues(alpha: .5)),
     ),
     child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Row(
           children: [
             Icon(Icons.mark_email_unread_outlined, color: lime),
             SizedBox(width: 10),
             Text(
-              'Confirma tu correo',
-              style: TextStyle(fontWeight: FontWeight.w800),
+              'Revisa tu correo',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        Text(
-          'Te enviamos un enlace a $email. Ábrelo y vuelve para iniciar sesión.',
-          style: const TextStyle(color: muted),
+        const Text(
+          'Enviamos un enlace de confirmación a:',
+          style: TextStyle(color: muted),
         ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            key: const ValueKey('auth-resend'),
-            onPressed: busy ? null : onResend,
-            child: const Text('Reenviar correo'),
+        Text(email, style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        const Text(
+          'Ábrelo y vuelve para iniciar sesión.',
+          style: TextStyle(color: muted),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 48,
+          child: FilledButton(
+            key: const ValueKey('auth-confirmation-login'),
+            onPressed: busy ? null : onLogin,
+            child: const Text('Ir a iniciar sesión'),
           ),
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            TextButton(
+              key: const ValueKey('auth-change-email'),
+              onPressed: busy ? null : onChangeEmail,
+              child: const Text('Cambiar correo'),
+            ),
+            TextButton(
+              key: const ValueKey('auth-resend'),
+              onPressed: busy ? null : onResend,
+              child: const Text('Reenviar correo'),
+            ),
+          ],
         ),
       ],
     ),

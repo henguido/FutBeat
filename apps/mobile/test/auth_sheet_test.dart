@@ -235,6 +235,92 @@ void main() {
       expect(find.byKey(const ValueKey('auth-forgot')), findsNothing);
     });
 
+    String primary(WidgetTester tester) =>
+        (tester
+                    .widget<FilledButton>(
+                      find.byKey(const ValueKey('auth-submit')),
+                    )
+                    .child!
+                as Text)
+            .data!;
+
+    testWidgets('one primary CTA per mode, the other is a link', (
+      tester,
+    ) async {
+      final value = _FakeAuth(db);
+      await open(tester, value, AuthMode.login);
+      expect(find.byType(FilledButton), findsOneWidget);
+      expect(primary(tester), 'Iniciar sesión');
+      expect(find.text('¿No tienes cuenta? Crear cuenta'), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-forgot')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('auth-switch')));
+      await tester.pumpAndSettle();
+      expect(find.byType(FilledButton), findsOneWidget);
+      expect(primary(tester), 'Crear cuenta');
+      expect(find.text('¿Ya tienes cuenta? Iniciar sesión'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('auth-switch')));
+      await tester.pumpAndSettle();
+      expect(primary(tester), 'Iniciar sesión');
+    });
+
+    testWidgets('an existing address goes to login, keeps the email', (
+      tester,
+    ) async {
+      final value = _FakeAuth(db)..existingAccount = true;
+      await open(tester, value, AuthMode.signup);
+      await tester.enterText(
+        find.byKey(const ValueKey('auth-email')),
+        'ya@example.com',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('auth-password')),
+        'secreta-12',
+      );
+      await tester.tap(find.byKey(const ValueKey('auth-submit')));
+      await tester.pumpAndSettle();
+      expect(title(tester), 'Iniciar sesión');
+      expect(find.textContaining('ya tiene una cuenta'), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-confirmation')), findsNothing);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('auth-email')))
+            .controller!
+            .text,
+        'ya@example.com',
+      );
+    });
+
+    testWidgets('check-your-email actions: change email and go to login', (
+      tester,
+    ) async {
+      final value = _FakeAuth(db);
+      await open(tester, value, AuthMode.signup);
+      await tester.enterText(
+        find.byKey(const ValueKey('auth-email')),
+        'nuevo@example.com',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('auth-password')),
+        'secreta-12',
+      );
+      await tester.tap(find.byKey(const ValueKey('auth-submit')));
+      await tester.pumpAndSettle();
+      expect(find.text('nuevo@example.com'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('auth-change-email')));
+      await tester.pumpAndSettle();
+      expect(title(tester), 'Crear cuenta');
+      expect(find.byKey(const ValueKey('auth-confirmation')), findsNothing);
+      await tester.enterText(
+        find.byKey(const ValueKey('auth-password')),
+        'secreta-12',
+      );
+      await tester.tap(find.byKey(const ValueKey('auth-submit')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('auth-confirmation-login')));
+      await tester.pumpAndSettle();
+      expect(title(tester), 'Iniciar sesión');
+    });
+
     testWidgets('social buttons only for enabled providers', (tester) async {
       final value = _FakeAuth(db);
       await open(tester, value, AuthMode.signup);
@@ -250,8 +336,8 @@ void main() {
         AuthMode.signup,
         providers: {OAuthProvider.google, OAuthProvider.facebook},
       );
-      expect(find.text('Crear cuenta con Google'), findsOneWidget);
-      expect(find.text('Crear cuenta con Facebook'), findsOneWidget);
+      expect(find.text('Continuar con Google'), findsOneWidget);
+      expect(find.text('Continuar con Facebook'), findsOneWidget);
     });
 
     testWidgets('email sign-in closes with a session', (tester) async {
@@ -348,7 +434,7 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('auth-submit')));
       await tester.pumpAndSettle();
-      expect(find.text('Confirma tu correo'), findsOneWidget);
+      expect(find.text('Revisa tu correo'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('auth-resend')));
       await tester.pumpAndSettle();
       expect(value.resent, ['nuevo@example.com']);
@@ -373,7 +459,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(value.signUps, ['nuevo@example.com']);
       expect(value.authenticated, isFalse);
-      expect(find.text('Confirma tu correo'), findsOneWidget);
+      expect(find.text('Revisa tu correo'), findsOneWidget);
       expect(find.byType(AuthSheet), findsOneWidget);
     });
 
@@ -421,6 +507,7 @@ class _FakeAuth extends PushService {
   final oauth = <OAuthProvider>[];
   String? rejectSignIn;
   bool cancelOAuth = false;
+  bool existingAccount = false;
 
   @override
   Future<void> signIn(String email, String password) async {
@@ -442,8 +529,10 @@ class _FakeAuth extends PushService {
   }
 
   @override
-  Future<void> signUp(String email, String password) async =>
-      signUps.add(email.trim());
+  Future<void> signUp(String email, String password) async {
+    signUps.add(email.trim());
+    if (existingAccount) throw const AccountAlreadyExists();
+  }
 
   @override
   Future<void> resendEmailConfirmation({String? emailAddress}) async =>

@@ -1190,16 +1190,43 @@ void main() {
     expect(find.text('Reenviar correo'), findsOneWidget);
   });
 
+  testWidgets('Perfil guest: login and sign-up open the AuthSheet', (
+    tester,
+  ) async {
+    final value = await _service();
+    await _pumpProfile(tester, value.service, value.db);
+    await _scrollTo(tester, find.byKey(const ValueKey('profile-signup')));
+    // No mixed form in Perfil: one entry per mode.
+    expect(find.widgetWithText(TextField, 'Correo'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('profile-signup')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('auth-title'))).data,
+      'Crear cuenta',
+    );
+    Navigator.of(tester.element(find.byKey(const ValueKey('auth-title'))))
+        .pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('profile-login')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('auth-title'))).data,
+      'Iniciar sesión',
+    );
+  });
+
   testWidgets('invalid input is caught before any request', (tester) async {
     final value = await _service();
     await _pumpProfile(tester, value.service, value.db);
-    await _scrollTo(tester, find.text('Crear cuenta'));
-    await tester.enterText(find.widgetWithText(TextField, 'Correo'), 'bad');
-    await tester.enterText(find.widgetWithText(TextField, 'Contraseña'), '123');
-    await tester.tap(find.text('Crear cuenta'));
+    await _scrollTo(tester, find.byKey(const ValueKey('profile-signup')));
+    await tester.tap(find.byKey(const ValueKey('profile-signup')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('auth-email')), 'bad');
+    await tester.enterText(find.byKey(const ValueKey('auth-password')), '123');
+    await tester.tap(find.byKey(const ValueKey('auth-submit')));
     await tester.pump();
     expect(find.text('Escribe un correo válido.'), findsOneWidget);
-    expect(find.text('Mínimo 8 caracteres.'), findsOneWidget);
+    expect(find.text('Mínimo 8 caracteres.'), findsWidgets);
     expect(value.http.called('/auth/v1/signup'), isFalse);
   });
 
@@ -1210,22 +1237,41 @@ void main() {
       'msg': 'Invalid login credentials',
     });
     await _pumpProfile(tester, value.service, value.db);
-    await _scrollTo(tester, find.text('Crear cuenta'));
+    await _scrollTo(tester, find.byKey(const ValueKey('profile-login')));
+    await tester.tap(find.byKey(const ValueKey('profile-login')));
+    await tester.pumpAndSettle();
     await tester.enterText(
-      find.widgetWithText(TextField, 'Correo'),
+      find.byKey(const ValueKey('auth-email')),
       'user@example.com',
     );
     await tester.enterText(
-      find.widgetWithText(TextField, 'Contraseña'),
+      find.byKey(const ValueKey('auth-password')),
       'wrong-password',
     );
-    await tester.tap(find.text('Iniciar sesión'));
+    await tester.tap(find.byKey(const ValueKey('auth-submit')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    await _scrollTo(tester, find.text('Correo o contraseña incorrectos.'));
     expect(find.text('Correo o contraseña incorrectos.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('auth-title')), findsOneWidget);
     expect(value.service.authenticated, isFalse);
   });
+
+  test(
+    'sign-up of an existing address is not a pending confirmation',
+    () async {
+      final value = await _service();
+      value.http.routes['/auth/v1/signup'] = (_) => {
+        'id': 'obfuscated',
+        'email': 'user@example.com',
+        'identities': <dynamic>[],
+      };
+      await expectLater(
+        value.service.signUp('user@example.com', 'secreta-123'),
+        throwsA(isA<AccountAlreadyExists>()),
+      );
+      expect(value.service.pendingConfirmationEmail, isNull);
+    },
+  );
 }
 
 /// PushService whose recovery calls are recorded (UI tests of the sheet).

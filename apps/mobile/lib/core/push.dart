@@ -358,6 +358,13 @@ enum OAuthProvider {
 /// reaches [callbackScheme]. Throws [OAuthCancelled] when the user closes it.
 typedef OAuthBrowser = Future<String> Function(Uri url, String callbackScheme);
 
+/// Sign-up for an address that already has an account. With email
+/// confirmation on, GoTrue answers 200 with a user without identities and
+/// sends no email (anti-enumeration): it must not read as "check your mail".
+class AccountAlreadyExists implements Exception {
+  const AccountAlreadyExists();
+}
+
 /// The user closed the provider page: not an error to show.
 class OAuthCancelled implements Exception {
   const OAuthCancelled();
@@ -753,6 +760,12 @@ class PushService {
     }
     if (data is Map && data['access_token'] != null) {
       throw _invalidSession(response.requestOptions);
+    }
+    final user = data is Map && data['user'] is Map ? data['user'] : data;
+    if (user is Map &&
+        user['identities'] is List &&
+        (user['identities'] as List).isEmpty) {
+      throw const AccountAlreadyExists();
     }
     pendingConfirmationEmail = normalized;
     await storage.write(
