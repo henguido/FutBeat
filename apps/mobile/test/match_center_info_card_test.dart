@@ -390,9 +390,7 @@ void main() {
       await _close(tester);
     });
 
-    testWidgets('Previa never shows a final-score breakdown', (
-      tester,
-    ) async {
+    testWidgets('Previa never shows a final-score breakdown', (tester) async {
       const periods = {
         'fullTime': {'home': 1, 'away': 0},
       };
@@ -410,9 +408,11 @@ void main() {
     ) async {
       await _open(
         tester,
-        detail: _detail(periodScores: const {
-          'fullTime': {'home': 2, 'away': 0},
-        }),
+        detail: _detail(
+          periodScores: const {
+            'fullTime': {'home': 2, 'away': 0},
+          },
+        ),
       );
       expect(find.byKey(const ValueKey('match-period-scores')), findsNothing);
       await _close(tester);

@@ -486,7 +486,10 @@ void main() {
       expect(pushRouteFor({'playerId': 'p1', 'teamId': 't1'}), '/player/p1');
       expect(pushRouteFor({'teamId': 'a/b'}), '/team/a%2Fb');
       expect(pushRouteFor({'matchId': '  '}), isNull);
-      expect(pushRouteFor({'type': 'NEWS', 'articleId': 'fb_article_1'}), '/news');
+      expect(
+        pushRouteFor({'type': 'NEWS', 'articleId': 'fb_article_1'}),
+        '/news',
+      );
     });
 
     testWidgets('foreground push shows a banner that opens the match', (

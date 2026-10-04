@@ -73,6 +73,7 @@ Future<void> pumpOnboarding(
   WidgetTester tester, {
   required AppDatabase database,
   double width = 390,
+  double height = 844,
   Set<String> follows = const {},
   CountryPreference preference = const CountryPreference(
     detectedCountry: 'CR',
@@ -80,10 +81,13 @@ Future<void> pumpOnboarding(
     bootstrapDismissed: false,
   ),
   bool livePreference = false,
+  bool liveFollows = false,
   bool offline = false,
+  bool atWelcome = false,
+  OnboardingProgressStore? progress,
   PushService? pushService,
 }) async {
-  tester.view.physicalSize = Size(width, 844);
+  tester.view.physicalSize = Size(width, height);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -92,7 +96,13 @@ Future<void> pumpOnboarding(
       overrides: [
         databaseProvider.overrideWithValue(database),
         detectedCountryProvider.overrideWithValue('CR'),
-        followsProvider.overrideWith((ref) => Stream.value(follows)),
+        followsProvider.overrideWith(
+          (ref) =>
+              liveFollows ? database.watchFollows() : Stream.value(follows),
+        ),
+        onboardingProgressStoreProvider.overrideWithValue(
+          progress ?? MemoryProgress(),
+        ),
         preferenceProvider.overrideWith(
           (ref) => livePreference
               ? database.watchPreference()
@@ -116,6 +126,28 @@ Future<void> pumpOnboarding(
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 20));
+  if (!atWelcome) {
+    await tester.tap(find.byKey(const ValueKey('onboarding-quick-setup')));
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+}
+
+class MemoryProgress implements OnboardingProgressStore {
+  MemoryProgress([this.step]);
+  int? step;
+  bool cleared = false;
+
+  @override
+  Future<int?> read() async => step;
+
+  @override
+  Future<void> write(int value) async => step = value;
+
+  @override
+  Future<void> clear() async {
+    cleared = true;
+    step = null;
+  }
 }
 
 void main() {
@@ -158,7 +190,10 @@ void main() {
     final db = AppDatabase(NativeDatabase.memory());
     addTearDown(db.close);
     await pumpGate(tester, database: db, dismissed: false);
-    expect(find.text('Bienvenido a FutBeat'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('onboarding-quick-setup')),
+      findsOneWidget,
+    );
     expect(find.byType(NavigationBar), findsNothing);
   });
 
@@ -170,11 +205,13 @@ void main() {
     expect(find.byType(NavigationBar), findsOneWidget);
   });
 
-  testWidgets('Skip persists dismissed and enters Matches', (tester) async {
+  testWidgets('guest / skip persists dismissed and enters Matches', (
+    tester,
+  ) async {
     final db = AppDatabase(NativeDatabase.memory());
     addTearDown(db.close);
     await pumpGate(tester, database: db, dismissed: false);
-    await tester.tap(find.text('Saltar'));
+    await tester.tap(find.text('Continuar como invitado'));
     await tester.pump(const Duration(milliseconds: 50));
     final saved = await tester.runAsync(() => db.watchPreference().first);
     expect(saved?.bootstrapDismissed, isTrue);
@@ -450,8 +487,12 @@ void main() {
     final db = AppDatabase(NativeDatabase.memory());
     addTearDown(db.close);
     await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
-    await pumpOnboarding(tester, database: db);
-    expect(find.text('Bienvenido a FutBeat'), findsOneWidget);
+    await pumpOnboarding(tester, database: db, atWelcome: true);
+    expect(find.text('Configuración rápida'), findsOneWidget);
+    expect(find.text('Continuar como invitado'), findsOneWidget);
+    expect(find.byType(NavigationBar), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('onboarding-quick-setup')));
+    await tester.pump(const Duration(milliseconds: 300));
     // Even a locale that matches is never auto-selected.
     expect(find.text('Elegir país'), findsOneWidget);
     expect(find.text('Costa Rica'), findsNothing);
@@ -489,7 +530,7 @@ void main() {
     expect(find.text('Reintentar'), findsOneWidget);
     await tester.tap(find.text('Continuar'));
     await tester.pump(const Duration(milliseconds: 20));
-    expect(find.text('Competiciones'), findsOneWidget);
+    expect(find.text('Ligas'), findsOneWidget);
   });
 
   testWidgets('device US without a choice shows Elegir país and saves none', (
@@ -656,10 +697,7 @@ void main() {
     await tester.tap(find.text('Continuar'));
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.widgetWithText(TextField, 'Manchester'), findsNothing);
-    expect(
-      find.widgetWithText(TextField, 'Buscar competiciones'),
-      findsOneWidget,
-    );
+    expect(find.widgetWithText(TextField, 'Buscar ligas'), findsOneWidget);
   });
 
   testWidgets('player step has real search and remains optional', (
@@ -708,7 +746,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
     }
     expect(find.text('Cuenta no disponible'), findsOneWidget);
-    expect(find.text('Ir a Partidos'), findsOneWidget);
+    expect(find.text('Continuar'), findsOneWidget);
   });
 
   testWidgets('configured account step offers an optional guest path', (
@@ -736,9 +774,11 @@ void main() {
     }
     expect(find.text('Crear cuenta'), findsOneWidget);
     expect(find.text('Iniciar sesión'), findsOneWidget);
-    expect(find.text('Continuar como invitado'), findsOneWidget);
+    expect(find.text('Continuar sin cuenta'), findsOneWidget);
     expect(
-      find.textContaining('tus favoritos se guardan en este dispositivo'),
+      find.text(
+        'Sincroniza favoritos, preferencias, notificaciones y Premium.',
+      ),
       findsOneWidget,
     );
   });
@@ -779,7 +819,204 @@ void main() {
     await tester.pump(const Duration(milliseconds: 20));
     expect(find.text('Sesión iniciada · qa@example.com'), findsOneWidget);
     expect(find.text('Crear cuenta'), findsNothing);
-    expect(find.text('Ir a Partidos'), findsOneWidget);
+    expect(find.text('Continuar'), findsOneWidget);
+  });
+
+  group('onboarding v2', () {
+    /// Lets Drift streams (real async) emit, then finishes transitions.
+    Future<void> settle(WidgetTester tester) async {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 60)),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+    }
+
+    /// Unmounts and lets Drift close its stream queries (their timers).
+    Future<void> unmount(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    }
+
+    Future<void> next(WidgetTester tester, [int times = 1]) async {
+      for (var i = 0; i < times; i++) {
+        await tester.tap(find.byKey(const ValueKey('onboarding-next')));
+        await settle(tester);
+      }
+    }
+
+    testWidgets('restart resumes the step where it was left', (tester) async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      final progress = MemoryProgress(OnboardingStep.competitions);
+      await pumpOnboarding(
+        tester,
+        database: db,
+        atWelcome: true,
+        progress: progress,
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Ligas'), findsOneWidget);
+      await next(tester);
+      expect(progress.step, OnboardingStep.players);
+    });
+
+    testWidgets('leagues and players persist as follows', (tester) async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+      await db.addFollows({'team:team_cr'});
+      await pumpOnboarding(tester, database: db, liveFollows: true);
+      await settle(tester);
+      await next(tester, 2); // → Ligas
+      await tester.tap(find.text('Liga Costa Rica'));
+      await settle(tester);
+      await next(tester); // → Jugadores (from the followed team)
+      expect(find.text('DE TUS EQUIPOS'), findsOneWidget);
+      await tester.tap(find.text('Jugador Local'));
+      await settle(tester);
+      expect(await tester.runAsync(() => db.watchFollows().first), {
+        'team:team_cr',
+        'competition:competition_cr',
+        'player:player_cr',
+      });
+      await unmount(tester);
+    });
+
+    testWidgets('back / forward keeps one follow and shows the count', (
+      tester,
+    ) async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+      await pumpOnboarding(tester, database: db, liveFollows: true);
+      await settle(tester);
+      await next(tester); // → Equipos
+      await tester.tap(find.text('Equipo Costa Rica'));
+      await settle(tester);
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('onboarding-selected-count')),
+            )
+            .data,
+        '1',
+      );
+      await next(tester);
+      await tester.tap(find.byTooltip('Atrás'));
+      await settle(tester);
+      expect(find.text('Equipos'), findsOneWidget);
+      final selected = tester.widget<Semantics>(
+        find
+            .ancestor(
+              of: find.byKey(const ValueKey('onboarding-team-team_cr')),
+              matching: find.byType(Semantics),
+            )
+            .first,
+      );
+      expect(selected.properties.selected, isTrue);
+      await next(tester);
+      expect(await tester.runAsync(() => db.watchFollows().first), {
+        'team:team_cr',
+      });
+      await unmount(tester);
+    });
+
+    testWidgets('offline, the whole flow still reaches Partidos', (
+      tester,
+    ) async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      final progress = MemoryProgress();
+      await pumpOnboarding(
+        tester,
+        database: db,
+        offline: true,
+        progress: progress,
+      );
+      await next(tester, 6); // country → … → summary, with no catalog
+      expect(find.text('Todo listo'), findsOneWidget);
+      final go = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('onboarding-next')),
+      );
+      expect(go.onPressed, isNotNull);
+      expect(find.text('Ir a Partidos'), findsOneWidget);
+      expect(progress.step, OnboardingStep.summary);
+    });
+
+    testWidgets('summary shows country and follow counts', (tester) async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await pumpOnboarding(
+        tester,
+        database: db,
+        preference: const CountryPreference(
+          detectedCountry: 'CR',
+          selectedCountry: 'CR',
+          bootstrapDismissed: false,
+        ),
+        follows: const {
+          'team:team_cr',
+          'team:team_es',
+          'competition:competition_cr',
+          'player:player_cr',
+        },
+      );
+      await next(tester, 6);
+      Text value(String key) => tester.widget<Text>(
+        find
+            .descendant(
+              of: find.byKey(ValueKey('onboarding-summary-$key')),
+              matching: find.byType(Text),
+            )
+            .last,
+      );
+      expect(value('country').data, 'Costa Rica');
+      expect(value('teams').data, '2');
+      expect(value('competitions').data, '1');
+      expect(value('players').data, '1');
+    });
+  });
+
+  testWidgets('welcome scrolls in landscape without overflow', (tester) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await pumpOnboarding(
+      tester,
+      database: db,
+      width: 800,
+      height: 360,
+      atWelcome: true,
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(tester.takeException(), isNull);
+    await tester.scrollUntilVisible(
+      find.text('Continuar como invitado'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Continuar como invitado'), findsOneWidget);
+  });
+
+  testWidgets('summary truncates a long country name at 320px', (tester) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await pumpOnboarding(
+      tester,
+      database: db,
+      width: 320,
+      preference: const CountryPreference(
+        detectedCountry: 'CD',
+        selectedCountry: 'CD',
+        bootstrapDismissed: false,
+      ),
+    );
+    for (var i = 0; i < 6; i++) {
+      await tester.tap(find.byKey(const ValueKey('onboarding-next')));
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    expect(find.text('Todo listo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   for (final width in [320.0, 360.0, 390.0, 430.0]) {
