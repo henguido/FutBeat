@@ -377,41 +377,54 @@ class _PositionRow extends StatelessWidget {
   final Color accent;
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Container(width: 3, height: 26, color: accent),
-      const SizedBox(width: 8),
-      if (team != null) ...[
-        EntityAvatar(team!, size: 24),
+  Widget build(BuildContext context) {
+    final rawPoints = entry.$2['points'];
+    final points = switch (rawPoints) {
+      int value when value >= 0 => value,
+      num value
+          when value.isFinite && value >= 0 && value == value.roundToDouble() =>
+        value.toInt(),
+      String value => int.tryParse(value.trim()),
+      _ => null,
+    };
+    return Row(
+      children: [
+        Container(width: 3, height: 26, color: accent),
         const SizedBox(width: 8),
-      ],
-      Expanded(
-        child: Text(
-          team?.displayName ?? '',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w700),
+        if (team != null) ...[
+          EntityAvatar(team!, size: 24),
+          const SizedBox(width: 8),
+        ],
+        Expanded(
+          child: Text(
+            team?.displayName ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
         ),
-      ),
-      if (entry.$3 != null) ...[
-        Text(entry.$3!, style: const TextStyle(color: muted, fontSize: 12)),
-        const SizedBox(width: 8),
-      ],
-      Text(
-        '#${entry.$1}',
-        style: TextStyle(color: accent, fontWeight: FontWeight.w900),
-      ),
-      const SizedBox(width: 14),
-      SizedBox(
-        width: 56,
-        child: Text(
-          '${entry.$2['points'] ?? 0} pts',
-          textAlign: TextAlign.end,
-          style: const TextStyle(fontWeight: FontWeight.w800),
+        if (entry.$3 != null) ...[
+          Text(entry.$3!, style: const TextStyle(color: muted, fontSize: 12)),
+          const SizedBox(width: 8),
+        ],
+        Text(
+          '#${entry.$1}',
+          style: TextStyle(color: accent, fontWeight: FontWeight.w900),
         ),
-      ),
-    ],
-  );
+        if (points != null && points >= 0) ...[
+          const SizedBox(width: 14),
+          SizedBox(
+            width: 56,
+            child: Text(
+              '$points pts',
+              textAlign: TextAlign.end,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
