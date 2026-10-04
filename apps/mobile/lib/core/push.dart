@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
@@ -22,6 +23,50 @@ String? reconcileSelectedCountry({
   required String? cloud,
   required bool dirty,
 }) => dirty ? local : cloud;
+
+/// First link of this device with an account: the server row may be the
+/// defaults its first read just created. Per field, a server value that
+/// differs from its default is real evidence and wins, unless the guest
+/// edited the profile on this device ([localEdited]); otherwise the local
+/// value stays. A server default never replaces a local choice.
+UserProfileSettings mergeFirstLinkProfile({
+  required UserProfileSettings local,
+  required UserProfileSettings cloud,
+  required bool localEdited,
+}) {
+  final defaults = const UserProfileSettings().toJson();
+  final localJson = local.toJson();
+  final cloudJson = cloud.toJson();
+  bool isDefault(String key, Object? value) =>
+      value == null ||
+      value == defaults[key] ||
+      // The server's timezone default; the app's is 'device'.
+      (key == 'timezone' && value == 'America/Costa_Rica');
+  final merged = <String, dynamic>{};
+  for (final key in {...localJson.keys, ...cloudJson.keys}) {
+    final localValue = localJson[key];
+    final cloudValue = cloudJson[key];
+    final localChosen = !isDefault(key, localValue);
+    final cloudChosen = !isDefault(key, cloudValue);
+    merged[key] = localChosen && (localEdited || !cloudChosen)
+        ? localValue
+        : cloudChosen
+        ? cloudValue
+        : localValue;
+  }
+  return UserProfileSettings.fromJson(merged);
+}
+
+/// First link: a manual local country beats the server; otherwise the
+/// server's explicit choice; never a server null over a local value.
+String? mergeFirstLinkCountry({
+  required String? local,
+  required String? cloud,
+  required bool localManual,
+}) {
+  if (localManual && local != null) return local;
+  return cloud ?? local;
+}
 
 /// Notification preference keys as the server stores them. The first seven
 /// are understood by every server (`futbeat_sync_user_profile_v2`); the rest
@@ -394,6 +439,11 @@ class PushService {
   }
 
   final _accountChanges = StreamController<String?>.broadcast();
+  final _profileChanges = StreamController<void>.broadcast();
+
+  /// Fires whenever the local profile settings are written (edits, a
+  /// reconcile with the account, sign-out resets).
+  Stream<void> get profileChanges => _profileChanges.stream;
 
   /// Emits the signed-in account id (null = guest) whenever it changes.
   Stream<String?> get accountChanges => _accountChanges.stream;
@@ -636,8 +686,9 @@ class PushService {
     final generation = _generation;
     try {
       await _queued(() => _reconcileIfDue(generation));
-    } catch (_) {
-      // Follows stay unpushed until a later reconcile merges the server set.
+    } catch (error) {
+      // Retried by the renewal tick; the guest data stays local meanwhile.
+      debugPrint('FutBeat account link pending (${error.runtimeType})');
     }
     if (_stale(generation)) return;
     await _startAccountSync();
@@ -1194,6 +1245,16 @@ class PushService {
       key: 'futbeat.profile.dirty',
       value: dirty ? 'true' : 'false',
     );
+    if (!_profileChanges.isClosed) _profileChanges.add(null);
+  }
+
+  /// A storage flag; an unreadable one counts as unset.
+  Future<bool> _flag(String key) async {
+    try {
+      return await storage.read(key: key) == 'true';
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Saves the profile and every notification preference. Uses the JSON
@@ -1264,74 +1325,147 @@ class PushService {
 
     final cloud = await _readCloudProfile();
     if (_stale(generation)) return;
+    // Never synced with this account on this device (first sign-in, or the
+    // first after a sign-out): guest choices are linked, never replaced.
+    final firstLink = await _readPushedSafe(userId) == null;
     final cloudPreferences = cloud['preferences'];
-    final dirty = await storage.read(key: 'futbeat.profile.dirty') == 'true';
-    final localProfile = await loadProfileSettings();
 
-    if (!dirty && cloudPreferences is Map) {
-      await _writeLocalProfile(
-        UserProfileSettings.fromJson(
-          Map<String, dynamic>.from(cloudPreferences),
-        ),
-        dirty: false,
-      );
-    } else {
+    // Every part runs even when another fails, favourites first: a profile
+    // or country error never leaves them unsynced. The first error is
+    // rethrown so the renewal tick retries the whole reconcile.
+    Object? failure;
+    StackTrace? failureStack;
+    Future<void> step(String name, Future<void> Function() work) async {
+      if (_stale(generation)) return;
       try {
-        await _syncProfileSettings(localProfile);
-      } catch (_) {
-        // The profile stays dirty and is retried by the next reconcile; a
-        // failed profile save must never block the follows merge below.
+        await work();
+      } catch (error, stack) {
+        debugPrint(
+          'FutBeat account reconcile: $name failed (${error.runtimeType})',
+        );
+        failure ??= error;
+        failureStack ??= stack;
       }
     }
 
+    await step('follows', () => _mergeFollows(cloud['follows'], generation));
+    await step(
+      'profile',
+      () => _reconcileProfile(cloudPreferences, firstLink: firstLink),
+    );
     if (cloudPreferences is Map) {
-      final values = Map<String, dynamic>.from(cloudPreferences);
-      final current = await database.watchPreference().first;
-      final legacyCountryDirty =
-          await storage.read(key: 'futbeat.country.dirty') == 'true';
-      var detectedDirty =
-          await storage.read(key: 'futbeat.country.detected.dirty') == 'true';
-      var selectedDirty =
-          await storage.read(key: 'futbeat.country.selected.dirty') == 'true';
-      if (legacyCountryDirty && !detectedDirty && !selectedDirty) {
-        detectedDirty = true;
-        selectedDirty = true;
+      await step(
+        'country',
+        () => _reconcileCountries(
+          Map<String, dynamic>.from(cloudPreferences),
+          firstLink: firstLink,
+        ),
+      );
+    }
+    if (_stale(generation)) return;
+    final error = failure;
+    if (error != null) Error.throwWithStackTrace(error, failureStack!);
+    _lastReconcile = clock();
+  }
+
+  Future<Set<String>?> _readPushedSafe(String? uid) async {
+    try {
+      return await _readPushed(uid);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _reconcileProfile(
+    Object? cloudPreferences, {
+    required bool firstLink,
+  }) async {
+    final dirty = await _flag('futbeat.profile.dirty');
+    final localProfile = await loadProfileSettings();
+    if (cloudPreferences is! Map) {
+      await _syncProfileSettings(localProfile);
+      return;
+    }
+    final cloudProfile = UserProfileSettings.fromJson(
+      Map<String, dynamic>.from(cloudPreferences),
+    );
+    if (firstLink) {
+      final merged = mergeFirstLinkProfile(
+        local: localProfile,
+        cloud: cloudProfile,
+        localEdited: dirty,
+      );
+      if (jsonEncode(merged.toJson()) == jsonEncode(cloudProfile.toJson())) {
+        // Nothing of the guest's to keep: the account's profile as is.
+        await _writeLocalProfile(merged, dirty: false);
+        return;
       }
-      final cloudDetected = values['detectedCountry']?.toString();
-      final cloudSelected = values['selectedCountry']?.toString();
-      final detected = reconcileSelectedCountry(
+      // Dirty until the server has the merged profile.
+      await _writeLocalProfile(merged, dirty: true);
+      await _syncProfileSettings(merged);
+      return;
+    }
+    if (!dirty) {
+      await _writeLocalProfile(cloudProfile, dirty: false);
+    } else {
+      await _syncProfileSettings(localProfile);
+    }
+  }
+
+  Future<void> _reconcileCountries(
+    Map<String, dynamic> values, {
+    required bool firstLink,
+  }) async {
+    final current = await database.watchPreference().first;
+    final legacyCountryDirty = await _flag('futbeat.country.dirty');
+    var detectedDirty = await _flag('futbeat.country.detected.dirty');
+    var selectedDirty = await _flag('futbeat.country.selected.dirty');
+    if (legacyCountryDirty && !detectedDirty && !selectedDirty) {
+      detectedDirty = true;
+      selectedDirty = true;
+    }
+    final cloudDetected = values['detectedCountry']?.toString();
+    final cloudSelected = values['selectedCountry']?.toString();
+    final String? detected;
+    final String? selected;
+    if (firstLink) {
+      // The device region is this device's fact; the choice follows the
+      // first-link rule. Whatever differs is then written to the account.
+      detected = current.detectedCountry ?? cloudDetected;
+      selected = mergeFirstLinkCountry(
+        local: current.selectedCountry,
+        cloud: cloudSelected,
+        localManual: selectedDirty,
+      );
+      detectedDirty = detected != cloudDetected;
+      selectedDirty = selected != cloudSelected;
+    } else {
+      detected = reconcileSelectedCountry(
         local: current.detectedCountry,
         cloud: cloudDetected,
         dirty: detectedDirty,
       );
-      final selected = reconcileSelectedCountry(
+      selected = reconcileSelectedCountry(
         local: current.selectedCountry,
         cloud: cloudSelected,
         dirty: selectedDirty,
       );
-      if (detected != current.detectedCountry ||
-          selected != current.selectedCountry) {
-        if (detected != current.detectedCountry) {
-          await database.saveDetectedCountry(detected);
-        }
-        if (selected != current.selectedCountry) {
-          await database.saveSelectedCountry(selected);
-        }
-      }
-      if (detectedDirty || selectedDirty) {
-        final effective = await database.watchPreference().first;
-        await syncCountries(
-          effective.detectedCountry,
-          effective.selectedCountry,
-          updateDetected: detectedDirty,
-          updateSelected: selectedDirty,
-        );
-      }
     }
-
-    if (_stale(generation)) return;
-    await _mergeFollows(cloud['follows'], generation);
-    if (!_stale(generation)) _lastReconcile = clock();
+    if (detected != current.detectedCountry) {
+      await database.saveDetectedCountry(detected);
+    }
+    if (selected != current.selectedCountry) {
+      await database.saveSelectedCountry(selected);
+    }
+    if (detectedDirty || selectedDirty) {
+      final effective = await database.watchPreference().first;
+      await syncCountries(
+        effective.detectedCountry,
+        effective.selectedCountry,
+        updateDetected: detectedDirty,
+        updateSelected: selectedDirty,
+      );
+    }
   }
 
   Future<void> _startAccountSync() async {
@@ -1573,6 +1707,7 @@ class PushService {
     unawaited(rotation?.cancel());
     unawaited(follows?.cancel());
     unawaited(_accountChanges.close());
+    unawaited(_profileChanges.close());
     dio.close(force: true);
   }
 }
@@ -1592,6 +1727,8 @@ final profileSettingsProvider = FutureProvider<UserProfileSettings>((
   ref,
 ) async {
   final service = ref.watch(pushServiceProvider);
+  final changes = service.profileChanges.listen((_) => ref.invalidateSelf());
+  ref.onDispose(changes.cancel);
   await service.restore();
   return service.loadProfileSettings();
 });
