@@ -19,18 +19,30 @@ const admobTestBannerUnitId = 'ca-app-pub-3940256099942544/6300978111';
 /// `--dart-define=FUTBEAT_ADMOB_TEST_ADS=true` for Google's test ads
 /// (development / QA). Nothing configured = no ads at all.
 class AdsConfig {
-  const AdsConfig({this.matchesFeedUnitId = ''});
+  const AdsConfig({this.matchesFeedUnitId = '', this.testAdsBuild = false});
 
   factory AdsConfig.fromEnvironment() {
     if (!Platform.isAndroid) return const AdsConfig();
     const testAds = bool.fromEnvironment('FUTBEAT_ADMOB_TEST_ADS');
     const feed = String.fromEnvironment('FUTBEAT_ADMOB_MATCHES_FEED_ID');
-    return AdsConfig(matchesFeedUnitId: testAds ? admobTestBannerUnitId : feed);
+    return testAds
+        ? const AdsConfig(
+            matchesFeedUnitId: admobTestBannerUnitId,
+            testAdsBuild: true,
+          )
+        : const AdsConfig(matchesFeedUnitId: feed);
   }
 
   final String matchesFeedUnitId;
 
+  /// Built with `FUTBEAT_ADMOB_TEST_ADS=true`.
+  final bool testAdsBuild;
+
   bool get configured => matchesFeedUnitId.isNotEmpty;
+
+  /// Google test units only: QA may run them without production consent.
+  bool get testAds =>
+      testAdsBuild || matchesFeedUnitId == admobTestBannerUnitId;
 
   String? unitFor(AdPlacement placement) {
     final unit = switch (placement) {
@@ -40,31 +52,43 @@ class AdsConfig {
   }
 }
 
-/// What the user allowed. Production in the EEA / UK / Switzerland needs a
-/// Google-certified CMP (UMP SDK) feeding this; until then FutBeat only
-/// asks for NON-personalized ads and never shows a made-up consent form.
+/// Answer of the consent platform (UMP / a Google-certified CMP).
 class AdsConsentDecision {
   const AdsConsentDecision({
     required this.canRequestAds,
     required this.personalized,
   });
 
+  /// Not known yet (no CMP, or its answer is still pending): no requests.
+  static const unresolved = AdsConsentDecision(
+    canRequestAds: false,
+    personalized: false,
+  );
+
   final bool canRequestAds;
   final bool personalized;
 }
 
+/// Production ad requests need [AdsConsentDecision.canRequestAds] from a
+/// real consent platform. Non-personalized is NOT consent.
 abstract interface class AdsConsent {
   Future<AdsConsentDecision> resolve();
 }
 
-/// Placeholder until UMP is integrated: non-personalized ads only.
-class NonPersonalizedAdsConsent implements AdsConsent {
-  const NonPersonalizedAdsConsent();
+/// Until UMP is integrated nothing authorizes production ads: fail closed.
+class UnresolvedAdsConsent implements AdsConsent {
+  const UnresolvedAdsConsent();
 
   @override
-  Future<AdsConsentDecision> resolve() async =>
-      const AdsConsentDecision(canRequestAds: true, personalized: false);
+  Future<AdsConsentDecision> resolve() async => AdsConsentDecision.unresolved;
 }
+
+/// Google test ads for QA: allowed without production consent, never
+/// personalized.
+const _testAdsDecision = AdsConsentDecision(
+  canRequestAds: true,
+  personalized: false,
+);
 
 /// A loaded ad ready to be placed.
 abstract interface class LoadedAd {
@@ -79,7 +103,65 @@ abstract interface class AdLoader {
   Future<LoadedAd?> loadBanner(String unitId, {required bool personalized});
 }
 
+/// The platform banner behind [GoogleAdLoader] (a seam for its tests).
+abstract interface class PlatformBanner {
+  Size get size;
+  Future<void> load();
+  Future<void> dispose();
+  Widget widget();
+}
+
+typedef PlatformBannerFactory = PlatformBanner Function(
+  String unitId, {
+  required bool personalized,
+  required void Function() onLoaded,
+  required void Function() onFailed,
+});
+
+class _GoogleBanner implements PlatformBanner {
+  _GoogleBanner(
+    String unitId, {
+    required bool personalized,
+    required void Function() onLoaded,
+    required void Function() onFailed,
+  }) : ad = BannerAd(
+         size: AdSize.banner,
+         adUnitId: unitId,
+         request: AdRequest(nonPersonalizedAds: !personalized),
+         listener: BannerAdListener(
+           onAdLoaded: (_) => onLoaded(),
+           onAdFailedToLoad: (_, _) => onFailed(),
+         ),
+       );
+
+  final BannerAd ad;
+
+  @override
+  Size get size => Size(ad.size.width.toDouble(), ad.size.height.toDouble());
+
+  @override
+  Future<void> load() => ad.load();
+
+  @override
+  Future<void> dispose() => ad.dispose();
+
+  @override
+  Widget widget() => AdWidget(ad: ad);
+}
+
 class GoogleAdLoader implements AdLoader {
+  GoogleAdLoader({
+    Future<void> Function()? initialize,
+    PlatformBannerFactory? createBanner,
+    this.timeout = const Duration(seconds: 30),
+  }) : _initialize = initialize ?? _initializeSdk,
+       _createBanner = createBanner ?? _GoogleBanner.new;
+
+  static Future<void> _initializeSdk() => MobileAds.instance.initialize();
+
+  final Future<void> Function() _initialize;
+  final PlatformBannerFactory _createBanner;
+  final Duration timeout;
   Future<void>? _initialized;
 
   @override
@@ -89,57 +171,77 @@ class GoogleAdLoader implements AdLoader {
   }) async {
     try {
       // The SDK starts only when the first ad is really requested (never
-      // for Premium users).
-      await (_initialized ??= MobileAds.instance.initialize());
+      // for Premium users or without consent).
+      await (_initialized ??= _initialize());
     } catch (_) {
       _initialized = null;
       return null;
     }
     final result = Completer<LoadedAd?>();
-    final banner = BannerAd(
-      size: AdSize.banner,
-      adUnitId: unitId,
-      request: AdRequest(nonPersonalizedAds: !personalized),
-      listener: BannerAdListener(
-        onAdLoaded: (ad) {
-          if (result.isCompleted) {
-            ad.dispose();
-          } else {
-            result.complete(_Banner(ad as BannerAd));
-          }
-        },
-        onAdFailedToLoad: (ad, _) {
-          ad.dispose();
-          if (!result.isCompleted) result.complete(null);
-        },
-      ),
+    Timer? timer;
+    var finished = false;
+    var released = false;
+    late final PlatformBanner banner;
+
+    // Every path ends here: the banner is disposed exactly once, and a
+    // callback arriving after the timeout is ignored.
+    void release() {
+      if (released) return;
+      released = true;
+      unawaited(banner.dispose().catchError((Object _) {}));
+    }
+
+    void finish(LoadedAd? ad) {
+      if (finished) return;
+      finished = true;
+      timer?.cancel();
+      result.complete(ad);
+    }
+
+    banner = _createBanner(
+      unitId,
+      personalized: personalized,
+      onLoaded: () {
+        if (finished || released) {
+          release();
+          return;
+        }
+        finish(_LoadedBanner(banner, release));
+      },
+      onFailed: () {
+        release();
+        finish(null);
+      },
     );
+    timer = Timer(timeout, () {
+      if (finished) return;
+      release();
+      finish(null);
+    });
     try {
       await banner.load();
     } catch (_) {
-      unawaited(banner.dispose());
-      return null;
+      release();
+      finish(null);
     }
-    return result.future.timeout(
-      const Duration(seconds: 30),
-      onTimeout: () => null,
-    );
+    return result.future;
   }
 }
 
-class _Banner implements LoadedAd {
-  _Banner(this.ad);
+class _LoadedBanner implements LoadedAd {
+  _LoadedBanner(this.banner, this._release);
 
-  final BannerAd ad;
-
-  @override
-  Size get size => Size(ad.size.width.toDouble(), ad.size.height.toDouble());
+  final PlatformBanner banner;
+  final void Function() _release;
 
   @override
-  Widget widget() => AdWidget(ad: ad);
+  Size get size => banner.size;
 
   @override
-  void dispose() => unawaited(ad.dispose());
+  Widget widget() => banner.widget();
+
+  @override
+  void dispose() => _release();
 }
 
 final adsConfigProvider = Provider<AdsConfig>(
@@ -148,13 +250,14 @@ final adsConfigProvider = Provider<AdsConfig>(
 
 final adLoaderProvider = Provider<AdLoader>((ref) => GoogleAdLoader());
 
+/// Production consent; fails closed until a real CMP is wired here.
 final adsConsentProvider = Provider<AdsConsent>(
-  (ref) => const NonPersonalizedAdsConsent(),
+  (ref) => const UnresolvedAdsConsent(),
 );
 
 /// The ONLY ads switch: configured ads, a settled plan for a resolved
 /// account, and `showsAds` (FREE). Premium, an account still restoring or a
-/// plan still loading never request an ad.
+/// plan still loading never request an ad. Consent is checked per request.
 final adsAllowedProvider = Provider<bool>((ref) {
   if (!ref.watch(adsConfigProvider).configured) return false;
   final plan = ref.watch(entitlementsProvider);
@@ -193,7 +296,9 @@ class _AdSlotState extends ConsumerState<AdSlot>
     final generation = _generation;
     LoadedAd? ad;
     try {
-      final consent = await ref.read(adsConsentProvider).resolve();
+      final consent = ref.read(adsConfigProvider).testAds
+          ? _testAdsDecision
+          : await ref.read(adsConsentProvider).resolve();
       if (consent.canRequestAds && mounted && generation == _generation) {
         ad = await ref
             .read(adLoaderProvider)

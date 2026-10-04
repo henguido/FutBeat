@@ -12,10 +12,12 @@ class _MemoryStore implements EntitlementStore {
 
   /// When set, reads wait for it (a slow secure storage at startup).
   Completer<void>? readGate;
+  bool failReads = false;
 
   @override
   Future<String?> read(String key) async {
     await readGate?.future;
+    if (failReads) throw StateError('secure storage unavailable');
     return values[key];
   }
 
@@ -80,6 +82,20 @@ final _premium = EntitlementGrant(
   productId: 'test_premium_monthly',
 );
 
+class _Consent implements AdsConsent {
+  _Consent(this.decision);
+
+  /// null = the consent platform never answers.
+  final AdsConsentDecision? decision;
+
+  @override
+  Future<AdsConsentDecision> resolve() => decision == null
+      ? Completer<AdsConsentDecision>().future
+      : Future.value(decision);
+}
+
+const _allowed = AdsConsentDecision(canRequestAds: true, personalized: false);
+
 class _Harness {
   final loader = _Loader();
   final store = _MemoryStore();
@@ -90,6 +106,8 @@ class _Harness {
   Future<void> pump(
     WidgetTester tester, {
     AdsConfig config = const AdsConfig(matchesFeedUnitId: 'test-feed-unit'),
+    // A real unit needs consent: allowed unless a test says otherwise.
+    AdsConsent? consent = const _AllowedConsent(),
   }) async {
     // Never awaited: unlistened when ads are off.
     addTearDown(() => unawaited(accounts.close()));
@@ -101,6 +119,7 @@ class _Harness {
           entitlementSourceProvider.overrideWithValue(source),
           adsConfigProvider.overrideWithValue(config),
           adLoaderProvider.overrideWithValue(loader),
+          if (consent != null) adsConsentProvider.overrideWithValue(consent),
         ],
         child: const MaterialApp(
           home: Scaffold(
@@ -125,6 +144,53 @@ class _Harness {
 }
 
 String _cached(EntitlementGrant grant) => jsonEncode(grant.toJson());
+
+class _AllowedConsent implements AdsConsent {
+  const _AllowedConsent();
+
+  @override
+  Future<AdsConsentDecision> resolve() async => _allowed;
+}
+
+class _FakeBanner implements PlatformBanner {
+  _FakeBanner(this.onLoaded, this.onFailed);
+
+  final void Function() onLoaded;
+  final void Function() onFailed;
+  int disposed = 0;
+
+  @override
+  Size get size => const Size(320, 50);
+
+  @override
+  Future<void> load() async {}
+
+  @override
+  Future<void> dispose() async => disposed++;
+
+  @override
+  Widget widget() => const SizedBox(key: ValueKey('platform-banner'));
+}
+
+({GoogleAdLoader loader, List<_FakeBanner> banners}) _googleLoader() {
+  final banners = <_FakeBanner>[];
+  final loader = GoogleAdLoader(
+    initialize: () async {},
+    timeout: const Duration(milliseconds: 40),
+    createBanner:
+        (
+          unitId, {
+          required personalized,
+          required onLoaded,
+          required onFailed,
+        }) {
+          final banner = _FakeBanner(onLoaded, onFailed);
+          banners.add(banner);
+          return banner;
+        },
+  );
+  return (loader: loader, banners: banners);
+}
 
 void main() {
   testWidgets('FREE with ads configured requests one non-personalized ad', (
@@ -262,5 +328,144 @@ void main() {
     expect(const AdsConfig().unitFor(AdPlacement.matchesFeed), isNull);
     // Test environment (not Android, no dart-define): nothing configured.
     expect(AdsConfig.fromEnvironment().configured, isFalse);
+  });
+
+  group('consent', () {
+    testWidgets('real unit + consent unresolved (default): no request', (
+      tester,
+    ) async {
+      final h = _Harness();
+      await h.pump(tester, consent: null); // production default
+      await h.account(tester, null);
+      expect(h.loader.requests, isEmpty);
+    });
+
+    testWidgets('real unit + consent pending forever: no request', (
+      tester,
+    ) async {
+      final h = _Harness();
+      await h.pump(tester, consent: _Consent(null));
+      await h.account(tester, null);
+      expect(h.loader.requests, isEmpty);
+    });
+
+    testWidgets('real unit + consent denied: no request', (tester) async {
+      final h = _Harness();
+      await h.pump(
+        tester,
+        consent: _Consent(
+          const AdsConsentDecision(canRequestAds: false, personalized: false),
+        ),
+      );
+      await h.account(tester, null);
+      expect(h.loader.requests, isEmpty);
+    });
+
+    testWidgets('real unit + consent allowed: request as allowed', (
+      tester,
+    ) async {
+      final h = _Harness();
+      await h.pump(
+        tester,
+        consent: _Consent(
+          const AdsConsentDecision(canRequestAds: true, personalized: true),
+        ),
+      );
+      await h.account(tester, null);
+      expect(h.loader.requests, [
+        (unitId: 'test-feed-unit', personalized: true),
+      ]);
+    });
+
+    testWidgets(
+      'Google test ads still work for QA without production consent',
+      (tester) async {
+        final h = _Harness();
+        await h.pump(
+          tester,
+          config: const AdsConfig(
+            matchesFeedUnitId: admobTestBannerUnitId,
+            testAdsBuild: true,
+          ),
+          consent: null,
+        );
+        await h.account(tester, null);
+        expect(h.loader.requests, [
+          (unitId: admobTestBannerUnitId, personalized: false),
+        ]);
+        expect(find.byKey(const ValueKey('fake-ad')), findsOneWidget);
+      },
+    );
+  });
+
+  group('entitlement storage failures fail closed', () {
+    testWidgets('storage throws: no ad until a verified FREE', (tester) async {
+      final h = _Harness();
+      h.store.failReads = true;
+      await h.pump(tester);
+      await h.account(tester, null);
+      expect(h.container.read(entitlementsProvider).settled, isFalse);
+      expect(h.loader.requests, isEmpty);
+
+      h.source.answer = const EntitlementCheck.answered(null);
+      await h.container.read(entitlementsProvider.notifier).refresh();
+      await tester.pumpAndSettle();
+      expect(h.container.read(entitlementsProvider).settled, isTrue);
+      expect(h.loader.requests, hasLength(1));
+    });
+
+    testWidgets('malformed cache: no ad until a verified FREE', (tester) async {
+      final h = _Harness();
+      h.store.values[entitlementStorageKey('guest')] = '{"plan":"gold"}';
+      await h.pump(tester);
+      await h.account(tester, null);
+      expect(h.container.read(entitlementsProvider).settled, isFalse);
+      expect(h.loader.requests, isEmpty);
+
+      h.source.answer = const EntitlementCheck.answered(null);
+      await h.container.read(entitlementsProvider.notifier).refresh();
+      await tester.pumpAndSettle();
+      expect(h.loader.requests, hasLength(1));
+      expect(find.byKey(const ValueKey('fake-ad')), findsOneWidget);
+    });
+  });
+
+  group('GoogleAdLoader', () {
+    test(
+      'timeout disposes the banner exactly once; a late load is ignored',
+      () async {
+        final g = _googleLoader();
+        final ad = await g.loader.loadBanner('unit', personalized: false);
+        expect(ad, isNull);
+        expect(g.banners.single.disposed, 1);
+
+        g.banners.single.onLoaded(); // AdMob answers after the timeout
+        await Future<void>.delayed(Duration.zero);
+        expect(g.banners.single.disposed, 1);
+      },
+    );
+
+    test('failed load disposes once; a loaded banner disposes once', () async {
+      final g = _googleLoader();
+      final failed = g.loader.loadBanner('unit', personalized: false);
+      await Future<void>.delayed(Duration.zero);
+      g.banners.last.onFailed();
+      expect(await failed, isNull);
+      expect(g.banners.last.disposed, 1);
+
+      final loading = g.loader.loadBanner('unit', personalized: false);
+      await Future<void>.delayed(Duration.zero);
+      g.banners.last.onLoaded();
+      final ad = await loading;
+      expect(ad, isNotNull);
+      expect(g.banners.last.disposed, 0);
+      // Past the timeout nothing else happens to a delivered banner.
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(g.banners.last.disposed, 0);
+      ad!
+        ..dispose()
+        ..dispose();
+      expect(g.banners.last.disposed, 1);
+    });
   });
 }

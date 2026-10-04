@@ -324,11 +324,16 @@ class EntitlementsController extends Notifier<Entitlements> {
 
   Future<void> _loadCache(String key) async {
     EntitlementGrant? grant;
+    // Only a clean read settles the plan: an unreadable or corrupt record
+    // leaves it unsettled (ads stay off) until a verified answer arrives.
+    var readable = true;
     try {
       final raw = await _store.read(entitlementStorageKey(key));
       grant = raw == null ? null : EntitlementGrant.fromJson(jsonDecode(raw));
+      readable = raw == null || grant != null;
     } catch (_) {
       grant = null;
+      readable = false;
     }
     if (!_current(key) || state.origin == EntitlementOrigin.verified) return;
     if (grant != null && grantActive(grant, _now())) {
@@ -341,7 +346,7 @@ class EntitlementsController extends Notifier<Entitlements> {
           settled: true,
         ),
       );
-    } else if (!state.settled) {
+    } else if (readable && !state.settled) {
       _set(Entitlements(accountKey: key, settled: true));
     }
   }
