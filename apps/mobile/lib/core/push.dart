@@ -572,6 +572,49 @@ class PushService {
     );
   }
 
+  /// "¿Olvidaste tu contraseña?": Supabase emails a one-time code. The
+  /// project's "Reset password" email template must include {{ .Token }}.
+  Future<void> requestPasswordReset(String emailAddress) async {
+    if (!accountConfigured) {
+      throw StateError('Account service is not configured');
+    }
+    await dio.post(
+      '${config.supabaseUrl}/auth/v1/recover',
+      data: {'email': emailAddress.trim()},
+      options: Options(headers: {'apikey': config.publicKey}),
+    );
+  }
+
+  /// Verifies the emailed code (which signs the account in, like
+  /// [signIn]) and then sets [newPassword] on it.
+  Future<void> resetPassword(
+    String emailAddress,
+    String code,
+    String newPassword,
+  ) async {
+    if (!accountConfigured) {
+      throw StateError('Account service is not configured');
+    }
+    await _awaitSignOutCleanup();
+    final result = await dio.post<dynamic>(
+      '${config.supabaseUrl}/auth/v1/verify',
+      data: {
+        'type': 'recovery',
+        'email': emailAddress.trim(),
+        'token': code.trim(),
+      },
+      options: Options(headers: {'apikey': config.publicKey}),
+    );
+    final next = _validSession(result.data);
+    if (next == null) throw _invalidSession(result.requestOptions);
+    await _startSession(next);
+    await dio.put<dynamic>(
+      '${config.supabaseUrl}/auth/v1/user',
+      data: {'password': newPassword},
+      options: authHeaders,
+    );
+  }
+
   Future<void> restore() =>
       _restoreFuture ??= _restore().whenComplete(_markAccountKnown);
 
