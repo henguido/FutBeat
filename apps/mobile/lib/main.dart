@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/billing.dart';
 import 'core/database.dart';
 import 'core/entity_media.dart';
 import 'core/models.dart';
@@ -203,6 +204,11 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     if (state == AppLifecycleState.resumed && ref.exists(pushServiceProvider)) {
       unawaited(ref.read(pushServiceProvider).resume());
     }
+    // Play may have renewed, cancelled or expired Premium meanwhile.
+    if (state == AppLifecycleState.resumed &&
+        ref.exists(premiumBillingProvider)) {
+      unawaited(ref.read(premiumBillingProvider.notifier).onResume());
+    }
   }
 
   @override
@@ -290,6 +296,10 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   Widget build(BuildContext context) {
     if (PushService.configured) ref.watch(pushServiceProvider);
+    // Billing listens to purchases app-wide (completes and verifies them).
+    if (ref.watch(billingGatewayProvider) != null) {
+      ref.watch(premiumBillingProvider);
+    }
     return Scaffold(
       body: widget.child,
       bottomNavigationBar: NavigationBar(

@@ -10,6 +10,7 @@ import '../../core/push.dart';
 import '../../core/push_messages.dart';
 import 'competition_order_preferences.dart';
 import 'notification_options.dart';
+import 'premium_card.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -313,6 +314,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   }
                 : null,
           ),
+          const SizedBox(height: 20),
+          const PremiumCard(),
           const SizedBox(height: 20),
           const Text(
             'Cuenta y seguridad',
