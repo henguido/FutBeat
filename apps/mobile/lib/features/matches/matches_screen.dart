@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/ads.dart';
 import '../../core/interests.dart';
 import '../../core/database.dart';
 import '../../core/models.dart';
@@ -145,6 +146,15 @@ String _dateContextLabel(DateTime value, DateTime today) {
   const weekdays = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM'];
   return weekdays[date.weekday - 1];
 }
+
+/// Competition groups shown before the feed's single ad slot.
+const feedAdAfterGroups = 3;
+
+/// The feed's one ad goes right after the [feedAdAfterGroups]-th complete
+/// competition group (never between rows of a group), and never in the
+/// LIVE view. Whether it is shown at all is [adsAllowedProvider]'s call.
+bool feedAdAfterGroup(int groupsRendered, String filter) =>
+    groupsRendered == feedAdAfterGroups && filter != 'En vivo';
 
 /// Only the LIVE status is date-dependent; all other user filters survive.
 String matchFilterForDate(String filter, DateTime selected, DateTime today) =>
@@ -507,8 +517,16 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           // Then every competition with its remaining matches. Favourite-team
           // fixtures were removed above, so every canonical match is rendered
           // exactly once.
+          var groups = 0;
           for (final competition in orderedCompetitions) {
+            final before = feedItems.length;
             addCompetition(competition);
+            // One discreet ad between competition groups (never inside a
+            // match row), not in the LIVE view. Gated by entitlements.
+            if (feedItems.length > before &&
+                feedAdAfterGroup(++groups, effectiveFilter)) {
+              feedItems.add(() => const AdSlot(AdPlacement.matchesFeed));
+            }
           }
 
           // Horizontal fling = previous/next day. Vertical scrolling and

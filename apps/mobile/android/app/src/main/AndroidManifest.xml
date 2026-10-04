@@ -35,6 +35,13 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="futbeat_match_alerts" />
+        <!-- AdMob App ID from the FUTBEAT_ADMOB_APP_ID build environment
+             (app/build.gradle.kts); Google's test App ID otherwise. The SDK
+             refuses to start without one; no ad is requested unless ad units
+             are configured (lib/core/ads.dart). -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${admobAppId}" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

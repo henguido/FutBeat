@@ -102,6 +102,7 @@ class Entitlements {
     this.plan = Plan.free,
     this.origin = EntitlementOrigin.none,
     this.expiresAt,
+    this.settled = false,
   });
 
   /// [entitlementAccountKey] of the account this belongs to.
@@ -109,6 +110,10 @@ class Entitlements {
   final Plan plan;
   final EntitlementOrigin origin;
   final DateTime? expiresAt;
+
+  /// The stored plan was read (or a verified answer arrived): FREE here is
+  /// real, not just the default while a cached PREMIUM is still loading.
+  final bool settled;
 
   bool get isPremium => plan == Plan.premium;
 
@@ -311,7 +316,7 @@ class EntitlementsController extends Notifier<Entitlements> {
       return;
     }
     final key = state.accountKey;
-    _set(Entitlements(accountKey: key));
+    _set(Entitlements(accountKey: key, settled: true));
     unawaited(
       _store.delete(entitlementStorageKey(key)).catchError((Object _) {}),
     );
@@ -333,8 +338,11 @@ class EntitlementsController extends Notifier<Entitlements> {
           plan: grant.plan,
           origin: EntitlementOrigin.cache,
           expiresAt: grant.expiresAt,
+          settled: true,
         ),
       );
+    } else if (!state.settled) {
+      _set(Entitlements(accountKey: key, settled: true));
     }
   }
 
@@ -398,6 +406,7 @@ class EntitlementsController extends Notifier<Entitlements> {
           accountKey: key,
           plan: active ? grant.plan : Plan.free,
           origin: EntitlementOrigin.verified,
+          settled: true,
           expiresAt: active ? grant.expiresAt : null,
         ),
       );
