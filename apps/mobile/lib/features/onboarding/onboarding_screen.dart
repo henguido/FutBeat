@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/entitlements.dart' show currentAccountProvider;
 import '../../core/countries.dart';
 import '../../core/database.dart';
+import '../../core/entity_media.dart';
 import '../../core/interests.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
@@ -157,6 +158,175 @@ class SecureOnboardingProgressStore implements OnboardingProgressStore {
 final onboardingProgressStoreProvider = Provider<OnboardingProgressStore>(
   (ref) => const SecureOnboardingProgressStore(),
 );
+
+/// One onboarding card: the entity shown and every id it stands for (its
+/// redirect aliases and real duplicates), so following / unfollowing it
+/// covers them all.
+class OnboardingChoice {
+  OnboardingChoice(this.entity, this.ids, this.canonicalId);
+  Entity entity;
+
+  /// Every catalog id and canonical id this card stands for.
+  final Set<String> ids;
+
+  /// Canonical id of the shown entity: what a new follow stores.
+  String canonicalId;
+
+  /// Every merged entity (duplicates are compared against all of them).
+  final List<Entity> members = [];
+}
+
+String _identityKey(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp('[áàä]'), 'a')
+    .replaceAll(RegExp('[éèë]'), 'e')
+    .replaceAll(RegExp('[íìï]'), 'i')
+    .replaceAll(RegExp('[óòö]'), 'o')
+    .replaceAll(RegExp('[úùü]'), 'u')
+    .replaceAll('ñ', 'n')
+    .replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+String _countryKey(Entity entity) =>
+    (entity.json['countryCode']?.toString() ?? entity.country)
+        .trim()
+        .toUpperCase();
+
+Set<String> _competitionNames(Entity entity) => {
+  for (final value in [
+    entity.name,
+    entity.json['shortName'],
+    ...?(entity.json['aliases'] as List?),
+  ])
+    if (value is String && _identityKey(value).isNotEmpty) _identityKey(value),
+};
+
+/// A short all-caps name that is exactly the initials of the other's name
+/// ("MLS" ↔ "Major League Soccer").
+bool _isAcronymOf(Entity short, Entity long) {
+  final acronym = short.name.trim();
+  if (!RegExp(r'^[A-Z]{2,5}$').hasMatch(acronym)) return false;
+  final words = long.name.trim().split(RegExp(r'\s+'));
+  if (words.length < 2) return false;
+  return words.map((word) => word[0].toUpperCase()).join() == acronym;
+}
+
+/// Two catalog competitions are the same one when they belong to the same
+/// country and one's name is the other's name, short name, alias or exact
+/// acronym. Different countries never merge.
+bool sameOnboardingCompetition(Entity a, Entity b) {
+  final country = _countryKey(a);
+  if (country.isEmpty || country != _countryKey(b)) return false;
+  if (_competitionNames(a).intersection(_competitionNames(b)).isNotEmpty) {
+    return true;
+  }
+  return _isAcronymOf(a, b) || _isAcronymOf(b, a);
+}
+
+/// One card per real entity, in the given order: entries resolving to the
+/// same canonical id merge, and competitions also merge real duplicates
+/// ([sameOnboardingCompetition]). The card shows the canonical entity, else
+/// the one with a verified image.
+List<OnboardingChoice> collapseOnboardingDuplicates(
+  String type,
+  Iterable<Entity> entities, {
+  String Function(String id)? resolve,
+}) {
+  String canonicalOf(String id) => resolve?.call(id) ?? id;
+  bool matches(OnboardingChoice choice, Entity entity, String canonical) =>
+      choice.ids.contains(canonical) ||
+      (type == 'competition' &&
+          choice.members.any(
+            (member) => sameOnboardingCompetition(member, entity),
+          ));
+  void prefer(OnboardingChoice choice, Entity entity, String canonical) {
+    final shownIsCanonical = choice.entity.id == choice.canonicalId;
+    final betterImage =
+        choice.entity.imageUrl == null && entity.imageUrl != null;
+    if ((entity.id == canonical && !shownIsCanonical) ||
+        (betterImage && !(shownIsCanonical && entity.id != canonical))) {
+      choice
+        ..entity = entity
+        ..canonicalId = canonical;
+    }
+  }
+
+  final choices = <OnboardingChoice>[];
+  for (final entity in entities) {
+    final canonical = canonicalOf(entity.id);
+    final matching = [
+      for (final choice in choices)
+        if (matches(choice, entity, canonical)) choice,
+    ];
+    if (matching.isEmpty) {
+      choices.add(
+        OnboardingChoice(entity, {entity.id, canonical}, canonical)
+          ..members.add(entity),
+      );
+      continue;
+    }
+    // The entity may bridge several cards (an alias chain): merge them all
+    // into the first one, in its position.
+    final target = matching.first;
+    for (final other in matching.skip(1)) {
+      target
+        ..ids.addAll(other.ids)
+        ..members.addAll(other.members);
+      prefer(target, other.entity, other.canonicalId);
+      choices.remove(other);
+    }
+    target
+      ..ids.addAll({entity.id, canonical})
+      ..members.add(entity);
+    prefer(target, entity, canonical);
+  }
+  return choices;
+}
+
+/// Player suggestions from real catalog players only (never invented):
+/// players of the chosen teams first; when there are few, real players of
+/// the chosen country, then the rest of the local catalog. No duplicates.
+List<({String label, List<Entity> players})> onboardingPlayerSuggestions(
+  Iterable<Entity> players,
+  Set<String> teamIds,
+  String? country, {
+  int fill = 12,
+  int limit = 30,
+}) {
+  final seen = <String>{};
+  final unique = [
+    for (final player in players)
+      if (seen.add(player.id)) player,
+  ];
+  final fromTeams = [
+    for (final player in unique)
+      if (teamIds.contains(player.json['teamId']?.toString())) player,
+  ].take(limit).toList();
+  final sections = <({String label, List<Entity> players})>[
+    if (fromTeams.isNotEmpty) (label: 'De tus equipos', players: fromTeams),
+  ];
+  if (fromTeams.length >= fill) return sections;
+  final used = {for (final player in fromTeams) player.id};
+  bool local(Entity player) =>
+      country != null &&
+      (entityMatchesCountry(player, country) ||
+          (player.country.trim().length > 2 &&
+              countryMatches(country, player.country)));
+  final rest = [
+    for (final p in unique)
+      if (!used.contains(p.id)) p,
+  ];
+  final more = [
+    ...rest.where(local),
+    ...rest.where((player) => !local(player)),
+  ].take(limit - fromTeams.length).toList();
+  if (more.isNotEmpty) {
+    sections.add((
+      label: fromTeams.isEmpty ? 'Destacados' : 'Más jugadores',
+      players: more,
+    ));
+  }
+  return sections;
+}
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key, this.reentry = false});
@@ -831,6 +1001,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       competition: (id) => data?.competition(id),
     );
     final selected = follows.where((f) => f.startsWith('$type:')).length;
+    final redirects = ref.read(entityMediaProvider).redirects;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -853,12 +1024,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         else
           const SizedBox(height: 12),
         _grid([
-          for (final entity in entities)
-            _selectableEntity(
-              entity,
-              type,
-              follows.contains('$type:${entity.id}'),
-            ),
+          for (final choice in collapseOnboardingDuplicates(
+            type,
+            entities,
+            resolve: (id) => redirects.resolve(data?.resolveEntityId(id) ?? id),
+          ))
+            _choiceCard(choice, type, follows, redirects),
         ]),
         if (entities.isEmpty && !(searchState ?? catalogState).isLoading)
           const Padding(
@@ -880,15 +1051,20 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         .map((item) => item.substring(5))
         .toSet();
     final source = data?.players ?? <Entity>[];
-    final players = query.length >= 2
-        ? source
-        : source
-              .where(
-                (player) =>
-                    selectedTeams.contains(player.json['teamId']?.toString()),
-              )
-              .toList();
+    final country = ref.read(preferenceProvider).asData?.value.effectiveCountry;
+    final sections = query.length >= 2
+        ? [(label: '', players: source.take(30).toList())]
+        : onboardingPlayerSuggestions(source, selectedTeams, country);
+    final players = [for (final section in sections) ...section.players];
     final selected = follows.where((f) => f.startsWith('player:')).length;
+    Widget grid(List<Entity> list) => _grid([
+      for (final player in list)
+        _selectableEntity(
+          player,
+          'player',
+          follows.contains('player:${player.id}'),
+        ),
+    ]);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -915,18 +1091,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     )),
                   ),
           ),
-        if (query.length < 2 && players.isNotEmpty)
-          _sectionLabel('De tus equipos')
-        else
-          const SizedBox(height: 12),
-        _grid([
-          for (final player in players.take(30))
-            _selectableEntity(
-              player,
-              'player',
-              follows.contains('player:${player.id}'),
-            ),
-        ]),
+        if (query.length >= 2 || players.isEmpty) const SizedBox(height: 12),
+        for (final section in sections) ...[
+          if (section.label.isNotEmpty) _sectionLabel(section.label),
+          grid(section.players),
+        ],
         if (players.isEmpty && !(searchState ?? catalogState).isLoading)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 20),
@@ -950,7 +1119,35 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     children: tiles,
   );
 
-  Widget _selectableEntity(Entity entity, String type, bool selected) {
+  /// A merged card: its ids normalized (canonical ids plus every known
+  /// redirect alias) for both the selected state and the toggle.
+  Widget _choiceCard(
+    OnboardingChoice choice,
+    String type,
+    Set<String> follows,
+    EntityRedirectMemory redirects,
+  ) {
+    final ids = {
+      ...choice.ids,
+      for (final alias in redirects.redirects.keys)
+        if (choice.ids.contains(redirects.resolve(alias))) alias,
+    };
+    return _selectableEntity(
+      choice.entity,
+      type,
+      ids.any((id) => follows.contains('$type:$id')),
+      ids: ids,
+      canonicalId: choice.canonicalId,
+    );
+  }
+
+  Widget _selectableEntity(
+    Entity entity,
+    String type,
+    bool selected, {
+    Set<String>? ids,
+    String? canonicalId,
+  }) {
     final name = onboardingEntityName(entity);
     final subtitle = onboardingEntitySubtitle(entity);
     return Semantics(
@@ -964,7 +1161,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         borderRadius: BorderRadius.circular(18),
         child: InkWell(
           borderRadius: BorderRadius.circular(18),
-          onTap: () => _toggle(type, entity.id),
+          onTap: () => ids == null || ids.length < 2
+              ? _toggle(type, entity.id)
+              : ref
+                    .read(databaseProvider)
+                    .toggleAny(type, canonicalId ?? entity.id, ids),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),

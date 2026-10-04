@@ -473,7 +473,13 @@ class ApiRepository implements FootballRepository {
           break;
         }
         _calendarFailures.remove(value);
-        yield snapshot;
+        // `revalidating` from the server means "rebuilding in the background"
+        // (stale-while-revalidate), not a request of ours in flight: the
+        // refresh line only shows while this app is loading. The raw answer
+        // in memory keeps the flag, so the date still revalidates sooner.
+        yield snapshot.revalidating
+            ? snapshot.withFreshness(stale: snapshot.stale)
+            : snapshot;
         _prefetchAround(date);
         return;
       } catch (error, stack) {

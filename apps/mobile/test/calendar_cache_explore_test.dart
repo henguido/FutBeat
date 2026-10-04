@@ -67,6 +67,52 @@ void main() {
     expect(results.every((s) => s.matches.single.score == '1 - 1'), true);
     dio.close();
   });
+  test(
+    'the refresh line follows our own request, not the server rebuild flag',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      await db.saveCalendarSnapshot(
+        '2026-08-20',
+        jsonEncode(calendarPayload()),
+      );
+      await db.customStatement('UPDATE calendar_snapshots SET saved_at = 0');
+      final gate = Completer<void>();
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (o, h) async {
+            await gate.future;
+            // Big day: the server serves its previous build while it rebuilds.
+            final raw = calendarPayload(score: true);
+            raw['freshness'] = {'stale': false, 'revalidating': true};
+            h.resolve(Response(requestOptions: o, data: raw));
+          },
+        ),
+      );
+      final repo = ApiRepository(dio, db);
+      final values = <Snapshot>[];
+      final done = Completer<void>();
+      final sub = repo
+          .watchDate(DateTime(2026, 8, 20))
+          .listen(values.add, onDone: done.complete);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      // Our request is in flight: the line shows.
+      expect(values.single.revalidating, true);
+      gate.complete();
+      await done.future;
+      // Answered: the line stops, the data is the new one.
+      expect(values.last.matches.single.score, '1 - 1');
+      expect(values.last.revalidating, false);
+      expect(values.last.stale, false);
+      // The server flag still shortens the next revalidation (raw in memory).
+      expect(repo.peekDate(DateTime(2026, 8, 20))?.revalidating, true);
+      await repo.settleBackground();
+      await sub.cancel();
+      dio.close();
+      await db.close();
+    },
+  );
+
   test('stale null score emits immediately then fresh 1-1 replaces memory and Drift', () async {
     final db = AppDatabase(NativeDatabase.memory());
     await db.saveCalendarSnapshot('2026-08-20', jsonEncode(calendarPayload()));

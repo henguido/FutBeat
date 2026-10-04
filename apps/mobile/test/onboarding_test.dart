@@ -13,7 +13,7 @@ import 'package:futbeat/core/push.dart';
 import 'package:futbeat/features/onboarding/onboarding_screen.dart';
 import 'package:futbeat/main.dart';
 
-Snapshot catalog() => Snapshot({
+Map<String, dynamic> catalogJson() => {
   'schemaVersion': 1,
   'demo': false,
   'updatedAt': '2026-09-27T12:00:00Z',
@@ -67,7 +67,9 @@ Snapshot catalog() => Snapshot({
   ],
   'matches': <dynamic>[],
   'standings': <dynamic>[],
-});
+};
+
+Snapshot catalog() => Snapshot(catalogJson());
 
 Future<void> pumpOnboarding(
   WidgetTester tester, {
@@ -1017,6 +1019,260 @@ void main() {
     }
     expect(find.text('Todo listo'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  group('P2: duplicate leagues', () {
+    Entity comp(
+      String id,
+      String name,
+      String code, {
+      Map<String, Object?> extra = const {},
+    }) => Entity({
+      'id': id,
+      'name': name,
+      'countryCode': code,
+      'country': code,
+      ...extra,
+    });
+
+    test('an acronym alias of the same country is one card, with the logo', () {
+      final choices = collapseOnboardingDuplicates('competition', [
+        comp('c_mls_long', 'Major League Soccer', 'US'),
+        comp(
+          'c_mls',
+          'MLS',
+          'US',
+          extra: {
+            'media': {
+              'url': 'https://example.test/mls.png',
+              'verificationStatus': 'VERIFIED',
+            },
+          },
+        ),
+        comp('c_usl', 'USL Championship', 'US'),
+      ]);
+      expect(choices, hasLength(2));
+      expect(choices.first.ids, {'c_mls_long', 'c_mls'});
+      expect(choices.last.ids, {'c_usl'});
+    });
+
+    test('short names / aliases and redirects merge; other leagues never', () {
+      final choices = collapseOnboardingDuplicates('competition', [
+        comp(
+          'a',
+          'Liga Promerica',
+          'CR',
+          extra: {'shortName': 'Primera División'},
+        ),
+        comp('b', 'Primera División', 'CR'),
+        comp('c', 'Copa Costa Rica', 'CR'),
+        comp('d', 'Primera División', 'ES'), // same name, other country
+        comp('e', 'Premier League', 'GB-ENG'),
+        comp('f', 'Old Premier id', 'GB-ENG'),
+        comp('g', 'XY', 'CR'), // nobody's initials
+      ], resolve: (id) => id == 'f' ? 'e' : id);
+      expect(
+        [for (final c in choices) c.ids],
+        [
+          {'a', 'b'},
+          {'c'},
+          {'d'},
+          {'e', 'f'},
+          {'g'},
+        ],
+      );
+      // The canonical entity is the one shown.
+      expect(choices[3].entity.id, 'e');
+    });
+
+    test('alias chains collapse into one card, whatever the order', () {
+      final choices = collapseOnboardingDuplicates('competition', [
+        comp(
+          'a',
+          'Liga X',
+          'CR',
+          extra: {
+            'aliases': ['Liga Y'],
+          },
+        ),
+        comp('c', 'Liga Z', 'CR'),
+        comp(
+          'b',
+          'Liga Y',
+          'CR',
+          extra: {
+            'aliases': ['Liga Z'],
+          },
+        ),
+      ]);
+      expect(choices, hasLength(1));
+      expect(choices.single.ids, {'a', 'b', 'c'});
+    });
+
+    test('a stale alias row carries its canonical id for follows', () {
+      final choices = collapseOnboardingDuplicates('competition', [
+        comp('alias_a', 'Liga Promerica', 'CR'),
+      ], resolve: (id) => id == 'alias_a' ? 'canonical_c' : id);
+      // A follow stored as `competition:canonical_c` selects this card, and
+      // a new follow is stored under the canonical id.
+      expect(choices.single.ids, {'alias_a', 'canonical_c'});
+      expect(choices.single.canonicalId, 'canonical_c');
+    });
+
+    testWidgets('one card for duplicates, the existing follow stays selected', (
+      tester,
+    ) async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await db.addFollows({'competition:competition_cr_dup'});
+      final raw = catalogJson();
+      final data = Snapshot({
+        ...raw,
+        'competitions': [
+          ...(raw['competitions'] as List),
+          {
+            'id': 'competition_cr_dup',
+            'name': 'LCR',
+            'country': 'Costa Rica',
+            'countryCode': 'CR',
+          },
+        ],
+      });
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            databaseProvider.overrideWithValue(db),
+            detectedCountryProvider.overrideWithValue('CR'),
+            followsProvider.overrideWith(
+              (ref) => Stream.value({'competition:competition_cr_dup'}),
+            ),
+            preferenceProvider.overrideWith(
+              (ref) => Stream.value(
+                const CountryPreference(
+                  detectedCountry: 'CR',
+                  selectedCountry: 'CR',
+                  bootstrapDismissed: false,
+                ),
+              ),
+            ),
+            exploreSnapshotProvider.overrideWith((ref) => Stream.value(data)),
+            profileSettingsProvider.overrideWith(
+              (ref) async => const UserProfileSettings(),
+            ),
+            onboardingProgressStoreProvider.overrideWithValue(
+              MemoryProgress(OnboardingStep.competitions),
+            ),
+          ],
+          child: const MaterialApp(home: OnboardingScreen()),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Ligas'), findsOneWidget);
+      // "LCR" = initials of "Liga Costa Rica" (same country): one card.
+      expect(find.text('LCR'), findsNothing);
+      expect(find.text('Liga Costa Rica'), findsOneWidget);
+      final card = tester.widget<Semantics>(
+        find
+            .ancestor(
+              of: find.byKey(
+                const ValueKey('onboarding-competition-competition_cr'),
+              ),
+              matching: find.byType(Semantics),
+            )
+            .first,
+      );
+      expect(card.properties.selected, isTrue);
+      // Unfollowing the card removes the duplicate's follow too.
+      await tester.tap(find.text('Liga Costa Rica'));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(await tester.runAsync(() => db.watchFollows().first), isEmpty);
+    });
+  });
+
+  group('P2: player suggestions', () {
+    Entity player(String id, String team, {String country = ''}) =>
+        Entity({'id': id, 'name': 'P $id', 'teamId': team, 'country': country});
+
+    test('players of the chosen teams come first', () {
+      final sections = onboardingPlayerSuggestions(
+        [player('1', 't1'), player('2', 't2'), player('3', 't1')],
+        {'t1'},
+        null,
+        fill: 2,
+      );
+      expect(sections.single.label, 'De tus equipos');
+      expect([for (final p in sections.single.players) p.id], ['1', '3']);
+    });
+
+    test('no players for the chosen teams: real fallback, country first', () {
+      final sections = onboardingPlayerSuggestions(
+        [
+          player('x', 'other'),
+          player('cr', 'other', country: 'Costa Rica'),
+          player('x', 'other'), // duplicate id
+        ],
+        {'t1'},
+        'CR',
+      );
+      expect(sections.single.label, 'Destacados');
+      expect([for (final p in sections.single.players) p.id], ['cr', 'x']);
+    });
+
+    test('few team players are completed without repeating them', () {
+      final sections = onboardingPlayerSuggestions(
+        [player('1', 't1'), player('2', 'other'), player('1', 't1')],
+        {'t1'},
+        null,
+      );
+      expect(
+        [for (final s in sections) s.label],
+        ['De tus equipos', 'Más jugadores'],
+      );
+      expect(
+        [
+          for (final s in sections)
+            for (final p in s.players) p.id,
+        ],
+        ['1', '2'],
+      );
+    });
+
+    test('no catalog players: nothing invented', () {
+      expect(onboardingPlayerSuggestions(const [], {'t1'}, 'CR'), isEmpty);
+    });
+
+    testWidgets('fallback shows real players and keeps follows selected', (
+      tester,
+    ) async {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await pumpOnboarding(
+        tester,
+        database: db,
+        follows: const {'team:team_es', 'player:player_cr'},
+        progress: MemoryProgress(OnboardingStep.players),
+        atWelcome: true,
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Jugadores'), findsOneWidget);
+      // No player of team_es in the catalog: real fallback, not empty.
+      expect(find.text('DESTACADOS'), findsOneWidget);
+      expect(find.text('Jugador Local'), findsOneWidget);
+      final card = tester.widget<Semantics>(
+        find
+            .ancestor(
+              of: find.byKey(const ValueKey('onboarding-player-player_cr')),
+              matching: find.byType(Semantics),
+            )
+            .first,
+      );
+      expect(card.properties.selected, isTrue);
+      expect(
+        find.widgetWithText(TextField, 'Buscar jugadores'),
+        findsOneWidget,
+      );
+    });
   });
 
   for (final width in [320.0, 360.0, 390.0, 430.0]) {
