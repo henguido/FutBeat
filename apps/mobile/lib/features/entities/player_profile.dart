@@ -282,7 +282,8 @@ List<(FootballMatch, Json, bool)> playerRecentEvents(
       if (event['playerId']?.toString() == playerId) {
         result.add((match, event, false));
       } else if (event['assistPlayerId']?.toString() == playerId &&
-          event['type'] == 'GOAL') {
+          event['type'] == 'GOAL' &&
+          event['ownGoal'] != true) {
         result.add((match, event, true));
       }
     }
@@ -622,11 +623,15 @@ class PlayerEventRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final type = assist ? 'ASSIST' : event['type']?.toString() ?? '';
+    final type = assist
+        ? 'ASSIST'
+        : event['type'] == 'GOAL' && event['ownGoal'] == true
+        ? 'OWN_GOAL'
+        : event['type']?.toString() ?? '';
     final home = data.team(match.homeId)?.displayName ?? '';
     final away = data.team(match.awayId)?.displayName ?? '';
     final opponent = [home, away].where((name) => name.isNotEmpty).join(' vs ');
-    final color = assist ? lime : eventColor(type);
+    final color = type == 'OWN_GOAL' ? Colors.orangeAccent : eventColor(type);
     return InkWell(
       // The profile already holds this match: the Match Center header paints
       // at once and the full context is read in the background.
@@ -645,7 +650,11 @@ class PlayerEventRow extends StatelessWidget {
                 color: color.withValues(alpha: .14),
               ),
               child: Icon(
-                assist ? Icons.assistant_outlined : eventIcon(type),
+                assist
+                    ? Icons.assistant_outlined
+                    : type == 'OWN_GOAL'
+                    ? Icons.sports_soccer
+                    : eventIcon(type),
                 size: 18,
                 color: color,
               ),
