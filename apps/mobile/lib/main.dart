@@ -24,13 +24,17 @@ import 'features/favorites/favorites_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'shared/widgets.dart';
 
-void main() => runApp(const ProviderScope(child: FutBeatApp()));
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await loadDeviceRegion();
+  runApp(const ProviderScope(child: FutBeatApp()));
+}
 
 Future<CountryPreference> refreshCountryForLocales(
   AppDatabase database,
   List<Locale>? locales,
 ) {
-  final detected = normalizeCountry(
+  final detected = deviceCountry(
     locales != null && locales.isNotEmpty ? locales.first.countryCode : null,
   );
   return refreshDetectedCountry(database, detected);

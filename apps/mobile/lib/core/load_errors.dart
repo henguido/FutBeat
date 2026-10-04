@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 
 /// Why a read failed, for the copy shown next to "Reintentar". Only a
@@ -6,6 +8,9 @@ import 'package:dio/dio.dart';
 enum LoadFailure { offline, server, other }
 
 LoadFailure classifyLoadError(Object? error) {
+  // A read that got no usable answer within its deadline (e.g. Partidos'
+  // visible deadline): the service is slow, not the phone offline.
+  if (error is TimeoutException) return LoadFailure.server;
   if (error is! DioException) return LoadFailure.other;
   final status = error.response?.statusCode;
   if (status != null) {

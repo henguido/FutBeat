@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/load_errors.dart';
@@ -31,6 +33,7 @@ void main() {
         requestOptions: options,
         type: DioExceptionType.receiveTimeout,
       ),
+      TimeoutException('Calendar date not loaded in time'),
     ]) {
       expect(classifyLoadError(error), LoadFailure.server);
       expect(loadErrorMessage(error), 'Servicio no disponible por ahora');

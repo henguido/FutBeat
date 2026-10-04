@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -259,6 +260,32 @@ void main() {
       await db.close();
     },
   );
+
+  test('the SIM country beats the locale region (es-US phone in CR)', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel = MethodChannel('futbeat/device');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async => 'cr');
+    addTearDown(() async {
+      messenger.setMockMethodCallHandler(channel, null);
+      await loadDeviceRegion(android: false);
+    });
+    await loadDeviceRegion(android: true);
+    expect(deviceCountry('US'), 'CR');
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final preference = await refreshCountryForLocales(db, const [
+      Locale('es', 'US'),
+    ]);
+    expect(preference.detectedCountry, 'CR');
+    expect(onboardingCountryCode(preference), 'CR');
+
+    // No SIM answer: the locale region.
+    messenger.setMockMethodCallHandler(channel, (call) async => null);
+    await loadDeviceRegion(android: true);
+    expect(deviceCountry('US'), 'US');
+  });
 
   test('automatic country refreshes when the device locale changes', () async {
     final db = AppDatabase(NativeDatabase.memory());

@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.telephony.TelephonyManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -13,6 +14,20 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         // Called from Dart only when push is configured for this build
         // (lib/core/push_messages.dart, ensureAndroidNotificationChannel).
+        // Country of the SIM (else the network): a region hint that needs
+        // no permission and no location (lib/core/interests.dart).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                if (call.method != "simCountry") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val telephony = getSystemService(Context.TELEPHONY_SERVICE)
+                    as? TelephonyManager
+                val country = telephony?.simCountryIso?.takeIf { it.isNotBlank() }
+                    ?: telephony?.networkCountryIso?.takeIf { it.isNotBlank() }
+                result.success(country)
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 if (call.method != "createNotificationChannel") {
@@ -48,5 +63,6 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "futbeat/notifications"
+        private const val DEVICE_CHANNEL = "futbeat/device"
     }
 }

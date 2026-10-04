@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'dart:ui';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'database.dart';
@@ -13,8 +15,30 @@ String? normalizeCountry(String? value) {
       : null;
 }
 
+String? _simCountry;
+
+/// Reads the SIM / network country once at startup (Android). A phone in
+/// Costa Rica with an es-US locale is in Costa Rica: the SIM is a better
+/// region hint than the language setting. Needs no permission.
+Future<void> loadDeviceRegion({bool? android}) async {
+  _simCountry = null;
+  if (!(android ?? Platform.isAndroid)) return;
+  try {
+    _simCountry = normalizeCountry(
+      await const MethodChannel('futbeat/device')
+          .invokeMethod<String>('simCountry'),
+    );
+  } catch (_) {
+    // No telephony: the locale region is used.
+  }
+}
+
+/// The device's region: SIM / network country, else the locale's region.
+String? deviceCountry(String? localeCountry) =>
+    _simCountry ?? normalizeCountry(localeCountry);
+
 final detectedCountryProvider = Provider<String?>(
-  (_) => normalizeCountry(PlatformDispatcher.instance.locale.countryCode),
+  (_) => deviceCountry(PlatformDispatcher.instance.locale.countryCode),
 );
 
 Future<CountryPreference> refreshDetectedCountry(
