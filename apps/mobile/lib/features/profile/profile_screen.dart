@@ -9,6 +9,7 @@ import '../../core/providers.dart';
 import '../../core/push.dart';
 import '../../core/push_messages.dart';
 import 'competition_order_preferences.dart';
+import 'ads_privacy_tile.dart';
 import 'notification_options.dart';
 import 'premium_card.dart';
 
@@ -316,6 +317,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
           const SizedBox(height: 20),
           const PremiumCard(),
+          const AdsPrivacyOptionsTile(),
           const SizedBox(height: 20),
           const Text(
             'Cuenta y seguridad',

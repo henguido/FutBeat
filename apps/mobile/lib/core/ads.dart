@@ -40,7 +40,8 @@ class AdsConfig {
 
   bool get configured => matchesFeedUnitId.isNotEmpty;
 
-  /// Google test units only: QA may run them without production consent.
+  /// Google test units only: QA may run them without production consent
+  /// (UMP is not involved).
   bool get testAds =>
       testAdsBuild || matchesFeedUnitId == admobTestBannerUnitId;
 
@@ -52,43 +53,146 @@ class AdsConfig {
   }
 }
 
-/// Answer of the consent platform (UMP / a Google-certified CMP).
-class AdsConsentDecision {
-  const AdsConsentDecision({
-    required this.canRequestAds,
-    required this.personalized,
-  });
-
-  /// Not known yet (no CMP, or its answer is still pending): no requests.
-  static const unresolved = AdsConsentDecision(
-    canRequestAds: false,
-    personalized: false,
-  );
-
-  final bool canRequestAds;
-  final bool personalized;
+/// Consent for production ads, as Google's User Messaging Platform (UMP)
+/// reports it. Only [canRequestAds] lets a production ad be requested.
+enum AdsConsentState {
+  /// Not known yet, still being gathered, or UMP failed: no ads.
+  unresolved,
+  canRequestAds,
+  cannotRequestAds,
 }
 
-/// Production ad requests need [AdsConsentDecision.canRequestAds] from a
-/// real consent platform. Non-personalized is NOT consent.
-abstract interface class AdsConsent {
-  Future<AdsConsentDecision> resolve();
+/// Google UMP (bundled with google_mobile_ads): Google's own consent
+/// messages and forms, configured in AdMob "Privacy & messaging". FutBeat
+/// shows no consent text of its own.
+abstract interface class UmpPlatform {
+  /// Refreshes consent info; throws on failure.
+  Future<void> requestConsentInfoUpdate();
+
+  /// Shows Google's form only when UMP says it is required; throws on a
+  /// form error.
+  Future<void> showConsentFormIfRequired();
+  Future<bool> canRequestAds();
+  Future<bool> privacyOptionsRequired();
+
+  /// Google's privacy options form (for a future "Privacidad" action).
+  Future<void> showPrivacyOptionsForm();
 }
 
-/// Until UMP is integrated nothing authorizes production ads: fail closed.
-class UnresolvedAdsConsent implements AdsConsent {
-  const UnresolvedAdsConsent();
+class GoogleUmpPlatform implements UmpPlatform {
+  ConsentInformation get _info => ConsentInformation.instance;
 
   @override
-  Future<AdsConsentDecision> resolve() async => AdsConsentDecision.unresolved;
+  Future<void> requestConsentInfoUpdate() {
+    final done = Completer<void>();
+    _info.requestConsentInfoUpdate(
+      ConsentRequestParameters(),
+      () => done.complete(),
+      (error) => done.completeError(StateError(error.message)),
+    );
+    return done.future;
+  }
+
+  @override
+  Future<void> showConsentFormIfRequired() {
+    final done = Completer<void>();
+    ConsentForm.loadAndShowConsentFormIfRequired((error) {
+      if (error == null) {
+        done.complete();
+      } else {
+        done.completeError(StateError(error.message));
+      }
+    });
+    return done.future;
+  }
+
+  @override
+  Future<bool> canRequestAds() => _info.canRequestAds();
+
+  @override
+  Future<bool> privacyOptionsRequired() async =>
+      await _info.getPrivacyOptionsRequirementStatus() ==
+      PrivacyOptionsRequirementStatus.required;
+
+  @override
+  Future<void> showPrivacyOptionsForm() {
+    final done = Completer<void>();
+    ConsentForm.showPrivacyOptionsForm((error) {
+      if (error == null) {
+        done.complete();
+      } else {
+        done.completeError(StateError(error.message));
+      }
+    });
+    return done.future;
+  }
 }
 
-/// Google test ads for QA: allowed without production consent, never
-/// personalized.
-const _testAdsDecision = AdsConsentDecision(
-  canRequestAds: true,
-  personalized: false,
+/// UMP on Android; nowhere else (no consent = no production ads).
+final umpPlatformProvider = Provider<UmpPlatform?>(
+  (ref) => Platform.isAndroid ? GoogleUmpPlatform() : null,
 );
+
+final adsConsentProvider =
+    NotifierProvider<AdsConsentController, AdsConsentState>(
+      AdsConsentController.new,
+    );
+
+/// Gathers consent once per app session, only for someone who would see
+/// ads (never for Premium). Any failure keeps [AdsConsentState.unresolved].
+class AdsConsentController extends Notifier<AdsConsentState> {
+  Future<void>? _gathering;
+
+  @override
+  AdsConsentState build() => AdsConsentState.unresolved;
+
+  /// Idempotent: the first call runs UMP (update, then Google's form only if
+  /// required); later calls reuse it, so no form is shown repeatedly.
+  Future<void> ensure() => _gathering ??= _gather();
+
+  Future<void> _gather() async {
+    final ump = ref.read(umpPlatformProvider);
+    if (ump == null) return;
+    try {
+      await ump.requestConsentInfoUpdate();
+      await ump.showConsentFormIfRequired();
+      final allowed = await ump.canRequestAds();
+      if (!ref.mounted) return;
+      state = allowed
+          ? AdsConsentState.canRequestAds
+          : AdsConsentState.cannotRequestAds;
+    } catch (_) {
+      // Fail closed for this session; retried on the next app start.
+    }
+  }
+
+  /// Whether Google requires a privacy options entry point for this user.
+  Future<bool> privacyOptionsRequired() async {
+    final ump = ref.read(umpPlatformProvider);
+    if (ump == null) return false;
+    try {
+      return await ump.privacyOptionsRequired();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens Google's privacy options form and re-reads the decision.
+  Future<void> showPrivacyOptions() async {
+    final ump = ref.read(umpPlatformProvider);
+    if (ump == null) return;
+    try {
+      await ump.showPrivacyOptionsForm();
+      final allowed = await ump.canRequestAds();
+      if (!ref.mounted) return;
+      state = allowed
+          ? AdsConsentState.canRequestAds
+          : AdsConsentState.cannotRequestAds;
+    } catch (_) {
+      if (ref.mounted) state = AdsConsentState.unresolved;
+    }
+  }
+}
 
 /// A loaded ad ready to be placed.
 abstract interface class LoadedAd {
@@ -251,18 +355,38 @@ final adsConfigProvider = Provider<AdsConfig>(
 final adLoaderProvider = Provider<AdLoader>((ref) => GoogleAdLoader());
 
 /// Production consent; fails closed until a real CMP is wired here.
-final adsConsentProvider = Provider<AdsConsent>(
-  (ref) => const UnresolvedAdsConsent(),
-);
+/// Google requires a privacy options entry point for this user. Re-read
+/// whenever the consent decision changes; unknown or any error = hidden.
+final adsPrivacyOptionsRequiredProvider = FutureProvider<bool>((ref) {
+  ref.watch(adsConsentProvider);
+  return ref.read(adsConsentProvider.notifier).privacyOptionsRequired();
+});
 
-/// The ONLY ads switch: configured ads, a settled plan for a resolved
-/// account, and `showsAds` (FREE). Premium, an account still restoring or a
-/// plan still loading never request an ad. Consent is checked per request.
-final adsAllowedProvider = Provider<bool>((ref) {
+/// The plan wants ads: configured units, a settled plan for a resolved
+/// account, and `showsAds` (FREE). Premium is never eligible, so it never
+/// sees a consent form, initializes the SDK or requests an ad.
+final adsEligibleProvider = Provider<bool>((ref) {
   if (!ref.watch(adsConfigProvider).configured) return false;
   final plan = ref.watch(entitlementsProvider);
   return plan.accountResolved && plan.settled && plan.showsAds;
 });
+
+/// The ONLY ads switch: eligible, and for production units UMP said
+/// [AdsConsentState.canRequestAds]. Google test ads (QA) need no
+/// production consent.
+final adsAllowedProvider = Provider<bool>((ref) {
+  if (!ref.watch(adsEligibleProvider)) return false;
+  if (ref.watch(adsConfigProvider).testAds) return true;
+  return ref.watch(adsConsentProvider) == AdsConsentState.canRequestAds;
+});
+
+/// Starts UMP as soon as someone is eligible for ads (app start), so
+/// Google's form, when required, never appears mid-scroll.
+void ensureAdsConsent(WidgetRef ref) {
+  if (ref.read(adsEligibleProvider) && !ref.read(adsConfigProvider).testAds) {
+    unawaited(ref.read(adsConsentProvider.notifier).ensure());
+  }
+}
 
 /// A discreet banner slot. Takes no space unless an ad really loaded, and
 /// drops it the moment ads stop being allowed (upgrade, restore, account
@@ -296,14 +420,14 @@ class _AdSlotState extends ConsumerState<AdSlot>
     final generation = _generation;
     LoadedAd? ad;
     try {
-      final consent = ref.read(adsConfigProvider).testAds
-          ? _testAdsDecision
-          : await ref.read(adsConsentProvider).resolve();
-      if (consent.canRequestAds && mounted && generation == _generation) {
-        ad = await ref
-            .read(adLoaderProvider)
-            .loadBanner(unitId, personalized: consent.personalized);
-      }
+      // Production: personalization follows the UMP (TCF) decision; test
+      // ads are never personalized.
+      ad = await ref
+          .read(adLoaderProvider)
+          .loadBanner(
+            unitId,
+            personalized: !ref.read(adsConfigProvider).testAds,
+          );
     } catch (_) {
       ad = null;
     }
@@ -330,6 +454,7 @@ class _AdSlotState extends ConsumerState<AdSlot>
     super.build(context);
     final allowed = ref.watch(adsAllowedProvider);
     final unitId = ref.watch(adsConfigProvider).unitFor(widget.placement);
+    if (ref.watch(adsEligibleProvider)) ensureAdsConsent(ref);
     if (!allowed || unitId == null) {
       if (_requested || _ad != null) _drop();
       return const SizedBox.shrink();

@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/ads.dart';
 import 'core/billing.dart';
 import 'core/database.dart';
 import 'core/entity_media.dart';
@@ -300,6 +301,8 @@ class _AppShellState extends ConsumerState<AppShell> {
     if (ref.watch(billingGatewayProvider) != null) {
       ref.watch(premiumBillingProvider);
     }
+    // Ads consent (Google UMP) once, at start, only for FREE users with ads.
+    if (ref.watch(adsEligibleProvider)) ensureAdsConsent(ref);
     return Scaffold(
       body: widget.child,
       bottomNavigationBar: NavigationBar(
