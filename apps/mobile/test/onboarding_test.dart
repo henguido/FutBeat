@@ -1069,7 +1069,7 @@ void main() {
         comp('d', 'Primera División', 'ES'), // same name, other country
         comp('e', 'Premier League', 'GB-ENG'),
         comp('f', 'Old Premier id', 'GB-ENG'),
-        comp('g', 'PD', 'CR'), // not the initials of "Copa Costa Rica"
+        comp('g', 'XY', 'CR'), // nobody's initials
       ], resolve: (id) => id == 'f' ? 'e' : id);
       expect(
         [for (final c in choices) c.ids],
@@ -1083,6 +1083,40 @@ void main() {
       );
       // The canonical entity is the one shown.
       expect(choices[3].entity.id, 'e');
+    });
+
+    test('alias chains collapse into one card, whatever the order', () {
+      final choices = collapseOnboardingDuplicates('competition', [
+        comp(
+          'a',
+          'Liga X',
+          'CR',
+          extra: {
+            'aliases': ['Liga Y'],
+          },
+        ),
+        comp('c', 'Liga Z', 'CR'),
+        comp(
+          'b',
+          'Liga Y',
+          'CR',
+          extra: {
+            'aliases': ['Liga Z'],
+          },
+        ),
+      ]);
+      expect(choices, hasLength(1));
+      expect(choices.single.ids, {'a', 'b', 'c'});
+    });
+
+    test('a stale alias row carries its canonical id for follows', () {
+      final choices = collapseOnboardingDuplicates('competition', [
+        comp('alias_a', 'Liga Promerica', 'CR'),
+      ], resolve: (id) => id == 'alias_a' ? 'canonical_c' : id);
+      // A follow stored as `competition:canonical_c` selects this card, and
+      // a new follow is stored under the canonical id.
+      expect(choices.single.ids, {'alias_a', 'canonical_c'});
+      expect(choices.single.canonicalId, 'canonical_c');
     });
 
     testWidgets('one card for duplicates, the existing follow stays selected', (
