@@ -567,6 +567,10 @@ void main() {
     expect(text, contains('Local Dos'));
     expect(text, contains('5 pts'));
     expect(text, isNot(contains('0 pts')));
+    expect(
+      tester.getRect(find.text('#2')).right,
+      moreOrLessEquals(tester.getRect(find.text('#3')).right),
+    );
     await _close(tester, container);
   });
 

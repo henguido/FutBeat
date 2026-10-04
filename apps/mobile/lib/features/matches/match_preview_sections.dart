@@ -411,17 +411,17 @@ class _PositionRow extends StatelessWidget {
           '#${entry.$1}',
           style: TextStyle(color: accent, fontWeight: FontWeight.w900),
         ),
-        if (points != null && points >= 0) ...[
-          const SizedBox(width: 14),
-          SizedBox(
-            width: 56,
-            child: Text(
-              '$points pts',
-              textAlign: TextAlign.end,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-        ],
+        const SizedBox(width: 14),
+        SizedBox(
+          width: 56,
+          child: points != null && points >= 0
+              ? Text(
+                  '$points pts',
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                )
+              : const SizedBox.shrink(),
+        ),
       ],
     );
   }
