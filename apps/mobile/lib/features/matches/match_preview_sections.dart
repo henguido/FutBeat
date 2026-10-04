@@ -113,8 +113,10 @@ class RecentFormSection extends StatelessWidget {
             if (homeMatches.isNotEmpty)
               _FormRow(
                 key: const ValueKey('form-home'),
+                data: data,
                 team: data.team(match.homeId) ?? value.team(match.homeId),
                 teamId: match.homeId,
+                currentMatchId: match.id,
                 accent: lime,
                 matches: homeMatches,
                 preview: value,
@@ -124,8 +126,10 @@ class RecentFormSection extends StatelessWidget {
             if (awayMatches.isNotEmpty)
               _FormRow(
                 key: const ValueKey('form-away'),
+                data: data,
                 team: data.team(match.awayId) ?? value.team(match.awayId),
                 teamId: match.awayId,
+                currentMatchId: match.id,
                 accent: awaySideColor,
                 matches: awayMatches,
                 preview: value,
@@ -152,16 +156,20 @@ bool _hasRealFormResult(Json item, String teamId) {
 
 class _FormRow extends StatelessWidget {
   const _FormRow({
+    required this.data,
     required this.team,
     required this.teamId,
+    required this.currentMatchId,
     required this.accent,
     required this.matches,
     required this.preview,
     super.key,
   });
 
+  final Snapshot data;
   final Entity? team;
   final String teamId;
+  final String currentMatchId;
   final Color accent;
 
   /// Newest first (as served).
@@ -189,7 +197,13 @@ class _FormRow extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         for (final item in chronological)
-          _ResultChip(item: item, teamId: teamId, preview: preview),
+          _ResultChip(
+            item: item,
+            teamId: teamId,
+            preview: preview,
+            data: data,
+            currentMatchId: currentMatchId,
+          ),
       ],
     );
   }
@@ -200,11 +214,15 @@ class _ResultChip extends StatelessWidget {
     required this.item,
     required this.teamId,
     required this.preview,
+    required this.data,
+    required this.currentMatchId,
   });
 
   final Json item;
   final String teamId;
   final MatchPreview preview;
+  final Snapshot data;
+  final String currentMatchId;
 
   @override
   Widget build(BuildContext context) {
@@ -217,27 +235,51 @@ class _ResultChip extends StatelessWidget {
     final scoreLabel =
         '${(score['home'] as num).toInt()} - ${(score['away'] as num).toInt()}';
     final date = DateTime.tryParse(item['startTime'] as String? ?? '');
+    final id = item['matchId'];
+    final canOpen =
+        id is String &&
+        RegExp(r'^fb_match_[A-Za-z0-9_-]+$').hasMatch(id) &&
+        id != currentMatchId;
+    final homeId = item['homeTeamId']?.toString() ?? '';
+    final awayId = item['awayTeamId']?.toString() ?? '';
+    final competitionId = item['competitionId']?.toString() ?? '';
+    final contextSnapshot = canOpen
+        ? meetingContext(
+            item,
+            data.team(homeId) ?? preview.team(homeId),
+            data.team(awayId) ?? preview.team(awayId),
+            preview.competitionName(competitionId) ??
+                data.competition(competitionId)?.name,
+          )
+        : null;
     return Tooltip(
       message: [
         '$home $scoreLabel $away',
         if (date != null) matchDateLabel(costaRicaTime(date)),
       ].join(' · '),
-      child: Container(
-        width: 26,
-        height: 26,
-        margin: const EdgeInsets.only(left: 5),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: .16),
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: color.withValues(alpha: .5)),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: color,
-            fontSize: 12,
-            fontWeight: FontWeight.w900,
+      child: InkWell(
+        key: canOpen ? ValueKey('form-match-$id') : null,
+        borderRadius: BorderRadius.circular(7),
+        onTap: canOpen
+            ? () => context.push('/match/$id', extra: contextSnapshot)
+            : null,
+        child: Container(
+          width: 26,
+          height: 26,
+          margin: const EdgeInsets.only(left: 5),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: .16),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: color.withValues(alpha: .5)),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
           ),
         ),
       ),
