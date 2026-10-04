@@ -6,6 +6,7 @@ import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
+import 'package:futbeat/features/entities/player_profile.dart';
 import 'package:go_router/go_router.dart';
 
 const _longName =
@@ -377,6 +378,28 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Partido fb_match_past'), findsOneWidget);
   });
+
+  testWidgets(
+    'own goal is labelled for its scorer and never creates an assist',
+    (tester) async {
+      final payload = _payload(player: _rich);
+      final events = ((payload['matches'] as List).first['events'] as List);
+      (events.first as Map)['ownGoal'] = true;
+      (events.last as Map)['ownGoal'] = true;
+      final data = Snapshot(payload);
+      expect(playerRecentEvents(data, 'fb_player'), hasLength(1));
+      await _pumpPlayer(tester, payload);
+      await _scrollSummaryTo(tester, 'Actividad reciente');
+      await tester.drag(
+        find.byType(CustomScrollView).first,
+        const Offset(0, -600),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Autogol · 23′'), findsOneWidget);
+      expect(find.text('Asistencia · 70′'), findsNothing);
+      expect(find.text('Gol · 23′'), findsNothing);
+    },
+  );
 
   testWidgets('news and only this player transfers are listed', (tester) async {
     await _pumpPlayer(
