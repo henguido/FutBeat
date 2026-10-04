@@ -396,6 +396,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   /// Sign in / create the account in Perfil (one auth screen for the whole
   /// app); the onboarding updates by itself when the account changes.
   Future<void> _openProfile() async {
+    // Perfil has the tab bar: leaving through it must not send a first-run
+    // user back into onboarding on the next launch.
+    if (!widget.reentry) {
+      await ref.read(databaseProvider).markBootstrapDismissed();
+    }
     if (mounted) await context.push('/profile');
   }
 
@@ -599,79 +604,108 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   String? get _subtitle => step == OnboardingStep.players ? 'Opcional.' : null;
 
-  Widget _welcomeStep() => Padding(
-    padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Spacer(flex: 3),
-        Center(
-          child: Container(
-            width: 96,
-            height: 96,
-            decoration: BoxDecoration(
-              color: lime.withValues(alpha: .12),
-              shape: BoxShape.circle,
-              border: Border.all(color: lime.withValues(alpha: .5), width: 2),
-            ),
-            child: const Icon(Icons.sports_soccer, color: lime, size: 54),
-          ),
-        ),
-        const SizedBox(height: 24),
-        const FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                'Fut',
-                style: TextStyle(fontSize: 40, fontWeight: FontWeight.w900),
-              ),
-              Text(
-                'Beat',
-                style: TextStyle(
-                  fontSize: 40,
-                  fontWeight: FontWeight.w900,
-                  color: lime,
+  Widget _welcomeStep() => LayoutBuilder(
+    // Scrolls on short screens (landscape); spacers fill tall ones.
+    builder: (context, constraints) => SingleChildScrollView(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: constraints.maxHeight),
+        child: IntrinsicHeight(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Spacer(flex: 3),
+                Center(
+                  child: Container(
+                    width: 96,
+                    height: 96,
+                    decoration: BoxDecoration(
+                      color: lime.withValues(alpha: .12),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: lime.withValues(alpha: .5),
+                        width: 2,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.sports_soccer,
+                      color: lime,
+                      size: 54,
+                    ),
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'EL LATIDO DEL FÚTBOL',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: muted, fontSize: 12, letterSpacing: 3),
-        ),
-        const Spacer(flex: 4),
-        SizedBox(
-          height: 56,
-          child: FilledButton(
-            key: const ValueKey('onboarding-quick-setup'),
-            onPressed: busy ? null : () => _goTo(OnboardingStep.country),
-            child: const Text(
-              'Configuración rápida',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                const SizedBox(height: 24),
+                const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Fut',
+                        style: TextStyle(
+                          fontSize: 40,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        'Beat',
+                        style: TextStyle(
+                          fontSize: 40,
+                          fontWeight: FontWeight.w900,
+                          color: lime,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'EL LATIDO DEL FÚTBOL',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: muted,
+                    fontSize: 12,
+                    letterSpacing: 3,
+                  ),
+                ),
+                const Spacer(flex: 4),
+                SizedBox(
+                  height: 56,
+                  child: FilledButton(
+                    key: const ValueKey('onboarding-quick-setup'),
+                    onPressed: busy
+                        ? null
+                        : () => _goTo(OnboardingStep.country),
+                    child: const Text(
+                      'Configuración rápida',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (ref.watch(pushServiceProvider).accountConfigured &&
+                    !ref.watch(pushServiceProvider).authenticated)
+                  SizedBox(
+                    height: 52,
+                    child: OutlinedButton(
+                      onPressed: busy ? null : _openProfile,
+                      child: const Text('Iniciar sesión'),
+                    ),
+                  ),
+                TextButton(
+                  onPressed: busy ? null : _finish,
+                  child: const Text('Continuar como invitado'),
+                ),
+              ],
             ),
           ),
         ),
-        const SizedBox(height: 10),
-        if (ref.watch(pushServiceProvider).accountConfigured &&
-            !ref.watch(pushServiceProvider).authenticated)
-          SizedBox(
-            height: 52,
-            child: OutlinedButton(
-              onPressed: busy ? null : _openProfile,
-              child: const Text('Iniciar sesión'),
-            ),
-          ),
-        TextButton(
-          onPressed: busy ? null : _finish,
-          child: const Text('Continuar como invitado'),
-        ),
-      ],
+      ),
     ),
   );
 
@@ -1134,17 +1168,19 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 Text(lead, style: const TextStyle(fontSize: 26)),
                 const SizedBox(width: 12),
               ],
+              Text(label, style: const TextStyle(color: muted, fontSize: 15)),
+              const SizedBox(width: 12),
+              // Long country names truncate instead of overflowing.
               Expanded(
                 child: Text(
-                  label,
-                  style: const TextStyle(color: muted, fontSize: 15),
-                ),
-              ),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
+                  value,
+                  textAlign: TextAlign.end,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ],

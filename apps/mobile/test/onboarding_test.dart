@@ -73,6 +73,7 @@ Future<void> pumpOnboarding(
   WidgetTester tester, {
   required AppDatabase database,
   double width = 390,
+  double height = 844,
   Set<String> follows = const {},
   CountryPreference preference = const CountryPreference(
     detectedCountry: 'CR',
@@ -86,7 +87,7 @@ Future<void> pumpOnboarding(
   OnboardingProgressStore? progress,
   PushService? pushService,
 }) async {
-  tester.view.physicalSize = Size(width, 844);
+  tester.view.physicalSize = Size(width, height);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -975,6 +976,47 @@ void main() {
       expect(value('competitions').data, '1');
       expect(value('players').data, '1');
     });
+  });
+
+  testWidgets('welcome scrolls in landscape without overflow', (tester) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await pumpOnboarding(
+      tester,
+      database: db,
+      width: 800,
+      height: 360,
+      atWelcome: true,
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(tester.takeException(), isNull);
+    await tester.scrollUntilVisible(
+      find.text('Continuar como invitado'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Continuar como invitado'), findsOneWidget);
+  });
+
+  testWidgets('summary truncates a long country name at 320px', (tester) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await pumpOnboarding(
+      tester,
+      database: db,
+      width: 320,
+      preference: const CountryPreference(
+        detectedCountry: 'CD',
+        selectedCountry: 'CD',
+        bootstrapDismissed: false,
+      ),
+    );
+    for (var i = 0; i < 6; i++) {
+      await tester.tap(find.byKey(const ValueKey('onboarding-next')));
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    expect(find.text('Todo listo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   for (final width in [320.0, 360.0, 390.0, 430.0]) {
