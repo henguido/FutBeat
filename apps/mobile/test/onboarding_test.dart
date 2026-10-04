@@ -629,6 +629,30 @@ void main() {
     expect(find.text('Reintentar'), findsOneWidget);
   });
 
+  testWidgets('picking the suggested country saves it as the choice', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+    await pumpOnboarding(tester, database: db, livePreference: true);
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('Costa Rica'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('onboarding-country')));
+    await settle(tester);
+    await tester.enterText(
+      find.byKey(const ValueKey('country-picker-search')),
+      'costa',
+    );
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('country-CR')));
+    await settle(tester);
+    final saved = await tester.runAsync(() => db.watchPreference().first);
+    expect(saved?.selectedCountry, 'CR');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(Duration.zero);
+  });
+
   testWidgets('picker lists localized names and saves a manual choice', (
     tester,
   ) async {

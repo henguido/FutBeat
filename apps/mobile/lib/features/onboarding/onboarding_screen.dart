@@ -902,7 +902,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       child: InkWell(
         key: const ValueKey('onboarding-country'),
         borderRadius: BorderRadius.circular(20),
-        onTap: countryBusy ? null : () => _pickCountry(code),
+        onTap: countryBusy
+            ? null
+            : () => _pickCountry(code, preference.selectedCountry),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
           decoration: BoxDecoration(
@@ -942,14 +944,16 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
-  Future<void> _pickCountry(String? current) async {
+  /// [current] is the country shown (maybe the suggestion); picking it
+  /// still records a manual choice when none was saved yet.
+  Future<void> _pickCountry(String? current, String? saved) async {
     final picked = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (_) => CountryPickerSheet(current: current),
     );
-    if (picked != null && picked != current) await _selectCountry(picked);
+    if (picked != null && picked != saved) await _selectCountry(picked);
   }
 
   Widget _searchField(String hint, int selected) => Row(

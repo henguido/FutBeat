@@ -68,6 +68,19 @@ String? mergeFirstLinkCountry({
   return cloud ?? local;
 }
 
+/// Diagnostic label for a failed account request: type, HTTP status and
+/// the PostgREST/GoTrue error code only (never headers, tokens or bodies).
+String describeAccountError(Object error) {
+  if (error is! DioException) return '${error.runtimeType}';
+  final data = error.response?.data;
+  final code = data is Map ? (data['code'] ?? data['error_code']) : null;
+  final message = data is Map ? '${data['message'] ?? ''}' : '';
+  final short = message.length > 120 ? message.substring(0, 120) : message;
+  return 'DioException ${error.type.name} '
+          '${error.response?.statusCode ?? '-'} ${code ?? ''} $short'
+      .trim();
+}
+
 /// Notification preference keys as the server stores them. The first seven
 /// are understood by every server (`futbeat_sync_user_profile_v2`); the rest
 /// only by servers with `futbeat_sync_user_profile_v3`.
@@ -1341,7 +1354,7 @@ class PushService {
         await work();
       } catch (error, stack) {
         debugPrint(
-          'FutBeat account reconcile: $name failed (${error.runtimeType})',
+          'FutBeat account reconcile: $name failed (${describeAccountError(error)})',
         );
         failure ??= error;
         failureStack ??= stack;
