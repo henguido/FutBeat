@@ -821,6 +821,52 @@ void main() {
     });
   });
 
+  test('a failed password update signs nobody in and retries without '
+      'spending the code again', () async {
+    final value = await _service();
+    var verifies = 0;
+    value.http.routes['/auth/v1/verify'] = (_) {
+      verifies++;
+      return value.http.issue('user-a');
+    };
+    var fail = true;
+    value.http.routes['/auth/v1/user'] = (_) => fail
+        ? const _Fail(422, {'error_code': 'same_password'})
+        : {'id': 'user-a'};
+    final seen = <String?>[];
+    final subscription = value.service.accountChanges.listen(seen.add);
+    addTearDown(subscription.cancel);
+
+    Object? error;
+    try {
+      await value.service.resetPassword(
+        'user@example.com',
+        '123456',
+        'vieja-123',
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    expect(
+      authErrorMessage(error!),
+      'Usa una contraseña distinta a la anterior.',
+    );
+    expect(value.service.authenticated, isFalse);
+    expect(await _read('futbeat.push.session'), isNull);
+    await Future<void>.delayed(Duration.zero);
+    expect(seen, isEmpty);
+
+    fail = false;
+    await value.service.resetPassword(
+      'user@example.com',
+      '123456',
+      'nueva-123',
+    );
+    expect(verifies, 1);
+    expect(value.service.accountId, 'user-a');
+    expect(await _read('futbeat.push.session'), isNotNull);
+  });
+
   testWidgets('recovery sheet: email, then code and new password', (
     tester,
   ) async {
