@@ -279,7 +279,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('auth-submit')));
       await tester.pumpAndSettle();
       expect(title(tester), 'Iniciar sesión');
-      expect(find.textContaining('ya tiene una cuenta'), findsOneWidget);
+      expect(find.textContaining('ya está registrado'), findsOneWidget);
       expect(find.byKey(const ValueKey('auth-confirmation')), findsNothing);
       expect(
         tester

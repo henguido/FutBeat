@@ -16,6 +16,7 @@ import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
 import 'package:futbeat/features/profile/password_reset_sheet.dart';
 import 'package:futbeat/features/profile/profile_screen.dart';
+import 'package:futbeat/main.dart' show handlePasswordResetLink;
 
 class _Tokens implements PushTokenSource {
   @override
@@ -751,123 +752,182 @@ void main() {
     expect(seen, ['user-a']);
   });
 
-  group('password recovery', () {
-    test('asks Supabase for a code without signing in', () async {
+  group('password recovery (email link)', () {
+    final link = Uri.parse(
+      'com.futbeat.futbeat://password-reset?code=one-time-code',
+    );
+
+    test('asks for a link to the app, PKCE, without signing in', () async {
       final value = await _service();
       await value.service.requestPasswordReset(' user@example.com ');
-      final call = value.http.calls.singleWhere(
+      final call = value.http.calls.lastWhere(
         (c) => c.path.contains('/auth/v1/recover'),
       );
-      expect(call.data, {'email': 'user@example.com'});
-      expect(call.headers['Authorization'], isNull);
-      expect(value.service.authenticated, isFalse);
-    });
-
-    test('a valid code signs in and sets the new password', () async {
-      final value = await _service(server: {'team:a'});
-      value.http.routes['/auth/v1/verify'] = (_) => value.http.issue('user-a');
-      value.http.routes['/auth/v1/user'] = (_) => {'id': 'user-a'};
-
-      await value.service.resetPassword(
-        'user@example.com',
-        ' 123456 ',
-        'nueva-clave-8',
-      );
-
-      final verify = value.http.calls.singleWhere(
-        (c) => c.path.contains('/auth/v1/verify'),
-      );
-      expect(verify.data, {
-        'type': 'recovery',
-        'email': 'user@example.com',
-        'token': '123456',
-      });
-      final update = value.http.calls.singleWhere(
-        (c) => c.path.contains('/auth/v1/user'),
-      );
-      expect(update.method, 'PUT');
-      expect(update.data, {'password': 'nueva-clave-8'});
       expect(
-        update.headers['Authorization'],
-        startsWith('Bearer access-user-a-'),
+        call.queryParameters['redirect_to'],
+        'com.futbeat.futbeat://password-reset',
       );
-      expect(value.service.accountId, 'user-a');
-      expect(await _read('futbeat.push.session'), isNotNull);
-      // Same account sync as a normal sign-in: server follows merge in.
-      await _settle(value.service);
-      expect(await value.db.watchFollows().first, contains('team:a'));
-    });
-
-    test('an invalid or expired code: clear message, no session', () async {
-      final value = await _service();
-      value.http.routes['/auth/v1/verify'] = (_) => const _Fail(403, {
-        'error_code': 'otp_expired',
-        'msg': 'Token has expired or is invalid',
-      });
-      Object? error;
-      try {
-        await value.service.resetPassword(
-          'user@example.com',
-          '000000',
-          'x' * 8,
-        );
-      } catch (caught) {
-        error = caught;
-      }
-      expect(error, isA<DioException>());
-      expect(authErrorMessage(error!), 'El código no es válido o ya venció.');
+      final body = call.data as Map;
+      expect(body['email'], 'user@example.com');
+      expect(body['code_challenge_method'], 's256');
+      expect(body['code_challenge'], isNotEmpty);
+      expect(body.containsKey('token'), isFalse);
       expect(value.service.authenticated, isFalse);
-      expect(value.http.called('/auth/v1/user'), isFalse);
+    });
+
+    test(
+      'the link redeems once; signed in only after the new password',
+      () async {
+        final value = await _service();
+        Map? update;
+        value.http.routes['grant_type=pkce'] = (_) =>
+            value.http.issue('user-a');
+        value.http.routes['/auth/v1/user'] = (options) {
+          update = options.data as Map;
+          return <String, dynamic>{};
+        };
+        await value.service.requestPasswordReset('user@example.com');
+        await value.service.beginPasswordRecovery(link);
+        expect(value.service.passwordRecoveryPending, isTrue);
+        expect(value.service.authenticated, isFalse);
+        await value.service.completePasswordRecovery('nueva-clave-8');
+        expect(update, {'password': 'nueva-clave-8'});
+        expect(value.service.authenticated, isTrue);
+        expect(value.service.passwordRecoveryPending, isFalse);
+        // The verifier is spent: the same link cannot be redeemed again.
+        await expectLater(
+          value.service.beginPasswordRecovery(link),
+          throwsA(
+            isA<RecoveryLinkInvalid>().having(
+              (e) => e.reason,
+              'reason',
+              'missing_verifier',
+            ),
+          ),
+        );
+      },
+    );
+
+    test('expired or rejected links never sign in', () async {
+      final value = await _service();
+      await value.service.requestPasswordReset('user@example.com');
+      await expectLater(
+        value.service.beginPasswordRecovery(
+          Uri.parse(
+            'com.futbeat.futbeat://password-reset#error=access_denied'
+            '&error_code=otp_expired',
+          ),
+        ),
+        throwsA(isA<RecoveryLinkInvalid>()),
+      );
+      value.http.routes['grant_type=pkce'] = (_) =>
+          const _Fail(403, {'error_code': 'flow_state_expired'});
+      await expectLater(
+        value.service.beginPasswordRecovery(link),
+        throwsA(
+          isA<RecoveryLinkInvalid>().having(
+            (e) => e.reason,
+            'reason',
+            'rejected',
+          ),
+        ),
+      );
+      expect(value.service.authenticated, isFalse);
+      expect(value.service.passwordRecoveryPending, isFalse);
+    });
+
+    test(
+      'a failed update keeps the recovery for a retry, no session',
+      () async {
+        final value = await _service();
+        var fail = true;
+        value.http.routes['grant_type=pkce'] = (_) =>
+            value.http.issue('user-a');
+        value.http.routes['/auth/v1/user'] = (_) =>
+            fail ? const _Fail.offline() : <String, dynamic>{};
+        await value.service.requestPasswordReset('user@example.com');
+        await value.service.beginPasswordRecovery(link);
+        await expectLater(
+          value.service.completePasswordRecovery('nueva-clave-8'),
+          throwsA(isA<DioException>()),
+        );
+        expect(value.service.authenticated, isFalse);
+        expect(value.service.passwordRecoveryPending, isTrue);
+        fail = false;
+        await value.service.completePasswordRecovery('nueva-clave-8');
+        expect(value.service.authenticated, isTrue);
+      },
+    );
+
+    test('cancel drops the recovery session', () async {
+      final value = await _service();
+      value.http.routes['grant_type=pkce'] = (_) => value.http.issue('user-a');
+      await value.service.requestPasswordReset('user@example.com');
+      await value.service.beginPasswordRecovery(link);
+      value.service.cancelPasswordRecovery();
+      expect(value.service.passwordRecoveryPending, isFalse);
+      await expectLater(
+        value.service.completePasswordRecovery('nueva-clave-8'),
+        throwsA(isA<RecoveryLinkInvalid>()),
+      );
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test('only password-reset links are handled (OAuth untouched)', () async {
+      final value = await _service();
+      final before = value.http.calls.length;
+      for (final other in [
+        'com.futbeat.futbeat://login-callback?code=x',
+        'https://futbeat.com/#access_token=x',
+      ]) {
+        await handlePasswordResetLink(
+          Uri.parse(other),
+          service: value.service,
+          navigator: null,
+          messenger: null,
+        );
+      }
+      expect(value.http.calls.length, before);
+      expect(value.service.passwordRecoveryPending, isFalse);
     });
   });
 
-  test('a failed password update signs nobody in and retries without '
-      'spending the code again', () async {
-    final value = await _service();
-    var verifies = 0;
-    value.http.routes['/auth/v1/verify'] = (_) {
-      verifies++;
-      return value.http.issue('user-a');
-    };
-    var fail = true;
-    value.http.routes['/auth/v1/user'] = (_) => fail
-        ? const _Fail(422, {'error_code': 'same_password'})
-        : {'id': 'user-a'};
-    final seen = <String?>[];
-    final subscription = value.service.accountChanges.listen(seen.add);
-    addTearDown(subscription.cancel);
-
-    Object? error;
-    try {
-      await value.service.resetPassword(
-        'user@example.com',
-        '123456',
-        'vieja-123',
-      );
-    } catch (caught) {
-      error = caught;
-    }
+  testWidgets('recovery sheet: link, no code field, resend', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final db = AppDatabase(NativeDatabase.memory());
+    final service = _ResetService(db);
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PasswordResetSheet(
+            service: service,
+            initialEmail: 'user@example.com',
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Recuperar contraseña'), findsOneWidget);
+    expect(find.textContaining('Código'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('reset-send')));
+    await tester.pumpAndSettle();
+    expect(service.requested, ['user@example.com']);
+    expect(find.text('Revisa tu correo'), findsOneWidget);
     expect(
-      authErrorMessage(error!),
-      'Usa una contraseña distinta a la anterior.',
+      find.text('Te enviamos un enlace para cambiar tu contraseña.'),
+      findsOneWidget,
     );
-    expect(value.service.authenticated, isFalse);
-    expect(await _read('futbeat.push.session'), isNull);
-    await Future<void>.delayed(Duration.zero);
-    expect(seen, isEmpty);
-
-    fail = false;
-    await value.service.resetPassword(
-      'user@example.com',
-      '123456',
-      'nueva-123',
-    );
-    expect(verifies, 1);
-    expect(value.service.accountId, 'user-a');
-    expect(await _read('futbeat.push.session'), isNotNull);
+    expect(find.textContaining('Código'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('reset-resend')));
+    await tester.pumpAndSettle();
+    expect(service.requested, hasLength(2));
+    expect(find.text('Volver a iniciar sesión'), findsOneWidget);
   });
 
-  testWidgets('recovery sheet: email, then code and new password', (
+  testWidgets('new password: length and match first, then saved', (
     tester,
   ) async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -880,64 +940,45 @@ void main() {
     bool? result;
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: Builder(
-            builder: (context) => TextButton(
-              onPressed: () async {
-                result = await showModalBottomSheet<bool>(
-                  context: context,
-                  isScrollControlled: true,
-                  builder: (_) => PasswordResetSheet(
-                    service: service,
-                    initialEmail: 'user@example.com',
-                  ),
-                );
-              },
-              child: const Text('abrir'),
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async => result = await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => NewPasswordScreen(service: service),
+              ),
             ),
+            child: const Text('abrir'),
           ),
         ),
       ),
     );
     await tester.tap(find.text('abrir'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('reset-code')), findsNothing);
-
-    await tester.tap(find.text('Enviar código'));
-    await tester.pumpAndSettle();
-    expect(service.requested, ['user@example.com']);
-    expect(find.text('Te enviamos un código a tu correo.'), findsOneWidget);
-
-    // Local validation first: no request with a bad code / short password.
-    await tester.enterText(find.byKey(const ValueKey('reset-code')), '12');
-    await tester.enterText(find.byKey(const ValueKey('reset-password')), 'x');
-    await tester.tap(find.text('Cambiar contraseña'));
-    await tester.pumpAndSettle();
-    expect(find.text('Escribe el código del correo.'), findsOneWidget);
-    expect(service.resets, isEmpty);
-
-    // A rejected code shows the clear message and keeps the sheet open.
-    service.failNext = true;
-    await tester.enterText(find.byKey(const ValueKey('reset-code')), '000000');
+    await tester.enterText(find.byKey(const ValueKey('new-password')), '123');
+    await tester.tap(find.byKey(const ValueKey('new-password-save')));
+    await tester.pump();
+    expect(service.completed, isEmpty);
     await tester.enterText(
-      find.byKey(const ValueKey('reset-password')),
+      find.byKey(const ValueKey('new-password')),
       'nueva-clave-8',
     );
-    await tester.tap(find.text('Cambiar contraseña'));
-    await tester.pumpAndSettle();
-    expect(find.text('El código no es válido o ya venció.'), findsOneWidget);
-    expect(result, isNull);
-
-    await tester.enterText(find.byKey(const ValueKey('reset-code')), '123456');
-    await tester.tap(find.text('Cambiar contraseña'));
-    await tester.pumpAndSettle();
-    expect(service.resets.last, (
-      'user@example.com',
-      '123456',
+    await tester.enterText(
+      find.byKey(const ValueKey('confirm-password')),
+      'otra-clave-8',
+    );
+    await tester.tap(find.byKey(const ValueKey('new-password-save')));
+    await tester.pump();
+    expect(find.text('Las contraseñas no coinciden.'), findsOneWidget);
+    expect(service.completed, isEmpty);
+    await tester.enterText(
+      find.byKey(const ValueKey('confirm-password')),
       'nueva-clave-8',
-    ));
+    );
+    await tester.tap(find.byKey(const ValueKey('new-password-save')));
+    await tester.pumpAndSettle();
+    expect(service.completed, ['nueva-clave-8']);
     expect(result, isTrue);
-    expect(find.byType(PasswordResetSheet), findsNothing);
   });
 
   test(
@@ -1287,32 +1328,13 @@ class _ResetService extends PushService {
       );
 
   final requested = <String>[];
-  final resets = <(String, String, String)>[];
-  bool failNext = false;
+  final completed = <String>[];
 
   @override
   Future<void> requestPasswordReset(String emailAddress) async =>
       requested.add(emailAddress.trim());
 
   @override
-  Future<void> resetPassword(
-    String emailAddress,
-    String code,
-    String newPassword,
-  ) async {
-    if (failNext) {
-      failNext = false;
-      final options = RequestOptions(path: '/auth/v1/verify');
-      throw DioException(
-        requestOptions: options,
-        type: DioExceptionType.badResponse,
-        response: Response(
-          requestOptions: options,
-          statusCode: 403,
-          data: {'error_code': 'otp_expired'},
-        ),
-      );
-    }
-    resets.add((emailAddress.trim(), code, newPassword));
-  }
+  Future<void> completePasswordRecovery(String newPassword) async =>
+      completed.add(newPassword);
 }

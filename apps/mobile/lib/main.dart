@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,6 +23,7 @@ import 'features/entities/entity_screen.dart';
 import 'features/explore/explore_screen.dart';
 import 'features/favorites/favorites_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
+import 'features/profile/password_reset_sheet.dart';
 import 'shared/widgets.dart';
 
 Future<void> main() async {
@@ -38,6 +40,42 @@ Future<CountryPreference> refreshCountryForLocales(
     locales != null && locales.isNotEmpty ? locales.first.countryCode : null,
   );
   return refreshDetectedCountry(database, detected);
+}
+
+/// `com.futbeat.futbeat://password-reset?code=…` from the reset email:
+/// redeems the one-time code and opens [NewPasswordScreen] on [navigator].
+/// The code never becomes a route, so it is not kept in navigation.
+/// Other links are ignored (OAuth callbacks go to flutter_web_auth_2).
+Future<void> handlePasswordResetLink(
+  Uri link, {
+  required PushService service,
+  required NavigatorState? navigator,
+  required ScaffoldMessengerState? messenger,
+}) async {
+  if (link.scheme != PushService.oauthCallbackScheme ||
+      link.host != 'password-reset') {
+    return;
+  }
+  void say(String text) =>
+      messenger?.showSnackBar(SnackBar(content: Text(text)));
+  try {
+    await service.beginPasswordRecovery(link);
+  } on RecoveryLinkInvalid catch (error) {
+    say(
+      error.reason == 'missing_verifier'
+          ? 'Abre el enlace en el teléfono donde lo pediste.'
+          : 'El enlace ya no es válido. Pide uno nuevo.',
+    );
+    return;
+  } catch (_) {
+    say('No se pudo abrir el enlace. Inténtalo de nuevo.');
+    return;
+  }
+  if (navigator == null) return;
+  final changed = await navigator.push<bool>(
+    MaterialPageRoute(builder: (_) => NewPasswordScreen(service: service)),
+  );
+  if (changed == true) say('Contraseña actualizada. Sesión iniciada.');
 }
 
 GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
@@ -147,11 +185,28 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   final messenger = GlobalKey<ScaffoldMessengerState>();
   PushMessageRouter? pushMessages;
   bool followPromptChecked = false;
+  StreamSubscription<Uri>? links;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Password-reset links (the initial one included).
+    try {
+      links = AppLinks().uriLinkStream.listen(
+        (link) => unawaited(
+          handlePasswordResetLink(
+            link,
+            service: ref.read(pushServiceProvider),
+            navigator: router.routerDelegate.navigatorKey.currentState,
+            messenger: messenger.currentState,
+          ),
+        ),
+        onError: (_) {},
+      );
+    } catch (_) {
+      // No platform links (tests, desktop).
+    }
     // Null unless the build has the push flags: nothing runs otherwise.
     final source = ref.read(pushMessageSourceProvider);
     if (source != null) {
@@ -220,6 +275,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     pushMessages?.dispose();
+    unawaited(links?.cancel());
     if (widget.router == null) router.dispose();
     super.dispose();
   }

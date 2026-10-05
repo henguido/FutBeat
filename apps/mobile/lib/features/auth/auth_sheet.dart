@@ -76,9 +76,11 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
         setState(() {
           mode = AuthMode.login;
           confirmationEmail = null;
+          // GoTrue's documented answer for an address already registered,
+          // possibly through Google or Facebook (no email is sent).
           message =
-              'Ese correo ya tiene una cuenta. Inicia sesión o '
-              'recupera tu contraseña.';
+              'Ese correo ya está registrado (también puede ser con Google '
+              'o Facebook). Inicia sesión o recupera tu contraseña.';
         });
       }
     } catch (error) {

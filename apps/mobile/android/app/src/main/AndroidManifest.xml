@@ -27,6 +27,20 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Password-reset email link: handled by app_links in Dart
+                 (lib/main.dart, handlePasswordResetLink), never by the
+                 router, so the one-time code is not kept in navigation. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="com.futbeat.futbeat"
+                    android:host="password-reset" />
+            </intent-filter>
+            <meta-data
+                android:name="flutter_deeplinking_enabled"
+                android:value="false" />
         </activity>
         <!-- Receives the Supabase OAuth redirect
              (com.futbeat.futbeat://login-callback) for Google / Facebook

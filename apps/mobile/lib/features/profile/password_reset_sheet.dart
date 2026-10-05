@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../core/auth_errors.dart';
 import '../../core/push.dart';
+import '../../core/theme.dart';
 
-/// "¿Olvidaste tu contraseña?": email → code from the email + new password.
-/// Pops `true` once the password changed (the account is then signed in).
+/// "¿Olvidaste tu contraseña?": the email gets a link that opens FutBeat on
+/// the "Nueva contraseña" screen ([NewPasswordScreen]). No code to type.
 class PasswordResetSheet extends StatefulWidget {
   const PasswordResetSheet({
     required this.service,
@@ -21,30 +22,33 @@ class PasswordResetSheet extends StatefulWidget {
 
 class _PasswordResetSheetState extends State<PasswordResetSheet> {
   late final email = TextEditingController(text: widget.initialEmail);
-  final code = TextEditingController();
-  final password = TextEditingController();
-  bool codeSent = false;
+  bool linkSent = false;
   bool busy = false;
   String? message;
   String? emailError;
-  String? codeError;
-  String? passwordError;
 
   @override
   void dispose() {
     email.dispose();
-    code.dispose();
-    password.dispose();
     super.dispose();
   }
 
-  Future<void> _run(Future<void> Function() work) async {
+  Future<void> _send() async {
+    final error = validateEmail(email.text);
     setState(() {
-      busy = true;
+      emailError = error;
       message = null;
     });
+    if (error != null) return;
+    setState(() => busy = true);
     try {
-      await work();
+      await widget.service.requestPasswordReset(email.text);
+      if (mounted) {
+        setState(() {
+          message = linkSent ? 'Enlace reenviado.' : null;
+          linkSent = true;
+        });
+      }
     } catch (error) {
       if (mounted) setState(() => message = authErrorMessage(error));
     } finally {
@@ -52,106 +56,228 @@ class _PasswordResetSheetState extends State<PasswordResetSheet> {
     }
   }
 
-  Future<void> _sendCode() async {
-    final error = validateEmail(email.text);
-    setState(() => emailError = error);
-    if (error != null) return;
-    await _run(() async {
-      await widget.service.requestPasswordReset(email.text);
-      if (mounted) {
-        setState(() {
-          codeSent = true;
-          message = 'Te enviamos un código a tu correo.';
-        });
-      }
-    });
-  }
-
-  Future<void> _reset() async {
-    final digits = code.text.trim();
-    final nextCodeError = RegExp(r'^\d{6,10}$').hasMatch(digits)
-        ? null
-        : 'Escribe el código del correo.';
-    final nextPasswordError = validatePassword(password.text, signUp: true);
-    setState(() {
-      codeError = nextCodeError;
-      passwordError = nextPasswordError;
-    });
-    if (nextCodeError != null || nextPasswordError != null) return;
-    await _run(() async {
-      await widget.service.resetPassword(email.text, digits, password.text);
-      if (mounted) Navigator.of(context).pop(true);
-    });
-  }
-
   @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          20,
-          16,
-          20,
-          16 + MediaQuery.viewInsetsOf(context).bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+  Widget build(BuildContext context) => SafeArea(
+    child: Padding(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        16,
+        20,
+        16 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            linkSent ? 'Revisa tu correo' : 'Recuperar contraseña',
+            key: const ValueKey('reset-title'),
+            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20),
+          ),
+          const SizedBox(height: 8),
+          if (linkSent) ...[
             const Text(
-              'Recuperar contraseña',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              'Te enviamos un enlace para cambiar tu contraseña.',
+              style: TextStyle(color: muted),
             ),
-            const SizedBox(height: 12),
+            Text(
+              email.text.trim(),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Ábrelo en este teléfono para elegir una nueva.',
+              style: TextStyle(color: muted),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 52,
+              child: FilledButton(
+                key: const ValueKey('reset-back'),
+                onPressed: busy ? null : () => Navigator.pop(context, false),
+                child: const Text('Volver a iniciar sesión'),
+              ),
+            ),
+            TextButton(
+              key: const ValueKey('reset-resend'),
+              onPressed: busy ? null : _send,
+              child: const Text('Reenviar enlace'),
+            ),
+          ] else ...[
             TextField(
               key: const ValueKey('reset-email'),
               controller: email,
-              enabled: !codeSent,
+              enabled: !busy,
               keyboardType: TextInputType.emailAddress,
               autofillHints: const [AutofillHints.email],
+              onSubmitted: (_) => _send(),
               decoration: InputDecoration(
                 labelText: 'Correo',
                 errorText: emailError,
               ),
             ),
-            if (codeSent) ...[
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('reset-code'),
-                controller: code,
-                keyboardType: TextInputType.number,
-                autofillHints: const [AutofillHints.oneTimeCode],
-                decoration: InputDecoration(
-                  labelText: 'Código',
-                  errorText: codeError,
-                ),
+            const SizedBox(height: 14),
+            SizedBox(
+              height: 52,
+              child: FilledButton(
+                key: const ValueKey('reset-send'),
+                onPressed: busy ? null : _send,
+                child: const Text('Enviar enlace'),
               ),
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('reset-password'),
-                controller: password,
-                obscureText: true,
-                autofillHints: const [AutofillHints.newPassword],
-                decoration: InputDecoration(
-                  labelText: 'Nueva contraseña',
-                  helperText: 'Mínimo 8 caracteres.',
-                  errorText: passwordError,
-                ),
-              ),
-            ],
-            if (message != null) ...[
-              const SizedBox(height: 10),
-              Text(message!, key: const ValueKey('reset-message')),
-            ],
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: busy ? null : (codeSent ? _reset : _sendCode),
-              child: Text(codeSent ? 'Cambiar contraseña' : 'Enviar código'),
             ),
-            if (codeSent)
-              TextButton(
-                onPressed: busy ? null : _sendCode,
-                child: const Text('Reenviar código'),
+          ],
+          if (message != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                message!,
+                key: const ValueKey('reset-message'),
+                textAlign: TextAlign.center,
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Opened by a redeemed password-reset link: choose the new password. The
+/// account is signed in only once it is saved; leaving drops the recovery.
+class NewPasswordScreen extends StatefulWidget {
+  const NewPasswordScreen({required this.service, super.key});
+
+  final PushService service;
+
+  @override
+  State<NewPasswordScreen> createState() => _NewPasswordScreenState();
+}
+
+class _NewPasswordScreenState extends State<NewPasswordScreen> {
+  final password = TextEditingController();
+  final confirm = TextEditingController();
+  bool obscure = true;
+  bool busy = false;
+  String? passwordError;
+  String? confirmError;
+  String? message;
+
+  @override
+  void dispose() {
+    password.dispose();
+    confirm.dispose();
+    if (widget.service.passwordRecoveryPending) {
+      widget.service.cancelPasswordRecovery();
+    }
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final nextPassword = validatePassword(password.text, signUp: true);
+    final nextConfirm = confirm.text == password.text
+        ? null
+        : 'Las contraseñas no coinciden.';
+    setState(() {
+      passwordError = nextPassword;
+      confirmError = nextConfirm;
+      message = null;
+    });
+    if (nextPassword != null || nextConfirm != null) return;
+    setState(() => busy = true);
+    try {
+      await widget.service.completePasswordRecovery(password.text);
+      password.clear();
+      confirm.clear();
+      if (mounted) Navigator.pop(context, true);
+    } on RecoveryLinkInvalid {
+      if (mounted) {
+        setState(() => message = 'El enlace ya no es válido. Pide uno nuevo.');
+      }
+    } catch (error) {
+      if (mounted) setState(() => message = authErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget field(
+      String key,
+      TextEditingController controller,
+      String label,
+      String? error, {
+      String? helper,
+    }) => TextField(
+      key: ValueKey(key),
+      controller: controller,
+      enabled: !busy,
+      obscureText: obscure,
+      autofillHints: const [AutofillHints.newPassword],
+      decoration: InputDecoration(
+        labelText: label,
+        helperText: helper,
+        errorText: error,
+      ),
+    );
+    return Scaffold(
+      appBar: AppBar(title: const Text('Nueva contraseña')),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            const Text(
+              'Elige una nueva contraseña para tu cuenta de FutBeat.',
+              style: TextStyle(color: muted),
+            ),
+            const SizedBox(height: 16),
+            field(
+              'new-password',
+              password,
+              'Nueva contraseña',
+              passwordError,
+              helper: 'Mínimo 8 caracteres.',
+            ),
+            const SizedBox(height: 10),
+            field(
+              'confirm-password',
+              confirm,
+              'Confirmar contraseña',
+              confirmError,
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setState(() => obscure = !obscure),
+                icon: Icon(
+                  obscure
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                ),
+                label: Text(obscure ? 'Mostrar' : 'Ocultar'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 52,
+              child: FilledButton(
+                key: const ValueKey('new-password-save'),
+                onPressed: busy ? null : _save,
+                child: busy
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Cambiar contraseña'),
+              ),
+            ),
+            if (message != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  message!,
+                  key: const ValueKey('new-password-message'),
+                  textAlign: TextAlign.center,
+                ),
               ),
           ],
         ),

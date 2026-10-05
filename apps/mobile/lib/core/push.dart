@@ -365,6 +365,14 @@ class AccountAlreadyExists implements Exception {
   const AccountAlreadyExists();
 }
 
+/// A password-reset link that cannot be used here: expired or already
+/// used, or requested from another device / before a reinstall (the PKCE
+/// verifier lives on the requesting device only).
+class RecoveryLinkInvalid implements Exception {
+  const RecoveryLinkInvalid(this.reason);
+  final String reason;
+}
+
 /// The user closed the provider page: not an error to show.
 class OAuthCancelled implements Exception {
   const OAuthCancelled();
@@ -436,6 +444,26 @@ class PushService {
   static const oauthConfigured = bool.fromEnvironment('FUTBEAT_OAUTH_ENABLED');
   static const oauthCallbackScheme = 'com.futbeat.futbeat';
   static const oauthRedirect = '$oauthCallbackScheme://login-callback';
+  static const passwordResetRedirect = '$oauthCallbackScheme://password-reset';
+  static const _recoveryVerifierKey = 'futbeat.auth.recovery.verifier';
+
+  /// PKCE verifier and its S256 challenge (OAuth and password recovery).
+  static ({String verifier, String challenge}) _pkcePair() {
+    final random = Random.secure();
+    final verifier = base64Url
+        .encode(List<int>.generate(48, (_) => random.nextInt(256)))
+        .replaceAll('=', '');
+    final challenge = base64Url
+        .encode(sha256.convert(ascii.encode(verifier)).bytes)
+        .replaceAll('=', '');
+    return (verifier: verifier, challenge: challenge);
+  }
+
+  /// GoTrue redirect parameters: query, or the fragment for errors.
+  static Map<String, String> _redirectParams(Uri link) => {
+    ...Uri.splitQueryString(link.fragment),
+    ...link.queryParameters,
+  };
 
   Set<OAuthProvider>? _oauthProviders;
 
@@ -641,13 +669,7 @@ class PushService {
       throw StateError('Social sign-in is not configured');
     }
     await _awaitSignOutCleanup();
-    final random = Random.secure();
-    final verifier = base64Url
-        .encode(List<int>.generate(48, (_) => random.nextInt(256)))
-        .replaceAll('=', '');
-    final challenge = base64Url
-        .encode(sha256.convert(ascii.encode(verifier)).bytes)
-        .replaceAll('=', '');
+    final (:verifier, :challenge) = _pkcePair();
     final url = Uri.parse('${config.supabaseUrl}/auth/v1/authorize').replace(
       queryParameters: {
         'provider': provider.id,
@@ -659,10 +681,7 @@ class PushService {
     final callback = Uri.parse(await oauthBrowser(url, oauthCallbackScheme));
     // GoTrue reports failures in the query or, for implicit errors, the
     // fragment.
-    final params = {
-      ...Uri.splitQueryString(callback.fragment),
-      ...callback.queryParameters,
-    };
+    final params = _redirectParams(callback);
     final error = params['error_code'] ?? params['error'];
     if (error != null) {
       if (error == 'access_denied') throw const OAuthCancelled();
@@ -794,54 +813,81 @@ class PushService {
     );
   }
 
-  /// "¿Olvidaste tu contraseña?": Supabase emails a one-time code. The
-  /// project's "Reset password" email template must include {{ .Token }}.
+  /// "¿Olvidaste tu contraseña?": Supabase emails a link (PKCE). Opening
+  /// it brings `com.futbeat.futbeat://password-reset?code=…` back to the
+  /// app; only this device holds the verifier that can redeem the code.
   Future<void> requestPasswordReset(String emailAddress) async {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
+    final (:verifier, :challenge) = _pkcePair();
+    await storage.write(key: _recoveryVerifierKey, value: verifier);
     await dio.post(
       '${config.supabaseUrl}/auth/v1/recover',
-      data: {'email': emailAddress.trim()},
+      queryParameters: {'redirect_to': passwordResetRedirect},
+      data: {
+        'email': emailAddress.trim(),
+        'code_challenge': challenge,
+        'code_challenge_method': 's256',
+      },
       options: Options(headers: {'apikey': config.publicKey}),
     );
   }
 
-  /// Session from a verified recovery code whose password update has not
-  /// succeeded yet. Never published: a retry reuses it instead of spending
-  /// the one-time code again.
+  /// Recovery session from a redeemed reset link, kept in memory only and
+  /// never published: the account is signed in after the new password is
+  /// set, not before.
   Map<String, dynamic>? _recoverySession;
-  String? _recoveryEmail;
 
-  /// Verifies the emailed code, sets [newPassword] with that verified
-  /// session and only then signs the account in (like [signIn]). A failed
-  /// update leaves no session behind and can be retried.
-  Future<void> resetPassword(
-    String emailAddress,
-    String code,
-    String newPassword,
-  ) async {
+  /// A reset link was redeemed and waits for the new password.
+  bool get passwordRecoveryPending => _recoverySession != null;
+
+  /// Redeems the code of a password-reset [link] (one use). Throws
+  /// [RecoveryLinkInvalid] for an expired/used link or a missing verifier.
+  Future<void> beginPasswordRecovery(Uri link) async {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
-    await _awaitSignOutCleanup();
-    final normalized = emailAddress.trim().toLowerCase();
-    var verified = _recoveryEmail == normalized ? _recoverySession : null;
-    if (verified == null) {
-      final result = await dio.post<dynamic>(
-        '${config.supabaseUrl}/auth/v1/verify',
-        data: {
-          'type': 'recovery',
-          'email': emailAddress.trim(),
-          'token': code.trim(),
-        },
+    final params = _redirectParams(link);
+    final error = params['error_code'] ?? params['error'];
+    if (error != null) throw RecoveryLinkInvalid(error);
+    final code = params['code'];
+    if (code == null || code.isEmpty) {
+      throw const RecoveryLinkInvalid('missing_code');
+    }
+    final verifier = await storage.read(key: _recoveryVerifierKey);
+    if (verifier == null) {
+      throw const RecoveryLinkInvalid('missing_verifier');
+    }
+    final Response<dynamic> result;
+    try {
+      result = await dio.post<dynamic>(
+        '${config.supabaseUrl}/auth/v1/token?grant_type=pkce',
+        data: {'auth_code': code, 'code_verifier': verifier},
         options: Options(headers: {'apikey': config.publicKey}),
       );
-      verified = _validSession(result.data);
-      if (verified == null) throw _invalidSession(result.requestOptions);
-      _recoverySession = verified;
-      _recoveryEmail = normalized;
+    } on DioException catch (error) {
+      // Any 4xx: used, expired or unknown code; a 5xx/offline is retryable.
+      final status = error.response?.statusCode;
+      if (status != null && status >= 400 && status < 500) {
+        await storage.delete(key: _recoveryVerifierKey);
+        throw const RecoveryLinkInvalid('rejected');
+      }
+      rethrow;
     }
+    final session = _validSession(result.data);
+    if (session == null) throw _invalidSession(result.requestOptions);
+    await storage.delete(key: _recoveryVerifierKey);
+    _recoverySession = session;
+  }
+
+  /// Sets [newPassword] with the redeemed recovery session and only then
+  /// signs the account in (like [signIn]). A failed update keeps the
+  /// recovery session for a retry.
+  Future<void> completePasswordRecovery(String newPassword) async {
+    final verified = _recoverySession;
+    if (verified == null) throw const RecoveryLinkInvalid('no_recovery');
+    await _awaitSignOutCleanup();
     await dio.put<dynamic>(
       '${config.supabaseUrl}/auth/v1/user',
       data: {'password': newPassword},
@@ -853,9 +899,11 @@ class PushService {
       ),
     );
     _recoverySession = null;
-    _recoveryEmail = null;
     await _startSession(verified);
   }
+
+  /// Leaving the new-password screen drops the recovery session.
+  void cancelPasswordRecovery() => _recoverySession = null;
 
   Future<void> restore() =>
       _restoreFuture ??= _restore().whenComplete(_markAccountKnown);
