@@ -108,6 +108,7 @@ class _Ump implements UmpPlatform {
   int updates = 0;
   int forms = 0;
   int privacyForms = 0;
+  int privacyReads = 0;
 
   @override
   Future<void> requestConsentInfoUpdate() async {
@@ -129,6 +130,7 @@ class _Ump implements UmpPlatform {
 
   @override
   Future<bool> privacyOptionsRequired() async {
+    privacyReads++;
     if (privacyStatusFails) throw StateError('UMP status failed');
     return privacyRequired;
   }
@@ -391,6 +393,10 @@ void main() {
       await h.account(tester, null);
       expect(h.container.read(adsConsentProvider), AdsConsentState.unresolved);
       expect(h.loader.requests, isEmpty);
+      // Offline / no answer: the update times out, fails closed, no hang.
+      await tester.pump(umpUpdateTimeout + const Duration(seconds: 1));
+      expect(h.container.read(adsConsentProvider), AdsConsentState.unresolved);
+      expect(h.loader.requests, isEmpty);
     });
 
     testWidgets('consent required + accepted: ads allowed, form shown once', (
@@ -462,6 +468,12 @@ void main() {
       await h.account(tester, 'user-a');
       expect(ump.updates, 0);
       expect(h.loader.requests, isEmpty);
+      // Not even the privacy options status is read for PREMIUM.
+      expect(
+        await h.container.read(adsPrivacyOptionsRequiredProvider.future),
+        isFalse,
+      );
+      expect(ump.privacyReads, 0);
     });
 
     testWidgets(
@@ -667,6 +679,63 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(tile, findsNothing);
       expect(find.text('Después'), findsOneWidget);
+    });
+  });
+
+  group('release vs debug ad units', () {
+    const real = 'ca-app-pub-1234567890123456/1234567890';
+
+    test('debug accepts Google test ads and real units', () {
+      final test = AdsConfig.resolve(
+        release: false,
+        testAds: true,
+        matchesFeedUnitId: '',
+      );
+      expect(test.configured, isTrue);
+      expect(test.testAds, isTrue);
+      expect(
+        AdsConfig.resolve(
+          release: false,
+          testAds: false,
+          matchesFeedUnitId: real,
+        ).unitFor(AdPlacement.matchesFeed),
+        real,
+      );
+    });
+
+    test('release never runs test ads: flag or test unit = no ads', () {
+      for (final config in [
+        AdsConfig.resolve(release: true, testAds: true, matchesFeedUnitId: ''),
+        AdsConfig.resolve(
+          release: true,
+          testAds: false,
+          matchesFeedUnitId: admobTestBannerUnitId,
+        ),
+        AdsConfig.resolve(
+          release: true,
+          testAds: true,
+          matchesFeedUnitId: real,
+        ),
+      ]) {
+        expect(config.configured, isFalse);
+        expect(config.unitFor(AdPlacement.matchesFeed), isNull);
+      }
+      final production = AdsConfig.resolve(
+        release: true,
+        testAds: false,
+        matchesFeedUnitId: real,
+      );
+      expect(production.configured, isTrue);
+      expect(production.testAds, isFalse);
+    });
+
+    test('Google test ids are recognised by publisher', () {
+      expect(isGoogleTestAdId(admobTestBannerUnitId), isTrue);
+      expect(
+        isGoogleTestAdId('ca-app-pub-3940256099942544~3347511713'),
+        isTrue,
+      );
+      expect(isGoogleTestAdId(real), isFalse);
     });
   });
 }
