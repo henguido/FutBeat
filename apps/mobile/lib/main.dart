@@ -55,11 +55,14 @@ Future<void> handlePasswordResetLink(
   required ScaffoldMessengerState? messenger,
 }) async {
   if (!PushService.isPasswordResetLink(link)) return;
+  // Host and path only: the one-time token is never logged.
+  debugPrint('FutBeat reset link: ${link.host}${link.path}');
   void say(String text) =>
       messenger?.showSnackBar(SnackBar(content: Text(text)));
   try {
     await service.beginPasswordRecovery(link);
   } on RecoveryLinkInvalid catch (error) {
+    debugPrint('FutBeat reset link invalid: ${error.reason}');
     say(
       error.reason == 'missing_token'
           ? 'Ese enlace está incompleto. Pide uno nuevo.'
