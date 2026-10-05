@@ -968,7 +968,9 @@ async function syncOneMatchDetail(
           return type.startsWith("start") || type.startsWith("sub");
         })
         .map((row) => {
-          const external = clean(row.playerId) || clean(row.playerKey);
+          // "0" is GOAL's placeholder for a player without id, never an id.
+          const external = [clean(row.playerId), clean(row.playerKey)]
+            .find((id) => id && !/^0+$/.test(id)) ?? "";
           return [external, {
             kind: "player",
             external,

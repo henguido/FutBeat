@@ -19,6 +19,18 @@ export const asList = (value: unknown): unknown[] => Array.isArray(value) ? valu
 
 export const cleanText = (value: unknown) => String(value ?? '').trim();
 
+// GOAL sends playerKey "0" for players it has no id for (530 lineup rows of
+// 101 matches in 10 days, all different players). A placeholder is no
+// identity: never a profile link, a photo or a canonical mapping.
+export const goalPlayerId = (value: unknown) => {
+  const id = cleanText(value);
+  return /^0+$/.test(id) ? '' : id;
+};
+
+const lineupRowPlayerId = (row: Record<string, unknown>) =>
+  goalPlayerId(row.playerId) || goalPlayerId(row.playerKey) ||
+  goalPlayerId(asRecord(row.player).id);
+
 export const safeImage = (value: unknown) => {
   const raw = cleanText(value);
   if (!raw) return null;
@@ -33,11 +45,8 @@ export const safeImage = (value: unknown) => {
 export function normalizeLineupPlayer(value: unknown, media: PlayerMedia = {}) {
   const row = asRecord(value);
   const nested = asRecord(row.player);
-  const providerId =
-    cleanText(row.playerId) ||
-    cleanText(row.playerKey) ||
-    cleanText(nested.id);
-  const canonical = asRecord(media[providerId]);
+  const providerId = lineupRowPlayerId(row);
+  const canonical = providerId ? asRecord(media[providerId]) : {};
   const name =
     cleanText(row.lineupPlayer) ||
     cleanText(nested.name) ||
@@ -67,6 +76,21 @@ type LineupPlayer = NonNullable<ReturnType<typeof normalizeLineupPlayer>>;
 const byLineupPosition = (left: LineupPlayer, right: LineupPlayer) =>
   (left.lineupPosition ?? 999) - (right.lineupPosition ?? 999);
 
+// The provider sometimes stores a lineup twice (every row repeated with a
+// new row id: 22 "starters"). One player is listed once per section: same
+// provider id, or (without one) same name and shirt number.
+function uniquePlayers(players: LineupPlayer[]) {
+  const seen = new Set<string>();
+  return players.filter((player) => {
+    const key = player.id
+      ? `id:${player.id}`
+      : `name:${player.name.toLowerCase()}#${player.number ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // Array-row lineup type -> section. Same prefixes the SQL harvest accepts
 // (lineup_rows: 'start%'/'sub%'), so a harvested player is also rendered.
 const lineupSection = (type: unknown) => {
@@ -93,11 +117,12 @@ export function normalizeLineupSide(
         .map((row) => normalizeLineupPlayer(row, media))
         .filter((item): item is LineupPlayer => item !== null)
         .sort(byLineupPosition);
+    const unique = (section: string) => uniquePlayers(players(section));
     return {
       formation: null,
-      starters: players('starters'),
-      substitutes: players('substitutes'),
-      missing: players('missing'),
+      starters: unique('starters'),
+      substitutes: unique('substitutes'),
+      missing: unique('missing'),
       coach: players('coach')[0] ?? null,
     };
   }
@@ -105,10 +130,10 @@ export function normalizeLineupSide(
   const root = asRecord(lineups);
   const data = asRecord(root[side]);
   const players = (key: string) =>
-    asList(data[key])
+    uniquePlayers(asList(data[key])
       .map((row) => normalizeLineupPlayer(row, media))
       .filter((item): item is LineupPlayer => item !== null)
-      .sort(byLineupPosition);
+      .sort(byLineupPosition));
   return {
     formation: cleanText(root[side === 'home' ? 'homeFormation' : 'awayFormation']) || null,
     starters: players('startingLineups'),
@@ -123,9 +148,7 @@ export function lineupPlayerIds(raw: unknown) {
   const lineups = payload.lineups;
   const ids = new Set<string>();
   const add = (value: unknown) => {
-    const row = asRecord(value);
-    const nested = asRecord(row.player);
-    const id = cleanText(row.playerId) || cleanText(row.playerKey) || cleanText(nested.id);
+    const id = lineupRowPlayerId(asRecord(value));
     if (id) ids.add(id);
   };
   if (Array.isArray(lineups)) {
@@ -153,9 +176,7 @@ export function lineupPlayerIdsBySection(raw: unknown) {
   const starters = new Set<string>();
   const substitutes = new Set<string>();
   const add = (set: Set<string>, value: unknown) => {
-    const row = asRecord(value);
-    const nested = asRecord(row.player);
-    const id = cleanText(row.playerId) || cleanText(row.playerKey) || cleanText(nested.id);
+    const id = lineupRowPlayerId(asRecord(value));
     if (id) set.add(id);
   };
   if (Array.isArray(lineups)) {

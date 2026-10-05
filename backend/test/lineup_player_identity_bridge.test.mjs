@@ -352,3 +352,29 @@ test('futbeat_request_player_profile never claims pending when neither profile n
   const result = (await db.query('select public.futbeat_request_player_profile($1) v', [player])).rows[0].v;
   assert.equal(result.enrichmentPending, false);
 }));
+
+// GOAL's playerKey "0" is a placeholder (production: 530 rows, 101 matches,
+// all different players). It must never become a provider identity.
+test('harvest_lineup_players: placeholder id "0" rows are kept by name but never resolved to an identity', () => withDb(async (db) => {
+  const { teamId: homeTeamId } = await seedTeam(db, { name: 'Zero Home' });
+  const { teamId: awayTeamId } = await seedTeam(db, { name: 'Zero Away' });
+  const matchId = 'fb_match_zero_key';
+  await db.query('insert into futbeat_private.entities values($1,$2,$3)', [matchId, 'match', JSON.stringify({
+    id: matchId, homeTeamId, awayTeamId, startTime: new Date().toISOString(), status: 'SCHEDULED', events: [], statistics: [],
+  })]);
+  await db.query('select futbeat_private.harvest_lineup_players($1,$2,now())', [matchId, JSON.stringify({
+    lineups: [
+      { team: 'home', type: 'starting_lineups', playerKey: '0', lineupPlayer: 'Sin Id Uno', lineupNumber: '7' },
+      { team: 'away', type: 'substitutes', playerKey: '000', lineupPlayer: 'Sin Id Dos' },
+      { team: 'home', type: 'starting_lineups', playerKey: '424242', lineupPlayer: 'Con Id' },
+    ],
+  })]);
+  const zero = (await db.query("select count(*)::int n from futbeat_private.provider_entities where kind='player' and external_id ~ '^0+$'")).rows[0].n;
+  assert.equal(zero, 0, 'no mapping for the placeholder');
+  const real = (await db.query("select count(*)::int n from futbeat_private.provider_entities where kind='player' and external_id='424242'")).rows[0].n;
+  assert.equal(real, 1, 'a real id is still harvested');
+  const rows = (await db.query("select count(*)::int n from futbeat_private.lineup_rows($1::jsonb)", [JSON.stringify({ lineups: [
+    { team: 'home', type: 'starting_lineups', playerKey: '0', lineupPlayer: 'X' },
+    { team: 'home', type: 'starting_lineups', player: { id: '0', name: 'Y' } }] })])).rows[0].n;
+  assert.equal(rows, 2, 'the rows themselves stay (name-only)');
+}));

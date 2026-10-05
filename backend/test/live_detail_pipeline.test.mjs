@@ -72,7 +72,8 @@ test('detail ingestion resolves lineup playerKey identities without names as key
     new URL('../../supabase/functions/futbeat-goal-live-sync/index.ts', import.meta.url),
     'utf8',
   );
-  assert.match(source, /clean\(row\.playerId\) \|\| clean\(row\.playerKey\)/);
+  // playerId first, then playerKey; GOAL's placeholder "0" is never an id.
+  assert.match(source, /\[clean\(row\.playerId\), clean\(row\.playerKey\)\]\s*\.find\(\(id\) => id && !\/\^0\+\$\/\.test\(id\)\)/);
   assert.match(source, /futbeat_resolve_global_entities/);
   assert.match(source, /type\.startsWith\("start"\) \|\| type\.startsWith\("sub"\)/);
 });

@@ -209,3 +209,34 @@ test('period scores: absent, nonterminal, awarded and incoherent answers fail cl
   assert.deepEqual(periods({ ...fixture, matchStatus: 'FINISHED', homeTeamHalftimeScore: '999' }),
     {});
 });
+
+test('placeholder player id "0" is no identity: no id, no canonical, no photo lookup', () => {
+  const media = { 0: { canonicalId: 'fb_player_somebody_else', image: cdn('somebody') } };
+  const lineups = [
+    { team: 'home', type: 'starting_lineups', playerKey: '0', lineupPlayer: 'Sin Id', lineupNumber: '9' },
+    { team: 'home', type: 'starting_lineups', playerKey: '77', lineupPlayer: 'Con Id' },
+  ];
+  const [noId, withId] = normalizeLineupSide(lineups, 'home', media).starters;
+  assert.equal(noId.name, 'Sin Id');
+  assert.equal(noId.id, null);
+  assert.equal(noId.canonicalId, null);
+  assert.equal(noId.image, null);
+  assert.equal(withId.id, '77');
+  assert.deepEqual(lineupPlayerIds({ payload: { lineups } }), ['77']);
+});
+
+test('a lineup stored twice by the provider is listed once per section (22 -> 11)', () => {
+  const once = Array.from({ length: 11 }, (_, i) => ({
+    team: 'away', type: 'starting_lineups', playerKey: `k${i}`, lineupPlayer: `P${i}`, lineupPosition: String(i + 1),
+  }));
+  const bench = [{ team: 'away', type: 'substitutes', playerKey: 'b1', lineupPlayer: 'Banca' }];
+  const noIds = [
+    { team: 'away', type: 'substitutes', playerKey: '0', lineupPlayer: 'Anon', lineupNumber: '30' },
+    { team: 'away', type: 'substitutes', playerKey: '0', lineupPlayer: 'Anon', lineupNumber: '30' },
+    { team: 'away', type: 'substitutes', playerKey: '0', lineupPlayer: 'Otro', lineupNumber: '31' },
+  ];
+  const side = normalizeLineupSide([...once, ...once.map((r) => ({ ...r })), ...bench, ...bench, ...noIds], 'away');
+  assert.equal(side.starters.length, 11);
+  assert.deepEqual(side.starters.map((p) => p.name), once.map((r) => r.lineupPlayer));
+  assert.deepEqual(side.substitutes.map((p) => p.name), ['Banca', 'Anon', 'Otro']);
+});
