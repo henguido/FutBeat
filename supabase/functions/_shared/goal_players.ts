@@ -6,9 +6,32 @@
 // first real response is captured, adjust GOAL_PLAYER_ENDPOINTS and the
 // readers below and pin the sample as a fixture.
 
+// Letters NFD does not decompose into a base letter + accent.
+const FOLD: Record<string, string> = {
+  'đ': 'd', 'Đ': 'D', 'ð': 'd', 'Ð': 'D', 'ł': 'l', 'Ł': 'L', 'ø': 'o',
+  'Ø': 'O', 'ß': 'ss', 'æ': 'ae', 'Æ': 'AE', 'œ': 'oe', 'Œ': 'OE',
+  'þ': 'th', 'Þ': 'Th', 'ı': 'i', 'ħ': 'h', 'Ħ': 'H',
+};
+
+/**
+ * The query GOAL's player search accepts. Production ledger (2026-09-28 ..
+ * 10-04): all 27 searches answered HTTP 400 had a non-ASCII letter
+ * ("Lukáš Hrádecký", "Srđan Babić", "Victor Lindelöf"); all 27 answered 200
+ * were plain ASCII. Accents are folded to their base letter.
+ */
+export function goalPlayerSearchQuery(query: string) {
+  return query
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .replace(/[^\x00-\x7F]/g, (char) => FOLD[char] ?? ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Paths relative to https://api.goal-api.com/v1 (the worker adds base + auth). */
 export const GOAL_PLAYER_ENDPOINTS = {
-  search: (query: string) => `/players/search?q=${encodeURIComponent(query)}`,
+  search: (query: string) =>
+    `/players/search?q=${encodeURIComponent(goalPlayerSearchQuery(query))}`,
   profile: (externalId: string) => `/players/${encodeURIComponent(externalId)}`,
   statistics: (externalId: string) => `/players/${encodeURIComponent(externalId)}/statistics`,
 };
