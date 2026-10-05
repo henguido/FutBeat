@@ -337,6 +337,16 @@ void main() {
       dio.interceptors.add(
         InterceptorsWrapper(
           onRequest: (o, h) {
+            // Player suggestions are a separate, optional request.
+            if (o.path == '/v1/player-suggestions') {
+              h.resolve(
+                Response(
+                  requestOptions: o,
+                  data: {...calendarPayload(), 'matches': [], 'players': []},
+                ),
+              );
+              return;
+            }
             requests.add(o);
             if (o.path == '/v1/explore') {
               h.resolve(

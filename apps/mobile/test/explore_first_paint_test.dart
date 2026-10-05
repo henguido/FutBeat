@@ -41,6 +41,21 @@ class _ExploreServer {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
+          // Player suggestions are a separate, optional request.
+          if (options.path == '/v1/player-suggestions') {
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: {
+                  'schemaVersion': 1,
+                  'demo': false,
+                  'updatedAt': '2026-10-05T00:00:00Z',
+                  'players': <dynamic>[],
+                },
+              ),
+            );
+            return;
+          }
           final country = options.queryParameters['country'] as String?;
           requests.add(country);
           pending[country] = (options, handler);

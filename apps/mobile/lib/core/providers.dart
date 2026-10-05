@@ -925,6 +925,27 @@ class ApiRepository implements FootballRepository {
     return snapshot;
   }
 
+  /// Real squad players to suggest without a query: followed [teamIds]
+  /// first, then [country]'s clubs, then globally relevant clubs (server
+  /// side, stored squads only). Optional content: one attempt, not persisted.
+  Future<Snapshot> loadPlayerSuggestions(
+    Iterable<String> teamIds,
+    String? country, {
+    CancelToken? cancelToken,
+  }) {
+    final teams = (teamIds.toSet().toList()..sort()).take(20).toList();
+    final code = exploreCountry(country);
+    return _loadCatalog(
+      'player-suggestions:${code ?? ''}:${teams.join(',')}',
+      '/v1/player-suggestions',
+      queryParameters: {
+        if (teams.isNotEmpty) 'teams': teams.join(','),
+        'country': ?code,
+      },
+      cancelToken: cancelToken,
+    );
+  }
+
   Future<Snapshot> searchCatalog(
     String query,
     String? country, {
@@ -1222,6 +1243,40 @@ final exploreSnapshotProvider = StreamProvider.autoDispose<Snapshot>((ref) {
     keepForAMinute();
   }();
 });
+
+/// Player suggestions for Explorar / onboarding without a query, keyed by
+/// the comma-joined followed team ids. Never invented and never blocking:
+/// any failure (or a non-API repository) answers no players.
+final playerSuggestionsProvider = FutureProvider.autoDispose
+    .family<List<Entity>, String>((ref, teamsKey) async {
+      final repository = ref.watch(repositoryProvider);
+      if (repository is! ApiRepository) return const <Entity>[];
+      final token = CancelToken();
+      ref.onDispose(() => token.cancel('Player suggestions closed'));
+      final country = await ref
+          .watch(preferenceProvider.selectAsync((p) => p.effectiveCountry))
+          .timeout(const Duration(seconds: 2))
+          .then<String?>((value) => value, onError: (Object _) => null);
+      try {
+        final snapshot = await repository.loadPlayerSuggestions(
+          teamsKey.split(',').where((id) => id.isNotEmpty),
+          country,
+          cancelToken: token,
+        );
+        return snapshot.players;
+      } catch (_) {
+        return const <Entity>[];
+      }
+    });
+
+/// Followed team ids as the [playerSuggestionsProvider] key.
+String followedTeamsKey(Set<String> follows) =>
+    (follows
+            .where((key) => key.startsWith('team:'))
+            .map((key) => key.substring(5))
+            .toList()
+          ..sort())
+        .join(',');
 
 final searchSnapshotProvider = FutureProvider.autoDispose
     .family<Snapshot, ({String query, String? country})>((ref, request) async {

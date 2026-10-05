@@ -361,6 +361,38 @@ export default {
       return replyNoStore(200, snapshot);
     }
 
+    if (path.endsWith('/futbeat-api/v1/player-suggestions')) {
+      // Real squad players only (stored data, no provider call): the
+      // caller's followed teams first, then its country, then global clubs.
+      const country = (requestUrl.searchParams.get('country') ?? '').trim().toUpperCase();
+      const teams = (requestUrl.searchParams.get('teams') ?? '')
+        .split(',')
+        .map((id) => id.trim())
+        .filter((id) => /^fb_team_[A-Za-z0-9_]{1,64}$/.test(id))
+        .slice(0, 20);
+      const { data: players, error } = await db.rpc('futbeat_read_player_suggestions', {
+        p_team_ids: teams,
+        p_country: /^[A-Z]{2}$/.test(country) ? country : null,
+      });
+      if (error || !Array.isArray(players)) {
+        return reply(503, { error: 'Sugerencias temporalmente no disponibles' });
+      }
+      return replyNoStore(200, {
+        schemaVersion: 1,
+        demo: false,
+        updatedAt: new Date().toISOString(),
+        coverage: { partial: false },
+        freshness: { stale: false },
+        competitions: [],
+        teams: [],
+        players,
+        matches: [],
+        standings: [],
+        news: [],
+        transfers: [],
+      });
+    }
+
     if (path.endsWith('/futbeat-api/v1/search')) {
       const query = (requestUrl.searchParams.get('q') ?? '').trim();
       const country = (requestUrl.searchParams.get('country') ?? '').trim();

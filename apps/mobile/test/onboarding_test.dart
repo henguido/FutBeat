@@ -114,6 +114,9 @@ Future<void> pumpOnboarding(
               ? database.watchPreference()
               : Stream.value(preference),
         ),
+        playerSuggestionsProvider.overrideWith(
+          (ref, teams) async => const <Entity>[],
+        ),
         exploreSnapshotProvider.overrideWith(
           (ref) => offline || catalogError != null
               ? Stream<Snapshot>.error(
@@ -774,6 +777,9 @@ void main() {
               ),
             ),
           ),
+          playerSuggestionsProvider.overrideWith(
+            (ref, teams) async => const <Entity>[],
+          ),
           exploreSnapshotProvider.overrideWith(
             (ref) => Stream.value(catalog()),
           ),
@@ -1368,6 +1374,9 @@ void main() {
                   bootstrapDismissed: false,
                 ),
               ),
+            ),
+            playerSuggestionsProvider.overrideWith(
+              (ref, teams) async => const <Entity>[],
             ),
             exploreSnapshotProvider.overrideWith((ref) => Stream.value(data)),
             profileSettingsProvider.overrideWith(

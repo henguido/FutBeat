@@ -150,12 +150,21 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
             .where((e) => !data.demo || e.matches(requestQuery))
             .toList() ??
         <Entity>[];
+    final follows = ref.watch(followsProvider).asData?.value ?? const {};
     final players = hasQuery
         ? data?.players
                   .where((e) => !data.demo || e.matches(requestQuery))
                   .toList() ??
               <Entity>[]
-        : <Entity>[];
+        : (ref
+                      .watch(
+                        playerSuggestionsProvider(followedTeamsKey(follows)),
+                      )
+                      .asData
+                      ?.value ??
+                  const <Entity>[])
+              .take(12)
+              .toList();
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -225,7 +234,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   heading(context, hasQuery ? 'Equipos' : 'Equipos sugeridos'),
                 for (final entity in teams)
                   EntityTile(entity, 'team', showFollow: true),
-                if (players.isNotEmpty) heading(context, 'Jugadores'),
+                if (players.isNotEmpty)
+                  heading(
+                    context,
+                    hasQuery ? 'Jugadores' : 'Jugadores sugeridos',
+                  ),
                 for (final entity in players) EntityTile(entity, 'player'),
               ],
             ),
