@@ -59,10 +59,7 @@ void main() {
     )!;
     expect(groups, hasLength(1));
     expect(groups.single.label, 'League A');
-    expect(
-      groups.single.rows.map((r) => r['teamId']),
-      _teams.sublist(4),
-    );
+    expect(groups.single.rows.map((r) => r['teamId']), _teams.sublist(4));
   });
 
   test('competition view lists each sub-group separately, never merged', () {

@@ -102,7 +102,10 @@ List<StandingsGroup>? standingsGroups(
     final teamId = row['teamId']?.toString() ?? '';
     if (standingsTeam(data, teamId) == null) return null;
     groups
-        .putIfAbsent((row['group']?.toString() ?? '', row['subgroup']), () => [])
+        .putIfAbsent((
+          row['group']?.toString() ?? '',
+          row['subgroup'],
+        ), () => [])
         .add(row);
   }
   for (final group in groups.values) {
