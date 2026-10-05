@@ -80,7 +80,7 @@ Toda la evidencia viene de lecturas read-only de producción (`provider_call_led
 4. **Detalle en vivo por favoritos:**
    - el bucket `live` prioriza partidos con seguidores (alertas de jugador titular/sale/entra);
    - el resto, solo con la lista live.
-5. **Resultados:** aplicar 20261005010000 (chunks en el link, catch-up de 30 min, hoy vencido como candidato) y, en una migración posterior, la paginación más allá de 500 cuando una sola prueba real controlada confirme cómo pagina GOAL (offset vs page).
+5. **Resultados:** aplicar `20261005010000` (chunks en el link, catch-up de 30 min, hoy vencido como candidato). Para los días con más de 500 resultados, el worker ya lee las finales faltantes de `/fixtures/date` (pagina bien; `18a9869`), con un máximo de 15 páginas y sin bajar de 150 unidades.
 6. **Sin proveedor nuevo de pago en v1.** Fallback de datos:
    - recovery por detalle (66 % útil) para partidos vencidos con seguidores o abiertos por usuarios;
    - el resto queda "Por confirmar" (nunca un FINAL inventado).
@@ -102,7 +102,6 @@ Presupuesto objetivo diario (1000):
 - [ ] Aprobar floors: coverage 500 (hoy 300).
 - [ ] Aprobar pacing de coverage (60/h) y recorte de prematch/recent_hot.
 - [ ] Aprobar LIVE a 2 min solo con partidos seguidos en vivo.
-- [ ] Autorizar una única llamada real de prueba de paginación de `/results/date` (offset vs page).
 - [ ] Evaluar plan GOAL de mayor cuota si v1 crece (1000/día no cubre detalle de días grandes).
 
 ## 6. Hallazgo crítico: el ingest de calendario lleva semanas descartado
