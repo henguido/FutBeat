@@ -22,10 +22,10 @@ import 'features/matches/matches_screen.dart';
 import 'features/matches/match_screen.dart';
 import 'features/entities/entity_screen.dart';
 import 'features/explore/explore_screen.dart';
+import 'features/news/news_screen.dart';
 import 'features/favorites/favorites_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/profile/password_reset_sheet.dart';
-import 'shared/widgets.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -107,17 +107,7 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
           AppShell(location: state.uri.path, child: child),
       routes: [
         GoRoute(path: '/matches', builder: (_, state) => const MatchesScreen()),
-        GoRoute(
-          path: '/news',
-          builder: (_, state) => const SectionScreen(
-            title: 'Noticias',
-            child: EmptyState(
-              'El fútbol también se cuenta',
-              'Todavía no hay noticias disponibles. Las fuentes de noticias se conectarán en un próximo incremento.',
-              icon: Icons.article_outlined,
-            ),
-          ),
-        ),
+        GoRoute(path: '/news', builder: (_, state) => const NewsScreen()),
         GoRoute(path: '/explore', builder: (_, state) => const ExploreScreen()),
         GoRoute(
           path: '/favorites',
@@ -412,15 +402,4 @@ class _AppShellState extends ConsumerState<AppShell> {
       ),
     );
   }
-}
-
-class SectionScreen extends StatelessWidget {
-  const SectionScreen({super.key, required this.title, required this.child});
-  final String title;
-  final Widget child;
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(title)),
-    body: ListView(padding: const EdgeInsets.all(20), children: [child]),
-  );
 }

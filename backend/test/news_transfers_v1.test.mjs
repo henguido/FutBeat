@@ -168,7 +168,9 @@ test('NewsData planning is bounded and Supabase worker is optional without a key
   assert.match(worker,/futbeat_reserve_newsdata_call/);
   assert.match(worker,/futbeat_store_news_batch/);
   assert.match(worker,/category\", \"sports/);
-  assert.doesNotMatch(worker,/image_url|imageUrl/);
+  // Since 2026-10-05 (owner request: "imagen válida cuando exista") the
+  // worker forwards NewsData's image_url, https only and optional.
+  assert.match(worker,/imageUrl\.startsWith\("https:\/\/"\) \? \{ imageUrl \} : \{\}/);
  } finally {
   await db.close();
  }

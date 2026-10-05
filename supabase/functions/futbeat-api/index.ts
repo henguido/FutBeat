@@ -361,6 +361,25 @@ export default {
       return replyNoStore(200, snapshot);
     }
 
+    if (path.endsWith('/futbeat-api/v1/news')) {
+      // Stored articles and roster changes only (no provider call here):
+      // the caller's followed subjects first, then its country.
+      const country = (requestUrl.searchParams.get('country') ?? '').trim().toUpperCase();
+      const subjects = (requestUrl.searchParams.get('subjects') ?? '')
+        .split(',')
+        .map((key) => key.trim())
+        .filter((key) => /^(team|player|competition):fb_[A-Za-z0-9_]{1,64}$/.test(key))
+        .slice(0, 50);
+      const { data: snapshot, error } = await db.rpc('futbeat_read_news_feed', {
+        p_subjects: subjects,
+        p_country: /^[A-Z]{2}$/.test(country) ? country : null,
+      });
+      if (error || !snapshot || snapshot.schemaVersion !== 1 || snapshot.demo !== false) {
+        return reply(503, { error: 'Noticias temporalmente no disponibles' });
+      }
+      return replyNoStore(200, snapshot);
+    }
+
     if (path.endsWith('/futbeat-api/v1/player-suggestions')) {
       // Real squad players only (stored data, no provider call): the
       // caller's followed teams first, then its country, then global clubs.

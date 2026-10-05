@@ -358,6 +358,7 @@ class NewsArticleCard extends StatelessWidget {
     final source = article['sourceName']?.toString().trim() ?? '';
     final url = article['url']?.toString().trim() ?? '';
     final date = _contentDateLabel(article['publishedAt']);
+    final image = article['imageUrl']?.toString().trim() ?? '';
 
     return Card(
       child: Padding(
@@ -365,6 +366,22 @@ class NewsArticleCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Optional source image; one that fails to load takes no space.
+            if (image.startsWith('https://')) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Image.network(
+                    image,
+                    key: const ValueKey('news-image'),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
             Text(
               title,
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),

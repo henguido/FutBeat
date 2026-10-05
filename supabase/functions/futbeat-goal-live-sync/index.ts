@@ -355,6 +355,7 @@ function normalizeNewsData(payload: Record<string, unknown>) {
     }
 
     const sourceUrl = clean(row.source_url);
+    const imageUrl = clean(row.image_url);
     articles.push({
       id,
       title,
@@ -364,6 +365,8 @@ function normalizeNewsData(payload: Record<string, unknown>) {
       sourceUrl: sourceUrl.startsWith("https://") ? sourceUrl : "",
       publishedAt,
       language: clean(row.language),
+      // Optional; the store keeps https URLs only.
+      ...(imageUrl.startsWith("https://") ? { imageUrl } : {}),
     });
   }
 
