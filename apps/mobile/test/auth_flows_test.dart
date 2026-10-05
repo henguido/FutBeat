@@ -949,6 +949,47 @@ void main() {
     expect(find.text('Volver a iniciar sesión'), findsOneWidget);
   });
 
+  testWidgets('a successful reset hands over to the app (to Partidos)', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final db = AppDatabase(NativeDatabase.memory());
+    final service = _ResetService(db);
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+    });
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(navigatorKey: navigator, home: const Text('perfil')),
+    );
+    var signedIn = 0;
+    final done = handlePasswordResetLink(
+      Uri.parse(
+        'https://futbeat.com/auth/reset?token_hash=one-time&type=recovery',
+      ),
+      service: service,
+      navigator: navigator.currentState,
+      messenger: null,
+      onSignedIn: () async => signedIn++,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Nueva contraseña'), findsWidgets);
+    await tester.enterText(
+      find.byKey(const ValueKey('new-password')),
+      'nueva-clave-8',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('confirm-password')),
+      'nueva-clave-8',
+    );
+    await tester.tap(find.byKey(const ValueKey('new-password-save')));
+    await tester.pumpAndSettle();
+    await done;
+    expect(service.completed, ['nueva-clave-8']);
+    expect(signedIn, 1);
+  });
+
   testWidgets('new password: length and match first, then saved', (
     tester,
   ) async {
@@ -1355,6 +1396,9 @@ class _ResetService extends PushService {
   @override
   Future<void> requestPasswordReset(String emailAddress) async =>
       requested.add(emailAddress.trim());
+
+  @override
+  Future<void> beginPasswordRecovery(Uri link) async {}
 
   @override
   Future<void> completePasswordRecovery(String newPassword) async =>

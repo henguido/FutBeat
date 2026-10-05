@@ -167,6 +167,7 @@ void main() {
     WidgetTester tester, {
     required AppDatabase database,
     required bool dismissed,
+    PushService? pushService,
   }) async {
     final router = createRouter();
     addTearDown(router.dispose);
@@ -188,12 +189,69 @@ void main() {
           profileSettingsProvider.overrideWith(
             (ref) async => const UserProfileSettings(),
           ),
+          if (pushService != null) ...[
+            pushServiceProvider.overrideWithValue(pushService),
+            liveRealtimeConfigProvider.overrideWithValue(pushService.config),
+            // No realtime socket in tests.
+            liveMatchUpdatesProvider.overrideWith(
+              (ref) => Stream.value(const <String, LiveMatchUpdate>{}),
+            ),
+          ],
         ],
         child: FutBeatApp(router: router),
       ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 30));
+  }
+
+  for (final hadData in [true, false]) {
+    testWidgets(
+      'Welcome sign-in: ${hadData ? 'an existing account goes to Partidos' : 'a new account stays to set up'}',
+      (tester) async {
+        FlutterSecureStorage.setMockInitialValues({});
+        final db = AppDatabase(NativeDatabase.memory());
+        final service = _SheetAuth(db, hadData: hadData);
+        addTearDown(() async {
+          service.dispose();
+          await db.close();
+        });
+        await tester.runAsync(service.restore);
+        await pumpGate(
+          tester,
+          database: db,
+          dismissed: false,
+          pushService: service,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('onboarding-welcome-login')),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey('auth-email')),
+          'qa@example.com',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('auth-password')),
+          'secreta-1',
+        );
+        await tester.tap(find.byKey(const ValueKey('auth-submit')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        final saved = await tester.runAsync(() => db.watchPreference().first);
+        expect(saved?.bootstrapDismissed, hadData);
+        expect(
+          find.byKey(const ValueKey('onboarding-quick-setup')),
+          hadData ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.byType(NavigationBar),
+          hadData ? findsOneWidget : findsNothing,
+        );
+        // Let the screen's own timers (feed, sheets) run out.
+        await tester.pump(const Duration(seconds: 5));
+      },
+    );
   }
 
   testWidgets('first launch gate opens onboarding without network', (
@@ -1455,7 +1513,7 @@ class _NoTokens implements PushTokenSource {
 
 /// Configured account service whose sign-in needs no server.
 class _SheetAuth extends PushService {
-  _SheetAuth(AppDatabase db)
+  _SheetAuth(AppDatabase db, {this.hadData})
     : super(
         const LiveRealtimeConfig(
           supabaseUrl: 'https://supabase.test',
@@ -1465,10 +1523,16 @@ class _SheetAuth extends PushService {
         _NoTokens(),
       );
 
+  /// What the account had on the server (see [PushService.accountHadData]).
+  final bool? hadData;
+
   @override
-  Future<void> signIn(String email, String password) async => session = {
-    'access_token': 'access',
-    'refresh_token': 'refresh',
-    'user': {'id': 'user-a', 'email': email.trim()},
-  };
+  Future<void> signIn(String email, String password) async {
+    accountHadData = hadData;
+    session = {
+      'access_token': 'access',
+      'refresh_token': 'refresh',
+      'user': {'id': 'user-a', 'email': email.trim()},
+    };
+  }
 }

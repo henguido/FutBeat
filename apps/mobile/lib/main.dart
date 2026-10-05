@@ -53,6 +53,7 @@ Future<void> handlePasswordResetLink(
   required PushService service,
   required NavigatorState? navigator,
   required ScaffoldMessengerState? messenger,
+  Future<void> Function()? onSignedIn,
 }) async {
   if (!PushService.isPasswordResetLink(link)) return;
   // Host and path only: the one-time token is never logged.
@@ -77,7 +78,9 @@ Future<void> handlePasswordResetLink(
   final changed = await navigator.push<bool>(
     MaterialPageRoute(builder: (_) => NewPasswordScreen(service: service)),
   );
-  if (changed == true) say('Contraseña actualizada. Sesión iniciada.');
+  if (changed != true) return;
+  say('Contraseña actualizada. Sesión iniciada.');
+  await onSignedIn?.call();
 }
 
 GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
@@ -202,6 +205,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
             service: ref.read(pushServiceProvider),
             navigator: router.routerDelegate.navigatorKey.currentState,
             messenger: messenger.currentState,
+            onSignedIn: _afterRecovery,
           ),
         ),
         onError: (_) {},
@@ -217,6 +221,17 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
         messenger: messenger,
       )..start();
     }
+  }
+
+  /// After a password reset the account is signed in: close the sheets
+  /// that requested the link and land on Partidos (an existing account is
+  /// set up; a first-run onboarding is completed by it).
+  Future<void> _afterRecovery() async {
+    final navigator = router.routerDelegate.navigatorKey.currentState;
+    navigator?.popUntil((route) => route is! PopupRoute);
+    await ref.read(databaseProvider).markBootstrapDismissed();
+    unawaited(const SecureOnboardingProgressStore().clear());
+    router.go('/matches');
   }
 
   /// The first follow added in this session offers notifications once.

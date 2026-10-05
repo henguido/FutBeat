@@ -579,10 +579,19 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   /// Sign in / create the account in place: the onboarding stays on the
-  /// same step and updates by itself when the account changes.
-  Future<void> _openAuth(AuthMode mode) async {
+  /// same step and updates by itself when the account changes. From the
+  /// welcome screen of a first run, an account that already has favourites
+  /// or a country (reinstall, new phone) is set up: straight to Partidos.
+  Future<void> _openAuth(AuthMode mode, {bool fromWelcome = false}) async {
     final signedIn = await showAuthSheet(context, mode);
-    if (signedIn && mounted) setState(() {});
+    if (!signedIn || !mounted) return;
+    if (fromWelcome &&
+        !widget.reentry &&
+        ref.read(pushServiceProvider).accountHadData == true) {
+      await _finish();
+      return;
+    }
+    setState(() {});
   }
 
   static const _searchSteps = {
@@ -875,7 +884,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     height: 52,
                     child: OutlinedButton(
                       key: const ValueKey('onboarding-welcome-login'),
-                      onPressed: busy ? null : () => _openAuth(AuthMode.login),
+                      onPressed: busy
+                          ? null
+                          : () => _openAuth(AuthMode.login, fromWelcome: true),
                       child: const Text('Iniciar sesión'),
                     ),
                   ),

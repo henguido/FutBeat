@@ -469,6 +469,11 @@ class PushService {
 
   Set<OAuthProvider>? _oauthProviders;
 
+  /// Whether the signed-in account already had favourites or a chosen
+  /// country on the server when this device linked it (an existing,
+  /// set-up account: onboarding is not needed again). Null until known.
+  bool? accountHadData;
+
   /// `futbeat_sync_user_profile_v3` answered "not found" on this
   /// server; later saves go straight to the legacy RPC.
   bool _preferencesRpcMissing = false;
@@ -1408,6 +1413,11 @@ class PushService {
     // first after a sign-out): guest choices are linked, never replaced.
     final firstLink = await _readPushedSafe(userId) == null;
     final cloudPreferences = cloud['preferences'];
+    final cloudFollows = cloud['follows'];
+    accountHadData =
+        (cloudFollows is List && cloudFollows.isNotEmpty) ||
+        (cloudPreferences is Map &&
+            '${cloudPreferences['selectedCountry'] ?? ''}'.isNotEmpty);
 
     // Every part runs even when another fails, favourites first: a profile
     // or country error never leaves them unsynced. The first error is
