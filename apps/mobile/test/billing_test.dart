@@ -168,43 +168,45 @@ void main() {
     expect(billingAccountTag('account:a'), isNot(contains('account')));
   });
 
-  test('successful purchase: acknowledged, then Premium from Play', () async {
-    final h = _Harness();
-    await h.signIn('user-a');
-    expect(h.plan.plan, Plan.free);
+  for (final product in [_monthly, _yearly]) {
+    test('successful $product purchase: acknowledged, then Premium', () async {
+      final h = _Harness();
+      await h.signIn('user-a');
+      expect(h.plan.plan, Plan.free);
 
-    h.gateway.onBuy = (offer, tag) {
-      h.gateway.ownedList.add(
-        OwnedPurchase(
-          productId: offer.productId,
-          purchased: true,
-          accountTag: tag,
-        ),
+      h.gateway.onBuy = (offer, tag) {
+        h.gateway.ownedList.add(
+          OwnedPurchase(
+            productId: offer.productId,
+            purchased: true,
+            accountTag: tag,
+          ),
+        );
+        h.gateway.emit([
+          PurchaseEvent(
+            productId: offer.productId,
+            outcome: PurchaseOutcome.purchased,
+            needsCompletion: true,
+            token: 'token-new',
+            handle: 'handle-new',
+          ),
+        ]);
+      };
+      final result = await h.billing.buy(_offer(product));
+
+      expect(result, PremiumActionResult.premium);
+      expect(h.gateway.completed, ['handle-new']);
+      expect(
+        h.gateway.bought.single.accountTag,
+        billingAccountTag('account:user-a'),
       );
-      h.gateway.emit([
-        PurchaseEvent(
-          productId: offer.productId,
-          outcome: PurchaseOutcome.purchased,
-          needsCompletion: true,
-          token: 'token-new',
-          handle: 'handle-new',
-        ),
-      ]);
-    };
-    final result = await h.billing.buy(_offer(_yearly));
-
-    expect(result, PremiumActionResult.premium);
-    expect(h.gateway.completed, ['handle-new']);
-    expect(
-      h.gateway.bought.single.accountTag,
-      billingAccountTag('account:user-a'),
-    );
-    expect(h.plan.isPremium, isTrue);
-    expect(h.plan.showsAds, isFalse);
-    expect(h.plan.origin, EntitlementOrigin.verified);
-    expect(h.plan.expiresAt, _now.add(billingLease));
-    expect(h.container.read(premiumBillingProvider).busy, isFalse);
-  });
+      expect(h.plan.isPremium, isTrue);
+      expect(h.plan.showsAds, isFalse);
+      expect(h.plan.origin, EntitlementOrigin.verified);
+      expect(h.plan.expiresAt, _now.add(billingLease));
+      expect(h.container.read(premiumBillingProvider).busy, isFalse);
+    });
+  }
 
   test('cancelled purchase keeps FREE without breaking the flow', () async {
     final h = _Harness();
