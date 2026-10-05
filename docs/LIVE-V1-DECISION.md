@@ -104,3 +104,19 @@ Presupuesto objetivo diario (1000):
 - [ ] Aprobar LIVE a 2 min solo con partidos seguidos en vivo.
 - [ ] Autorizar una única llamada real de prueba de paginación de `/results/date` (offset vs page).
 - [ ] Evaluar plan GOAL de mayor cuota si v1 crece (1000/día no cubre detalle de días grandes).
+
+## 6. Hallazgo crítico: el ingest de calendario lleva semanas descartado
+
+- El workflow de GitHub "FutBeat global fixtures" (cada 3 h) pagina bien `/fixtures/date/{d}` (2.102 fixtures, ~22 requests) y envía los datos a `futbeat-global-ingest`.
+- La reserva legacy `futbeat_reserve_provider_call` cuenta **todas** las llamadas GOAL del día (~700 de detalle) contra un límite de 24 (hot) / 64 (calendar). Resultado:
+  - siempre responde `skipped: daily_limit`;
+  - el log del workflow muestra `accepted=` vacío;
+  - el ledger tiene 0 filas `global-ingest` desde el 27-sep;
+  - `calendar_coverage` no se escribe desde el 19-sep.
+- Consecuencias:
+  - los FINISHED/marcadores de ayer y hoy que el workflow ya pagó nunca llegan a la base de datos;
+  - es la causa principal de los miles de SCHEDULED vencidos;
+  - el workflow sigue gastando requests GOAL para nada.
+- Fix preparado: migración `20261005070000` (para goal_api, el límite cuenta solo el mismo `call_kind`), con tests.
+- Además, el workflow solo hace fetch si quedan ≥ 350 unidades; con el consumo de madrugada eso pasa 1–2 veces al día. Subir el floor de coverage (punto 4.1) también devuelve frecuencia al calendario.
+- Al aplicarlo, el ingest vuelve a escribir unos 2.100 fixtures por corrida hot, como antes del 19-sep. Hay que vigilar la carga de PostgREST/DB.
