@@ -151,7 +151,7 @@ void main() {
     expect(match.isAwaitingUpdate, isTrue);
     expect(match.isScheduled, isTrue);
     expect(match.isUpcoming, isFalse);
-    expect(match.statusLabel, 'Programado');
+    expect(match.statusLabel, 'Por confirmar');
   });
 
   test(

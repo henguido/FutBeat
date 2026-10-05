@@ -351,3 +351,28 @@ test('a terminal recovery still pending asks the results lane for its date (once
   assert.equal((await db.query("select state from futbeat_private.live_terminal_recovery where external_match_id='rec-1'")).rows[0].state, 'RESOLVED');
   assert.deepEqual(await demand(), [{ d: date, n: 1 }]);
 }));
+
+// Results days are linked in chunks (20261005010000): the ghost rule must see
+// the provider ids of the WHOLE answer, not just its own chunk.
+test('chunked link: a ghost reported in ANOTHER chunk of the same answer is still alive', () => withDb(async (db) => {
+  const k = await seedKnown(db);
+  const kickoff = hoursAgo(1);
+  const ghost = await calendarMatch(db, k, 'chunk', { start: at(kickoff, -10), ext: 'chunk-old' });
+  const chunk = [feedFixture(k, 'chunk-new', { kickoff, minute: 40 })];
+  const link = (await db.query('select public.futbeat_link_goal_results_chunk($1,$2) v',
+    [JSON.stringify(chunk), ['chunk-new', 'chunk-old']])).rows[0].v;
+  assert.deepEqual([link.relinked, link.created], [0, 0]);
+  assert.equal(link.unmapped[0].discovery, 'ghost_still_reported');
+  assert.equal(await mapped(db, 'chunk-old'), ghost);
+  assert.equal(await mapped(db, 'chunk-new'), null);
+}));
+
+test('chunked link with only its own ids behaves exactly like the single call (ghost relinked)', () => withDb(async (db) => {
+  const k = await seedKnown(db);
+  const kickoff = hoursAgo(1);
+  const ghost = await calendarMatch(db, k, 'solo', { start: at(kickoff, -10), ext: 'solo-old' });
+  const link = (await db.query('select public.futbeat_link_goal_results_chunk($1,$2) v',
+    [JSON.stringify([feedFixture(k, 'solo-new', { kickoff, minute: 40 })]), []])).rows[0].v;
+  assert.equal(link.relinked, 1);
+  assert.equal(await mapped(db, 'solo-new'), ghost);
+}));

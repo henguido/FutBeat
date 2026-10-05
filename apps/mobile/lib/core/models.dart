@@ -857,7 +857,9 @@ class FootballMatch {
   }
 
   String get statusLabel {
-    if (isAwaitingUpdate && hasPlayedEvidence) {
+    if (isAwaitingUpdate) {
+      // Kickoff passed, no final yet: never "Programado" (same as the feed).
+      if (!hasPlayedEvidence) return 'Por confirmar';
       return json['score'] != null ? 'Marcador parcial' : '';
     }
     return switch (status) {

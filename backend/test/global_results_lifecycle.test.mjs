@@ -767,6 +767,9 @@ test('planner uses UTC index ranges and attempts older than 90 days are pruned',
     await seedMatch(db, { date, coverage:false, suffix:'_boundary' });
     await seedMatch(db, { date:historicalDate(15), coverage:false, suffix:'_outside' });
     await seedMatch(db, { date:historicalDate(0), coverage:false, suffix:'_today' });
+    // Today's fixture is not kicked off yet (an overdue one of today is a
+    // candidate since 20261005010000; see results_catch_up.test.mjs).
+    await db.query("update futbeat_private.entities set payload=jsonb_set(payload,'{startTime}',to_jsonb((now()+interval '1 hour')::text)) where id='fb_match_results_test_today'");
     for (const zone of ['Pacific/Kiritimati', 'Pacific/Honolulu', 'UTC']) {
       await db.query("select set_config('TimeZone',$1,false)", [zone]);
       assert.equal((await db.query('select public.futbeat_next_goal_results_candidate()::text d')).rows[0].d, date);

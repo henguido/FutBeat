@@ -199,6 +199,56 @@ async function recordObservationsInChunks(
   return { insertedObservations, duplicates, chunks: progress.chunks };
 }
 
+// A busy results day (500+ fixtures) linked in one RPC exceeded the
+// statement timeout and threw the whole day away. It is linked in chunks,
+// each its own short statement; every chunk receives ALL provider ids of the
+// answer so discovery's "ghost still reported" rule sees the full batch.
+// Until the chunk RPC is deployed (404), the original single call is used.
+const LINK_CHUNK_SIZE = 100;
+async function linkResultsInChunks(fixtures: Record<string, unknown>[]) {
+  if (fixtures.length <= LINK_CHUNK_SIZE) {
+    return await rpc("futbeat_link_goal_live_matches", {
+      p_fixtures: fixtures,
+    }, 30000);
+  }
+  const reported = [
+    ...new Set(
+      fixtures.map((fixture) => clean(fixture.apiId ?? fixture.id))
+        .filter(Boolean),
+    ),
+  ];
+  const total = {
+    linked: 0,
+    alreadyLinked: 0,
+    unmappedCount: 0,
+    relinked: 0,
+    created: 0,
+    chunks: 0,
+  };
+  for (let start = 0; start < fixtures.length; start += LINK_CHUNK_SIZE) {
+    let result: Record<string, unknown> | null;
+    try {
+      result = await rpc("futbeat_link_goal_results_chunk", {
+        p_fixtures: fixtures.slice(start, start + LINK_CHUNK_SIZE),
+        p_reported: reported,
+      }, 30000);
+    } catch (error) {
+      const missing = start === 0 && error instanceof Error &&
+        /failed: 404\b/.test(error.message);
+      if (!missing) throw error;
+      return await rpc("futbeat_link_goal_live_matches", {
+        p_fixtures: fixtures,
+      }, 30000);
+    }
+    for (const key of Object.keys(total) as (keyof typeof total)[]) {
+      if (key === "chunks") continue;
+      total[key] += Number(result?.[key] ?? 0) || 0;
+    }
+    total.chunks += 1;
+  }
+  return total;
+}
+
 async function readGoalKey() {
   const key = await rpc("futbeat_read_goal_live_secret");
   const value = clean(key);
@@ -716,9 +766,7 @@ async function syncOneResultsDate() {
     }
 
     stage = "link";
-    const linkResult = await rpc("futbeat_link_goal_live_matches", {
-      p_fixtures: fixtures,
-    }, 30000);
+    const linkResult = await linkResultsInChunks(fixtures);
     stage = "normalize";
     const observations = await Promise.all(
       fixtures.map((fixture) =>
@@ -767,6 +815,7 @@ async function syncOneResultsDate() {
         insertedObservations: persistence?.insertedObservations ?? 0,
         duplicates: persistence?.duplicates ?? 0,
         recordChunks: persistence.chunks,
+        ...(linkResult?.chunks ? { linkChunks: linkResult.chunks } : {}),
         resultsComplete: finalized?.resultsComplete ?? false,
         unresolved: finalized?.unresolved ?? null,
         ...(truncatedBy ? { truncatedBy } : {}),

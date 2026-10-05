@@ -43,7 +43,7 @@ function edge(source, fetch, logs) {
 // GOAL fetch itself.
 function sqlRpc(db, failAt) {
   const allowed = new Set([
-    'futbeat_reserve_goal_results_date', 'futbeat_link_goal_live_matches',
+    'futbeat_reserve_goal_results_date', 'futbeat_link_goal_live_matches', 'futbeat_link_goal_results_chunk',
     'futbeat_record_live_batch', 'futbeat_finalize_goal_results_date',
     'futbeat_complete_results_date_attempt', 'futbeat_complete_provider_call',
   ]);
@@ -53,7 +53,8 @@ function sqlRpc(db, failAt) {
     const entries = Object.entries(body);
     assert.ok(entries.every(([key]) => /^p_[a-z_]+$/.test(key)), JSON.stringify(body));
     const args = entries.map(([key], i) => `${key} => $${i + 1}`).join(',');
-    const values = entries.map(([, value]) => value != null && typeof value === 'object' ? JSON.stringify(value) : value);
+    // p_reported is a text[] parameter (a JS array); everything else jsonb.
+    const values = entries.map(([key, value]) => key === 'p_reported' ? value : value != null && typeof value === 'object' ? JSON.stringify(value) : value);
     return (await db.query(`select public.${name}(${args}) value`, values)).rows[0].value;
   };
 }
@@ -551,4 +552,63 @@ test('a record chunk that fails keeps what earlier chunks stored; the retry only
   const done = retry.rpcCalls('futbeat_complete_provider_call')[0].body.p_metadata;
   assert.deepEqual([done.insertedObservations, done.duplicates], [35, 25]);
   assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
+}));
+
+// A busy day (500+ results) linked in ONE statement hit the 8 s statement
+// timeout in production (2026-10-03, stage "link", twice) and the whole day
+// was thrown away. It is now linked in chunks of 100, every chunk carrying
+// the full list of provider ids of the answer.
+test('a 250-result day is linked in 3 chunks, each with every reported id, and still reaches the canonical match', () => withDb(async (db) => {
+  const { match, external } = await seedResultsDueMatch(db);
+  const data = [resultFixture(external), ...Array.from({ length: 249 }, (_, i) => resultFixture(`busy-${i}`))];
+  const h = harness(db, { provider: () => Response.json({ success: true, data, pagination: { total: 250 } }) });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  const chunks = h.rpcCalls('futbeat_link_goal_results_chunk');
+  assert.equal(chunks.length, 3);
+  assert.deepEqual(chunks.map((c) => c.body.p_fixtures.length), [100, 100, 50]);
+  for (const c of chunks) assert.equal(c.body.p_reported.length, 250, 'the full batch is reported to every chunk');
+  assert.equal(h.rpcCalls('futbeat_link_goal_live_matches').length, 0);
+  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 2, away: 1 } });
+  const completion = h.rpcCalls('futbeat_complete_provider_call').at(-1).body;
+  assert.equal(completion.p_metadata.linkChunks, 3);
+  assert.equal(completion.p_metadata.alreadyLinkedMatches, 1);
+  assert.equal(completion.p_metadata.unmappedMatches, 249);
+}));
+
+test('a small day keeps the single original link call', () => withDb(async (db) => {
+  const { external } = await seedResultsDueMatch(db);
+  const h = harness(db, { provider: () => Response.json({ success: true, data: [resultFixture(external)], pagination: { total: 1 } }) });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok');
+  assert.equal(h.rpcCalls('futbeat_link_goal_live_matches').length, 1);
+  assert.equal(h.rpcCalls('futbeat_link_goal_results_chunk').length, 0);
+}));
+
+test('chunk RPC not deployed yet (404) -> falls back to the single original call, nothing lost', () => withDb(async (db) => {
+  const { match, external } = await seedResultsDueMatch(db);
+  const data = [resultFixture(external), ...Array.from({ length: 149 }, (_, i) => resultFixture(`busy-${i}`))];
+  const h = harness(db, {
+    provider: () => Response.json({ success: true, data, pagination: { total: 150 } }),
+    failAt: (name) => name === 'futbeat_link_goal_results_chunk' ? (() => { throw Object.assign(new Error('RPC futbeat_link_goal_results_chunk failed: 404 PGRST202'), { httpStatus: 404 }); })() : false,
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(h.rpcCalls('futbeat_link_goal_results_chunk').length, 1);
+  assert.equal(h.rpcCalls('futbeat_link_goal_live_matches').length, 1);
+  assert.equal(h.rpcCalls('futbeat_link_goal_live_matches')[0].body.p_fixtures.length, 150);
+  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 2, away: 1 } });
+}));
+
+test('a chunk failing for another reason (timeout 500) still fails the attempt at stage "link"', () => withDb(async (db) => {
+  const { external } = await seedResultsDueMatch(db);
+  const data = [resultFixture(external), ...Array.from({ length: 149 }, (_, i) => resultFixture(`busy-${i}`))];
+  const h = harness(db, {
+    provider: () => Response.json({ success: true, data, pagination: { total: 150 } }),
+    failAt: 'futbeat_link_goal_results_chunk',
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'failed');
+  assert.equal(value.results.stage, 'link');
+  assert.equal(h.rpcCalls('futbeat_link_goal_live_matches').length, 0, 'no silent fallback on a real failure');
 }));
