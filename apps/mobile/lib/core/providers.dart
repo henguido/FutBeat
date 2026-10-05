@@ -1303,11 +1303,29 @@ final newsFeedProvider = FutureProvider.autoDispose<Snapshot>((ref) async {
   if (repository is! ApiRepository) return repository.load();
   final token = CancelToken();
   ref.onDispose(() => token.cancel('Noticias closed'));
-  return repository.loadNewsFeed(
-    follows.where((key) => newsSubjectKinds.any(key.startsWith)),
-    country,
-    cancelToken: token,
-  );
+  try {
+    return await repository.loadNewsFeed(
+      follows.where((key) => newsSubjectKinds.any(key.startsWith)),
+      country,
+      cancelToken: token,
+    );
+  } on DioException catch (error) {
+    // A server without the news route (older deploy) has no news: an empty
+    // feed, not an error. Network failures still surface as errors (Retry).
+    if (error.response?.statusCode == 404) {
+      return Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        'competitions': const <dynamic>[],
+        'teams': const <dynamic>[],
+        'players': const <dynamic>[],
+        'matches': const <dynamic>[],
+        'standings': const <dynamic>[],
+      });
+    }
+    rethrow;
+  }
 });
 
 /// Followed team ids as the [playerSuggestionsProvider] key.

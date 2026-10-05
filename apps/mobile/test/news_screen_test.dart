@@ -161,4 +161,20 @@ void main() {
     expect(find.byKey(const ValueKey('news-image')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'a server without /v1/news (404) reads as no news, not an error',
+    (tester) async {
+      await _pump(
+        tester,
+        (o) => throw DioException(
+          requestOptions: o,
+          response: Response(requestOptions: o, statusCode: 404),
+          type: DioExceptionType.badResponse,
+        ),
+      );
+      expect(find.text('Sin noticias disponibles'), findsOneWidget);
+      expect(find.text('No pudimos cargar las noticias'), findsNothing);
+    },
+  );
 }
