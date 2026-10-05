@@ -19,6 +19,9 @@ import 'package:futbeat/features/profile/profile_screen.dart';
 import 'package:go_router/go_router.dart';
 
 class _Tokens implements PushTokenSource {
+  @override
+  Future<String?> currentToken() => requestToken();
+
   _Tokens([this.token]);
   final String? token;
   @override

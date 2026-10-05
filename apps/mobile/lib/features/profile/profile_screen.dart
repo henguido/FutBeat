@@ -7,7 +7,6 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth_errors.dart';
 import '../../core/providers.dart';
 import '../../core/push.dart';
-import '../../core/push_messages.dart';
 import '../auth/auth_sheet.dart';
 import 'competition_order_preferences.dart';
 import 'ads_privacy_tile.dart';
@@ -79,15 +78,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final signedIn = await showAuthSheet(context, mode);
     await _load();
     if (!mounted) return;
+    // Signing in never asks for notifications: they are turned on from an
+    // explicit action (onboarding "Activar notificaciones", Perfil switches)
+    // or the first follow the user adds.
     setState(() => message = signedIn ? 'Sesión iniciada.' : null);
-    if (signedIn) await _offerNotifications(service);
-  }
-
-  /// After sign-in: offer push once (only when push is configured).
-  Future<void> _offerNotifications(PushService service) async {
-    if (!mounted || !service.authenticated) return;
-    await maybeOfferNotifications(context, service);
-    if (mounted) setState(() {});
   }
 
   Future<void> saveSettings(UserProfileSettings value) async {

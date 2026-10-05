@@ -16,6 +16,9 @@ import 'package:futbeat/features/profile/profile_screen.dart';
 
 class _Tokens implements PushTokenSource {
   @override
+  Future<String?> currentToken() => requestToken();
+
+  @override
   Future<String?> requestToken() async => null;
 
   @override

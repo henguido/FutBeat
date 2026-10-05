@@ -580,6 +580,9 @@ void main() {
 
 class _NoTokens implements PushTokenSource {
   @override
+  Future<String?> currentToken() => requestToken();
+
+  @override
   Future<String?> requestToken() async => null;
 
   @override

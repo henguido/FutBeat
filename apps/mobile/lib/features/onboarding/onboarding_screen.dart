@@ -602,6 +602,19 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // A restored, already set-up account (see PushService.accountHadData)
+    // marks the setup done: from the first-run welcome go to Partidos.
+    // Mid-setup steps and Personalizar FutBeat are never moved.
+    ref.listen(preferenceProvider, (previous, next) {
+      final was = previous?.asData?.value.bootstrapDismissed;
+      if (!widget.reentry &&
+          step == OnboardingStep.welcome &&
+          was == false &&
+          next.asData?.value.bootstrapDismissed == true &&
+          mounted) {
+        context.go('/matches');
+      }
+    });
     final preference = ref.watch(preferenceProvider).asData?.value;
     final follows =
         ref.watch(followsProvider).asData?.value ?? const <String>{};

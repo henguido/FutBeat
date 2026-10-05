@@ -20,6 +20,9 @@ import 'package:futbeat/main.dart' show handlePasswordResetLink;
 
 class _Tokens implements PushTokenSource {
   @override
+  Future<String?> currentToken() => requestToken();
+
+  @override
   Future<String?> requestToken() async => null;
 
   @override

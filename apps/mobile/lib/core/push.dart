@@ -319,7 +319,13 @@ Future<void> ensureFirebase() async {
 }
 
 abstract interface class PushTokenSource {
+  /// Asks for the notification permission when needed (an explicit user
+  /// action only) and returns the device token.
   Future<String?> requestToken();
+
+  /// The device token only if notifications are already allowed; never
+  /// shows the system permission dialog.
+  Future<String?> currentToken();
   Stream<String> get rotations;
 }
 
@@ -336,6 +342,19 @@ class FirebasePushTokens implements PushTokenSource {
     }
     if (Platform.isIOS &&
         await FirebaseMessaging.instance.getAPNSToken() == null) {
+      return null;
+    }
+    return FirebaseMessaging.instance.getToken();
+  }
+
+  @override
+  Future<String?> currentToken() async {
+    await ensureFirebase();
+    final settings = await FirebaseMessaging.instance.getNotificationSettings();
+    if (![
+      AuthorizationStatus.authorized,
+      AuthorizationStatus.provisional,
+    ].contains(settings.authorizationStatus)) {
       return null;
     }
     return FirebaseMessaging.instance.getToken();
@@ -468,6 +487,11 @@ class PushService {
   };
 
   Set<OAuthProvider>? _oauthProviders;
+
+  /// Follows written to this device by an account sync (not chosen by
+  /// the user here): they never count as "first follow" for the
+  /// notifications offer.
+  final Set<String> syncedFollows = {};
 
   /// Whether the signed-in account already had favourites or a chosen
   /// country on the server when this device linked it (an existing,
@@ -966,7 +990,9 @@ class PushService {
       if (pushConfigured &&
           await storage.read(key: 'futbeat.push.enabled') == 'true' &&
           !_stale(generation)) {
-        await enable();
+        // Re-register silently; a permission revoked in Android settings is
+        // not asked for again on startup.
+        await enable(prompt: false);
       }
     } catch (_) {
       enabled = false;
@@ -1196,6 +1222,7 @@ class PushService {
       next = {...local, ...incoming};
     }
     final missing = next.difference(local);
+    syncedFollows.addAll(missing);
     if (missing.isNotEmpty) await database.addFollows(missing);
     if (_stale(generation)) return;
     if (leftover != null) await storage.delete(key: leftoverKey);
@@ -1418,6 +1445,14 @@ class PushService {
         (cloudFollows is List && cloudFollows.isNotEmpty) ||
         (cloudPreferences is Map &&
             '${cloudPreferences['selectedCountry'] ?? ''}'.isNotEmpty);
+    // An account that was already set up does not need the first-run
+    // onboarding again on this device (reinstall, new phone), whichever
+    // provider signed it in. An onboarding already on screen is not moved.
+    if (accountHadData == true) {
+      try {
+        await database.markBootstrapDismissed();
+      } catch (_) {}
+    }
 
     // Every part runs even when another fails, favourites first: a profile
     // or country error never leaves them unsynced. The first error is
@@ -1641,12 +1676,15 @@ class PushService {
     } catch (_) {}
   }
 
-  Future<void> enable() async {
+  /// Turns notifications on for this device. [prompt] (default) may show
+  /// the system permission dialog, so only a user action passes it; the
+  /// automatic re-enable at startup never asks again.
+  Future<void> enable({bool prompt = true}) async {
     await _awaitSignOutCleanup();
     if (!pushConfigured || !authenticated) {
       throw StateError('Push requires configuration and sign-in');
     }
-    token = await tokens.requestToken();
+    token = await (prompt ? tokens.requestToken() : tokens.currentToken());
     if (token == null) {
       throw StateError('Notification permission or device token unavailable');
     }

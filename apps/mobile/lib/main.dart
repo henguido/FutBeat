@@ -240,11 +240,18 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     AsyncValue<Set<String>> next,
   ) {
     if (followPromptChecked) return;
-    if (!followAdded(previous?.asData?.value, next.asData?.value)) return;
+    final service = ref.read(pushServiceProvider);
+    if (!followAdded(
+      previous?.asData?.value,
+      next.asData?.value,
+      synced: service.syncedFollows,
+    )) {
+      return;
+    }
     followPromptChecked = true;
     final context = router.routerDelegate.navigatorKey.currentContext;
     if (context == null) return;
-    unawaited(maybeOfferNotifications(context, ref.read(pushServiceProvider)));
+    unawaited(maybeOfferNotifications(context, service));
   }
 
   @override

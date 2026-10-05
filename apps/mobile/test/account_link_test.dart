@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/push.dart';
+import 'package:futbeat/core/push_messages.dart';
 
 const _config = LiveRealtimeConfig(
   supabaseUrl: 'https://supabase.test',
@@ -12,6 +13,9 @@ const _config = LiveRealtimeConfig(
 );
 
 class _Tokens implements PushTokenSource {
+  @override
+  Future<String?> currentToken() => requestToken();
+
   @override
   Future<String?> requestToken() async => null;
 
@@ -368,4 +372,80 @@ void main() {
       },
     );
   });
+
+  group('notification permission', () {
+    test('restored follows are not a "first follow"; user ones are', () async {
+      final value = service();
+      await value.signInWithOAuth(OAuthProvider.google);
+      // The server had nothing here; simulate an account that had follows.
+      server.follows['user-g'] = {'team:restored'};
+      await value.signOut();
+      await value.signOutCleanup;
+      final before = await db.watchFollows().first;
+      await value.signInWithOAuth(OAuthProvider.google);
+      final after = await db.watchFollows().first;
+      expect(after.difference(before), {'team:restored'});
+      expect(followAdded(before, after, synced: value.syncedFollows), isFalse);
+      expect(
+        followAdded(after, {
+          ...after,
+          'team:mine',
+        }, synced: value.syncedFollows),
+        isTrue,
+      );
+    });
+
+    test('startup re-enable never asks; an explicit enable does', () async {
+      final tokens = _RecordingTokens();
+      final first = PushService(
+        _config,
+        db,
+        tokens,
+        dio: server.dio,
+        oauthEnabled: true,
+        oauthBrowser: (_, _) async =>
+            'com.futbeat.futbeat://login-callback?code=one-time',
+        pushConfigured: true,
+      );
+      await first.signInWithOAuth(OAuthProvider.google);
+      expect(tokens.prompts, 0);
+      await first.enable();
+      expect(tokens.prompts, 1);
+      // A new app start on the same storage (the fake dio stays open).
+      addTearDown(first.dispose);
+
+      final restarted = PushService(
+        _config,
+        db,
+        tokens,
+        dio: server.dio,
+        pushConfigured: true,
+      );
+      addTearDown(restarted.dispose);
+      await restarted.restore();
+      expect(restarted.enabled, isTrue);
+      expect(tokens.prompts, 1);
+      expect(tokens.silent, 1);
+    });
+  });
+}
+
+class _RecordingTokens implements PushTokenSource {
+  var prompts = 0;
+  var silent = 0;
+
+  @override
+  Future<String?> requestToken() async {
+    prompts++;
+    return 'device-token';
+  }
+
+  @override
+  Future<String?> currentToken() async {
+    silent++;
+    return 'device-token';
+  }
+
+  @override
+  Stream<String> get rotations => const Stream.empty();
 }

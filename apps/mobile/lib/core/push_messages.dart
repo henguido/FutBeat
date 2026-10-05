@@ -235,11 +235,16 @@ class PushMessageRouter {
 }
 
 /// True when [next] adds a follow to an already loaded [previous] set.
-bool followAdded(Set<String>? previous, Set<String>? next) =>
+/// A follow the user added here: new keys that did not arrive from an
+/// account sync ([synced], see [PushService.syncedFollows]).
+bool followAdded(
+  Set<String>? previous,
+  Set<String>? next, {
+  Set<String> synced = const {},
+}) =>
     previous != null &&
     next != null &&
-    next.length > previous.length &&
-    !previous.containsAll(next);
+    next.difference(previous).difference(synced).isNotEmpty;
 
 /// Offers to enable notifications on this device when
 /// [PushService.shouldPromptForNotifications] allows it (push configured,

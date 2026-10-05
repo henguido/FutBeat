@@ -19,6 +19,9 @@ const _config = LiveRealtimeConfig(
 
 class _Tokens implements PushTokenSource {
   @override
+  Future<String?> currentToken() => requestToken();
+
+  @override
   Future<String?> requestToken() async => null;
 
   @override
