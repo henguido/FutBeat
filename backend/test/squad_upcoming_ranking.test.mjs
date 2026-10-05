@@ -191,8 +191,13 @@ test('P2 helpers remain private and planner is deterministic/read-only with unch
   for (const n of [0, 26, null]) await assert.rejects(plan(db, n), /Invalid squad plan limit/);
   const old = (await readFile(new URL('../../supabase/migrations/20260922141448_optimize_squad_candidate_pool.sql', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const current = (await definition(db, 'futbeat_private.futbeat_team_squad_plan(integer)')).replace(/\r\n/g, '\n');
-  assert.equal(current.slice(current.indexOf('  if tier=0 then'), current.indexOf('  elsif tier=2 then')),
-    old.slice(old.indexOf('  if tier=0 then'), old.indexOf('  elsif tier=2 then')));
+  // Tier 0 changed only in 20261005100000 (window-first probe, same rows);
+  // tiers 1 and 6 are compared against the original text.
+  const liveTier = (await readFile(new URL('../../supabase/migrations/20261005100000_squad_plan_live_tier.sql', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  assert.equal(current.slice(current.indexOf('  if tier=0 then'), current.indexOf('  elsif tier=1 then')),
+    liveTier.slice(liveTier.indexOf('  if tier=0 then'), liveTier.indexOf('  elsif tier=1 then')));
+  assert.equal(current.slice(current.indexOf('  elsif tier=1 then'), current.indexOf('  elsif tier=2 then')),
+    old.slice(old.indexOf('  elsif tier=1 then'), old.indexOf('  elsif tier=2 then')));
   // Tiers 3-5 are unchanged; #111 only adds tier 6 ('requested') to the
   // priority/reason mapping (checked below), so compare up to it.
   const tail = (text) => {

@@ -147,3 +147,12 @@ test('large planner fixture uses indexed bounded lookups and never scans observa
   t.diagnostic(JSON.stringify({fixture:'synthetic PGlite',teams:8000,players:20000,matches:4000,mappings:28000,observations:30000,sqlMs:p['Execution Time']}));
  } finally {await db.close();}
 });
+
+// 20261005100000: the LIVE tier probes window matches by primary key instead
+// of walking every entity (production: 100k buffers -> 13k per call).
+test('squad plan LIVE tier: window-first probe, and live teams still come first', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const sql = await readFile(new URL('../../supabase/migrations/20261005100000_squad_plan_live_tier.sql', import.meta.url), 'utf8');
+  assert.match(sql, /cross join lateral\(select e\.payload from futbeat_private\.entities e\s+where e\.id=c\.match_id and e\.kind='match' offset 0\) e/);
+  assert.doesNotMatch(sql, /join futbeat_private\.entities e on e\.id=c\.match_id and e\.kind='match'\n\s+cross join lateral\(values/);
+});
