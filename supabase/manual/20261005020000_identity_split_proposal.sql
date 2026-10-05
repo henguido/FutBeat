@@ -88,6 +88,12 @@ order by name,observed_matches desc,external_id;
 --   and exists(select 1 from futbeat_private.provider_observations o
 --     where o.canonical_match_id=x.id and o.raw_payload->'homeTeam'->>'id'=a.external_id);
 -- (same statement for awayTeamId / awayTeam)
+-- C2. fixtures without observations, by competition evidence: a fixture of C
+--     in a competition where ONLY ek was observed (e.g. River Plate: the
+--     Uruguayan id in "Segunda Division"/"Copa Uruguay", 26 fixtures) moves
+--     to ek's new entity; a competition where both or neither id was seen
+--     is left alone (re-ingest decides). Same jsonb_set, with
+--       x.payload->>'competitionId' in (competitions observed for ek only).
 -- commit;
 
 -- D. ROLLBACK (write) --------------------------------------------------------
