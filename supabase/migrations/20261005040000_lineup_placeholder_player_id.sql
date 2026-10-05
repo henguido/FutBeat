@@ -7,8 +7,8 @@
 -- canonical player, so every such row linked to that player's profile and
 -- photo. Events and substitutions carry no "0" ids (checked).
 --
--- Fix: lineup_rows (the single reader every SQL lineup harvest uses) drops a
--- placeholder id (all zeros) from playerId / playerKey / player.id before the
+-- Fix: both SQL lineup readers -- lineup_rows (every lineup harvest) and
+-- lineup_player_roles (titular / banquillo alerts) -- drop a placeholder id (all zeros) from playerId / playerKey / player.id before the
 -- row reaches a harvest; the row keeps its name, number and position, so it
 -- is still counted and rendered, just never resolved to an identity. The
 -- worker and the API normalizers apply the same rule (goalPlayerId).
@@ -16,7 +16,8 @@
 -- authorization): `delete from futbeat_private.provider_entities where
 -- provider='goal_api' and kind='player' and external_id ~ '^0+$'` once
 -- this migration is live; nothing else references the placeholder id.
--- Rollback: re-create lineup_rows from 20260922235500_player_search_coverage.sql.
+-- Rollback: re-create lineup_rows from 20260922235500_player_search_coverage.sql
+-- and lineup_player_roles from 20260928100000_free_player_alerts.sql.
 
 create or replace function futbeat_private.lineup_item_without_placeholder(p_item jsonb)
 returns jsonb language sql immutable set search_path='' as $$
@@ -45,5 +46,30 @@ returns table(side text,item jsonb) language sql immutable set search_path='' as
  where jsonb_typeof(p_payload->'lineups')='object'
 $$;
 
+-- The alert reader (note_lineup_alerts): a placeholder row has no id, so
+-- it can never notify "<someone> es titular" nor count toward the XI.
+-- Body from 20260928100000_free_player_alerts.sql; change: each row passes
+-- through lineup_item_without_placeholder first.
+create or replace function futbeat_private.lineup_player_roles(p_payload jsonb)
+returns table(side text,role text,external_id text) language sql immutable set search_path='' as $$
+  select nullif(lower(r->>'team'),''),
+    case when lower(r->>'type') like 'start%' then 'starter' else 'bench' end,
+    coalesce(nullif(btrim(r->>'playerId'),''),nullif(btrim(r->>'playerKey'),''),nullif(btrim(r#>>'{player,id}'),''))
+  from jsonb_array_elements(case when jsonb_typeof(p_payload->'lineups')='array'
+    then p_payload->'lineups' else '[]'::jsonb end) raw
+  cross join lateral (select futbeat_private.lineup_item_without_placeholder(raw) r) clean
+  where lower(coalesce(r->>'type','')) like 'start%' or lower(coalesce(r->>'type','')) like 'sub%'
+  union all
+  select s.side,case k.key when 'startingLineups' then 'starter' else 'bench' end,
+    coalesce(nullif(btrim(r->>'playerId'),''),nullif(btrim(r->>'playerKey'),''),nullif(btrim(r#>>'{player,id}'),''))
+  from (values('home'),('away')) s(side)
+  cross join (values('startingLineups'),('substitutes')) k(key)
+  cross join lateral jsonb_array_elements(case when jsonb_typeof(p_payload->'lineups'->s.side->k.key)='array'
+    then p_payload->'lineups'->s.side->k.key else '[]'::jsonb end) raw
+  cross join lateral (select futbeat_private.lineup_item_without_placeholder(raw) r) clean
+  where jsonb_typeof(p_payload->'lineups')='object'
+$$;
+
 revoke all on function futbeat_private.lineup_item_without_placeholder(jsonb),
+  futbeat_private.lineup_player_roles(jsonb),
   futbeat_private.lineup_rows(jsonb) from public,anon,authenticated;

@@ -190,9 +190,12 @@ create or replace function public.futbeat_read_news_feed(
  ), transfers as (
    select tr.*,p.payload->>'name' player_name,ft.payload->>'name' from_team_name,
      tt.payload->>'name' to_team_name,
+     -- Stored ids may be aliases: compare canonical to canonical.
      case when exists(select 1 from followed f where
-       (f.subject_type='player' and f.subject_id=tr.player_id)
-       or (f.subject_type='team' and f.subject_id in (tr.from_team_id,tr.to_team_id))) then 1 else 2 end tier
+       (f.subject_type='player' and f.subject_id=futbeat_private.futbeat_resolve_entity_id('player',tr.player_id))
+       or (f.subject_type='team' and f.subject_id in (
+         futbeat_private.futbeat_resolve_entity_id('team',tr.from_team_id),
+         futbeat_private.futbeat_resolve_entity_id('team',tr.to_team_id)))) then 1 else 2 end tier
    from futbeat_private.transfer_events tr
    left join futbeat_private.entities p on p.id=tr.player_id and p.kind='player'
    left join futbeat_private.entities ft on ft.id=tr.from_team_id and ft.kind='team'

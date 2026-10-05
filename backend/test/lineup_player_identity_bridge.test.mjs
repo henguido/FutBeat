@@ -378,3 +378,15 @@ test('harvest_lineup_players: placeholder id "0" rows are kept by name but never
     { team: 'home', type: 'starting_lineups', player: { id: '0', name: 'Y' } }] })])).rows[0].n;
   assert.equal(rows, 2, 'the rows themselves stay (name-only)');
 }));
+
+test('lineup_player_roles (titular/banquillo alerts) never yields the placeholder id "0"', () => withDb(async (db) => {
+  const rows = (await db.query('select external_id from futbeat_private.lineup_player_roles($1::jsonb)', [JSON.stringify({ lineups: [
+    { team: 'home', type: 'starting_lineups', playerKey: '0', lineupPlayer: 'Sin Id' },
+    { team: 'home', type: 'starting_lineups', playerKey: '77', lineupPlayer: 'Con Id' },
+    { team: 'away', type: 'substitutes', playerId: '000', playerKey: '0' },
+  ] })])).rows.map((r) => r.external_id);
+  assert.deepEqual(rows, [null, '77', null]);
+  const nested = (await db.query('select external_id from futbeat_private.lineup_player_roles($1::jsonb)', [JSON.stringify({ lineups: {
+    home: { startingLineups: [{ player: { id: '0', name: 'X' } }, { player: { id: '9', name: 'Y' } }] } } })])).rows.map((r) => r.external_id);
+  assert.deepEqual(nested, [null, '9']);
+}));

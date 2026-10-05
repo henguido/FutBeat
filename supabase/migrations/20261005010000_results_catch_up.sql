@@ -25,7 +25,9 @@
 --      every 45 min / 1 h without escalation; the last three days cap at
 --      3 h; older days keep 6 h x attempt (unchanged).
 --   3. next_goal_results_candidate: also today's matches whose kickoff was
---      more than 150 min ago; the last three days come before older ones.
+--      more than 150 min ago; never-attempted dates first, then the date
+--      waiting longest since its last attempt (recent dates break ties), so
+--      frequent recent retries never starve a due older date.
 --      Closing as missing_from_provider still needs >= 4 attempts AND
 --      kickoff > 48 h ago (unchanged), so frequent partial-day attempts
 --      can never close a match early.
@@ -140,9 +142,14 @@ returns date language sql stable security invoker set search_path='' as $$
  left join futbeat_private.results_date_attempts a
    on a.provider='goal_api' and a.provider_date=c.provider_date
  where a.next_retry_at is null or a.next_retry_at<=now()
- -- The last three days (today included) first, then fewest attempts.
- order by (c.provider_date<(now() at time zone 'UTC')::date-2),
-   coalesce(a.attempt_count,0),coalesce(a.last_attempt_at,'epoch'::timestamptz),
+ -- Never-attempted dates first (after an outage), then the date waiting
+ -- longest since its last attempt (round robin: today/yesterday, due every
+ -- 45-60 min, cannot starve a due older date); the last three days break
+ -- ties, then fewest attempts.
+ order by (a.last_attempt_at is not null),
+   coalesce(a.last_attempt_at,'epoch'::timestamptz),
+   (c.provider_date<(now() at time zone 'UTC')::date-2),
+   coalesce(a.attempt_count,0),
    c.provider_date desc limit 1
 $$;
 

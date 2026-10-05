@@ -157,8 +157,10 @@ void main() {
         ),
       ),
     );
-    // Test HTTP returns 400 for every image: the error builder hides it.
+    // Test HTTP returns 400 for every image: the error builder hides it
+    // and leaves no empty 16:9 box behind.
     expect(find.byKey(const ValueKey('news-image')), findsOneWidget);
+    expect(find.byType(AspectRatio), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

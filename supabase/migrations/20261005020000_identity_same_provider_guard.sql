@@ -11,9 +11,11 @@
 -- id (different clubs). 1,333 fixtures (373 future) and 1 follow touch them.
 -- One competition is affected the same way (Ykkonen, Finland: 2 ids).
 --
--- Fix: the name / shortName / alias fallback skips an entity that already
--- holds a DIFFERENT id of the same provider (directly or through a redirected
--- alias) unless the caller supplies a country that corroborates the match.
+-- Fix: the name / shortName / alias fallback never merges into an entity
+-- that already holds a DIFFERENT id of the same provider (directly or
+-- through a redirected alias) unless both sides carry the same country.
+-- Ambiguity is still decided over all name matches (two candidates = new
+-- entity, as before).
 -- Cross-provider matching by name is unchanged. Only future resolutions are
 -- affected: existing mappings are left as they are (repair is a separate,
 -- authorized data operation; see supabase/manual/20261005020000_identity_split_proposal.sql).
@@ -28,6 +30,7 @@ declare
   result text;
   matched text;
   matches integer;
+  v_guard_ok boolean;
 begin
   if p_provider not in ('sofascore','espn','goal_api')
      or p_kind not in ('competition','team','match','player')
@@ -47,8 +50,33 @@ begin
   end if;
 
   if p_kind in ('competition','team') and nullif(p_name,'') is not null then
-    select count(*),min(e.id)
-    into matches,matched
+    -- Ambiguity is decided over ALL compatible name matches; the guard then
+    -- applies to the single match (filtering first would turn an ambiguous
+    -- name into a "unique" one and merge into the wrong entity).
+    select count(*),min(e.id),bool_and(
+      -- A second id of the SAME provider is a different team/competition
+      -- unless a country corroborates it (both sides carry the same
+      -- country): a name alone never merges two provider ids (GOAL sends
+      -- teams without country; same-named clubs, or a club and a national
+      -- side, are distinct ids).
+      (nullif(p_country,'') is not null
+        and lower(coalesce(e.payload->>'country',''))=lower(p_country))
+      or not exists(
+        select 1
+        from futbeat_private.provider_entities pe
+        where pe.provider=p_provider
+          and pe.kind=p_kind
+          and pe.external_id<>p_external
+          and (
+            pe.canonical_id=e.id
+            or pe.canonical_id in (
+              select r.alias_id
+              from futbeat_private.entity_redirects r
+              where r.canonical_id=e.id and r.kind=p_kind
+            )
+          )
+      ))
+    into matches,matched,v_guard_ok
     from futbeat_private.entities e
     where e.kind=p_kind
       and not exists(
@@ -78,31 +106,10 @@ begin
         nullif(p_country,'') is null
         or nullif(e.payload->>'country','') is null
         or lower(e.payload->>'country')=lower(p_country)
-      )
-      -- A second id of the SAME provider is a different team/competition
-      -- unless a country corroborates it: a name alone never merges two
-      -- provider ids (GOAL sends teams without country, and same-named
-      -- clubs or a club and a national side are distinct ids).
-      and (
-        nullif(p_country,'') is not null
-        or not exists(
-          select 1
-          from futbeat_private.provider_entities pe
-          where pe.provider=p_provider
-            and pe.kind=p_kind
-            and pe.external_id<>p_external
-            and (
-              pe.canonical_id=e.id
-              or pe.canonical_id in (
-                select r.alias_id
-                from futbeat_private.entity_redirects r
-                where r.canonical_id=e.id and r.kind=p_kind
-              )
-            )
-        )
       );
 
-    if matches=1 then
+
+    if matches=1 and v_guard_ok then
       result:=futbeat_private.futbeat_resolve_entity_id(p_kind,matched);
     end if;
   end if;

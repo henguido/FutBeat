@@ -52,3 +52,20 @@ test('competitions follow the same rule (two same-named leagues of one provider 
   const b = await resolve(db, 'goal_api', 'competition', 'league-b', 'Primera Division');
   assert.notEqual(a, b);
 }));
+
+test('ambiguity is decided over all name matches: the guard never makes a name "unique"', () => withDb(async (db) => {
+  const goalNacional = await resolve(db, 'goal_api', 'team', 'nac-goal-100', 'Nacional');
+  // A second, different "Nacional" known only from another provider.
+  await db.query("insert into futbeat_private.entities values('fb_team_nacional_other','team',$1)",
+    [JSON.stringify({ id: 'fb_team_nacional_other', name: 'Nacional', country: '' })]);
+  await db.query("insert into futbeat_private.provider_entities values('sofascore','team','nac-sofa','fb_team_nacional_other')");
+  const fresh = await resolve(db, 'goal_api', 'team', 'nac-goal-200', 'Nacional');
+  assert.notEqual(fresh, goalNacional);
+  assert.notEqual(fresh, 'fb_team_nacional_other', 'two candidates: a new entity, never a merge into the other club');
+}));
+
+test('a country only corroborates when the stored entity has that same country', () => withDb(async (db) => {
+  const club = await resolve(db, 'goal_api', 'team', 'and-club', 'Andorra CF');
+  assert.notEqual(await resolve(db, 'goal_api', 'team', 'and-national', 'Andorra CF', 'Andorra'), club,
+    'stored club has no country: "Andorra" corroborates nothing');
+}));

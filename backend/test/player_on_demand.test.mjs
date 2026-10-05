@@ -305,3 +305,14 @@ test('security: player demand/reserve/store are service-only; helpers private; w
   assert.equal(forged.status, 403);
   assert.equal(goal.goalCalls().length, 0);
 }));
+
+test('a name with no Latin letters is never sent to GOAL (it folds to an empty query)', () => withDb(async (db) => {
+  // The catalog refuses such searches; a demand could still arrive from
+  // another path (e.g. lineup hydration), so the worker guards it too.
+  await db.query("insert into futbeat_private.player_search_demands(query_key,query_text) values('ivan petrov key','Иван Петров')");
+  const goal = worker(db, () => { throw new Error('GOAL must not be called'); });
+  const result = await goal.run();
+  assert.equal(goal.goalCalls().length, 0);
+  assert.equal(result.players[0].kind, 'player-search');
+  assert.equal(result.players[0].skipped, 'unsearchable_query');
+}));

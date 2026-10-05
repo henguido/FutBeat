@@ -96,3 +96,14 @@ test('the results cron is rescheduled every 30 min only when pg_cron exists (no-
   const cron = (await db.query("select to_regnamespace('cron') is not null v")).rows[0].v;
   assert.equal(cron, false, 'local PGlite has no pg_cron: the migration body must skip cleanly');
 }));
+
+test('a due older date is not starved by recent dates retried every 45-60 min', () => withDb(async (db) => {
+  await seed(db, `${utcDate(1)}T18:00:00.000Z`);
+  await seed(db, `${utcDate(5)}T18:00:00.000Z`);
+  // Yesterday was attempted 50 min ago and is due again; the older date
+  // waited 7 h since its last attempt.
+  await db.query(`insert into futbeat_private.results_date_attempts(provider,provider_date,attempt_count,last_attempt_at,last_outcome,next_retry_at)
+    values('goal_api',$1,5,now()-interval '50 minutes','PARTIAL',now()),('goal_api',$2,2,now()-interval '7 hours','PARTIAL',now())`,
+  [utcDate(1), utcDate(5)]);
+  assert.equal(await candidate(db), utcDate(5));
+}));

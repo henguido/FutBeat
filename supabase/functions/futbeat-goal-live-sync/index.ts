@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { nextResultsOffset } from "../_shared/results_pagination.ts";
 import {
   GOAL_PLAYER_ENDPOINTS,
+  goalPlayerSearchQuery,
   normalizeGoalPlayerProfile,
   normalizeGoalPlayerSearch,
   normalizeGoalPlayerStatistics,
@@ -1173,7 +1174,18 @@ async function syncPlayerDemand(maxCalls = 2) {
     let remaining: number | null = null;
     try {
       goalKey ||= await readGoalKey();
-      if (kind === "player-search") {
+      if (kind === "player-search" &&
+        goalPlayerSearchQuery(clean(plan.query)).length < 2) {
+        // A name with no Latin letters (Cyrillic, Arabic, CJK...) folds to
+        // nothing: GOAL cannot search it. No provider call; the reservation
+        // closes with no players (never unrelated ones from an empty query).
+        const stored = await rpc("futbeat_store_player_search_result", {
+          p_reservation_id: reservationId,
+          p_players: [],
+          p_provider_remaining: null,
+        });
+        results.push({ status: "ok", kind, skipped: "unsearchable_query", ...stored });
+      } else if (kind === "player-search") {
         const response = await fetchGoal(
           goalKey,
           GOAL_PLAYER_ENDPOINTS.search(clean(plan.query)),
