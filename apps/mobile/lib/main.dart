@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
@@ -191,8 +192,8 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Password-reset links (the initial one included).
-    try {
+    // Password-reset links (the initial one included), Android only.
+    if (Platform.isAndroid) {
       links = AppLinks().uriLinkStream.listen(
         (link) => unawaited(
           handlePasswordResetLink(
@@ -204,8 +205,6 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
         ),
         onError: (_) {},
       );
-    } catch (_) {
-      // No platform links (tests, desktop).
     }
     // Null unless the build has the push flags: nothing runs otherwise.
     final source = ref.read(pushMessageSourceProvider);
