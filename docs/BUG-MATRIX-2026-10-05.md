@@ -24,7 +24,7 @@ La evidencia es de lecturas read-only de producción tomadas esta noche, salvo i
 | 11 | Finales con marcador distinto (dedupe) | CLOSED | #172, #179 (score-after) |
 | 12 | Datos viejos / lentos tras outage | FIXED-NOT-QA | Catch-up reciente y backoff sin escalar (`20261005010000`). La causa raíz del outage (PGRST002) se resolvió con el restart del 2026-10-04 |
 | 13 | Tabla no disponible | FIXED-NOT-QA (parcial) | Sub-grupos desde fixtures (`20261005030000`): UEFA NL se resuelve. Argentina, MLS, Concacaf NL y CA Cup siguen fail-closed (correcto, sin evidencia) |
-| 14 | Identidad club vs selección (Andorra) | FIXED-NOT-QA | Guard en el resolver (`20261005020000`). Producción: 65 canónicos y 143 ids pendientes de split autorizado |
+| 14 | Identidad club vs selección (Andorra) | FIXED-NOT-QA | Guard en el resolver (`20261005020000`). Producción: 65 canónicos y 143 ids pendientes de split autorizado. Ejemplo visible: "River Plate" (Argentina) muestra 22 partidos de la Segunda División de Uruguay y 4 de la Copa Uruguay (OPEN-P1 hasta el split) |
 | 15 | Alineaciones: jugador equivocado o foto ajena | FIXED-NOT-QA | Placeholder `playerKey "0"` (530 filas): `ba42fe1` y `20261005040000`. Falta borrar el mapping `'0'` en prod |
 | 16 | Alineación duplicada (22 titulares) | FIXED-NOT-QA | Dedupe por sección (`ba42fe1`, requiere deploy de `futbeat-api`) |
 | 17 | Fotos de jugadores | CLOSED + (15) | #177. La foto ajena por id `"0"` queda cubierta por la fila 15 |
