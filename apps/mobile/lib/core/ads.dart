@@ -253,35 +253,70 @@ typedef PlatformBannerFactory = PlatformBanner Function(
   required void Function() onFailed,
 });
 
+/// In-feed banner sized to the screen width (Google's anchored adaptive
+/// size, height known before loading: no layout jump), falling back to the
+/// standard 320x50 banner.
 class _GoogleBanner implements PlatformBanner {
   _GoogleBanner(
-    String unitId, {
-    required bool personalized,
-    required void Function() onLoaded,
-    required void Function() onFailed,
-  }) : ad = BannerAd(
-         size: AdSize.banner,
-         adUnitId: unitId,
-         request: AdRequest(nonPersonalizedAds: !personalized),
-         listener: BannerAdListener(
-           onAdLoaded: (_) => onLoaded(),
-           onAdFailedToLoad: (_, _) => onFailed(),
-         ),
-       );
+    this.unitId, {
+    required this.personalized,
+    required this.onLoaded,
+    required this.onFailed,
+  });
 
-  final BannerAd ad;
+  final String unitId;
+  final bool personalized;
+  final void Function() onLoaded;
+  final void Function() onFailed;
+  BannerAd? _ad;
+  bool _disposed = false;
 
-  @override
-  Size get size => Size(ad.size.width.toDouble(), ad.size.height.toDouble());
+  /// Feed side margins the banner stays within.
+  static const _feedMargin = 32;
 
-  @override
-  Future<void> load() => ad.load();
+  /// Standard banner, when no adaptive size is available.
+  static const _standard = AdSize(width: 320, height: 50);
 
   @override
-  Future<void> dispose() => ad.dispose();
+  Size get size {
+    final value = _ad?.size ?? _standard;
+    return Size(value.width.toDouble(), value.height.toDouble());
+  }
 
   @override
-  Widget widget() => AdWidget(ad: ad);
+  Future<void> load() async {
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    final width = (view.physicalSize.width / view.devicePixelRatio).truncate();
+    AdSize size = _standard;
+    try {
+      size =
+          await AdSize.getLargeAnchoredAdaptiveBannerAdSize(
+            width - _feedMargin,
+          ) ??
+          _standard;
+    } catch (_) {}
+    if (_disposed) return;
+    final ad = BannerAd(
+      size: size,
+      adUnitId: unitId,
+      request: AdRequest(nonPersonalizedAds: !personalized),
+      listener: BannerAdListener(
+        onAdLoaded: (_) => onLoaded(),
+        onAdFailedToLoad: (_, _) => onFailed(),
+      ),
+    );
+    _ad = ad;
+    await ad.load();
+  }
+
+  @override
+  Future<void> dispose() async {
+    _disposed = true;
+    await _ad?.dispose();
+  }
+
+  @override
+  Widget widget() => AdWidget(ad: _ad!);
 }
 
 class GoogleAdLoader implements AdLoader {

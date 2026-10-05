@@ -320,13 +320,45 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  test('the feed ad goes after the third group, never in LIVE', () {
-    expect(feedAdAfterGroup(1, 'Todos'), isFalse);
-    expect(feedAdAfterGroup(2, 'Todos'), isFalse);
-    expect(feedAdAfterGroup(3, 'Todos'), isTrue);
-    expect(feedAdAfterGroup(3, 'Próximos'), isTrue);
-    expect(feedAdAfterGroup(4, 'Todos'), isFalse);
-    expect(feedAdAfterGroup(3, 'En vivo'), isFalse);
+  group('feed ad slots', () {
+    List<int> slots(int groups, {bool favorites = false, String f = 'Todos'}) =>
+        feedAdSlots(favorites: favorites, groups: groups, filter: f);
+
+    test('with favourites: after them, then every 4 groups from the 3rd', () {
+      expect(slots(20, favorites: true), [0, 3, 7, 11, 15]);
+    });
+
+    test('without favourites: after the 2nd group, then every 4', () {
+      expect(slots(20), [2, 6, 10, 14, 18]);
+    });
+
+    test('never more than 5 per day', () {
+      expect(slots(200, favorites: true), hasLength(feedAdMaxSlots));
+      expect(slots(200), hasLength(feedAdMaxSlots));
+    });
+
+    test('short feeds: few or no slots, never at the end', () {
+      expect(slots(0), isEmpty);
+      expect(slots(1), isEmpty);
+      expect(slots(2), isEmpty);
+      expect(slots(3), [2]);
+      expect(slots(0, favorites: true), isEmpty);
+      expect(slots(1, favorites: true), [0]);
+      expect(slots(3, favorites: true), [0]);
+      expect(slots(4, favorites: true), [0, 3]);
+    });
+
+    test('slots are spaced (never consecutive) and never in LIVE', () {
+      for (final favorites in [true, false]) {
+        final list = slots(40, favorites: favorites);
+        for (var i = 1; i < list.length; i++) {
+          expect(list[i] - list[i - 1], greaterThanOrEqualTo(3));
+        }
+      }
+      expect(slots(20, f: 'En vivo'), isEmpty);
+      expect(slots(20, favorites: true, f: 'En vivo'), isEmpty);
+      expect(slots(20, f: 'Próximos'), [2, 6, 10, 14, 18]);
+    });
   });
 
   testWidgets('a feed with fewer groups has no ad slot', (tester) async {
@@ -1114,6 +1146,129 @@ void main() {
       greaterThan(firstCompetitionY),
     );
     expect(tester.takeException(), isNull);
+  });
+
+  group('feed ad slots in the real feed', () {
+    /// [groups] competitions with two matches each today; with
+    /// [favourite], one of them involves the followed team t_fav.
+    Snapshot manyGroups(int groups, {bool favourite = false}) {
+      final today = costaRicaNow();
+      String at(int hour) => DateTime.utc(
+        today.year,
+        today.month,
+        today.day,
+        hour + 6,
+      ).toIso8601String();
+      final teams = <Map<String, dynamic>>[
+        {'id': 't_fav', 'name': 'Equipo Favorito', 'country': 'Costa Rica'},
+      ];
+      final matches = <Map<String, dynamic>>[];
+      for (var g = 0; g < groups; g++) {
+        for (var m = 0; m < 2; m++) {
+          final home = 't_${g}_${m}_h';
+          final away = 't_${g}_${m}_a';
+          teams
+            ..add({'id': home, 'name': 'Local $g$m'})
+            ..add({'id': away, 'name': 'Visita $g$m'});
+          matches.add({
+            'id': 'm_${g}_$m',
+            'competitionId': 'c_$g',
+            'homeTeamId': favourite && g == 0 && m == 0 ? 't_fav' : home,
+            'awayTeamId': away,
+            'startTime': at(10 + m),
+            'status': 'SCHEDULED',
+            'events': <dynamic>[],
+            'statistics': <dynamic>[],
+          });
+        }
+      }
+      return Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        'coverage': {'partial': false},
+        'freshness': {'stale': false},
+        'competitions': [
+          for (var g = 0; g < groups; g++)
+            {
+              'id': 'c_$g',
+              'name': 'Liga ${String.fromCharCode(65 + g % 26)}$g',
+              'country': 'Costa Rica',
+              'countryCode': 'CR',
+              'relevanceScore': 900 - g,
+            },
+        ],
+        'teams': teams,
+        'players': <dynamic>[],
+        'matches': matches,
+        'standings': <dynamic>[],
+      });
+    }
+
+    /// Kinds of the feed's blocks top to bottom: H = competition header,
+    /// M = match row, A = ad slot.
+    String layout(WidgetTester tester) {
+      final items = <(double, String)>[
+        for (final e in find.byType(MatchCard).evaluate())
+          (tester.getTopLeft(find.byWidget(e.widget)).dy, 'M'),
+        for (final e in find.byType(AdSlot).evaluate())
+          (tester.getTopLeft(find.byWidget(e.widget)).dy, 'A'),
+        for (final e
+            in find.byTooltip(RegExp('^Ocultar partidos de ')).evaluate())
+          (tester.getTopLeft(find.byWidget(e.widget)).dy, 'H'),
+      ]..sort((a, b) => a.$1.compareTo(b.$1));
+      return items.map((i) => i.$2).join();
+    }
+
+    testWidgets('without favourites: after group 2, then every 4, between '
+        'complete groups only', (tester) async {
+      await _pump(tester, data: manyGroups(20), size: const Size(390, 60000));
+      expect(find.byType(AdSlot), findsNWidgets(5));
+      final text = layout(tester);
+      // Every ad is followed by a group header, never by a match row.
+      expect(RegExp('A(?!H)').hasMatch(text), isFalse, reason: text);
+      expect(text.contains('AA'), isFalse);
+      // Two complete groups (header + 2 rows each) before the first ad.
+      expect(text.startsWith('HMMHMMA'), isTrue, reason: text);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('with favourites: the first ad right after FAVORITOS', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        data: manyGroups(20, favourite: true),
+        follows: const {'team:t_fav'},
+        size: const Size(390, 60000),
+      );
+      expect(find.text('FAVORITOS'), findsOneWidget);
+      expect(find.byType(AdSlot), findsNWidgets(5));
+      final favourites = tester.getTopLeft(find.text('FAVORITOS')).dy;
+      final ads =
+          find
+              .byType(AdSlot)
+              .evaluate()
+              .map((e) => tester.getTopLeft(find.byWidget(e.widget)).dy)
+              .toList()
+            ..sort();
+      final headers =
+          find
+              .byTooltip(RegExp('^Ocultar partidos de '))
+              .evaluate()
+              .map((e) => tester.getTopLeft(find.byWidget(e.widget)).dy)
+              .toList()
+            ..sort();
+      // FAVORITOS, then the ad, then the first competition group.
+      expect(ads.first, greaterThan(favourites));
+      expect(ads.first, lessThan(headers.first));
+      expect(RegExp('A(?!H)').hasMatch(layout(tester)), isFalse);
+    });
+
+    testWidgets('a short feed gets few or no ad slots', (tester) async {
+      await _pump(tester, data: manyGroups(3), size: const Size(390, 9000));
+      expect(find.byType(AdSlot), findsOneWidget);
+    });
   });
 }
 

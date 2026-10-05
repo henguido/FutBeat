@@ -148,14 +148,33 @@ String _dateContextLabel(DateTime value, DateTime today) {
   return weekdays[date.weekday - 1];
 }
 
-/// Competition groups shown before the feed's single ad slot.
-const feedAdAfterGroups = 3;
+/// At most this many ad slots in one day's feed.
+const feedAdMaxSlots = 5;
 
-/// The feed's one ad goes right after the [feedAdAfterGroups]-th complete
-/// competition group (never between rows of a group), and never in the
-/// LIVE view. Whether it is shown at all is [adsAllowedProvider]'s call.
-bool feedAdAfterGroup(int groupsRendered, String filter) =>
-    groupsRendered == feedAdAfterGroups && filter != 'En vivo';
+/// Where the Partidos feed may show an ad, as the number of complete
+/// competition groups before each slot (0 = right after the FAVORITOS
+/// block). With favourites: after them, then after groups 3, 7, 11, 15.
+/// Without: after groups 2, 6, 10, 14, 18. A slot always has feed content
+/// after it (never at the end, never two in a row, never inside a group),
+/// at most [feedAdMaxSlots], and none in the LIVE view. Whether a slot
+/// shows anything is [adsAllowedProvider]'s call (never for Premium).
+List<int> feedAdSlots({
+  required bool favorites,
+  required int groups,
+  required String filter,
+}) {
+  if (filter == 'En vivo') return const [];
+  final slots = <int>[];
+  if (favorites && groups >= 1) slots.add(0);
+  for (
+    var after = favorites ? 3 : 2;
+    after < groups && slots.length < feedAdMaxSlots;
+    after += 4
+  ) {
+    slots.add(after);
+  }
+  return slots;
+}
 
 /// Only the LIVE status is date-dependent; all other user filters survive.
 String matchFilterForDate(String filter, DateTime selected, DateTime today) =>
@@ -516,12 +535,16 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             feedItems.add(() => const EmptyState('Sin partidos', ''));
           }
 
+          // Feed positions where a complete block ends: [0] = after
+          // FAVORITOS, then after each competition group (ads go only there).
+          final blockEnds = <int, int>{};
           if (followedGames.isNotEmpty) {
             feedItems.add(() => const _FeedHeading(title: 'FAVORITOS'));
             for (final match in followedGames) {
               feedItems.add(() => MatchCard(match, data));
             }
             feedItems.add(() => const SizedBox(height: 12));
+            blockEnds[0] = feedItems.length;
           }
 
           // Then every competition with its remaining matches. Favourite-team
@@ -531,12 +554,29 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           for (final competition in orderedCompetitions) {
             final before = feedItems.length;
             addCompetition(competition);
-            // One discreet ad between competition groups (never inside a
-            // match row), not in the LIVE view. Gated by entitlements.
-            if (feedItems.length > before &&
-                feedAdAfterGroup(++groups, effectiveFilter)) {
-              feedItems.add(() => const AdSlot(AdPlacement.matchesFeed));
+            if (feedItems.length > before) {
+              blockEnds[++groups] = feedItems.length;
             }
+          }
+
+          // Discreet ads between complete blocks (see [feedAdSlots]). Each
+          // slot is keyed by date and position: a date change builds new
+          // slots, never mixing or duplicating the previous day's ads. Built
+          // lazily by the list, so a slot loads only when scrolled near.
+          final slots = feedAdSlots(
+            favorites: followedGames.isNotEmpty,
+            groups: groups,
+            filter: effectiveFilter,
+          );
+          for (final (index, after) in slots.indexed.toList().reversed) {
+            final at = blockEnds[after];
+            if (at == null) continue;
+            final day = requestDate.toIso8601String().substring(0, 10);
+            final key = ValueKey('feed-ad-$day-$index');
+            feedItems.insert(
+              at,
+              () => AdSlot(AdPlacement.matchesFeed, key: key),
+            );
           }
 
           // Horizontal fling = previous/next day. Vertical scrolling and
