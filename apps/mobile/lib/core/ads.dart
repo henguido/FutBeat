@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'entitlements.dart';
+import 'theme.dart';
 
 /// Where FutBeat may show an ad. Only non-intrusive slots: no Match
 /// Center, no interstitials, no rewarded ads.
@@ -536,14 +537,26 @@ class _AdSlotState extends ConsumerState<AdSlot>
     }
     final ad = _ad;
     if (ad == null) return const SizedBox.shrink();
+    // A feed block like the match cards: card colour and radius behind
+    // the adaptive banner (no dark band around it), a small gap from the
+    // cards. Only built once an ad loaded, so nothing is reserved before.
     return Padding(
       key: ValueKey('ad-${widget.placement.name}'),
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Center(
-        child: SizedBox(
-          width: ad.size.width,
-          height: ad.size.height,
-          child: ad.widget(),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: panel,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Center(
+            child: SizedBox(
+              width: ad.size.width,
+              height: ad.size.height,
+              child: ad.widget(),
+            ),
+          ),
         ),
       ),
     );
