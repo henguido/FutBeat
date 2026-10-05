@@ -86,6 +86,10 @@ function harness(db, options = {}) {
       assert.equal(init.headers.Authorization, `Bearer ${goalKey}`);
       return options.provider ? options.provider(url, init) : Response.json({ success: true, data: [], pagination: { total: 0 } });
     }
+    if (url.href.startsWith('https://api.goal-api.com/v1/fixtures/date/')) {
+      assert.equal(init.headers.Authorization, `Bearer ${goalKey}`);
+      return options.fixtures ? options.fixtures(url, init) : Response.json({ success: true, data: [], pagination: { hasMore: false } });
+    }
     unexpected.push(url.href);
     throw new Error(`Unexpected mocked request: ${url.href}`);
   };
@@ -360,7 +364,9 @@ test('pagination: the provider repeats page 1 on page 2 (offset ignored) -> the 
   const completion = h.rpcCalls('futbeat_complete_provider_call').at(-1).body;
   assert.equal(completion.p_status, 'SUCCEEDED');
   assert.equal(completion.p_metadata.truncatedBy, 'pagination_stalled');
-  assert.equal(completion.p_metadata.providerRequests, 2);
+  // 2 results pages + 1 /fixtures/date fallback page (empty here).
+  assert.equal(completion.p_metadata.providerRequests, 3);
+  assert.equal(completion.p_metadata.fallbackRequests, 1);
   assert.equal((await attempt(db, dateStr)).last_result_count, 500);
 }));
 
@@ -611,4 +617,71 @@ test('a chunk failing for another reason (timeout 500) still fails the attempt a
   assert.equal(value.results.status, 'failed');
   assert.equal(value.results.stage, 'link');
   assert.equal(h.rpcCalls('futbeat_link_goal_live_matches').length, 0, 'no silent fallback on a real failure');
+}));
+
+// /results/date caps a busy day at 500 rows; the same date's /fixtures/date
+// list pages correctly. Its terminal fixtures missing from the results are
+// added (never a scheduled or in-play one), within a page budget.
+test('results capped at 500 -> /fixtures/date fallback adds the missing finals only', () => withDb(async (db) => {
+  const { match, external, dateStr } = await seedResultsDueMatch(db);
+  const results = Array.from({ length: 500 }, (_, i) => resultFixture(`world-${i}`));
+  const fixturePages = [
+    [resultFixture('world-1'), resultFixture(external, { home: 3, away: 2 }), resultFixture('not-started', { status: 'NOT_STARTED' })],
+    [resultFixture('in-play', { status: 'LIVE' }), resultFixture('late-final')],
+  ];
+  const fixtureUrls = [];
+  const h = harness(db, {
+    provider: () => Response.json({ success: true, data: results, pagination: { hasMore: true } }),
+    fixtures: (url) => {
+      fixtureUrls.push(url.pathname + url.search);
+      const page = fixturePages[fixtureUrls.length - 1] ?? [];
+      return Response.json({ success: true, data: page, pagination: { hasMore: fixtureUrls.length < fixturePages.length, limit: 100 } });
+    },
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.deepEqual(fixtureUrls, [`/v1/fixtures/date/${dateStr}?limit=100&offset=0`, `/v1/fixtures/date/${dateStr}?limit=100&offset=100`]);
+  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 3, away: 2 } }, 'the final missing from the 500 results reached the match');
+  const meta = h.rpcCalls('futbeat_complete_provider_call').at(-1).body.p_metadata;
+  assert.equal(meta.fallbackRequests, 2);
+  assert.equal(meta.fallbackAdded, 2, 'the tracked final and late-final; never NOT_STARTED, LIVE or a duplicate');
+  assert.equal(meta.providerRequests, 4);
+  assert.equal(meta.results, 502);
+}));
+
+test('fallback page error keeps the 500 results (the date never fails for it)', () => withDb(async (db) => {
+  await seedResultsDueMatch(db);
+  const results = Array.from({ length: 500 }, (_, i) => resultFixture(`world-${i}`));
+  const h = harness(db, {
+    provider: () => Response.json({ success: true, data: results, pagination: { hasMore: true } }),
+    fixtures: () => Response.json({ success: false }, { status: 500 }),
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok');
+  assert.equal(value.results.results, 500);
+  assert.equal(h.rpcCalls('futbeat_complete_provider_call').at(-1).body.p_status, 'SUCCEEDED');
+}));
+
+test('no fallback below the provider floor, and none for a normal (uncapped) day', () => withDb(async (db) => {
+  await seedResultsDueMatch(db);
+  const results = Array.from({ length: 500 }, (_, i) => resultFixture(`world-${i}`));
+  let fixtureCalls = 0;
+  const low = harness(db, {
+    provider: () => new Response(JSON.stringify({ success: true, data: results, pagination: { hasMore: true } }),
+      { headers: { 'content-type': 'application/json', 'x-ratelimit-remaining': '120' } }),
+    fixtures: () => { fixtureCalls += 1; return Response.json({ success: true, data: [] }); },
+  });
+  assert.equal((await low.invoke()).value.results.status, 'ok');
+  assert.equal(fixtureCalls, 0, 'remaining 120 <= floor 150: no extra provider call');
+}));
+
+test('a normal day (complete results) never calls /fixtures/date', () => withDb(async (db) => {
+  const { external } = await seedResultsDueMatch(db);
+  let fixtureCalls = 0;
+  const h = harness(db, {
+    provider: () => Response.json({ success: true, data: [resultFixture(external)], pagination: { total: 1 } }),
+    fixtures: () => { fixtureCalls += 1; return Response.json({ success: true, data: [] }); },
+  });
+  assert.equal((await h.invoke()).value.results.status, 'ok');
+  assert.equal(fixtureCalls, 0);
 }));

@@ -175,6 +175,19 @@ async function normalizeLiveFixture(
 // independent fixtures (one row per provider id), share one receivedAt, and
 // what a failed run already stored is kept: the retry only pays for the rest.
 const RECORD_CHUNK_SIZE = 25;
+
+// /fixtures/date fallback for a results day capped at 500 rows.
+const RESULTS_STALL_ROWS = 500;
+const FIXTURES_FALLBACK_PAGES = 15;
+// Never below the user_high class floor of the quota policy.
+const FIXTURES_FALLBACK_MIN_REMAINING = 150;
+const TERMINAL_RESULT_STATUSES = new Set([
+  "FINISHED_PENDING_VERIFICATION",
+  "POSTPONED",
+  "CANCELLED",
+  "SUSPENDED",
+  "ABANDONED",
+]);
 async function recordObservationsInChunks(
   receivedAt: string,
   observations: unknown[],
@@ -768,6 +781,61 @@ async function syncOneResultsDate() {
       }
     }
 
+    // GOAL's /results/date stops at 500 rows on busy days (the offset is
+    // ignored: 09-19 had 1,449 fixtures never answered). The same date's
+    // /fixtures/date list pages correctly (the calendar workflow reads
+    // 1,000+ per day): its TERMINAL fixtures the results answer missed are
+    // added, within a fixed page budget and above the provider floor. Best
+    // effort: a failing page keeps what was read and never fails the date.
+    let fallbackRequests = 0;
+    let fallbackAdded = 0;
+    if (
+      truncatedBy === "pagination_stalled" &&
+      fixtures.length >= RESULTS_STALL_ROWS
+    ) {
+      stage = "fixtures_fallback";
+      let fallbackOffset = 0;
+      for (let page = 0; page < FIXTURES_FALLBACK_PAGES; page += 1) {
+        if (remaining != null && remaining <= FIXTURES_FALLBACK_MIN_REMAINING) {
+          break;
+        }
+        providerRequests += 1;
+        fallbackRequests += 1;
+        let response: Awaited<ReturnType<typeof fetchGoal>>;
+        try {
+          response = await fetchGoal(
+            goalKey,
+            `/fixtures/date/${providerDate}?limit=100&offset=${fallbackOffset}`,
+          );
+        } catch (error) {
+          const errorRemaining = (error as { remaining?: unknown })?.remaining;
+          if (typeof errorRemaining === "number") remaining = errorRemaining;
+          break;
+        }
+        remaining = response.remaining ?? remaining;
+        const data = response.payload.data;
+        if (!Array.isArray(data) || data.length === 0) break;
+        for (const item of data) {
+          if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+          const fixture = item as Record<string, unknown>;
+          const external = clean(fixture.apiId ?? fixture.id);
+          if (!external || seen.has(external)) continue;
+          // Only results: never a scheduled or in-play fixture.
+          if (!TERMINAL_RESULT_STATUSES.has(goalLiveStatus(fixture))) continue;
+          seen.add(external);
+          fixtures.push(fixture);
+          fallbackAdded += 1;
+        }
+        const pagination = response.payload.pagination;
+        const row = pagination && typeof pagination === "object" &&
+            !Array.isArray(pagination)
+          ? pagination as Record<string, unknown>
+          : {};
+        if (row.hasMore !== true) break;
+        fallbackOffset += nonNegativeInteger(row.limit) || 100;
+      }
+    }
+
     stage = "link";
     const linkResult = await linkResultsInChunks(fixtures);
     stage = "normalize";
@@ -819,6 +887,7 @@ async function syncOneResultsDate() {
         duplicates: persistence?.duplicates ?? 0,
         recordChunks: persistence.chunks,
         ...(linkResult?.chunks ? { linkChunks: linkResult.chunks } : {}),
+        ...(fallbackRequests > 0 ? { fallbackRequests, fallbackAdded } : {}),
         resultsComplete: finalized?.resultsComplete ?? false,
         unresolved: finalized?.unresolved ?? null,
         ...(truncatedBy ? { truncatedBy } : {}),
