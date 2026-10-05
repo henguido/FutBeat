@@ -444,8 +444,10 @@ class PushService {
   static const oauthConfigured = bool.fromEnvironment('FUTBEAT_OAUTH_ENABLED');
   static const oauthCallbackScheme = 'com.futbeat.futbeat';
   static const oauthRedirect = '$oauthCallbackScheme://login-callback';
-  static const passwordResetRedirect = '$oauthCallbackScheme://password-reset';
-  static const _recoveryVerifierKey = 'futbeat.auth.recovery.verifier';
+  static const passwordResetHost = 'futbeat.com';
+  static const passwordResetPath = '/auth/reset';
+  static const passwordResetUrl =
+      'https://$passwordResetHost$passwordResetPath';
 
   /// PKCE verifier and its S256 challenge (OAuth and password recovery).
   static ({String verifier, String challenge}) _pkcePair() {
@@ -813,23 +815,19 @@ class PushService {
     );
   }
 
-  /// "¿Olvidaste tu contraseña?": Supabase emails a link (PKCE). Opening
-  /// it brings `com.futbeat.futbeat://password-reset?code=…` back to the
-  /// app; only this device holds the verifier that can redeem the code.
+  /// "¿Olvidaste tu contraseña?": Supabase emails a link to
+  /// https://futbeat.com/auth/reset?token_hash=…&type=recovery (the
+  /// project's recovery template). It is an Android App Link: Gmail and
+  /// Chrome open FutBeat directly, which a server redirect to a custom
+  /// scheme cannot do from an in-app browser tab.
   Future<void> requestPasswordReset(String emailAddress) async {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
-    final (:verifier, :challenge) = _pkcePair();
-    await storage.write(key: _recoveryVerifierKey, value: verifier);
     await dio.post(
       '${config.supabaseUrl}/auth/v1/recover',
-      queryParameters: {'redirect_to': passwordResetRedirect},
-      data: {
-        'email': emailAddress.trim(),
-        'code_challenge': challenge,
-        'code_challenge_method': 's256',
-      },
+      queryParameters: {'redirect_to': passwordResetUrl},
+      data: {'email': emailAddress.trim()},
       options: Options(headers: {'apikey': config.publicKey}),
     );
   }
@@ -842,8 +840,19 @@ class PushService {
   /// A reset link was redeemed and waits for the new password.
   bool get passwordRecoveryPending => _recoverySession != null;
 
-  /// Redeems the code of a password-reset [link] (one use). Throws
-  /// [RecoveryLinkInvalid] for an expired/used link or a missing verifier.
+  /// Whether [link] is a password-reset link: the App Link
+  /// https://futbeat.com/auth/reset or the web fallback's
+  /// com.futbeat.futbeat://password-reset.
+  static bool isPasswordResetLink(Uri link) =>
+      (link.scheme == 'https' &&
+          link.host == passwordResetHost &&
+          (link.path == passwordResetPath ||
+              link.path == '$passwordResetPath/')) ||
+      (link.scheme == oauthCallbackScheme && link.host == 'password-reset');
+
+  /// Redeems the one-time token of a password-reset [link] with GoTrue's
+  /// verify (token_hash, type recovery). Throws [RecoveryLinkInvalid] for an
+  /// expired, used or malformed link.
   Future<void> beginPasswordRecovery(Uri link) async {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
@@ -851,33 +860,29 @@ class PushService {
     final params = _redirectParams(link);
     final error = params['error_code'] ?? params['error'];
     if (error != null) throw RecoveryLinkInvalid(error);
-    final code = params['code'];
-    if (code == null || code.isEmpty) {
-      throw const RecoveryLinkInvalid('missing_code');
-    }
-    final verifier = await storage.read(key: _recoveryVerifierKey);
-    if (verifier == null) {
-      throw const RecoveryLinkInvalid('missing_verifier');
+    final tokenHash = params['token_hash'];
+    if (tokenHash == null ||
+        tokenHash.isEmpty ||
+        params['type'] != 'recovery') {
+      throw const RecoveryLinkInvalid('missing_token');
     }
     final Response<dynamic> result;
     try {
       result = await dio.post<dynamic>(
-        '${config.supabaseUrl}/auth/v1/token?grant_type=pkce',
-        data: {'auth_code': code, 'code_verifier': verifier},
+        '${config.supabaseUrl}/auth/v1/verify',
+        data: {'type': 'recovery', 'token_hash': tokenHash},
         options: Options(headers: {'apikey': config.publicKey}),
       );
     } on DioException catch (error) {
-      // Any 4xx: used, expired or unknown code; a 5xx/offline is retryable.
+      // Any 4xx: used, expired or unknown token; a 5xx/offline is retryable.
       final status = error.response?.statusCode;
       if (status != null && status >= 400 && status < 500) {
-        await storage.delete(key: _recoveryVerifierKey);
         throw const RecoveryLinkInvalid('rejected');
       }
       rethrow;
     }
     final session = _validSession(result.data);
     if (session == null) throw _invalidSession(result.requestOptions);
-    await storage.delete(key: _recoveryVerifierKey);
     _recoverySession = session;
   }
 

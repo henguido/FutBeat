@@ -27,9 +27,22 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Password-reset email link: handled by app_links in Dart
-                 (lib/main.dart, handlePasswordResetLink), never by the
-                 router, so the one-time code is not kept in navigation. -->
+            <!-- Password-reset email link (Android App Link, verified by
+                 https://futbeat.com/.well-known/assetlinks.json): handled by
+                 app_links in Dart (lib/main.dart, handlePasswordResetLink),
+                 never by the router, so the one-time token is not kept in
+                 navigation. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="futbeat.com"
+                    android:pathPrefix="/auth/reset" />
+            </intent-filter>
+            <!-- Manual fallback from https://futbeat.com/auth/reset ("Abrir
+                 FutBeat", after a tap) when the App Link is not resolved. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

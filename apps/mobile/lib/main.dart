@@ -43,28 +43,26 @@ Future<CountryPreference> refreshCountryForLocales(
   return refreshDetectedCountry(database, detected);
 }
 
-/// `com.futbeat.futbeat://password-reset?code=…` from the reset email:
-/// redeems the one-time code and opens [NewPasswordScreen] on [navigator].
-/// The code never becomes a route, so it is not kept in navigation.
-/// Other links are ignored (OAuth callbacks go to flutter_web_auth_2).
+/// The reset email's https://futbeat.com/auth/reset App Link (or the web
+/// fallback's com.futbeat.futbeat://password-reset): redeems the one-time
+/// token and opens [NewPasswordScreen] on [navigator]. The token never
+/// becomes a route, so it is not kept in navigation. Other links are
+/// ignored (OAuth callbacks go to flutter_web_auth_2).
 Future<void> handlePasswordResetLink(
   Uri link, {
   required PushService service,
   required NavigatorState? navigator,
   required ScaffoldMessengerState? messenger,
 }) async {
-  if (link.scheme != PushService.oauthCallbackScheme ||
-      link.host != 'password-reset') {
-    return;
-  }
+  if (!PushService.isPasswordResetLink(link)) return;
   void say(String text) =>
       messenger?.showSnackBar(SnackBar(content: Text(text)));
   try {
     await service.beginPasswordRecovery(link);
   } on RecoveryLinkInvalid catch (error) {
     say(
-      error.reason == 'missing_verifier'
-          ? 'Abre el enlace en el teléfono donde lo pediste.'
+      error.reason == 'missing_token'
+          ? 'Ese enlace está incompleto. Pide uno nuevo.'
           : 'El enlace ya no es válido. Pide uno nuevo.',
     );
     return;

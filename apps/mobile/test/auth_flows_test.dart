@@ -752,12 +752,27 @@ void main() {
     expect(seen, ['user-a']);
   });
 
-  group('password recovery (email link)', () {
+  group('password recovery (email App Link)', () {
     final link = Uri.parse(
-      'com.futbeat.futbeat://password-reset?code=one-time-code',
+      'https://futbeat.com/auth/reset?token_hash=one-time-hash&type=recovery',
     );
 
-    test('asks for a link to the app, PKCE, without signing in', () async {
+    /// GoTrue verify: the token works once, then it is spent.
+    void verifyOnce(_Http http) {
+      var used = false;
+      http.routes['/auth/v1/verify'] = (options) {
+        final body = options.data as Map;
+        if (used ||
+            body['type'] != 'recovery' ||
+            body['token_hash'] != 'one-time-hash') {
+          return const _Fail(403, {'error_code': 'otp_expired'});
+        }
+        used = true;
+        return http.issue('user-a');
+      };
+    }
+
+    test('asks for the futbeat.com reset link, without signing in', () async {
       final value = await _service();
       await value.service.requestPasswordReset(' user@example.com ');
       final call = value.http.calls.lastWhere(
@@ -765,13 +780,9 @@ void main() {
       );
       expect(
         call.queryParameters['redirect_to'],
-        'com.futbeat.futbeat://password-reset',
+        'https://futbeat.com/auth/reset',
       );
-      final body = call.data as Map;
-      expect(body['email'], 'user@example.com');
-      expect(body['code_challenge_method'], 's256');
-      expect(body['code_challenge'], isNotEmpty);
-      expect(body.containsKey('token'), isFalse);
+      expect(call.data, {'email': 'user@example.com'});
       expect(value.service.authenticated, isFalse);
     });
 
@@ -780,13 +791,11 @@ void main() {
       () async {
         final value = await _service();
         Map? update;
-        value.http.routes['grant_type=pkce'] = (_) =>
-            value.http.issue('user-a');
+        verifyOnce(value.http);
         value.http.routes['/auth/v1/user'] = (options) {
           update = options.data as Map;
           return <String, dynamic>{};
         };
-        await value.service.requestPasswordReset('user@example.com');
         await value.service.beginPasswordRecovery(link);
         expect(value.service.passwordRecoveryPending, isTrue);
         expect(value.service.authenticated, isFalse);
@@ -794,36 +803,41 @@ void main() {
         expect(update, {'password': 'nueva-clave-8'});
         expect(value.service.authenticated, isTrue);
         expect(value.service.passwordRecoveryPending, isFalse);
-        // The verifier is spent: the same link cannot be redeemed again.
         await expectLater(
           value.service.beginPasswordRecovery(link),
           throwsA(
             isA<RecoveryLinkInvalid>().having(
               (e) => e.reason,
               'reason',
-              'missing_verifier',
+              'rejected',
             ),
           ),
         );
       },
     );
 
-    test('expired or rejected links never sign in', () async {
+    test('expired, rejected or incomplete links never sign in', () async {
       final value = await _service();
-      await value.service.requestPasswordReset('user@example.com');
+      verifyOnce(value.http);
+      final before = value.http.calls.length;
+      for (final bad in [
+        'https://futbeat.com/auth/reset#error=access_denied&error_code=otp_expired',
+        'https://futbeat.com/auth/reset',
+        'https://futbeat.com/auth/reset?token_hash=x&type=signup',
+      ]) {
+        await expectLater(
+          value.service.beginPasswordRecovery(Uri.parse(bad)),
+          throwsA(isA<RecoveryLinkInvalid>()),
+          reason: bad,
+        );
+      }
+      expect(value.http.calls.length, before);
       await expectLater(
         value.service.beginPasswordRecovery(
           Uri.parse(
-            'com.futbeat.futbeat://password-reset#error=access_denied'
-            '&error_code=otp_expired',
+            'https://futbeat.com/auth/reset?token_hash=bad&type=recovery',
           ),
         ),
-        throwsA(isA<RecoveryLinkInvalid>()),
-      );
-      value.http.routes['grant_type=pkce'] = (_) =>
-          const _Fail(403, {'error_code': 'flow_state_expired'});
-      await expectLater(
-        value.service.beginPasswordRecovery(link),
         throwsA(
           isA<RecoveryLinkInvalid>().having(
             (e) => e.reason,
@@ -841,11 +855,9 @@ void main() {
       () async {
         final value = await _service();
         var fail = true;
-        value.http.routes['grant_type=pkce'] = (_) =>
-            value.http.issue('user-a');
+        verifyOnce(value.http);
         value.http.routes['/auth/v1/user'] = (_) =>
             fail ? const _Fail.offline() : <String, dynamic>{};
-        await value.service.requestPasswordReset('user@example.com');
         await value.service.beginPasswordRecovery(link);
         await expectLater(
           value.service.completePasswordRecovery('nueva-clave-8'),
@@ -861,8 +873,7 @@ void main() {
 
     test('cancel drops the recovery session', () async {
       final value = await _service();
-      value.http.routes['grant_type=pkce'] = (_) => value.http.issue('user-a');
-      await value.service.requestPasswordReset('user@example.com');
+      verifyOnce(value.http);
       await value.service.beginPasswordRecovery(link);
       value.service.cancelPasswordRecovery();
       expect(value.service.passwordRecoveryPending, isFalse);
@@ -873,13 +884,24 @@ void main() {
       expect(value.service.authenticated, isFalse);
     });
 
-    test('only password-reset links are handled (OAuth untouched)', () async {
+    test('App Link and web fallback are reset links; OAuth is not', () async {
+      expect(PushService.isPasswordResetLink(link), isTrue);
+      expect(
+        PushService.isPasswordResetLink(
+          Uri.parse(
+            'com.futbeat.futbeat://password-reset?token_hash=x&type=recovery',
+          ),
+        ),
+        isTrue,
+      );
       final value = await _service();
       final before = value.http.calls.length;
       for (final other in [
         'com.futbeat.futbeat://login-callback?code=x',
-        'https://futbeat.com/#access_token=x',
+        'https://futbeat.com/privacy',
+        'https://evil.example/auth/reset?token_hash=x&type=recovery',
       ]) {
+        expect(PushService.isPasswordResetLink(Uri.parse(other)), isFalse);
         await handlePasswordResetLink(
           Uri.parse(other),
           service: value.service,
