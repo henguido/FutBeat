@@ -95,11 +95,15 @@ List<StandingsGroup>? standingsGroups(
   if (table == null || rows.isEmpty || table['groupsResolved'] == false) {
     return null;
   }
-  final groups = <String, List<Json>>{};
+  // A server `subgroup` splits one provider label holding several groups
+  // (rebuilt from fixtures): each is its own table under the same label.
+  final groups = <(String, Object?), List<Json>>{};
   for (final row in rows) {
     final teamId = row['teamId']?.toString() ?? '';
     if (standingsTeam(data, teamId) == null) return null;
-    groups.putIfAbsent(row['group']?.toString() ?? '', () => []).add(row);
+    groups
+        .putIfAbsent((row['group']?.toString() ?? '', row['subgroup']), () => [])
+        .add(row);
   }
   for (final group in groups.values) {
     final positions = [
@@ -110,7 +114,7 @@ List<StandingsGroup>? standingsGroups(
   }
   final all = [
     for (final entry in groups.entries)
-      (label: entry.key.isEmpty ? null : entry.key, rows: entry.value),
+      (label: entry.key.$1.isEmpty ? null : entry.key.$1, rows: entry.value),
   ];
   StandingsGroup labelled(StandingsGroup group) =>
       group.label == null && all.any((other) => other.label != null)
