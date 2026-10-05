@@ -14,7 +14,7 @@ La evidencia es de lecturas read-only de producción tomadas esta noche, salvo i
 | 1 | Partido pasado sigue "En vivo" | CLOSED | Prod: 0 filas `live_match_updates` LIVE con kickoff de hace más de 4 h. 1 payload LIVE viejo, pero el read model lo sirve FINISHED. #185, #127, prune cada 5 min |
 | 2 | LIVE sale como "Próximo" | CLOSED | `isUpcoming` excluye LIVE y los vencidos. #193 (filtro LIVE coherente), #171 |
 | 3 | "PROGRAMADO" después del kickoff | FIXED-NOT-QA | App: la pill del Match Center ahora dice "Por confirmar" (`040ee86`). Backend: catch-up de resultados `20261005010000` (no aplicada) |
-| 4 | Miles de SCHEDULED vencidos | OPEN-P1 (mitigado) | 1.351+ sin observar. Causa: GOAL tope 500 resultados/día y 100 en vivo. Mitigación en `040ee86` (chunks del link, catch-up y prioridad reciente). Lo que GOAL no devuelve queda "Por confirmar" |
+| 4 | Miles de SCHEDULED vencidos | FIXED-NOT-QA (causa raíz) | **Causa principal:** el ingest de calendario se descarta en cada corrida desde ~19-sep (la reserva legacy cuenta las ~700 llamadas diarias de detalle). Fix en `3b527c0` (migración `20261005070000`). Secundario: tope de GOAL (500 resultados, 100 en vivo), mitigado en `040ee86`. Lo que GOAL no devuelve queda "Por confirmar" |
 | 5 | `—` sin hora/estado/marcador | CLOSED | `feed_v2_test` ("dash + POR CONFIRMAR, no Programado"). #169 |
 | 6 | Explorar no carga / vacío | CLOSED | #187 (primer pintado 3–5 s → 0,7 s; migración aplicada) |
 | 7 | Retry | CLOSED | Explorar y Noticias tienen "Reintentar" con datos conservados (tests de explore_first_paint y news_screen) |
@@ -41,7 +41,7 @@ La evidencia es de lecturas read-only de producción tomadas esta noche, salvo i
 
 ## P0/P1 abiertos reproducibles
 
-- **P1-4** SCHEDULED vencidos: queda limitado por el proveedor. El fix máximo sin evidencia nueva está preparado.
+- **P1-4** SCHEDULED vencidos: causa raíz encontrada (ingest de calendario descartado). Fix preparado; falta aplicar `20261005070000` (autorización).
 - **P1-19 / P1-20** LIVE y cuota: pendiente de la decisión del dueño (documento con números).
 
 No hay P0 abiertos.
