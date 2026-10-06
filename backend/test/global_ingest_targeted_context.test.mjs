@@ -98,6 +98,10 @@ test('hot ingest never reads the full snapshot; reads the targeted context after
   assert.equal(request.p_from, kickoff(12));
   assert.equal(request.p_to, kickoff(16));
   assert.ok(h.calls.every((c) => c.origin === 'https://supabase.test'), 'no GOAL call from the ingest');
+  const meta = (await db.query("select metadata from futbeat_private.provider_call_ledger where call_kind='global-ingest' order by id desc limit 1")).rows[0].metadata;
+  for (const key of ['resolve-base', 'read-current', 'discover-matches', 'resolve-matches', 'normalize', 'store']) {
+    assert.equal(typeof meta.stageMs[key], 'number', key);
+  }
 }));
 
 test('a second run: known entities come back from the context, new ones are resolved, no duplicates, same canonical ids', () => withDb(async (db) => {
