@@ -2,6 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from "npm:jose@6.1.0";
 import { normalizeSofaScoreFixtures } from "../../../backend/providers/sofascore.mjs";
 import { normalizeEspnFixtures } from "../../../backend/providers/espn.mjs";
 import { goalFixtureScore } from "../_shared/live_events.ts";
+import { runChunksWithTimeoutRetry } from "../_shared/chunked_rpc.ts";
 import {
   collectGoalApiBaseIdentities,
   normalizeGoalApiFixtures,
@@ -233,14 +234,15 @@ async function resolveIdentityItems(
   items: Array<Record<string, unknown>>,
   target: Map<string, string>,
 ) {
-  // Each chunk is one RPC = one statement under the API role's 8 s timeout.
-  // 800 identities timed out in production (2026-10-06, stage resolve-base,
-  // 57014) once a two-week ingest gap left many identities unmapped: the
-  // name fallback costs ~23 ms per new identity. 100 keeps a chunk at a few
-  // seconds even when every identity is new.
-  const chunkSize = 100;
-  for (let offset = 0; offset < items.length; offset += chunkSize) {
-    const chunk = items.slice(offset, offset + chunkSize);
+  // Each chunk is one RPC = one transaction under the API role's 8 s
+  // statement timeout. Production 2026-10-06: chunks of 800, then 100, timed
+  // out (57014) at stage resolve-base (new identities ~23-48 ms each, plus
+  // 3-9 s spikes on the first batch after a pause). 50 per chunk, and a chunk
+  // that hits 57014 is run once more (it was rolled back; the resolver is
+  // idempotent; no provider call). Chunks stay in order; a second failure or
+  // any other error aborts the ingest.
+  const chunkSize = 50;
+  await runChunksWithTimeoutRetry(items, chunkSize, async (chunk) => {
     const rows = await rpc(
       "futbeat_resolve_global_entities",
       {
@@ -255,7 +257,11 @@ async function resolveIdentityItems(
       );
     }
     addResolvedRows(target, rows);
-  }
+    return rows.length;
+  }, {
+    retryDelayMs: 1500,
+    onRetry: (index) => console.warn(`identity chunk ${index} hit 57014; retrying once`),
+  });
 }
 
 
