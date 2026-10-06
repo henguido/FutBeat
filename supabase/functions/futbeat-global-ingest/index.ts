@@ -184,6 +184,35 @@ function withinCostaRicaWindow(
 
 const entityKey = (kind: string, external: string) => `${kind}:${external}`;
 
+// Arguments of futbeat_read_ingest_context for one GOAL batch: the canonical
+// competitions and teams resolved for it (deduplicated) and the kickoff
+// window of its fixtures (existing matches are only reused within 5 min).
+function ingestContextRequest(
+  events: Array<Record<string, unknown>>,
+  resolved: Map<string, string>,
+) {
+  const competitions = new Set<string>();
+  const teams = new Set<string>();
+  for (const [key, canonical] of resolved) {
+    if (key.startsWith("competition:")) competitions.add(canonical);
+    else if (key.startsWith("team:")) teams.add(canonical);
+  }
+  let from = Infinity;
+  let to = -Infinity;
+  for (const event of events) {
+    const kickoff = Date.parse(String(event?.kickoffUtc ?? ""));
+    if (!Number.isFinite(kickoff)) continue;
+    from = Math.min(from, kickoff);
+    to = Math.max(to, kickoff);
+  }
+  return {
+    p_competition_ids: [...competitions].sort(),
+    p_team_ids: [...teams].sort(),
+    p_from: Number.isFinite(from) ? new Date(from).toISOString() : null,
+    p_to: Number.isFinite(to) ? new Date(to).toISOString() : null,
+  };
+}
+
 function addResolvedRows(
   target: Map<string, string>,
   rows: unknown,
@@ -268,10 +297,15 @@ async function resolveIdentityItems(
 // GOAL fixtures -> canonical snapshot: resolve base identities, discover the
 // matches still unknown, resolve them, then normalize. Shared by the calendar
 // ingest and the team-fixtures ingest so both use one identity path.
+// `existing` is either the current snapshot, or a loader called right after
+// the base identities are resolved (the targeted read needs their canonical
+// ids). Only competitions[], teams[] and matches[] of it are used.
+type ExistingLoader = (resolved: Map<string, string>) => Promise<unknown>;
+
 async function normalizeGoalBatch(
   provider: string,
   events: Array<Record<string, unknown>>,
-  existing: unknown,
+  existingOrLoader: unknown | ExistingLoader,
   receivedAt: string,
   onStage: (stage: string) => void,
 ) {
@@ -288,6 +322,12 @@ async function normalizeGoalBatch(
     resolved,
   );
   resolvedBase = resolved.size;
+
+  let existing = existingOrLoader;
+  if (typeof existingOrLoader === "function") {
+    onStage("read-current");
+    existing = await (existingOrLoader as ExistingLoader)(resolved);
+  }
 
   onStage("discover-matches");
   const pendingMatches = new Map<string, {
@@ -1477,8 +1517,16 @@ Deno.serve(async (request) => {
   let resolvedMatches = 0;
 
   try {
-    const baseExisting = await rpc("futbeat_read_snapshot");
-    let existing = baseExisting;
+    // GOAL: only the existing competitions/teams/matches of this batch
+    // (futbeat_read_ingest_context), read after resolve-base. The full
+    // snapshot read (3.8 MB, 5.6-7.8 s) timed out the ingest in production.
+    // Other sources keep the full snapshot.
+    const readExisting = async (resolved?: Map<string, string>) => {
+      if (input.source !== "GOAL API") return await rpc("futbeat_read_snapshot");
+      return await rpc("futbeat_read_ingest_context", ingestContextRequest(events, resolved!), 30000);
+    };
+    const baseExisting = input.source === "GOAL API" ? null : await readExisting();
+    let existing: unknown = baseExisting;
 
     if (mode === "calendar") {
       const daySnapshots = [];
@@ -1491,29 +1539,33 @@ Deno.serve(async (request) => {
           }),
         );
       }
-      existing = {
-        ...baseExisting,
+      existing = (base: Record<string, unknown> | null) => ({
+        ...base,
         competitions: mergeById(
-          baseExisting?.competitions,
+          base?.competitions,
           ...daySnapshots.map((snapshot) => snapshot?.competitions),
         ),
         teams: mergeById(
-          baseExisting?.teams,
+          base?.teams,
           ...daySnapshots.map((snapshot) => snapshot?.teams),
         ),
         matches: mergeById(
-          baseExisting?.matches,
+          base?.matches,
           ...daySnapshots.map((snapshot) => snapshot?.matches),
         ),
-      };
+      });
     }
+    const withCalendar = (base: unknown) =>
+      typeof existing === "function"
+        ? (existing as (b: unknown) => unknown)(base)
+        : base;
 
     let snapshot;
     if (input.source === "GOAL API") {
       const normalized = await normalizeGoalBatch(
         provider,
         events,
-        existing,
+        async (resolved: Map<string, string>) => withCalendar(await readExisting(resolved)),
         receivedAt,
         (next) => {
           stage = next;
@@ -1539,8 +1591,8 @@ Deno.serve(async (request) => {
         });
 
       snapshot = input.source === "ESPN"
-        ? await normalizeEspnFixtures(events, resolve, receivedAt, existing)
-        : await normalizeSofaScoreFixtures(events, resolve, receivedAt, existing);
+        ? await normalizeEspnFixtures(events, resolve, receivedAt, withCalendar(baseExisting))
+        : await normalizeSofaScoreFixtures(events, resolve, receivedAt, withCalendar(baseExisting));
     }
 
     stage = "store";
