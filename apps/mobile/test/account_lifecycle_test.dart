@@ -13,6 +13,7 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
 import 'package:futbeat/features/profile/profile_screen.dart';
+import 'package:futbeat/features/profile/account_security_screen.dart';
 
 class _Tokens implements PushTokenSource {
   @override
@@ -379,7 +380,7 @@ void main() {
               (ref, keys) async => _emptySnapshot,
             ),
           ],
-          child: const MaterialApp(home: ProfileScreen()),
+          child: const MaterialApp(home: AccountSecurityScreen()),
         ),
       );
       await tester.pump(const Duration(milliseconds: 500));
@@ -447,7 +448,7 @@ void main() {
                     key: const Key('global-hour-format'),
                   ),
                 ),
-                const Expanded(child: ProfileScreen()),
+                const Expanded(child: AccountSecurityScreen()),
               ],
             ),
           ),

@@ -18,6 +18,13 @@ import 'core/push.dart';
 import 'core/push_messages.dart';
 import 'core/interests.dart';
 import 'features/profile/profile_screen.dart';
+import 'features/profile/about_screen.dart';
+import 'features/profile/account_security_screen.dart';
+import 'features/profile/notifications_screen.dart';
+import 'features/profile/personalization_screen.dart';
+import 'features/profile/premium_screen.dart';
+import 'features/profile/privacy_ads_screen.dart';
+import 'features/profile/support_legal_screen.dart';
 import 'features/matches/matches_screen.dart';
 import 'features/matches/match_screen.dart';
 import 'features/entities/entity_screen.dart';
@@ -114,6 +121,34 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
           builder: (_, state) => const FavoritesScreen(),
         ),
         GoRoute(path: '/profile', builder: (_, state) => const ProfileScreen()),
+        GoRoute(
+          path: '/profile/personalization',
+          builder: (_, state) => const PersonalizationScreen(),
+        ),
+        GoRoute(
+          path: '/profile/notifications',
+          builder: (_, state) => const NotificationsScreen(),
+        ),
+        GoRoute(
+          path: '/profile/account',
+          builder: (_, state) => const AccountSecurityScreen(),
+        ),
+        GoRoute(
+          path: '/profile/premium',
+          builder: (_, state) => const PremiumScreen(),
+        ),
+        GoRoute(
+          path: '/profile/privacy',
+          builder: (_, state) => const PrivacyAdsScreen(),
+        ),
+        GoRoute(
+          path: '/profile/support',
+          builder: (_, state) => const SupportLegalScreen(),
+        ),
+        GoRoute(
+          path: '/profile/about',
+          builder: (_, state) => const AboutScreen(),
+        ),
         GoRoute(
           path: '/match/:id',
           builder: (_, state) {

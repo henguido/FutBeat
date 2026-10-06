@@ -4,14 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/auth_errors.dart';
+import '../../core/entitlements.dart';
 import '../../core/providers.dart';
 import '../../core/push.dart';
 import '../auth/auth_sheet.dart';
-import 'competition_order_preferences.dart';
-import 'ads_privacy_tile.dart';
 import 'notification_options.dart';
-import 'premium_card.dart';
+import 'profile_section.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -21,23 +19,13 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
-  final displayName = TextEditingController();
-
   UserProfileSettings settings = const UserProfileSettings();
-  bool busy = false;
   bool loaded = false;
-  String? message;
 
   @override
   void initState() {
     super.initState();
     unawaited(_load());
-  }
-
-  @override
-  void dispose() {
-    displayName.dispose();
-    super.dispose();
   }
 
   Future<void> _load() async {
@@ -47,430 +35,233 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (!mounted) return;
     setState(() {
       settings = value;
-      displayName.text = value.displayName ?? '';
       loaded = true;
     });
   }
 
-  Future<void> action(
-    Future<void> Function() work,
-    String success, {
-    String Function()? successFor,
-  }) async {
-    setState(() {
-      busy = true;
-      message = null;
-    });
-    try {
-      await work();
-      await _load();
-      if (mounted) setState(() => message = successFor?.call() ?? success);
-    } catch (error) {
-      if (mounted) setState(() => message = authErrorMessage(error));
-    } finally {
-      if (mounted) setState(() => busy = false);
-    }
-  }
-
-  /// Sign in / create the account in the shared AuthSheet; Perfil only
-  /// refreshes once there is a session.
-  Future<void> _openAuth(PushService service, AuthMode mode) async {
-    final signedIn = await showAuthSheet(context, mode);
+  Future<void> _openAuth(AuthMode mode) async {
+    await showAuthSheet(context, mode);
     await _load();
-    if (!mounted) return;
-    // Signing in never asks for notifications: they are turned on from an
-    // explicit action (onboarding "Activar notificaciones", Perfil switches)
-    // or the first follow the user adds.
-    setState(() => message = signedIn ? 'Sesión iniciada.' : null);
   }
 
-  Future<void> saveSettings(UserProfileSettings value) async {
-    setState(() {
-      settings = value;
-      message = null;
-    });
-    try {
-      await ref.read(pushServiceProvider).saveProfileSettings(value);
-      ref.invalidate(profileSettingsProvider);
-    } catch (_) {
-      if (mounted) {
-        setState(() => message = 'No se pudieron guardar los cambios.');
-      }
-    }
-  }
-
-  Future<void> saveName() async {
-    final name = displayName.text.trim();
-    final next = settings.copyWith(
-      displayName: name.isEmpty ? null : name,
-      clearDisplayName: name.isEmpty,
-    );
-    await saveSettings(next);
-    if (mounted) setState(() => message = 'Perfil actualizado.');
-  }
-
-  Future<void> confirmAccountDeletion(PushService service) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Eliminar cuenta'),
-        content: const Text(
-          'Se eliminarán tu perfil, favoritos sincronizados, preferencias y avisos asociados. Esta acción no se puede deshacer.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: const Text('Eliminar definitivamente'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await action(() async {
-        await service.deleteAccount();
-        ref.invalidate(profileSettingsProvider);
-      }, 'Cuenta eliminada.');
-    }
-  }
-
-  String initials(PushService service) {
+  String _initials(PushService service) {
     final source = settings.displayName?.trim().isNotEmpty == true
         ? settings.displayName!
         : service.email ?? 'F';
-    final words = source
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    if (words.isEmpty) return 'F';
-    if (words.length == 1) return words.first.substring(0, 1).toUpperCase();
-    return '${words.first.substring(0, 1)}${words.last.substring(0, 1)}'
-        .toUpperCase();
+    final words = source.trim().split(RegExp(r'\s+'));
+    return words.length > 1
+        ? '${words.first[0]}${words.last[0]}'.toUpperCase()
+        : words.first[0].toUpperCase();
   }
-
-  Widget notificationSwitch({
-    required String title,
-    required IconData icon,
-    required bool value,
-    required UserProfileSettings Function(bool) change,
-  }) => SwitchListTile(
-    contentPadding: EdgeInsets.zero,
-    secondary: Icon(icon),
-    title: Text(title),
-    value: value,
-    onChanged: (next) => saveSettings(change(next)),
-  );
 
   @override
   Widget build(BuildContext context) {
     final service = ref.watch(pushServiceProvider);
+    final plan = ref.watch(entitlementsProvider);
     final follows =
         ref.watch(followsProvider).asData?.value ?? const <String>{};
-
-    final teamCount = follows
-        .where((value) => value.startsWith('team:'))
-        .length;
-    final competitionCount = follows
-        .where((value) => value.startsWith('competition:'))
-        .length;
-    final playerCount = follows
-        .where((value) => value.startsWith('player:'))
-        .length;
-
+    int count(String type) =>
+        follows.where((v) => v.startsWith('$type:')).length;
+    final summary = favoritesSummary(
+      teams: count('team'),
+      competitions: count('competition'),
+      players: count('player'),
+    );
+    final provider = authProviderLabel(service.authProvider) ?? 'Correo';
     return Scaffold(
       appBar: AppBar(title: const Text('Perfil')),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        key: const ValueKey('profile-root'),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
         children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 28,
-                    child: Text(
-                      initials(service),
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          settings.displayName?.trim().isNotEmpty == true
-                              ? settings.displayName!
-                              : 'Tu perfil',
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        if (service.email != null)
-                          Text(
-                            service.email!,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
+          _ProfileHeader(
+            initials: _initials(service),
+            name: settings.displayName,
+            service: service,
+            provider: provider,
+            premium: plan.isPremium,
+            onLogin: () => _openAuth(AuthMode.login),
+            onSignup: () => _openAuth(AuthMode.signup),
+            onResend: service.resendEmailConfirmation,
+          ),
+          ProfileSection(
+            title: 'Accesos rápidos',
+            children: [
+              ProfileDestinationTile(
+                icon: Icons.star_outline,
+                title: 'Mis favoritos',
+                subtitle: summary,
+                onTap: () => context.go('/favorites'),
               ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.star_outline),
-            title: const Text('Mis favoritos'),
-            subtitle: Text(
-              favoritesSummary(
-                teams: teamCount,
-                competitions: competitionCount,
-                players: playerCount,
+              ProfileDestinationTile(
+                icon: Icons.workspace_premium_outlined,
+                title: plan.isPremium ? 'FutBeat Premium' : 'Premium',
+                subtitle: plan.isPremium
+                    ? 'Sin anuncios'
+                    : 'Disfruta FutBeat sin anuncios',
+                onTap: () => context.push('/profile/premium'),
               ),
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.go('/favorites'),
-          ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.tune),
-            title: const Text('Personalizar FutBeat'),
-            subtitle: const Text('País, favoritos y alertas'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/onboarding?reentry=1'),
-          ),
-          const SizedBox(height: 8),
-          const SizedBox(height: 12),
-          const CompetitionOrderPanel(),
-          const SizedBox(height: 20),
-          const Text(
-            'Preferencias',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-          ),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<String>(
-            initialValue: settings.hourFormat,
-            decoration: const InputDecoration(labelText: 'Formato de hora'),
-            items: const [
-              DropdownMenuItem(
-                value: 'system',
-                child: Text('Según el dispositivo'),
-              ),
-              DropdownMenuItem(value: '12h', child: Text('12 horas')),
-              DropdownMenuItem(value: '24h', child: Text('24 horas')),
             ],
-            onChanged: loaded
-                ? (value) {
-                    if (value != null) {
-                      saveSettings(settings.copyWith(hourFormat: value));
-                    }
-                  }
-                : null,
           ),
-          const SizedBox(height: 20),
-          const PremiumCard(),
-          const AdsPrivacyOptionsTile(),
-          const SizedBox(height: 20),
-          const Text(
-            'Cuenta y seguridad',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+          ProfileSection(
+            title: 'Configuración',
+            children: [
+              ProfileDestinationTile(
+                icon: Icons.tune,
+                title: 'Personalización',
+                subtitle: 'País, favoritos, competiciones y hora',
+                onTap: () => context.push('/profile/personalization'),
+              ),
+              ProfileDestinationTile(
+                icon: Icons.notifications_none,
+                title: 'Notificaciones',
+                subtitle: loaded
+                    ? notificationSummary(settings)
+                    : 'Cargando preferencias…',
+                onTap: () => context.push('/profile/notifications'),
+              ),
+              ProfileDestinationTile(
+                icon: Icons.privacy_tip_outlined,
+                title: 'Privacidad y anuncios',
+                onTap: () => context.push('/profile/privacy'),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
-          if (!service.authenticated) const _GuestCard(),
-          if (!service.accountConfigured)
-            const ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.cloud_off_outlined),
-              title: Text('Inicio de sesión no disponible'),
-            )
-          else if (!service.authenticated) ...[
-            if (service.pendingConfirmationEmail != null)
-              Card(
-                color: Theme.of(context).colorScheme.secondaryContainer,
-                child: ListTile(
-                  leading: const Icon(Icons.mark_email_unread_outlined),
-                  title: const Text('Confirma tu correo'),
-                  subtitle: Text(service.pendingConfirmationEmail!),
-                  trailing: TextButton(
-                    onPressed: busy
-                        ? null
-                        : () => action(
-                            service.resendEmailConfirmation,
-                            'Correo de confirmación reenviado.',
-                          ),
-                    child: const Text('Reenviar correo'),
-                  ),
+          ProfileSection(
+            title: service.authenticated ? 'Cuenta y ayuda' : 'Ayuda',
+            children: [
+              if (service.authenticated || service.accountConfigured)
+                ProfileDestinationTile(
+                  icon: Icons.manage_accounts_outlined,
+                  title: 'Cuenta y seguridad',
+                  subtitle: service.authenticated
+                      ? '$provider · ${service.emailVerified == true ? 'Correo verificado' : 'Cuenta conectada'}'
+                      : 'Inicia sesión o crea una cuenta',
+                  onTap: () => context.push('/profile/account'),
                 ),
+              ProfileDestinationTile(
+                icon: Icons.help_outline,
+                title: 'Soporte y legal',
+                onTap: () => context.push('/profile/support'),
               ),
-            SizedBox(
-              height: 52,
-              child: FilledButton(
-                key: const ValueKey('profile-login'),
-                onPressed: busy
-                    ? null
-                    : () => _openAuth(service, AuthMode.login),
-                child: const Text('Iniciar sesión'),
+              ProfileDestinationTile(
+                icon: Icons.info_outline,
+                title: 'Acerca de FutBeat',
+                onTap: () => context.push('/profile/about'),
               ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 52,
-              child: OutlinedButton(
-                key: const ValueKey('profile-signup'),
-                onPressed: busy
-                    ? null
-                    : () => _openAuth(service, AuthMode.signup),
-                child: const Text('Crear cuenta'),
-              ),
-            ),
-          ] else ...[
-            Card(
-              color: service.emailVerified == false
-                  ? Theme.of(context).colorScheme.secondaryContainer
-                  : null,
-              child: ListTile(
-                leading: Icon(
-                  service.emailVerified == false
-                      ? Icons.mark_email_unread_outlined
-                      : Icons.verified_user_outlined,
-                ),
-                title: Text(service.email ?? 'Sesión iniciada'),
-                subtitle: switch ((
-                  service.emailVerified,
-                  authProviderLabel(service.authProvider),
-                )) {
-                  (false, _) => const Text('Confirma tu correo'),
-                  (true, final String via) when via != 'Correo' => Text(
-                    'Correo verificado · $via',
-                  ),
-                  (true, _) => const Text('Correo verificado'),
-                  (null, final String via) => Text(via),
-                  (null, null) => null,
-                },
-                trailing: service.emailVerified == false
-                    ? TextButton(
-                        onPressed: busy
-                            ? null
-                            : () => action(
-                                service.resendEmailConfirmation,
-                                'Correo de confirmación reenviado.',
-                              ),
-                        child: const Text('Reenviar correo'),
-                      )
-                    : null,
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: displayName,
-              enabled: !busy,
-              maxLength: 80,
-              decoration: const InputDecoration(
-                labelText: 'Nombre',
-                counterText: '',
-              ),
-              onSubmitted: (_) => saveName(),
-            ),
-            const SizedBox(height: 10),
-            FilledButton.tonal(
-              onPressed: busy ? null : saveName,
-              child: const Text('Guardar nombre'),
-            ),
-          ],
-          const SizedBox(height: 22),
-          const Text(
-            'Notificaciones',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ],
           ),
-          if (loaded) ...[
-            for (final option in notificationOptions)
-              notificationSwitch(
-                title: option.title,
-                icon: option.icon,
-                value: option.value(settings),
-                change: (value) => option.update(settings, value),
-              ),
-          ],
-          if (service.authenticated && PushService.configured) ...[
-            const SizedBox(height: 6),
-            FilledButton.tonalIcon(
-              onPressed: busy
-                  ? null
-                  : service.enabled
-                  ? () =>
-                        action(service.disable, 'Notificaciones desactivadas.')
-                  : () => action(service.enable, 'Notificaciones activadas.'),
-              icon: Icon(
-                service.enabled
-                    ? Icons.notifications_off_outlined
-                    : Icons.notifications_active_outlined,
-              ),
-              label: Text(
-                service.enabled
-                    ? 'Desactivar avisos en este dispositivo'
-                    : 'Activar avisos en este dispositivo',
-              ),
-            ),
-          ],
-          if (service.authenticated) ...[
-            const SizedBox(height: 22),
-            const Text(
-              'Cuenta y privacidad',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-            ),
-            const SizedBox(height: 6),
-            TextButton.icon(
-              onPressed: busy
-                  ? null
-                  : () => action(service.signOut, 'Sesión cerrada.'),
-              icon: const Icon(Icons.logout),
-              label: const Text('Cerrar sesión'),
-            ),
-            TextButton.icon(
-              onPressed: busy ? null : () => confirmAccountDeletion(service),
-              style: TextButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.error,
-              ),
-              icon: const Icon(Icons.delete_forever_outlined),
-              label: const Text('Eliminar cuenta'),
-            ),
-          ],
-          if (message != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(message!),
-            ),
         ],
       ),
     );
   }
 }
 
-class _GuestCard extends StatelessWidget {
-  const _GuestCard();
+class _ProfileHeader extends StatelessWidget {
+  const _ProfileHeader({
+    required this.initials,
+    required this.name,
+    required this.service,
+    required this.provider,
+    required this.premium,
+    required this.onLogin,
+    required this.onSignup,
+    required this.onResend,
+  });
+  final String initials;
+  final String? name;
+  final PushService service;
+  final String provider;
+  final bool premium;
+  final VoidCallback onLogin;
+  final VoidCallback onSignup;
+  final Future<void> Function() onResend;
 
   @override
-  Widget build(BuildContext context) => const Card(
-    child: ListTile(
-      leading: Icon(Icons.person_outline),
-      title: Text('Invitado'),
-      subtitle: Text('Tus favoritos se guardan en este dispositivo.'),
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 28,
+                child: Text(
+                  initials,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name?.trim().isNotEmpty == true ? name! : 'Tu perfil',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      service.authenticated
+                          ? service.email ?? 'Cuenta conectada'
+                          : 'Invitado',
+                    ),
+                    if (!service.authenticated)
+                      const Text(
+                        'Tus favoritos se guardan en este dispositivo.',
+                      ),
+                    if (service.authenticated)
+                      Text(
+                        '$provider · ${premium ? 'Premium' : 'Plan Gratis'}',
+                      ),
+                    if (service.emailVerified == true)
+                      const Text('Correo verificado'),
+                  ],
+                ),
+              ),
+              if (premium) const Chip(label: Text('PREMIUM')),
+            ],
+          ),
+          if (!service.authenticated && service.accountConfigured) ...[
+            const SizedBox(height: 16),
+            FilledButton(
+              key: const ValueKey('profile-login'),
+              onPressed: onLogin,
+              child: const Text('Iniciar sesión'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              key: const ValueKey('profile-signup'),
+              onPressed: onSignup,
+              child: const Text('Crear cuenta'),
+            ),
+          ],
+          if (!service.accountConfigured && !service.authenticated) ...[
+            const SizedBox(height: 12),
+            const Text('Inicio de sesión no disponible.'),
+          ],
+          if (service.emailVerified == false) ...[
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.mark_email_unread_outlined),
+              title: const Text('Confirma tu correo'),
+              trailing: TextButton(
+                onPressed: onResend,
+                child: const Text('Reenviar correo'),
+              ),
+            ),
+          ],
+        ],
+      ),
     ),
   );
 }
 
-/// "1 equipo · 2 ligas · 0 jugadores": Spanish singular only for exactly one.
 String favoritesSummary({
   required int teams,
   required int competitions,
@@ -482,4 +273,14 @@ String favoritesSummary({
     count(competitions, 'liga', 'ligas'),
     count(players, 'jugador', 'jugadores'),
   ].join(' · ');
+}
+
+String notificationSummary(UserProfileSettings settings) {
+  final values = notificationOptions
+      .where((o) => o.value(settings))
+      .map((o) => o.title)
+      .toList();
+  if (values.isEmpty) return 'Sin alertas seleccionadas';
+  final shown = values.take(3).join(', ');
+  return values.length > 3 ? '$shown y ${values.length - 3} más' : shown;
 }

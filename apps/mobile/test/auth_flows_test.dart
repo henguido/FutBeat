@@ -15,6 +15,7 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
 import 'package:futbeat/features/profile/password_reset_sheet.dart';
+import 'package:futbeat/features/profile/account_security_screen.dart';
 import 'package:futbeat/features/profile/profile_screen.dart';
 import 'package:futbeat/main.dart' show handlePasswordResetLink;
 
@@ -39,13 +40,14 @@ class _Fail {
 }
 
 /// A signed-in session that needs no server round trip (widget tests).
-Map<String, dynamic> _session() => {
+Map<String, dynamic> _session({String? provider}) => {
   'access_token': 'access-user-a-0',
   'refresh_token': 'refresh-user-a-0',
   'user': {
     'id': 'user-a',
     'email': 'user@example.com',
     'email_confirmed_at': '2026-09-27T00:00:00Z',
+    if (provider != null) 'app_metadata': {'provider': provider},
   },
 };
 
@@ -302,8 +304,9 @@ final _emptySnapshot = Snapshot({
 Future<void> _pumpProfile(
   WidgetTester tester,
   PushService service,
-  AppDatabase db,
-) async {
+  AppDatabase db, {
+  Widget child = const ProfileScreen(),
+}) async {
   tester.view.physicalSize = const Size(800, 3200);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -328,7 +331,7 @@ Future<void> _pumpProfile(
           (ref, keys) async => _emptySnapshot,
         ),
       ],
-      child: const MaterialApp(home: ProfileScreen()),
+      child: MaterialApp(home: child),
     ),
   );
   await tester.pump(const Duration(milliseconds: 500));
@@ -1269,6 +1272,41 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Correo verificado'), findsNothing);
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(find.text('Orden de competiciones'), findsNothing);
+    expect(find.text('Cerrar sesión'), findsNothing);
+    expect(find.text('Eliminar cuenta'), findsNothing);
+  });
+
+  testWidgets('Google account delegates its password to Google', (
+    tester,
+  ) async {
+    final value = await _service();
+    value.service.session = _session(provider: 'google');
+    await _pumpProfile(
+      tester,
+      value.service,
+      value.db,
+      child: const AccountSecurityScreen(),
+    );
+    expect(find.text('Gestionada por Google'), findsOneWidget);
+    expect(find.byKey(const ValueKey('account-password-reset')), findsNothing);
+  });
+
+  testWidgets('email account exposes password recovery', (tester) async {
+    final value = await _service();
+    value.service.session = _session(provider: 'email');
+    await _pumpProfile(
+      tester,
+      value.service,
+      value.db,
+      child: const AccountSecurityScreen(),
+    );
+    expect(
+      find.byKey(const ValueKey('account-password-reset')),
+      findsOneWidget,
+    );
+    expect(find.text('Gestionada por Google'), findsNothing);
   });
 
   testWidgets('signed-in profile shows email and verification badge', (
