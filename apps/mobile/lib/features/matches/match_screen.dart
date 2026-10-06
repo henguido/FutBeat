@@ -15,6 +15,7 @@ import '../../shared/widgets.dart';
 import '../entities/standings.dart';
 import 'match_info_card.dart';
 import 'match_preview_sections.dart';
+import 'lineup_history_section.dart';
 import 'match_period_scores.dart';
 
 const _headerTop = Color(0xFF1B2B31);
@@ -334,6 +335,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     // or the tabs, failing on its own, read once per open.
     final preview = ref.watch(matchPreviewProvider(widget.id));
     final previewValue = preview.asData?.value;
+    final homeLineupHistory = ref.watch(
+      lineupHistoryProvider((matchId: widget.id, teamId: match.homeId)),
+    );
+    final awayLineupHistory = ref.watch(
+      lineupHistoryProvider((matchId: widget.id, teamId: match.awayId)),
+    );
     final showRecentForm =
         preview.isLoading ||
         (previewValue != null &&
@@ -371,6 +378,14 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         data: data,
         match: match,
         onOpen: () => _selectTab(_MatchTabId.headToHead),
+      ),
+      LineupHistorySection(
+        teamName: home.displayName,
+        entries: homeLineupHistory,
+      ),
+      LineupHistorySection(
+        teamName: away.displayName,
+        entries: awayLineupHistory,
       ),
       PreviewEmptyState(
         preview: preview,
