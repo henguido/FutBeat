@@ -52,7 +52,11 @@ class _Repository implements FootballRepository {
 const _longHome = 'Club Deportivo Universitario Metropolitano de Occidente';
 const _longAway = 'Asociación Deportiva Atlética Internacional Fronteriza';
 
-Snapshot _snapshot({bool adjacentMatches = false}) {
+Snapshot _snapshot({
+  bool adjacentMatches = false,
+  bool subgroupData = false,
+  bool exactlyThreeOneCompetition = false,
+}) {
   final today = costaRicaNow();
   String startAt(int hour, int dayOffset) => DateTime.utc(
     today.year,
@@ -72,6 +76,8 @@ Snapshot _snapshot({bool adjacentMatches = false}) {
     Map<String, dynamic>? latestEvent,
     bool played = false,
     int dayOffset = 0,
+    String? group,
+    String? round,
   }) => {
     'id': id,
     'competitionId': comp,
@@ -83,6 +89,8 @@ Snapshot _snapshot({bool adjacentMatches = false}) {
     'score': score,
     'latestEvent': ?latestEvent,
     if (played) 'hasPlayedEvidence': true,
+    'group': ?group,
+    'round': ?round,
     'events': <dynamic>[],
     'statistics': <dynamic>[],
   };
@@ -135,31 +143,49 @@ Snapshot _snapshot({bool adjacentMatches = false}) {
         minute: 63,
         score: {'home': 1, 'away': 0},
         latestEvent: {'type': 'GOAL', 'minute': 64},
+        group: subgroupData ? 'A' : null,
       ),
-      match('m_cr_next', 'c_cr', 't_her', 't_car', 'SCHEDULED', 23),
-      match('m_es_1', 'c_es', 't_bet', 't_get', 'SCHEDULED', 23),
       match(
-        'm_es_long',
-        'c_es',
-        't_long1',
-        't_long2',
-        'LIVE',
-        12,
-        minute: 88,
-        score: {'home': 12, 'away': 10},
-        latestEvent: {'type': 'SUBSTITUTION', 'minute': 88},
-      ),
-      match('m_es_awaiting', 'c_es', 't_get', 't_bet', 'SCHEDULED', 0),
-      match(
-        'm_es_partial',
-        'c_es',
-        't_bet',
-        't_long2',
+        'm_cr_next',
+        'c_cr',
+        't_her',
+        't_car',
         'SCHEDULED',
-        0,
-        score: {'home': 2, 'away': 1},
-        played: true,
+        23,
+        group: subgroupData ? 'B' : null,
       ),
+      match(
+        'm_es_1',
+        exactlyThreeOneCompetition ? 'c_cr' : 'c_es',
+        't_bet',
+        't_get',
+        'SCHEDULED',
+        23,
+      ),
+      if (!exactlyThreeOneCompetition) ...[
+        match(
+          'm_es_long',
+          'c_es',
+          't_long1',
+          't_long2',
+          'LIVE',
+          12,
+          minute: 88,
+          score: {'home': 12, 'away': 10},
+          latestEvent: {'type': 'SUBSTITUTION', 'minute': 88},
+        ),
+        match('m_es_awaiting', 'c_es', 't_get', 't_bet', 'SCHEDULED', 0),
+        match(
+          'm_es_partial',
+          'c_es',
+          't_bet',
+          't_long2',
+          'SCHEDULED',
+          0,
+          score: {'home': 2, 'away': 1},
+          played: true,
+        ),
+      ],
       if (adjacentMatches) ...[
         match(
           'm_yesterday_final',
@@ -255,7 +281,7 @@ Future<List<String>> _pump(
   return opened;
 }
 
-Finder _row(String matchId) => find.byKey(ValueKey('match-card-$matchId'));
+Finder _row(String matchId) => find.byKey(ValueKey('match-row-$matchId'));
 
 void main() {
   test('date transition clears only LIVE and never reapplies it', () {
@@ -298,7 +324,7 @@ void main() {
           .selected,
       isTrue,
     );
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(
       tester
           .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'En vivo'))
@@ -364,14 +390,14 @@ void main() {
   testWidgets('a feed with fewer groups has no ad slot', (tester) async {
     await _pump(tester);
     expect(find.byType(AdSlot), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
   });
 
   testWidgets('every match of the day is a row, once, without follows', (
     tester,
   ) async {
     await _pump(tester);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     for (final id in [
       'm_cr_live',
       'm_cr_next',
@@ -384,6 +410,43 @@ void main() {
     }
     expect(find.text('FAVORITOS'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('three matches from one competition render in one group card', (
+    tester,
+  ) async {
+    await _pump(tester, data: _snapshot(exactlyThreeOneCompetition: true));
+    expect(
+      find.byKey(const ValueKey('competition-group-competition-c_cr')),
+      findsOneWidget,
+    );
+    expect(find.byType(CompetitionMatchGroupCard), findsOneWidget);
+    expect(find.byType(FeedMatchRow), findsNWidgets(3));
+  });
+
+  testWidgets('two competitions render as two group cards', (tester) async {
+    await _pump(tester);
+    expect(find.byType(CompetitionMatchGroupCard), findsNWidgets(2));
+    expect(
+      find.byKey(const ValueKey('competition-group-competition-c_cr')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('competition-group-competition-c_es')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('subgroups appear only with explicit provider evidence', (
+    tester,
+  ) async {
+    await _pump(tester);
+    expect(find.text('Grupo A'), findsNothing);
+    expect(find.text('Grupo B'), findsNothing);
+
+    await _pump(tester, data: _snapshot(subgroupData: true));
+    expect(find.text('Grupo A'), findsOneWidget);
+    expect(find.text('Grupo B'), findsOneWidget);
   });
 
   testWidgets('the row star follows / unfollows the match without moving it '
@@ -405,7 +468,11 @@ void main() {
     expect(opened, isEmpty, reason: 'the star never opens the match');
     expect(db.toggles, ['match:m_es_long']);
     expect(find.text('FAVORITOS'), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6), reason: 'reorders only');
+    expect(
+      find.byType(FeedMatchRow),
+      findsNWidgets(6),
+      reason: 'reorders only',
+    );
     expect(_row('m_es_long'), findsOneWidget, reason: 'never duplicated');
     // Still under its own competition.
     expect(
@@ -416,7 +483,7 @@ void main() {
     await tester.tap(star);
     await tester.pumpAndSettle();
     expect(find.text('FAVORITOS'), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     await tester.tap(find.text(_longHome).first);
     await tester.pumpAndSettle();
     expect(opened, ['m_es_long']);
@@ -426,7 +493,7 @@ void main() {
     final handle = tester.ensureSemantics();
     await _pump(tester);
     final row = tester.getSemantics(
-      find.byKey(const ValueKey('match-card-action-m_es_1')),
+      find.bySemanticsLabel(RegExp(r'^Real Betis contra Getafe,')),
     );
     expect(row.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
     expect(row.label, isNot(contains('Seguir')));
@@ -447,7 +514,7 @@ void main() {
     await _pump(tester, follows: {'team:t_bet'});
     expect(find.text('FAVORITOS'), findsOneWidget);
     // Same total, followed matches appear once.
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(_row('m_es_1'), findsOneWidget);
     expect(_row('m_es_partial'), findsOneWidget);
     expect(_row('m_es_awaiting'), findsOneWidget);
@@ -509,7 +576,7 @@ void main() {
     await _pump(tester);
     final live = _row('m_cr_live');
     expect(
-      find.descendant(of: live, matching: find.text("63′ · EN VIVO")),
+      find.descendant(of: live, matching: find.text("63′ · En vivo")),
       findsOneWidget,
     );
     expect(
@@ -571,7 +638,7 @@ void main() {
       '"Favoritos": it stays in its competition, once', (tester) async {
     await _pump(tester, follows: {'match:m_es_1', 'competition:c_es'});
     expect(find.text('FAVORITOS'), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(_row('m_es_1'), findsOneWidget);
     expect(
       tester.getTopLeft(_row('m_es_1')).dy,
@@ -647,9 +714,11 @@ void main() {
       tester,
     ) async {
       await _pump(tester, size: Size(width, 3000), follows: {'team:t_long1'});
-      expect(find.byType(MatchCard), findsNWidgets(6));
+      expect(find.byType(FeedMatchRow), findsNWidgets(6));
       expect(tester.takeException(), isNull);
-      for (final row in tester.widgetList<MatchCard>(find.byType(MatchCard))) {
+      for (final row in tester.widgetList<FeedMatchRow>(
+        find.byType(FeedMatchRow),
+      )) {
         final size = tester.getSize(_row(row.match.id));
         expect(size.height, greaterThanOrEqualTo(48));
         expect(size.width, lessThanOrEqualTo(width));
@@ -662,7 +731,9 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await _pump(tester, size: const Size(320, 4000), follows: {'team:t_long1'});
     expect(tester.takeException(), isNull);
-    for (final row in tester.widgetList<MatchCard>(find.byType(MatchCard))) {
+    for (final row in tester.widgetList<FeedMatchRow>(
+      find.byType(FeedMatchRow),
+    )) {
       expect(
         tester.getSize(_row(row.match.id)).height,
         greaterThanOrEqualTo(48),
@@ -712,7 +783,7 @@ void main() {
       ),
     );
     final live = tester.getSemantics(
-      find.byKey(const ValueKey('match-card-action-m_cr_live')),
+      find.bySemanticsLabel(RegExp('Saprissa contra Alajuelense')),
     );
     expect(live.label, contains('Saprissa contra Alajuelense'));
     expect(live.label, contains('1 - 0'));
@@ -731,7 +802,7 @@ void main() {
     final name = tester.widget<Text>(
       find.descendant(of: _row('m_es_long'), matching: find.text(_longHome)),
     );
-    expect(name.maxLines, 3);
+    expect(name.maxLines, 1);
     expect(name.overflow, TextOverflow.ellipsis);
     expect(tester.takeException(), isNull);
   });
@@ -771,7 +842,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(list).dx, restX);
     // Back on today: the same matches, once.
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(tester.takeException(), isNull);
   });
 
@@ -784,7 +855,11 @@ void main() {
     await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
     await tester.pumpAndSettle();
     expect(selected('En vivo'), isTrue);
-    expect(find.byType(MatchCard), findsNWidgets(2), reason: 'two live today');
+    expect(
+      find.byType(FeedMatchRow),
+      findsNWidgets(2),
+      reason: 'two live today',
+    );
 
     final swipe = find.byKey(const ValueKey('matches-date-swipe'));
     await tester.fling(swipe, const Offset(-300, 0), 1200); // tomorrow
@@ -796,7 +871,7 @@ void main() {
     await tester.fling(swipe, const Offset(300, 0), 1200);
     await tester.pumpAndSettle();
     expect(selected('Todos'), isTrue);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
 
     // Other filters are the user's choice on any day.
     // (The chip sits beyond the right edge of the chip row at 390 px.)
@@ -895,7 +970,7 @@ void main() {
         lessThan(tester.getTopLeft(find.text(second)).dy),
       );
       // Reordered only: every match of the day, exactly once.
-      expect(find.byType(MatchCard), findsNWidgets(6));
+      expect(find.byType(FeedMatchRow), findsNWidgets(6));
       for (final id in [
         'm_cr_live',
         'm_cr_next',
@@ -913,14 +988,18 @@ void main() {
         'are not repeated', (tester) async {
       await _pump(tester, country: country, follows: {'team:t_bet'});
       final favourites = tester.getTopLeft(find.text('FAVORITOS')).dy;
-      expect(favourites, lessThan(tester.getTopLeft(find.text(first)).dy));
-      expect(favourites, lessThan(tester.getTopLeft(find.text(second)).dy));
-      expect(find.byType(MatchCard), findsNWidgets(6));
+      final firstId = first == 'LaLiga' ? 'c_es' : 'c_cr';
+      final secondId = second == 'LaLiga' ? 'c_es' : 'c_cr';
+      final firstHeader = find.byKey(ValueKey('competition-open-$firstId'));
+      final secondHeader = find.byKey(ValueKey('competition-open-$secondId'));
+      expect(favourites, lessThan(tester.getTopLeft(firstHeader).dy));
+      expect(favourites, lessThan(tester.getTopLeft(secondHeader).dy));
+      expect(find.byType(FeedMatchRow), findsNWidgets(6));
       for (final id in ['m_es_1', 'm_es_awaiting', 'm_es_partial']) {
         expect(_row(id), findsOneWidget);
         expect(
           tester.getTopLeft(_row(id)).dy,
-          lessThan(tester.getTopLeft(find.text(first)).dy),
+          lessThan(tester.getTopLeft(firstHeader).dy),
         );
       }
       expect(tester.takeException(), isNull);
@@ -935,7 +1014,7 @@ void main() {
       tester.getTopLeft(find.text('LaLiga')).dy,
       lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
     );
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
   });
 
   // --- One canonical fixture, exactly once -------------------------------
@@ -1080,7 +1159,7 @@ void main() {
       ),
     ]);
     await _pump(tester, data: data);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(_row('m_es_1'), findsNothing);
     expect(_row('m_es_1_twin'), findsOneWidget);
     expect(
@@ -1097,7 +1176,7 @@ void main() {
       _twinOf('m_es_1', twinId: 'm_es_1_other', competitionId: 'c_cr'),
     ]);
     await _pump(tester, data: data);
-    expect(find.byType(MatchCard), findsNWidgets(7));
+    expect(find.byType(FeedMatchRow), findsNWidgets(7));
     expect(_row('m_es_1'), findsOneWidget);
     expect(_row('m_es_1_other'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -1114,7 +1193,7 @@ void main() {
       follows: {'competition:c_es', 'match:m_cr_next'},
     );
     expect(find.text('FAVORITOS'), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(tester.takeException(), isNull);
   });
 
@@ -1127,7 +1206,11 @@ void main() {
       follows: {'team:t_bet', 'competition:c_cr'},
     );
     expect(find.text('FAVORITOS'), findsOneWidget);
-    expect(find.byType(MatchCard), findsNWidgets(6), reason: 'nothing hidden');
+    expect(
+      find.byType(FeedMatchRow),
+      findsNWidgets(6),
+      reason: 'nothing hidden',
+    );
     // The favourite team's fixture appears once (one of the two entities).
     expect(
       _row('m_es_1').evaluate().length + _row('m_es_1_twin').evaluate().length,
@@ -1209,7 +1292,7 @@ void main() {
     /// M = match row, A = ad slot.
     String layout(WidgetTester tester) {
       final items = <(double, String)>[
-        for (final e in find.byType(MatchCard).evaluate())
+        for (final e in find.byType(FeedMatchRow).evaluate())
           (tester.getTopLeft(find.byWidget(e.widget)).dy, 'M'),
         for (final e in find.byType(AdSlot).evaluate())
           (tester.getTopLeft(find.byWidget(e.widget)).dy, 'A'),
@@ -1254,14 +1337,22 @@ void main() {
             ..sort();
       final headers =
           find
-              .byTooltip(RegExp('^Ocultar partidos de '))
+              .byWidgetPredicate(
+                (widget) =>
+                    widget.key?.toString().contains(
+                      'competition-group-competition-',
+                    ) ==
+                    true,
+              )
               .evaluate()
               .map((e) => tester.getTopLeft(find.byWidget(e.widget)).dy)
               .toList()
             ..sort();
       // FAVORITOS, then the ad, then the first competition group.
       expect(ads.first, greaterThan(favourites));
-      expect(ads.first, lessThan(headers.first));
+      // In tests the unloaded ad placeholder can have zero height, so the
+      // following group may start at the same y-coordinate.
+      expect(ads.first, lessThanOrEqualTo(headers.first));
       expect(RegExp('A(?!H)').hasMatch(layout(tester)), isFalse);
     });
 

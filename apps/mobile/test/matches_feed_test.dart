@@ -861,48 +861,47 @@ void main() {
     expect(data.onDate(today, 'Próximos'), isEmpty);
   });
 
-  testWidgets(
-    'large match catalogs build only visible cards while preserving all matches',
-    (tester) async {
-      final data = _largeSnapshot(250);
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets('large match catalogs stay in one complete competition card', (
+    tester,
+  ) async {
+    final data = _largeSnapshot(250);
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            repositoryProvider.overrideWithValue(_Repository(data)),
-            liveMatchUpdatesProvider.overrideWith(
-              (ref) => Stream.value(const <String, LiveMatchUpdate>{}),
-            ),
-            preferenceProvider.overrideWith(
-              (ref) => Stream.value(
-                const CountryPreference(
-                  detectedCountry: 'CR',
-                  selectedCountry: null,
-                  bootstrapDismissed: true,
-                ),
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          repositoryProvider.overrideWithValue(_Repository(data)),
+          liveMatchUpdatesProvider.overrideWith(
+            (ref) => Stream.value(const <String, LiveMatchUpdate>{}),
+          ),
+          preferenceProvider.overrideWith(
+            (ref) => Stream.value(
+              const CountryPreference(
+                detectedCountry: 'CR',
+                selectedCountry: null,
+                bootstrapDismissed: true,
               ),
             ),
-            followsProvider.overrideWith((ref) => Stream.value(<String>{})),
-            temporaryInterestsProvider.overrideWith(
-              (ref) => Stream.value(<String>{}),
-            ),
-          ],
-          child: const MaterialApp(home: MatchesScreen()),
-        ),
-      );
-      await tester.pumpAndSettle();
+          ),
+          followsProvider.overrideWith((ref) => Stream.value(<String>{})),
+          temporaryInterestsProvider.overrideWith(
+            (ref) => Stream.value(<String>{}),
+          ),
+        ],
+        child: const MaterialApp(home: MatchesScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(data.matches, hasLength(250));
-      final builtCards = find.byType(MatchCard).evaluate().length;
-      expect(builtCards, greaterThan(0));
-      expect(builtCards, lessThan(50));
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(data.matches, hasLength(250));
+    final builtCards = find.byType(FeedMatchRow).evaluate().length;
+    expect(builtCards, data.matches.length);
+    expect(find.byType(CompetitionMatchGroupCard), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'followed team matches appear first and the rest of the day stays visible',
