@@ -1513,6 +1513,16 @@ Deno.serve(async (request) => {
   const receivedAt = new Date().toISOString();
   const started = performance.now();
   let stage = "read-current";
+  // Observability: milliseconds spent in each stage (ledger metadata).
+  const stageMs: Record<string, number> = {};
+  let stageStarted = performance.now();
+  const setStage = (next: string) => {
+    const now = performance.now();
+    stageMs[stage] = Math.round((stageMs[stage] ?? 0) + now - stageStarted);
+    stage = next;
+    stageStarted = now;
+  };
+  const closeStage = () => setStage(stage);
   let resolvedBase = 0;
   let resolvedMatches = 0;
 
@@ -1568,14 +1578,14 @@ Deno.serve(async (request) => {
         async (resolved: Map<string, string>) => withCalendar(await readExisting(resolved)),
         receivedAt,
         (next) => {
-          stage = next;
+          setStage(next);
         },
       );
       snapshot = normalized.snapshot;
       resolvedBase = normalized.resolvedBase;
       resolvedMatches = normalized.resolvedMatches;
     } else {
-      stage = "normalize";
+      setStage("normalize");
       const resolve = (
         kind: string,
         external: string,
@@ -1595,7 +1605,7 @@ Deno.serve(async (request) => {
         : await normalizeSofaScoreFixtures(events, resolve, receivedAt, withCalendar(baseExisting));
     }
 
-    stage = "store";
+    setStage("store");
     const result = mode === "calendar"
       ? await rpc(
         "futbeat_store_calendar_range",
@@ -1643,6 +1653,7 @@ Deno.serve(async (request) => {
         teams: snapshot.teams.length,
         resolvedBase,
         resolvedMatches,
+        stageMs: (closeStage(), stageMs),
         transport: "github-actions-oidc",
         provider: input.source,
         mode,
@@ -1676,6 +1687,7 @@ Deno.serve(async (request) => {
         durationMs: Math.round(performance.now() - started),
         resolvedBase,
         resolvedMatches,
+        stageMs: (closeStage(), stageMs),
         transport: "github-actions-oidc",
         mode,
       },
