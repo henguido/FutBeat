@@ -547,6 +547,8 @@ void main() {
     expect(find.text('Posición en la tabla'), findsOneWidget);
     final text = _textIn(tester, 'standings-snapshot');
     expect(text, contains('#2'));
+    expect(text, contains('5 PJ'));
+    expect(text, contains('DG +5'));
     expect(text, contains('12 pts'));
     expect(text, contains('#3'));
     expect(text, contains('5 pts'));
@@ -557,6 +559,69 @@ void main() {
     expect(find.byKey(const ValueKey('standings-snapshot')), findsNothing);
     await _close(tester, container);
   });
+
+  testWidgets('Previa summarizes three H2H meetings and opens the full tab', (
+    tester,
+  ) async {
+    final container = await _open(tester, _Server((_) => _context()));
+    await _scrollTo(tester, find.byKey(const ValueKey('preview-h2h')));
+    expect(find.text('Últimos enfrentamientos'), findsOneWidget);
+    expect(find.byKey(const ValueKey('preview-h2h-open')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('preview-h2h-open')));
+    await _settle(tester);
+    expect(_selectedTab(tester), 'Cara a cara');
+    await _close(tester, container);
+  });
+
+  testWidgets('Previa without supplemental data keeps useful context and a '
+      'compact empty state', (tester) async {
+    final empty = _preview(h2h: false)
+      ..['form'] = {
+        'home': {'state': 'none', 'matchIds': <String>[]},
+        'away': {'state': 'none', 'matchIds': <String>[]},
+      };
+    final container = await _open(
+      tester,
+      _Server((_) => _context(table: false), preview: () => empty),
+    );
+    await _scrollTo(tester, find.byKey(const ValueKey('preview-empty')));
+    expect(find.text('Información del partido'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay datos suficientes para esta previa.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('recent-form')), findsNothing);
+    expect(find.byKey(const ValueKey('preview-h2h')), findsNothing);
+    await _close(tester, container);
+  });
+
+  testWidgets('320 px H2H summary and long names do not overflow', (
+    tester,
+  ) async {
+    final container = await _open(
+      tester,
+      _Server(
+        (_) => _context(longNames: true),
+        preview: () => _preview(longNames: true),
+      ),
+      width: 320,
+    );
+    await _scrollTo(tester, find.byKey(const ValueKey('preview-h2h')));
+    expect(tester.takeException(), isNull);
+    await _close(tester, container);
+  });
+
+  testWidgets(
+    'a future match never labels absent or inferred XI as confirmed',
+    (tester) async {
+      final container = await _open(tester, _Server((_) => _context()));
+      expect(find.text('Alineación confirmada'), findsNothing);
+      expect(find.text('Posible alineación'), findsNothing);
+      await _tab(tester, 'Alineación');
+      expect(find.text('Alineación confirmada'), findsNothing);
+      await _close(tester, container);
+    },
+  );
 
   testWidgets('mini table never turns missing points into zero', (
     tester,

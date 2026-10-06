@@ -366,6 +366,20 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         stage: detail.stage,
         onViewTable: () => _selectTab(_MatchTabId.standings),
       ),
+      PreviewHeadToHeadSection(
+        preview: preview,
+        data: data,
+        match: match,
+        onOpen: () => _selectTab(_MatchTabId.headToHead),
+      ),
+      PreviewEmptyState(
+        preview: preview,
+        hasStandings: StandingsSnapshotCard.entries(
+          data,
+          match,
+          stage: detail.stage,
+        ).isNotEmpty,
+      ),
     ];
 
     // Bounded: once the retries are spent a pending table settles into a

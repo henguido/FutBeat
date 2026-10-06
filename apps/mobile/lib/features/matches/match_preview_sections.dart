@@ -310,28 +310,28 @@ class StandingsSnapshotCard extends StatelessWidget {
   final String? stage;
   final VoidCallback? onViewTable;
 
-  @override
-  Widget build(BuildContext context) {
-    // The match's own group (or, across groups, each side's own group); a
-    // table that cannot be resolved is hidden.
+  static List<(int, Json, String?)> entries(
+    Snapshot data,
+    FootballMatch match, {
+    String? stage,
+  }) {
     final groups = standingsGroups(
       standingsTableFor(data, match.competitionId),
       data,
       focusTeamIds: {match.homeId, match.awayId},
       stage: stage,
     );
-    // Across groups each position is labelled with its own group.
     final crossGroup = (groups?.length ?? 0) > 1;
     (int, Json, String?)? find(String teamId) {
       final resolvedTeamId = data.resolveEntityId(teamId);
       for (final group in groups ?? const <StandingsGroup>[]) {
-        final rows = group.rows;
-        for (var i = 0; i < rows.length; i++) {
-          if (data.resolveEntityId(rows[i]['teamId']?.toString() ?? '') ==
+        for (var i = 0; i < group.rows.length; i++) {
+          final row = group.rows[i];
+          if (data.resolveEntityId(row['teamId']?.toString() ?? '') ==
               resolvedTeamId) {
             return (
-              (rows[i]['position'] as num?)?.toInt() ?? i + 1,
-              rows[i],
+              (row['position'] as num?)?.toInt() ?? i + 1,
+              row,
               crossGroup ? group.label : null,
             );
           }
@@ -340,8 +340,28 @@ class StandingsSnapshotCard extends StatelessWidget {
       return null;
     }
 
-    final home = find(match.homeId);
-    final away = find(match.awayId);
+    return [?find(match.homeId), ?find(match.awayId)];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // The match's own group (or, across groups, each side's own group); a
+    // table that cannot be resolved is hidden.
+    final resolved = entries(data, match, stage: stage);
+    final home = resolved
+        .where(
+          (e) =>
+              data.resolveEntityId(e.$2['teamId']?.toString() ?? '') ==
+              data.resolveEntityId(match.homeId),
+        )
+        .firstOrNull;
+    final away = resolved
+        .where(
+          (e) =>
+              data.resolveEntityId(e.$2['teamId']?.toString() ?? '') ==
+              data.resolveEntityId(match.awayId),
+        )
+        .firstOrNull;
     if (home == null && away == null) return const SizedBox.shrink();
     final historical = match.isFinished || match.hasPlayedEvidence;
     return Column(
@@ -399,6 +419,17 @@ class _PositionRow extends StatelessWidget {
       String value => int.tryParse(value.trim()),
       _ => null,
     };
+    int? whole(Object? value) => switch (value) {
+      int number when number >= 0 => number,
+      num number when number.isFinite && number == number.roundToDouble() =>
+        number.toInt(),
+      String text => int.tryParse(text.trim()),
+      _ => null,
+    };
+    final played = whole(entry.$2['played']);
+    final gf = whole(entry.$2['gf']);
+    final ga = whole(entry.$2['ga']);
+    final goalDifference = gf != null && ga != null ? gf - ga : null;
     return Row(
       children: [
         Container(width: 3, height: 26, color: accent),
@@ -423,18 +454,126 @@ class _PositionRow extends StatelessWidget {
           '#${entry.$1}',
           style: TextStyle(color: accent, fontWeight: FontWeight.w900),
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 10),
         SizedBox(
-          width: 56,
-          child: points != null && points >= 0
-              ? Text(
-                  '$points pts',
-                  textAlign: TextAlign.end,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                )
-              : const SizedBox.shrink(),
+          width: 104,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(
+              [
+                if (played != null) '$played PJ',
+                if (goalDifference != null)
+                  'DG ${goalDifference > 0 ? '+' : ''}$goalDifference',
+                if (points != null && points >= 0) '$points pts',
+              ].join(' · '),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+            ),
+          ),
         ),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Resumen cara a cara para Previa
+// ---------------------------------------------------------------------------
+
+class PreviewHeadToHeadSection extends StatelessWidget {
+  const PreviewHeadToHeadSection({
+    required this.preview,
+    required this.data,
+    required this.match,
+    required this.onOpen,
+    super.key,
+  });
+
+  final AsyncValue<MatchPreview> preview;
+  final Snapshot data;
+  final FootballMatch match;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) => preview.when(
+    loading: () => const SizedBox.shrink(),
+    error: (_, _) => const SizedBox.shrink(),
+    data: (value) {
+      final meetings = value.h2hMeetings.take(3).toList();
+      if (meetings.isEmpty) return const SizedBox.shrink();
+      Entity? team(String id) => data.team(id) ?? value.team(id);
+      String? competitionName(String? id) =>
+          value.competitionName(id) ??
+          (id == null ? null : data.competition(id)?.name);
+      return Column(
+        key: const ValueKey('preview-h2h'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(2, 14, 2, 8),
+            child: Text(
+              'Últimos enfrentamientos',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+            ),
+          ),
+          _Card(
+            child: Column(
+              children: [
+                for (var i = 0; i < meetings.length; i++) ...[
+                  _MeetingRow(
+                    item: meetings[i],
+                    team: team,
+                    competitionName: competitionName,
+                  ),
+                  if (i + 1 < meetings.length) const SizedBox(height: 8),
+                ],
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    key: const ValueKey('preview-h2h-open'),
+                    onPressed: onOpen,
+                    icon: const Icon(Icons.compare_arrows_rounded, size: 18),
+                    label: const Text('Ver cara a cara'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+class PreviewEmptyState extends StatelessWidget {
+  const PreviewEmptyState({
+    required this.preview,
+    required this.hasStandings,
+    super.key,
+  });
+
+  final AsyncValue<MatchPreview> preview;
+  final bool hasStandings;
+
+  @override
+  Widget build(BuildContext context) {
+    if (hasStandings || preview.isLoading) return const SizedBox.shrink();
+    final value = preview.asData?.value;
+    if (value != null &&
+        (value.formMatches('home').isNotEmpty ||
+            value.formMatches('away').isNotEmpty ||
+            value.h2hMeetings.isNotEmpty)) {
+      return const SizedBox.shrink();
+    }
+    return const Padding(
+      key: ValueKey('preview-empty'),
+      padding: EdgeInsets.only(top: 14),
+      child: _Card(
+        child: Text(
+          'Todavía no hay datos suficientes para esta previa.',
+          style: TextStyle(color: muted),
+        ),
+      ),
     );
   }
 }
