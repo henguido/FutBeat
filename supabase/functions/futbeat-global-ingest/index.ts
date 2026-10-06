@@ -233,7 +233,12 @@ async function resolveIdentityItems(
   items: Array<Record<string, unknown>>,
   target: Map<string, string>,
 ) {
-  const chunkSize = 800;
+  // Each chunk is one RPC = one statement under the API role's 8 s timeout.
+  // 800 identities timed out in production (2026-10-06, stage resolve-base,
+  // 57014) once a two-week ingest gap left many identities unmapped: the
+  // name fallback costs ~23 ms per new identity. 100 keeps a chunk at a few
+  // seconds even when every identity is new.
+  const chunkSize = 100;
   for (let offset = 0; offset < items.length; offset += chunkSize) {
     const chunk = items.slice(offset, offset + chunkSize);
     const rows = await rpc(
