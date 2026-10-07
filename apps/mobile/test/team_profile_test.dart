@@ -401,7 +401,8 @@ void main() {
     );
     // Summary v2 (#156): no upcoming match -> no empty "next match" card.
     expect(find.text('Partido siguiente'), findsNothing);
-    expect(find.text('Últimos partidos'), findsOneWidget);
+    expect(find.text('Forma reciente'), findsOneWidget);
+    expect(find.text('Últimos resultados'), findsOneWidget);
 
     await _openTab(tester, 'Plantilla');
     for (final label in squadGroupOrder) {

@@ -20,6 +20,7 @@ void main() {
     ('matches', '/matches'),
     ('match', '/match/fb_match_clasico'),
     ('competition', '/competition/fb_comp_cr'),
+    ('team', '/team/fb_team_sap'),
     ('explore', '/explore'),
     ('player', '/player/fb_player_torres'),
   ]) {

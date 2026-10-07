@@ -691,7 +691,7 @@ class SquadPlayerRow extends StatelessWidget {
             SizedBox(
               width: 28,
               child: Text(
-                number?.toString() ?? '–',
+                number?.toString() ?? '',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: muted,
