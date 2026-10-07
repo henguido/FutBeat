@@ -431,6 +431,36 @@ class _PositionRow extends StatelessWidget {
 // Cara a cara
 // ---------------------------------------------------------------------------
 
+/// Canonical, newest-first H2H rows prepared once for presentation. Only a
+/// real match id deduplicates; id-less rows are deliberately preserved.
+List<Json> prepareH2hMeetings(Iterable<Json> source) {
+  final seenIds = <String>{};
+  final indexed = <({int index, Json item, DateTime? date})>[];
+  for (final (index, item) in source.indexed) {
+    final id = item['matchId']?.toString().trim() ?? '';
+    if (id.isNotEmpty && !seenIds.add(id)) continue;
+    indexed.add((
+      index: index,
+      item: item,
+      date: DateTime.tryParse(item['startTime']?.toString() ?? ''),
+    ));
+  }
+  indexed.sort((a, b) {
+    final aDate = a.date;
+    final bDate = b.date;
+    if (aDate != null && bDate != null) {
+      final dateOrder = bDate.compareTo(aDate);
+      if (dateOrder != 0) return dateOrder;
+    } else if (aDate != null) {
+      return -1;
+    } else if (bDate != null) {
+      return 1;
+    }
+    return a.index.compareTo(b.index);
+  });
+  return [for (final entry in indexed) entry.item];
+}
+
 class HeadToHeadTab extends ConsumerStatefulWidget {
   const HeadToHeadTab({
     required this.preview,
@@ -459,6 +489,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   /// scope has pages, they replace the preview's first meetings: the server
   /// order and totals are the only source from then on.
   final Map<bool, List<H2hPage>> _pages = {false: [], true: []};
+  final Map<bool, int> _visibleLimits = {false: 5, true: 5};
   final Set<bool> _loading = {};
   final Set<bool> _failed = {};
 
@@ -513,6 +544,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
     setState(() {
       _loading.add(competition);
       _failed.remove(competition);
+      _visibleLimits[competition] = 1 << 20;
     });
     try {
       final page = await api.loadMatchH2h(
@@ -704,7 +736,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
         'CONFIRMED_EMPTY' => Column(
           children: [
             const _H2hMessage(
-              'Sin enfrentamientos anteriores',
+              'Todavía no hay enfrentamientos recientes disponibles.',
               key: ValueKey('h2h-empty'),
             ),
             ?_extendControl(0),
@@ -733,21 +765,21 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
         : all;
     final pages = _pages[_thisCompetition]!;
     // Before any page: the preview's newest meetings. After: the server's
-    // pages only, each id once.
-    final seen = <String>{};
-    final meetings = [
-      for (final item in pages.isEmpty ? base : pages.expand((p) => p.meetings))
-        if (seen.add(item['matchId']?.toString() ?? '')) item,
-    ];
-    final totals =
-        (pages.isEmpty ? null : pages.last.totals) ??
-        value.h2hTotals(competition: _thisCompetition) ??
-        _countTotals(meetings, match.homeId);
+    // pages only. Canonical ids dedupe; id-less rows remain separate because
+    // matching only teams/dates could merge distinct real matches.
+    final meetings = prepareH2hMeetings(
+      pages.isEmpty ? base : pages.expand((page) => page.meetings),
+    );
+    final visible = meetings
+        .take(_visibleLimits[_thisCompetition] ?? 5)
+        .toList(growable: false);
+    final sampleTotals = _countTotals(visible, match.homeId);
     // More stored meetings than shown: the server said so, or (before any
     // page) the scope's totals count more than the preview listed.
     final more = pages.isNotEmpty
         ? pages.last.hasMore
-        : meetings.length < totals.total;
+        : meetings.length <
+              (value.h2hTotals(competition: _thisCompetition)?.total ?? 0);
     final verifiedFrom = _verifiedFrom ?? value.h2hVerifiedFrom;
     final showCurrent =
         current != null &&
@@ -755,12 +787,15 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _H2hSummary(
-          home: team(match.homeId),
-          away: team(match.awayId),
-          totals: totals,
-        ),
-        const SizedBox(height: 12),
+        if (visible.length >= 2) ...[
+          _H2hSummary(
+            home: team(match.homeId),
+            away: team(match.awayId),
+            totals: sampleTotals,
+            sampleSize: visible.length,
+          ),
+          const SizedBox(height: 12),
+        ],
         Row(
           children: [
             _FilterChip(
@@ -801,7 +836,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
           ),
           const SizedBox(height: 8),
         ],
-        if (meetings.isEmpty && !more)
+        if (visible.isEmpty && !more)
           // "No meetings" only when the server confirmed it; a pair whose
           // history is still being fetched (or has no source) never reads
           // as confirmed empty just because a current match exists.
@@ -821,12 +856,12 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
                       key: ValueKey('h2h-empty-competition'),
                     )
                   : const _H2hMessage(
-                      'Sin enfrentamientos anteriores',
+                      'Todavía no hay enfrentamientos recientes disponibles.',
                       key: ValueKey('h2h-empty'),
                     ),
           }
         else
-          for (final item in meetings) ...[
+          for (final item in visible) ...[
             _MeetingRow(
               item: item,
               team: team,
@@ -844,6 +879,16 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
               ),
             ),
           )
+        else if (meetings.length > visible.length)
+          Center(
+            child: TextButton(
+              key: const ValueKey('h2h-more'),
+              onPressed: () => setState(
+                () => _visibleLimits[_thisCompetition] = meetings.length,
+              ),
+              child: const Text('Ver más'),
+            ),
+          )
         else if ((more || _failed.contains(_thisCompetition)) && _api != null)
           Center(
             child: TextButton(
@@ -855,7 +900,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
             ),
           )
         else
-          ?_extendControl(meetings.length),
+          ?_extendControl(visible.length),
       ],
     );
   }
@@ -891,6 +936,12 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   static H2hTotals _countTotals(List<Json> meetings, String homeId) {
     var homeWins = 0, draws = 0, awayWins = 0;
     for (final item in meetings) {
+      if (!const {
+        'VERIFIED',
+        'FINISHED_PENDING_VERIFICATION',
+      }.contains(item['status'])) {
+        continue;
+      }
       switch (teamMatchResult(item, homeId)) {
         case TeamResult.win:
           homeWins++;
@@ -953,11 +1004,13 @@ class _H2hSummary extends StatelessWidget {
     required this.home,
     required this.away,
     required this.totals,
+    required this.sampleSize,
   });
 
   final Entity? home;
   final Entity? away;
   final H2hTotals totals;
+  final int sampleSize;
 
   @override
   Widget build(BuildContext context) {
@@ -980,6 +1033,18 @@ class _H2hSummary extends StatelessWidget {
       key: const ValueKey('h2h-summary'),
       child: Column(
         children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Últimos $sampleSize enfrentamientos',
+              style: const TextStyle(
+                color: muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
           Row(children: [side(home), side(away)]),
           const SizedBox(height: 12),
           Row(
@@ -1127,6 +1192,85 @@ Snapshot? meetingContext(
   }
 }
 
+class H2hScoreContext {
+  const H2hScoreContext({
+    required this.score,
+    this.penalties,
+    this.extraTime = false,
+  });
+
+  final String score;
+  final MatchPeriodScore? penalties;
+  final bool extraTime;
+}
+
+H2hScoreContext h2hScoreContext(Json item) {
+  MatchPeriodScore? parse(Object? value) {
+    if (value is! Map) return null;
+    final home = value['home'];
+    final away = value['away'];
+    return home is int && away is int && home >= 0 && away >= 0
+        ? MatchPeriodScore(home, away)
+        : null;
+  }
+
+  final canonical = parse(item['score']);
+  final periods = item['periodScores'];
+  final penalties = periods is Map ? parse(periods['penalties']) : null;
+  final extraTime = periods is Map && parse(periods['extraTime']) != null;
+  return H2hScoreContext(
+    score: canonical?.label ?? '–',
+    penalties: penalties,
+    extraTime: extraTime,
+  );
+}
+
+String h2hMeetingSemanticLabel(
+  Json item, {
+  required String homeName,
+  required String awayName,
+  String? competition,
+}) {
+  final parts = <String>[];
+  final date = DateTime.tryParse(item['startTime']?.toString() ?? '');
+  if (date != null) parts.add(matchDateLabel(costaRicaTime(date)));
+  final context = h2hScoreContext(item);
+  final rawScore = item['score'];
+  final homeScore = rawScore is Map ? rawScore['home'] : null;
+  final awayScore = rawScore is Map ? rawScore['away'] : null;
+  parts.add(
+    homeScore is num && awayScore is num
+        ? '$homeName ${homeScore.toInt()}, $awayName ${awayScore.toInt()}'
+        : '$homeName contra $awayName',
+  );
+  if (competition?.isNotEmpty == true) parts.add(competition!);
+  if (context.extraTime) parts.add('tras prórroga');
+  final penalties = context.penalties;
+  if (penalties != null) {
+    final winner = penalties.home == penalties.away
+        ? null
+        : penalties.home > penalties.away
+        ? homeName
+        : awayName;
+    parts.add(
+      winner == null
+          ? 'penales ${penalties.home} a ${penalties.away}'
+          : '$winner ganó ${penalties.home} a ${penalties.away} en penales',
+    );
+  }
+  final status = item['status'];
+  parts.add(
+    const {'VERIFIED', 'FINISHED_PENDING_VERIFICATION'}.contains(status)
+        ? 'final'
+        : switch (status) {
+            'LIVE' || 'HALFTIME' || 'EXTRA_TIME' || 'PENALTIES' => 'en vivo',
+            'SCHEDULED' || 'PRE_MATCH' || 'DISCOVERED' => 'programado',
+            _ => 'estado no disponible',
+          },
+  );
+  return '${parts.join(', ')}.';
+}
+
 class _MeetingRow extends StatelessWidget {
   const _MeetingRow({
     required this.item,
@@ -1145,14 +1289,15 @@ class _MeetingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final id = item['matchId'] as String?;
+    final id = item['matchId']?.toString().trim() ?? '';
     final home = team(item['homeTeamId'] as String? ?? '');
     final away = team(item['awayTeamId'] as String? ?? '');
     final date = DateTime.tryParse(item['startTime'] as String? ?? '');
-    final score = item['score'] is Map
-        ? '${item['score']['home']} - ${item['score']['away']}'
-        : '–';
+    final score = h2hScoreContext(item);
     final competition = competitionName(item['competitionId'] as String?);
+    final homeName = home?.displayName ?? 'Local';
+    final awayName = away?.displayName ?? 'Visitante';
+    final canNavigate = id.isNotEmpty && label == null;
     Widget side(Entity? entity, {required bool end}) => Expanded(
       child: Row(
         mainAxisAlignment: end
@@ -1179,49 +1324,73 @@ class _MeetingRow extends StatelessWidget {
         ],
       ),
     );
-    return InkWell(
-      key: label == null ? ValueKey('h2h-match-$id') : null,
-      borderRadius: BorderRadius.circular(14),
-      // The selected match itself is already open.
-      onTap: id == null || label != null
-          ? null
-          : () => context.push(
-              '/match/$id',
-              extra: meetingContext(item, home, away, competition),
-            ),
-      child: _Card(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              [
-                ?label,
-                if (date != null) matchDateLabel(costaRicaTime(date)),
-                ?competition,
-              ].join(' · '),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: muted, fontSize: 12),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                side(home, end: false),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Text(
-                    score,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      fontFeatures: [FontFeature.tabularFigures()],
+    return Semantics(
+      button: canNavigate,
+      excludeSemantics: true,
+      label: h2hMeetingSemanticLabel(
+        item,
+        homeName: homeName,
+        awayName: awayName,
+        competition: competition,
+      ),
+      child: InkWell(
+        key: canNavigate ? ValueKey('h2h-match-$id') : null,
+        borderRadius: BorderRadius.circular(14),
+        // The selected match itself is already open.
+        onTap: !canNavigate
+            ? null
+            : () => context.push(
+                '/match/$id',
+                extra: meetingContext(item, home, away, competition),
+              ),
+        child: _Card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                [
+                  ?label,
+                  if (date != null) matchDateLabel(costaRicaTime(date)),
+                  ?competition,
+                ].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: muted, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  side(home, end: false),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Column(
+                      children: [
+                        Text(
+                          score.score,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                        if (score.penalties case final penalties?)
+                          Text(
+                            'Penales ${penalties.home}–${penalties.away}',
+                            style: const TextStyle(color: muted, fontSize: 9),
+                          ),
+                        if (score.extraTime)
+                          const Text(
+                            'Tras prórroga',
+                            style: TextStyle(color: muted, fontSize: 9),
+                          ),
+                      ],
                     ),
                   ),
-                ),
-                side(away, end: true),
-              ],
-            ),
-          ],
+                  side(away, end: true),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

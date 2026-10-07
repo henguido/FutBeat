@@ -248,19 +248,22 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
-  testWidgets('27 stored meetings: 20 first, Ver más loads the rest; totals '
-      'never change with paging', (tester) async {
+  testWidgets('27 stored meetings: five first, then local and server history', (
+    tester,
+  ) async {
     final all = _history(27);
     final api = _FakeH2hApi(all);
     await _pump(tester, _preview(all), api);
+    expect(_rows(tester), 5);
+    expect(find.text('Últimos 5 enfrentamientos'), findsOneWidget);
+    await _tap(tester, find.byKey(const ValueKey('h2h-more')));
     expect(_rows(tester), 20);
-    final wins = _value(tester, 'h2h-home-wins');
+    expect(api.calls, isEmpty);
     await _tap(tester, find.byKey(const ValueKey('h2h-more')));
     // First page from the top (no cursor), what was shown + one page.
     expect(api.calls, ['all|-|40|']);
     expect(_rows(tester), 27);
     expect(find.byKey(const ValueKey('h2h-more')), findsNothing);
-    expect(_value(tester, 'h2h-home-wins'), wins);
     expect(_value(tester, 'h2h-home-wins'), '${_totals(all)['homeWins']}');
   });
 
@@ -282,7 +285,9 @@ void main() {
     await _pump(tester, _preview(all), api);
     await _tap(tester, find.text('Este torneo'));
     final shown = _rows(tester);
-    expect(shown, lessThan(27));
+    expect(shown, 5);
+    await _tap(tester, find.byKey(const ValueKey('h2h-more')));
+    expect(_rows(tester), lessThan(27));
     await _tap(tester, find.byKey(const ValueKey('h2h-more')));
     expect(api.calls.single, startsWith('competition|'));
     expect(_rows(tester), 27);
@@ -290,7 +295,7 @@ void main() {
     expect(find.textContaining('Copa Larga'), findsNothing);
     // Back to Todos: its own list, its own paging.
     await _tap(tester, find.text('Todos'));
-    expect(_rows(tester), 20);
+    expect(_rows(tester), 5);
     expect(find.byKey(const ValueKey('h2h-more')), findsOneWidget);
   });
 
@@ -320,6 +325,7 @@ void main() {
     final all = _history(40);
     final api = _FakeH2hApi(all);
     await _pump(tester, _preview(all, verifiedFrom: '2026-04-02'), api);
+    await _tap(tester, find.byKey(const ValueKey('h2h-more')));
     await _tap(tester, find.byKey(const ValueKey('h2h-more')));
     expect(_rows(tester), 40);
     await _tap(tester, find.byKey(const ValueKey('h2h-extend')));
@@ -394,7 +400,11 @@ void main() {
   for (final (availability, key, copy) in [
     ('PENDING', 'h2h-pending', 'Cargando historial'),
     ('UNAVAILABLE', 'h2h-no-source', 'Historial no disponible'),
-    ('CONFIRMED_EMPTY', 'h2h-empty', 'Sin enfrentamientos anteriores'),
+    (
+      'CONFIRMED_EMPTY',
+      'h2h-empty',
+      'Todavía no hay enfrentamientos recientes disponibles.',
+    ),
   ]) {
     testWidgets('a pair with only its current match and no stored meetings '
         'reads "$copy" when the server says $availability', (tester) async {
@@ -422,7 +432,10 @@ void main() {
       expect(find.byKey(ValueKey(key)), findsOneWidget);
       expect(find.text(copy), findsWidgets);
       if (availability != 'CONFIRMED_EMPTY') {
-        expect(find.text('Sin enfrentamientos anteriores'), findsNothing);
+        expect(
+          find.text('Todavía no hay enfrentamientos recientes disponibles.'),
+          findsNothing,
+        );
       }
     });
   }
@@ -456,6 +469,7 @@ void main() {
   ) async {
     final all = _history(25);
     await _pump(tester, _preview(all), _FakeH2hApi(all, fail: true));
+    await _tap(tester, find.byKey(const ValueKey('h2h-more')));
     await _tap(tester, find.byKey(const ValueKey('h2h-more')));
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('Reintentar'), findsOneWidget);

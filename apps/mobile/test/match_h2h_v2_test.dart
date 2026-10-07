@@ -121,8 +121,9 @@ Future<void> _pump(
   WidgetTester tester,
   Map<String, dynamic> preview, {
   String status = 'SCHEDULED',
+  double width = 390,
 }) async {
-  tester.view.physicalSize = const Size(390, 1400);
+  tester.view.physicalSize = Size(width, 1400);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -177,7 +178,7 @@ List<int> _barFlex(WidgetTester tester) => tester
     .toList();
 
 void main() {
-  testWidgets('1/2. wins · draws · wins and a proportional bar', (
+  testWidgets('1/2. visible sample drives wins, draws and proportional bar', (
     tester,
   ) async {
     await _pump(
@@ -187,12 +188,12 @@ void main() {
       ),
     );
     expect(_value(tester, 'h2h-home-wins'), '1');
-    expect(_value(tester, 'h2h-draws'), '2');
-    expect(_value(tester, 'h2h-away-wins'), '7');
-    expect(find.text('victoria'), findsOneWidget);
-    expect(find.text('empates'), findsOneWidget);
-    expect(find.text('victorias'), findsOneWidget);
-    expect(_barFlex(tester), [1, 2, 7]);
+    expect(_value(tester, 'h2h-draws'), '1');
+    expect(_value(tester, 'h2h-away-wins'), '1');
+    expect(find.text('victoria'), findsNWidgets(2));
+    expect(find.text('empate'), findsOneWidget);
+    expect(_barFlex(tester), [1, 1, 1]);
+    expect(find.text('Últimos 3 enfrentamientos'), findsOneWidget);
   });
 
   testWidgets('3. reversed historical home/away counts by team id (legacy)', (
@@ -310,7 +311,10 @@ void main() {
     await _pump(tester, _preview(availability: 'PENDING', meetings: []));
     expect(find.byKey(const ValueKey('h2h-pending')), findsOneWidget);
     expect(find.text('Cargando historial'), findsOneWidget);
-    expect(find.text('Sin enfrentamientos anteriores'), findsNothing);
+    expect(
+      find.text('Todavía no hay enfrentamientos recientes disponibles.'),
+      findsNothing,
+    );
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
@@ -319,7 +323,10 @@ void main() {
       tester,
       _preview(availability: 'CONFIRMED_EMPTY', meetings: []),
     );
-    expect(find.text('Sin enfrentamientos anteriores'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay enfrentamientos recientes disponibles.'),
+      findsOneWidget,
+    );
     expect(find.text('Cargando historial'), findsNothing);
     await _pump(tester, _preview(availability: 'UNAVAILABLE', meetings: []));
     expect(find.text('Historial no disponible'), findsOneWidget);
@@ -368,6 +375,75 @@ void main() {
       for (final text in banned) {
         expect(find.textContaining(text), findsNothing, reason: text);
       }
+    }
+  });
+
+  test(
+    'canonical preparation sorts, deduplicates ids and preserves id-less',
+    () {
+      final rows = prepareH2hMeetings([
+        _meeting('older', _home, _away, 1, 0, -20),
+        _meeting('newer', _home, _away, 2, 0, -2),
+        _meeting('older', _home, _away, 9, 9, -1),
+        {..._meeting('', _home, _away, 0, 0, -5), 'matchId': null},
+        {..._meeting('', _home, _away, 0, 0, -6), 'matchId': null},
+      ]);
+      expect(rows, hasLength(4));
+      expect(rows.first['matchId'], 'newer');
+      expect(rows.where((row) => row['matchId'] == null), hasLength(2));
+    },
+  );
+
+  testWidgets('last-five sample expands locally without inventing results', (
+    tester,
+  ) async {
+    final rows = [
+      for (var i = 0; i < 7; i++)
+        _meeting('sample-$i', _home, _away, i, 0, -i - 1),
+    ];
+    await _pump(tester, _preview(meetings: rows));
+    expect(find.text('Últimos 5 enfrentamientos'), findsOneWidget);
+    expect(find.byKey(const ValueKey('h2h-match-sample-5')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('h2h-more')));
+    await tester.pumpAndSettle();
+    expect(find.text('Últimos 7 enfrentamientos'), findsOneWidget);
+    expect(find.byKey(const ValueKey('h2h-match-sample-5')), findsOneWidget);
+  });
+
+  testWidgets('penalties, extra time and semantics use only explicit data', (
+    tester,
+  ) async {
+    final penalty = {
+      ..._meeting('penalty', _home, _away, 2, 2, -1),
+      'periodScores': {
+        'extraTime': {'home': 1, 'away': 1},
+        'penalties': {'home': 5, 'away': 4},
+      },
+    };
+    await _pump(tester, _preview(meetings: [penalty]));
+    expect(find.text('Penales 5–4'), findsOneWidget);
+    expect(find.text('Tras prórroga'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(RegExp('Equipo Norte ganó 5 a 4 en penales')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('incomplete metadata stays readable at supported phone widths', (
+    tester,
+  ) async {
+    final incomplete = <String, dynamic>{
+      'matchId': null,
+      'status': 'SCHEDULED',
+      'homeTeamId': _home,
+      'awayTeamId': _away,
+      'score': {'home': 10, 'away': 11},
+    };
+    for (final width in [320.0, 360.0, 390.0, 430.0]) {
+      await _pump(tester, _preview(meetings: [incomplete]), width: width);
+      expect(find.text('10 - 11'), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'width $width');
+      expect(find.byKey(const ValueKey('h2h-match-')), findsNothing);
     }
   });
 }
