@@ -58,7 +58,7 @@ void main() {
       focusTeamIds: {_teams[5], _teams[6]},
     )!;
     expect(groups, hasLength(1));
-    expect(groups.single.label, 'League A');
+    expect(groups.single.label, 'League A · Subgrupo 2');
     expect(groups.single.rows.map((r) => r['teamId']), _teams.sublist(4));
   });
 

@@ -529,6 +529,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
                 homeTeamId: match.homeId,
                 awayTeamId: match.awayId,
                 stage: detail.stage,
+                season: match.season,
+                compactContext: true,
                 refreshing: standingsRefreshing || _standingsManualRetry,
                 onRetry: _retryStandings,
               ),
@@ -1340,6 +1342,8 @@ class MatchStandingsTab extends StatelessWidget {
     this.awayTeamId,
     this.onRetry,
     this.stage,
+    this.season,
+    this.compactContext = false,
   });
 
   final Snapshot data;
@@ -1352,6 +1356,13 @@ class MatchStandingsTab extends StatelessWidget {
   /// The match's provider stage (match detail), when known: the table of
   /// that phase is shown (see standingsGroups).
   final String? stage;
+
+  /// Exact season carried by the match, when present.
+  final String? season;
+
+  /// Production Match Center uses a short compact window. Kept optional so
+  /// embedders that already request the full table retain their behaviour.
+  final bool compactContext;
 
   /// A visible refresh for this table is running (bounded or manual).
   final bool refreshing;
@@ -1390,10 +1401,22 @@ class MatchStandingsTab extends StatelessWidget {
             // their own labelled group, never one mixed table.
             focusTeamIds: {?homeTeamId, ?awayTeamId},
             stage: stage,
+            season: season,
+            contextRows: compactContext ? 7 : null,
             highlightedTeams: {?homeTeamId: lime, ?awayTeamId: awaySideColor},
             // In-play evidence from the snapshot itself (never the clock).
             liveTeamIds: liveTeamIds(data, competitionId),
           ),
+          if (compactContext)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: const ValueKey('standings-show-full'),
+                onPressed: () => context.push('/competition/$competitionId'),
+                icon: const Icon(Icons.open_in_new_rounded, size: 17),
+                label: const Text('Ver tabla completa'),
+              ),
+            ),
         ],
       );
     }

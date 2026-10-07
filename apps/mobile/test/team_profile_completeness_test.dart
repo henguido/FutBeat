@@ -612,7 +612,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(home: Scaffold(body: Standings(data, 'fb_comp_a'))),
       );
-      expect(find.text('Tabla no disponible'), findsOneWidget);
+      expect(find.text('Tabla no disponible para esta fase.'), findsOneWidget);
       expect(find.text('Equipo'), findsNothing);
       expect(tester.takeException(), isNull);
     });

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
@@ -34,7 +35,13 @@ Set<String> liveTeamIds(Snapshot data, String competitionId) => {
 
 /// One displayable group of a standings table ([label] null for a single,
 /// unnamed table).
-typedef StandingsGroup = ({String? label, List<Json> rows});
+typedef StandingsGroup = ({
+  String? label,
+  String? stage,
+  String? group,
+  String? subgroup,
+  List<Json> rows,
+});
 
 /// Label shown on the unlabelled table (the competition's overall/annual
 /// table) when the stored table also has labelled groups.
@@ -97,16 +104,14 @@ List<StandingsGroup>? standingsGroups(
   }
   // A server `subgroup` splits one provider label holding several groups
   // (rebuilt from fixtures): each is its own table under the same label.
-  final groups = <(String, Object?), List<Json>>{};
+  final groups = <(String, String, String), List<Json>>{};
   for (final row in rows) {
     final teamId = row['teamId']?.toString() ?? '';
     if (standingsTeam(data, teamId) == null) return null;
-    groups
-        .putIfAbsent((
-          row['group']?.toString() ?? '',
-          row['subgroup'],
-        ), () => [])
-        .add(row);
+    final stage = row['stage']?.toString().trim() ?? '';
+    final group = row['group']?.toString().trim() ?? '';
+    final subgroup = row['subgroup']?.toString().trim() ?? '';
+    groups.putIfAbsent((stage, group, subgroup), () => []).add(row);
   }
   for (final group in groups.values) {
     final positions = [
@@ -117,11 +122,27 @@ List<StandingsGroup>? standingsGroups(
   }
   final all = [
     for (final entry in groups.entries)
-      (label: entry.key.$1.isEmpty ? null : entry.key.$1, rows: entry.value),
+      (
+        label: _standingsGroupLabel(
+          stage: entry.key.$1,
+          group: entry.key.$2,
+          subgroup: entry.key.$3,
+        ),
+        stage: entry.key.$1.isEmpty ? null : entry.key.$1,
+        group: entry.key.$2.isEmpty ? null : entry.key.$2,
+        subgroup: entry.key.$3.isEmpty ? null : entry.key.$3,
+        rows: entry.value,
+      ),
   ];
   StandingsGroup labelled(StandingsGroup group) =>
       group.label == null && all.any((other) => other.label != null)
-      ? (label: overallStandingsLabel, rows: group.rows)
+      ? (
+          label: overallStandingsLabel,
+          stage: group.stage,
+          group: group.group,
+          subgroup: group.subgroup,
+          rows: group.rows,
+        )
       : group;
   if (focusTeamIds.isEmpty) {
     return [for (final group in all) labelled(group)];
@@ -147,7 +168,8 @@ List<StandingsGroup>? standingsGroups(
       final named = [
         for (final group in all)
           if (group.label != null)
-            if (standingsLabelTokens(group.label) case final tokens
+            if (standingsLabelTokens(group.stage ?? group.group ?? group.label)
+                case final tokens
                 when tokens.isNotEmpty && stageTokens.containsAll(tokens))
               group,
       ];
@@ -160,7 +182,10 @@ List<StandingsGroup>? standingsGroups(
     if (current.isNotEmpty) {
       final hinted = [
         for (final group in whole)
-          if (group.label == current) group,
+          if (group.stage == current ||
+              group.group == current ||
+              group.label == current)
+            group,
       ];
       if (hinted.length == 1) return hinted;
     }
@@ -185,6 +210,19 @@ List<StandingsGroup>? standingsGroups(
   return own.any((group) => group.label == null) ? null : own;
 }
 
+String? _standingsGroupLabel({
+  required String stage,
+  required String group,
+  required String subgroup,
+}) {
+  final parts = <String>[];
+  for (final value in [stage, group]) {
+    if (value.isNotEmpty && !parts.contains(value)) parts.add(value);
+  }
+  if (subgroup.isNotEmpty) parts.add('Subgrupo $subgroup');
+  return parts.isEmpty ? null : parts.join(' · ');
+}
+
 /// The team entity of a standings row, also when the row was stored under
 /// an alias id the snapshot redirects to its canonical team.
 Entity? standingsTeam(Snapshot data, String teamId) => teamId.isEmpty
@@ -203,10 +241,28 @@ String? standingsSeason(Json table) {
   return null;
 }
 
-/// The table of [competitionId] in [data] (first one), if any.
-Json? standingsTableFor(Snapshot data, String competitionId) => data.standings
-    .where((s) => s['competitionId'] == competitionId)
-    .firstOrNull;
+/// The unambiguous table of [competitionId] in [data]. When several seasons
+/// coexist, resolve the requested (or competition-current) season exactly;
+/// never let list order choose a historical table.
+Json? standingsTableFor(Snapshot data, String competitionId, {String? season}) {
+  final candidates = data.standings
+      .where((table) => table['competitionId'] == competitionId)
+      .toList();
+  if (candidates.length <= 1) return candidates.firstOrNull;
+  final wanted = normalizeSeasonKey(
+    season ?? data.competition(competitionId)?.json['season']?.toString(),
+  );
+  if (wanted == null) return null;
+  final exact = [
+    for (final table in candidates)
+      if (normalizeSeasonKey(
+            table['seasonKey']?.toString() ?? table['season']?.toString(),
+          ) ==
+          wanted)
+        table,
+  ];
+  return exact.length == 1 ? exact.single : null;
+}
 
 class Standings extends StatefulWidget {
   const Standings(
@@ -219,6 +275,7 @@ class Standings extends StatefulWidget {
     this.focusTeamIds = const {},
     this.season,
     this.stage,
+    this.contextRows,
   });
 
   final Snapshot data;
@@ -246,6 +303,10 @@ class Standings extends StatefulWidget {
   /// Season of the table for the Forma read (default: [standingsSeason]).
   final String? season;
 
+  /// Match Center only: keep the focused sides and nearby context instead
+  /// of rendering a very long group. Null renders the full resolved group.
+  final int? contextRows;
+
   @override
   State<Standings> createState() => _StandingsState();
 }
@@ -265,7 +326,11 @@ class _StandingsState extends State<Standings> {
   bool _formFailed = false;
 
   String get _storageId {
-    final table = standingsTableFor(widget.data, widget.competitionId);
+    final table = standingsTableFor(
+      widget.data,
+      widget.competitionId,
+      season: widget.season,
+    );
     final season = table == null ? null : _season(table);
     return 'standings-view-${widget.competitionId}-${season ?? ''}';
   }
@@ -315,7 +380,11 @@ class _StandingsState extends State<Standings> {
     if (!widget.selectableView || widget.data.demo || _api() == null) {
       return null;
     }
-    final table = standingsTableFor(widget.data, widget.competitionId);
+    final table = standingsTableFor(
+      widget.data,
+      widget.competitionId,
+      season: widget.season,
+    );
     final season = table == null ? null : _season(table);
     if (table == null || season == null) return null;
     // Only a parseable timestamp is sent (normalized to UTC ISO 8601): a
@@ -364,7 +433,11 @@ class _StandingsState extends State<Standings> {
   @override
   Widget build(BuildContext context) {
     final data = widget.data;
-    final table = standingsTableFor(data, widget.competitionId);
+    final table = standingsTableFor(
+      data,
+      widget.competitionId,
+      season: widget.season,
+    );
     final groups = standingsGroups(
       table,
       data,
@@ -372,14 +445,19 @@ class _StandingsState extends State<Standings> {
       stage: widget.stage,
     );
     if (table == null || groups == null) {
-      return const Padding(
+      return Padding(
         key: ValueKey('standings-unavailable'),
-        padding: EdgeInsets.symmetric(vertical: 32),
+        padding: const EdgeInsets.symmetric(vertical: 32),
         child: Column(
           children: [
-            Icon(Icons.table_rows_outlined, size: 36, color: muted),
-            SizedBox(height: 10),
-            Text('Tabla no disponible', style: TextStyle(color: muted)),
+            const Icon(Icons.table_rows_outlined, size: 36, color: muted),
+            const SizedBox(height: 10),
+            Text(
+              table == null
+                  ? 'Tabla no disponible'
+                  : 'Tabla no disponible para esta fase.',
+              style: const TextStyle(color: muted),
+            ),
           ],
         ),
       );
@@ -390,7 +468,9 @@ class _StandingsState extends State<Standings> {
       StandingsView.full,
       if (formIdentity != null) StandingsView.form,
     ];
-    final view = !widget.selectableView
+    final view = widget.contextRows != null
+        ? StandingsView.compact
+        : !widget.selectableView
         ? StandingsView.full
         : views.contains(_view)
         ? _view
@@ -406,24 +486,31 @@ class _StandingsState extends State<Standings> {
         }
       });
     }
-    final highlighted =
+    final rawHighlighted =
         widget.highlightedTeams.isEmpty && widget.focusTeamIds.length == 1
         ? {widget.focusTeamIds.single: lime}
         : widget.highlightedTeams;
+    final highlighted = {
+      for (final entry in rawHighlighted.entries)
+        data.resolveEntityId(entry.key): entry.value,
+    };
+    final live = {
+      for (final id in widget.liveTeamIds) data.resolveEntityId(id),
+    };
     Widget tableOf(List<_Entry> entries) => switch (view) {
       StandingsView.compact => _Table(
         key: const ValueKey('standings-compact'),
         entries: entries,
         columns: _compactColumns,
         highlightedTeams: highlighted,
-        liveTeamIds: widget.liveTeamIds,
+        liveTeamIds: live,
       ),
       StandingsView.form => _Table(
         key: const ValueKey('standings-form'),
         entries: entries,
         columns: _formColumns,
         highlightedTeams: highlighted,
-        liveTeamIds: widget.liveTeamIds,
+        liveTeamIds: live,
         form: _form,
       ),
       StandingsView.full => LayoutBuilder(
@@ -441,7 +528,7 @@ class _StandingsState extends State<Standings> {
               entries: entries,
               columns: _fullColumns,
               highlightedTeams: highlighted,
-              liveTeamIds: widget.liveTeamIds,
+              liveTeamIds: live,
             ),
           ),
         ),
@@ -463,7 +550,7 @@ class _StandingsState extends State<Standings> {
         const SizedBox(height: 12),
         // Its own row above the table: never squeezes the title on a
         // narrow phone.
-        if (widget.selectableView) ...[
+        if (widget.selectableView && widget.contextRows == null) ...[
           _ViewSwitch(views: views, view: view, onChanged: _select),
           const SizedBox(height: 10),
         ],
@@ -486,14 +573,57 @@ class _StandingsState extends State<Standings> {
             KeyedSubtree(
               key: ValueKey('standings-table-$g'),
               child: tableOf([
-                for (var i = 0; i < groups[g].rows.length; i++)
-                  _Entry.from(groups[g].rows[i], i, data),
+                for (final indexed in _standingsContextRows(
+                  groups[g].rows,
+                  data,
+                  widget.focusTeamIds,
+                  widget.contextRows,
+                ))
+                  _Entry.from(indexed.$2, indexed.$1, data),
               ]),
             ),
           ],
       ],
     );
   }
+}
+
+List<(int, Json)> _standingsContextRows(
+  List<Json> rows,
+  Snapshot data,
+  Set<String> focusTeamIds,
+  int? limit,
+) {
+  final indexed = rows.indexed.toList();
+  if (limit == null || limit <= 0 || rows.length <= limit) return indexed;
+  final focus = {for (final id in focusTeamIds) data.resolveEntityId(id)};
+  final focused = [
+    for (final item in indexed)
+      if (focus.contains(
+        data.resolveEntityId(item.$2['teamId']?.toString() ?? ''),
+      ))
+        item.$1,
+  ];
+  if (focused.isEmpty) return indexed.take(limit).toList();
+  final first = focused.reduce((a, b) => a < b ? a : b);
+  final last = focused.reduce((a, b) => a > b ? a : b);
+  if (last - first + 1 <= limit) {
+    final room = limit - (last - first + 1);
+    final start = (first - room ~/ 2).clamp(0, rows.length - limit);
+    return indexed.skip(start).take(limit).toList();
+  }
+  // Far-apart teams: show each side plus immediate neighbours, in table
+  // order. This keeps both match teams visible without a misleading splice.
+  final wanted = <int>{};
+  for (final at in focused) {
+    for (var i = at - 1; i <= at + 1; i++) {
+      if (i >= 0 && i < rows.length) wanted.add(i);
+    }
+  }
+  return [
+    for (final item in indexed)
+      if (wanted.contains(item.$1)) item,
+  ];
 }
 
 /// Forma not loaded yet: a bounded single read, then "Reintentar".
@@ -601,13 +731,13 @@ class _Column {
 }
 
 const _compactColumns = [
-  _Column('J', 'played', semantic: 'jugados'),
+  _Column('PJ', 'played', semantic: 'partidos jugados'),
   _Column('DG', 'diff', width: 38, semantic: 'diferencia de gol'),
   _Column('Pts', 'points', width: 38, semantic: 'puntos'),
 ];
 
 const _fullColumns = [
-  _Column('J', 'played', semantic: 'jugados'),
+  _Column('PJ', 'played', semantic: 'partidos jugados'),
   _Column('G', 'won', semantic: 'ganados'),
   _Column('E', 'drawn', semantic: 'empatados'),
   _Column('P', 'lost', semantic: 'perdidos'),
@@ -657,8 +787,8 @@ class _Table extends StatelessWidget {
             _TeamRow(
               entry: entries[i],
               columns: columns,
-              accent: highlightedTeams[entries[i].teamId],
-              live: liveTeamIds.contains(entries[i].teamId),
+              accent: highlightedTeams[entries[i].formTeamId],
+              live: liveTeamIds.contains(entries[i].formTeamId),
               divider: i > 0,
               // Stored rows may carry an alias; Forma is keyed canonically.
               form: form?.results(entries[i].formTeamId) ?? const [],

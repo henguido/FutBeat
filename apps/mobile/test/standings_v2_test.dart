@@ -282,7 +282,7 @@ void main() {
     },
   );
 
-  testWidgets('three views: Resumida (J header) by default, Completa, Forma', (
+  testWidgets('three views: Resumida (PJ header) by default, Completa, Forma', (
     tester,
   ) async {
     final server = _FormServer();
@@ -298,14 +298,14 @@ void main() {
     expect(find.text('Completa'), findsOneWidget);
     expect(find.text('Forma'), findsOneWidget);
     expect(find.byKey(const ValueKey('standings-compact')), findsOneWidget);
-    for (final label in ['Pos', 'Equipo', 'J', 'DG', 'Pts']) {
+    for (final label in ['Pos', 'Equipo', 'PJ', 'DG', 'Pts']) {
       expect(_inTable('standings-compact', find.text(label)), findsOneWidget);
     }
-    expect(_inTable('standings-compact', find.text('PJ')), findsNothing);
+    expect(_inTable('standings-compact', find.text('J')), findsNothing);
     expect(_inTable('standings-compact', find.text('GF')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('standings-view-full')));
     await _settle(tester);
-    for (final label in ['J', 'G', 'E', 'P', 'GF', 'GC', 'DG', 'Pts']) {
+    for (final label in ['PJ', 'G', 'E', 'P', 'GF', 'GC', 'DG', 'Pts']) {
       expect(_inTable('standings-full', find.text(label)), findsOneWidget);
     }
     expect(server.reads, 0, reason: 'Forma is loaded only when opened');
@@ -631,7 +631,7 @@ void main() {
         away: 'fb_team_tv2_a2',
       ),
     );
-    expect(find.text('Tabla no disponible'), findsOneWidget);
+    expect(find.text('Tabla no disponible para esta fase.'), findsOneWidget);
     expect(find.byKey(const ValueKey('standings-compact')), findsNothing);
   });
 
@@ -647,7 +647,7 @@ void main() {
       ),
       repository: ApiRepository(_FormServer().dio()),
     );
-    expect(find.text('Tabla no disponible'), findsOneWidget);
+    expect(find.text('Tabla no disponible para esta fase.'), findsOneWidget);
     expect(find.byKey(const ValueKey('standings-view-form')), findsNothing);
     expect(find.text('Equipo'), findsNothing);
   });
