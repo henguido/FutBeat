@@ -307,6 +307,7 @@ class PlayerProfileView extends StatelessWidget {
     required this.team,
     required this.matches,
     this.enriching = false,
+    this.matchContext,
     super.key,
   });
 
@@ -314,6 +315,7 @@ class PlayerProfileView extends StatelessWidget {
   final Entity player;
   final Entity? team;
   final List<FootballMatch> matches;
+  final PlayerProfileMatchContext? matchContext;
 
   /// The server is fetching more of this player's data right now.
   final bool enriching;
@@ -418,6 +420,10 @@ class PlayerProfileView extends StatelessWidget {
     final events = playerRecentEvents(data, player.id).take(5).toList();
     return [
       if (enriching) const _EnrichingNotice(),
+      if (matchContext case final context?) ...[
+        const ProfileSectionTitle('En este partido'),
+        PlayerCurrentMatchCard(context),
+      ],
       const ProfileSectionTitle('Ficha del jugador'),
       if (player.json['injured'] == true) const _InjuryBanner(),
       if (facts.isEmpty)
@@ -491,6 +497,197 @@ class PlayerProfileView extends StatelessWidget {
         for (final match in results) dated(match),
       ],
     ];
+  }
+}
+
+/// Match Center context rendered in the full profile without another read.
+/// Missing groups stay absent: a provider omission is never painted as zero.
+class PlayerCurrentMatchCard extends StatelessWidget {
+  const PlayerCurrentMatchCard(this.matchContext, {super.key});
+
+  final PlayerProfileMatchContext matchContext;
+
+  @override
+  Widget build(BuildContext context) {
+    final summary = matchContext.summary.entries;
+    return Column(
+      key: const ValueKey('player-current-match'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (matchContext.team case final team?)
+          Card(
+            child: ListTile(
+              dense: true,
+              leading: EntityAvatar(team, size: 34),
+              title: const Text('Equipo en el partido'),
+              subtitle: Text(team.displayName),
+              trailing: const Icon(Icons.chevron_right, color: muted),
+              onTap: () => context.push('/team/${team.id}'),
+            ),
+          ),
+        if (summary.isNotEmpty)
+          _PlayerMatchSummaryGrid(summary)
+        else if (matchContext.statSections.isEmpty &&
+            matchContext.events.isEmpty)
+          const InlineEmpty(
+            Icons.query_stats_outlined,
+            'Sin datos individuales del partido',
+            detail: 'El proveedor no publicó estadísticas para este jugador.',
+          ),
+        for (final (title, rows) in matchContext.statSections) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(2, 12, 2, 6),
+            child: Text(
+              title,
+              style: const TextStyle(
+                color: muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          _PlayerMatchStatCard(rows),
+        ],
+        if (matchContext.events.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(2, 12, 2, 4),
+            child: Text(
+              'EVENTOS',
+              style: TextStyle(
+                color: muted,
+                fontSize: 11,
+                letterSpacing: .7,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Card(
+            child: Column(
+              children: [
+                for (final event in matchContext.events)
+                  _PlayerMatchEventRow(event),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PlayerMatchSummaryGrid extends StatelessWidget {
+  const _PlayerMatchSummaryGrid(this.entries);
+  final List<(String, String)> entries;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      const gap = 6.0;
+      final columns = constraints.maxWidth < 340 ? 2 : 3;
+      final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [
+          for (final (label, value) in entries)
+            SizedBox(
+              width: width,
+              child: Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 10,
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        value,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: muted, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  );
+}
+
+class _PlayerMatchStatCard extends StatelessWidget {
+  const _PlayerMatchStatCard(this.rows);
+  final List<(String, String)> rows;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      child: Column(
+        children: [
+          for (final (index, (label, value)) in rows.indexed) ...[
+            if (index > 0) const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: muted, fontSize: 13),
+                    ),
+                  ),
+                  Text(
+                    value,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+class _PlayerMatchEventRow extends StatelessWidget {
+  const _PlayerMatchEventRow(this.event);
+  final LineupPlayerEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = eventColor(event.type);
+    return Padding(
+      key: ValueKey('player-current-event-${event.type}-${event.minute}'),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      child: Row(
+        children: [
+          Icon(eventIcon(event.type), size: 18, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              eventLabel(event.type),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          if (event.minute != null)
+            Text('${event.minute}′', style: const TextStyle(color: muted)),
+        ],
+      ),
+    );
   }
 }
 

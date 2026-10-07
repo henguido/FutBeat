@@ -11,6 +11,7 @@ import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
+import '../matches/match_screen.dart' show PlayerProfileMatchContext;
 import 'competition_profile.dart';
 import 'player_profile.dart';
 import 'standings.dart';
@@ -95,11 +96,13 @@ class EntityScreen extends ConsumerStatefulWidget {
     required this.id,
     this.competitionId,
     this.season,
+    this.playerMatchContext,
   });
   final String type, id;
 
   /// Initial profile context (opened from a match), when given.
   final String? competitionId, season;
+  final PlayerProfileMatchContext? playerMatchContext;
   @override
   ConsumerState<EntityScreen> createState() => _EntityScreenState();
 }
@@ -313,6 +316,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             enriching:
                 data.enrichmentPending &&
                 enrichmentAttempts < profileEnrichmentRetryDelays.length,
+            matchContext: widget.playerMatchContext,
           );
         }
         if (type == 'competition') {

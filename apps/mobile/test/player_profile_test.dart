@@ -7,6 +7,7 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
 import 'package:futbeat/features/entities/player_profile.dart';
+import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:go_router/go_router.dart';
 
 const _longName =
@@ -84,6 +85,7 @@ Future<void> _pumpPlayer(
   WidgetTester tester,
   Map<String, dynamic> payload, {
   Size size = const Size(360, 780),
+  PlayerProfileMatchContext? matchContext,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -98,8 +100,11 @@ Future<void> _pumpPlayer(
     routes: [
       GoRoute(
         path: '/player/:id',
-        builder: (_, state) =>
-            EntityScreen(type: 'player', id: state.pathParameters['id']!),
+        builder: (_, state) => EntityScreen(
+          type: 'player',
+          id: state.pathParameters['id']!,
+          playerMatchContext: matchContext,
+        ),
       ),
       GoRoute(
         path: '/team/:id',
@@ -412,6 +417,107 @@ void main() {
     await tester.tap(find.text('Gol · 23′'));
     await tester.pumpAndSettle();
     expect(find.text('Partido fb_match_past'), findsOneWidget);
+  });
+
+  testWidgets(
+    'Match Center context shows only real summary, provider stats and events',
+    (tester) async {
+      await _pumpPlayer(
+        tester,
+        _payload(player: _rich),
+        matchContext: PlayerProfileMatchContext(
+          team: Entity({
+            'id': 'fb_team',
+            'name': 'Club Local',
+            'country': 'Costa Rica',
+          }),
+          summary: const PlayerMatchSummary(
+            rating: 8.4,
+            minutes: 72,
+            goals: 1,
+            assists: 1,
+            yellowCards: 1,
+          ),
+          statSections: const [
+            (
+              'Pases',
+              [('Pases precisos', '21/25'), ('Ocasiones creadas', '3')],
+            ),
+            ('Defensa', [('Duelos', '6/9'), ('Recuperaciones', '4')]),
+          ],
+          events: const [
+            LineupPlayerEvent('GOAL', 23),
+            LineupPlayerEvent('ASSIST', 51),
+            LineupPlayerEvent('YELLOW_CARD', 64),
+            LineupPlayerEvent('SUB_OUT', 72, role: 'out'),
+            LineupPlayerEvent('OWN_GOAL', 12),
+          ],
+        ),
+      );
+
+      expect(find.text('En este partido'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('player-current-match')),
+        findsOneWidget,
+      );
+      for (final text in ['8.4', '72′']) {
+        expect(find.text(text), findsWidgets, reason: text);
+      }
+      await _scrollSummaryTo(tester, 'Ocasiones creadas');
+      for (final text in [
+        'Pases precisos',
+        '21/25',
+        'Duelos',
+        'Ocasiones creadas',
+      ]) {
+        expect(find.text(text), findsWidgets, reason: text);
+      }
+      await _scrollSummaryTo(tester, 'EVENTOS');
+      for (final type in [
+        'GOAL',
+        'ASSIST',
+        'YELLOW_CARD',
+        'SUB_OUT',
+        'OWN_GOAL',
+      ]) {
+        expect(
+          find.byKey(
+            ValueKey(
+              'player-current-event-$type-${switch (type) {
+                'GOAL' => 23,
+                'ASSIST' => 51,
+                'YELLOW_CARD' => 64,
+                'SUB_OUT' => 72,
+                _ => 12,
+              }}',
+            ),
+          ),
+          findsOneWidget,
+          reason: type,
+        );
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('empty match context explains missing data without fake zeros', (
+    tester,
+  ) async {
+    await _pumpPlayer(
+      tester,
+      _payload(player: _rich),
+      matchContext: const PlayerProfileMatchContext(
+        team: null,
+        summary: PlayerMatchSummary(),
+        statSections: [],
+        events: [],
+      ),
+      size: const Size(320, 640),
+    );
+    expect(find.text('En este partido'), findsOneWidget);
+    expect(find.text('Sin datos individuales del partido'), findsOneWidget);
+    expect(find.text('0'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

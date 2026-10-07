@@ -3586,6 +3586,23 @@ class PlayerMatchSummary {
   ];
 }
 
+/// Local, immutable context carried from Match Center to the full player
+/// profile. Every value was already computed for the sheet; opening the
+/// profile must not trigger another match request or infer missing numbers.
+class PlayerProfileMatchContext {
+  const PlayerProfileMatchContext({
+    required this.team,
+    required this.summary,
+    required this.statSections,
+    required this.events,
+  });
+
+  final Entity? team;
+  final PlayerMatchSummary summary;
+  final List<(String, List<(String, String)>)> statSections;
+  final List<LineupPlayerEvent> events;
+}
+
 PlayerMatchSummary playerMatchSummary(
   Json player,
   List<LineupPlayerEvent> events, {
@@ -3760,6 +3777,8 @@ Future<void> showMatchPlayerSheet(
   final minutes = scope == null
       ? null
       : playerMinutesPlayed(player, scope.detail, side);
+  final summary = playerMatchSummary(player, events, minutes: minutes);
+  final statSections = playerMatchStatSections(player);
   final canonicalId = player['canonicalId']?.toString().trim() ?? '';
   return showModalBottomSheet<void>(
     context: context,
@@ -3779,7 +3798,15 @@ Future<void> showMatchPlayerSheet(
           ? null
           : () {
               Navigator.of(sheetContext).pop();
-              context.push('/player/$canonicalId');
+              context.push(
+                '/player/$canonicalId',
+                extra: PlayerProfileMatchContext(
+                  team: team,
+                  summary: summary,
+                  statSections: statSections,
+                  events: events,
+                ),
+              );
             },
     ),
   );

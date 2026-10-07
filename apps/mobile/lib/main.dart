@@ -168,6 +168,9 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
               // Opened from a match: that competition + season (#161).
               competitionId: state.uri.queryParameters['competitionId'],
               season: state.uri.queryParameters['season'],
+              playerMatchContext: state.extra is PlayerProfileMatchContext
+                  ? state.extra as PlayerProfileMatchContext
+                  : null,
             ),
           ),
       ],

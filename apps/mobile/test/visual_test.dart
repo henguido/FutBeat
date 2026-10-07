@@ -21,6 +21,7 @@ void main() {
     ('match', '/match/fb_match_clasico'),
     ('competition', '/competition/fb_comp_cr'),
     ('explore', '/explore'),
+    ('player', '/player/fb_player_torres'),
   ]) {
     testWidgets('Visual review: $name', (tester) async {
       await openApp(tester, route: route);

@@ -222,8 +222,20 @@ Future<_Server> _open(
       ),
       GoRoute(
         path: '/player/:id',
-        builder: (_, state) =>
-            Scaffold(body: Text('Perfil ${state.pathParameters['id']}')),
+        builder: (_, state) {
+          final matchContext = state.extra;
+          return Scaffold(
+            body: Column(
+              children: [
+                Text('Perfil ${state.pathParameters['id']}'),
+                if (matchContext is PlayerProfileMatchContext) ...[
+                  Text('Eventos ${matchContext.events.length}'),
+                  Text('Rating ${matchContext.summary.rating}'),
+                ],
+              ],
+            ),
+          );
+        },
       ),
     ],
   );
@@ -519,6 +531,8 @@ void main() {
     await tester.tap(_profile);
     await tester.pumpAndSettle();
     expect(find.text('Perfil fb_player_9'), findsOneWidget);
+    expect(find.textContaining('Eventos '), findsOneWidget);
+    expect(find.text('Rating 8.4'), findsOneWidget);
     await _close(tester);
   });
 
