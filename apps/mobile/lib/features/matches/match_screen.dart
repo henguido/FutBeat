@@ -22,6 +22,17 @@ const _headerBottom = Color(0xFF0F181C);
 const _cardBorder = Color(0xFF2B373D);
 const awaySideColor = Color(0xFF4FC3F7);
 
+enum _MatchTabId { facts, live, lineup, standings, statistics, headToHead }
+
+const _allMatchTabs = <_MatchTabId>[
+  _MatchTabId.facts,
+  _MatchTabId.live,
+  _MatchTabId.lineup,
+  _MatchTabId.standings,
+  _MatchTabId.statistics,
+  _MatchTabId.headToHead,
+];
+
 /// Bounded refreshes while the server hydrates missing lineup photos.
 /// Same cadence as EntityScreen's profileEnrichmentRetryDelays.
 const _lineupEnrichmentRetryDelays = [
@@ -104,6 +115,11 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       },
     );
     Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
+  }
+
+  void _selectTab(_MatchTabId id) {
+    final index = _allMatchTabs.indexOf(id);
+    if (index >= 0 && index != _tabs.index) _tabs.animateTo(index);
   }
 
   void _scheduleLineupEnrichmentRefresh() {
@@ -344,7 +360,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         const _SectionTitle('Forma reciente'),
         RecentFormSection(preview: preview, data: data, match: match),
       ],
-      StandingsSnapshotCard(data: data, match: match, stage: detail.stage),
+      StandingsSnapshotCard(
+        data: data,
+        match: match,
+        stage: detail.stage,
+        onViewTable: () => _selectTab(_MatchTabId.standings),
+      ),
     ];
 
     // Bounded: once the retries are spent a pending table settles into a
@@ -360,7 +381,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       controller: _tabs,
       isScrollable: true,
       tabAlignment: TabAlignment.start,
-      labelPadding: const EdgeInsets.symmetric(horizontal: 14),
+      labelPadding: const EdgeInsets.symmetric(horizontal: 12),
       labelColor: Colors.white,
       unselectedLabelColor: muted,
       labelStyle: const TextStyle(
@@ -380,14 +401,169 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ),
       dividerColor: Colors.transparent,
       tabs: [
-        Tab(text: factsTabLabel, height: 42),
-        const Tab(text: 'En vivo', height: 42),
-        const Tab(text: 'Alineación', height: 42),
-        const Tab(text: 'Tabla', height: 42),
-        const Tab(text: 'Estadísticas', height: 42),
-        const Tab(text: 'Cara a cara', height: 42),
+        Tab(
+          key: const ValueKey('match-tab-facts'),
+          text: factsTabLabel,
+          height: 44,
+        ),
+        const Tab(key: ValueKey('match-tab-live'), text: 'En vivo', height: 44),
+        const Tab(
+          key: ValueKey('match-tab-lineup'),
+          text: 'Alineación',
+          height: 44,
+        ),
+        const Tab(
+          key: ValueKey('match-tab-standings'),
+          text: 'Tabla',
+          height: 44,
+        ),
+        const Tab(
+          key: ValueKey('match-tab-statistics'),
+          text: 'Estadísticas',
+          height: 44,
+        ),
+        const Tab(
+          key: ValueKey('match-tab-headToHead'),
+          text: 'Cara a cara',
+          height: 44,
+        ),
       ],
     );
+
+    final tabViews = <_MatchTabId, Widget>{
+      _MatchTabId.facts: _MatchTabList('facts', [
+        if (data.demo) const DemoNotice(),
+        // Before kickoff the match facts lead; afterwards the story.
+        if (match.showKickoff) ...[
+          const _SectionTitle('Información del partido'),
+          MatchInfoCard(
+            match: match,
+            competition: competition,
+            detail: detail,
+            venue: venue,
+          ),
+          ...previewSections,
+        ],
+        if (detail.videos.isNotEmpty) ...[
+          const _SectionTitle('Resumen oficial'),
+          PostMatchVideos(detail),
+        ],
+        if (periodScores != null) ...[
+          const _SectionTitle('Marcador por período'),
+          MatchPeriodScoresCard(scores: periodScores),
+        ],
+        if (!match.showKickoff && detail.topRated().isNotEmpty) ...[
+          _SectionTitle(_topRatedTitle(match, detail)),
+          if (match.isLive)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Provisional',
+                style: TextStyle(
+                  color: muted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          TopRatedCard(
+            key: const ValueKey('top-rated-card'),
+            topRated: detail.topRated(),
+            home: home,
+            away: away,
+          ),
+          const _SectionTitle('Mejor puntuado por equipo'),
+          if (match.isLive)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Provisional',
+                style: TextStyle(
+                  color: muted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          TeamTopRatedCard(
+            key: const ValueKey('team-top-rated-card'),
+            best: detail.bestRatedBySide(),
+            home: home,
+            away: away,
+          ),
+        ],
+        if (hasStats) ...[
+          const _SectionTitle('Estadísticas clave'),
+          Statistics(
+            match,
+            detail: detail,
+            mode: StatisticsDisplayMode.compact,
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () => _selectTab(_MatchTabId.statistics),
+              icon: const Icon(Icons.bar_chart_rounded, size: 18),
+              label: const Text('Ver todas las estadísticas'),
+            ),
+          ),
+        ],
+        if (!match.showKickoff) ...[
+          const _SectionTitle('Información del partido'),
+          MatchInfoCard(
+            match: match,
+            competition: competition,
+            detail: detail,
+            venue: venue,
+          ),
+          ...previewSections,
+        ],
+      ]),
+      _MatchTabId.live: _MatchTabList('live', [
+        if (data.demo) const DemoNotice(),
+        if (showEvents) ...[
+          const _SectionTitle('Eventos del partido'),
+          MatchTimeline(data, match, detail),
+        ] else
+          const _EmptySection(
+            Icons.sports_soccer_rounded,
+            'El partido aún no inicia',
+          ),
+      ]),
+      _MatchTabId.lineup: _MatchTabList('alineacion', [
+        if (data.demo) const DemoNotice(),
+        Lineups(data, match, detail),
+      ]),
+      _MatchTabId.standings: _MatchTabList('tabla', [
+        if (data.demo) const DemoNotice(),
+        MatchStandingsTab(
+          data,
+          match.competitionId,
+          homeTeamId: match.homeId,
+          awayTeamId: match.awayId,
+          stage: detail.stage,
+          season: match.season,
+          compactContext: true,
+          refreshing: standingsRefreshing || _standingsManualRetry,
+          onRetry: _retryStandings,
+        ),
+      ]),
+      _MatchTabId.statistics: _MatchTabList('estadisticas', [
+        if (data.demo) const DemoNotice(),
+        _StatsLegend(home: home, away: away),
+        const SizedBox(height: 12),
+        Statistics(match, detail: detail),
+      ]),
+      _MatchTabId.headToHead: _MatchTabList('cara-a-cara', [
+        if (data.demo) const DemoNotice(),
+        HeadToHeadTab(
+          preview: preview,
+          data: data,
+          match: match,
+          onRetry: () => ref.invalidate(matchPreviewProvider(widget.id)),
+        ),
+      ]),
+    };
 
     final page = Scaffold(
       appBar: AppBar(
@@ -417,140 +593,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         ],
         body: TabBarView(
           controller: _tabs,
-          children: [
-            _MatchTabList('facts', [
-              if (data.demo) const DemoNotice(),
-              // Before kickoff the match facts lead; afterwards the story.
-              if (match.showKickoff) ...[
-                const _SectionTitle('Información del partido'),
-                MatchInfoCard(
-                  match: match,
-                  competition: competition,
-                  detail: detail,
-                  venue: venue,
-                ),
-                ...previewSections,
-              ],
-              if (detail.videos.isNotEmpty) ...[
-                const _SectionTitle('Resumen oficial'),
-                PostMatchVideos(detail),
-              ],
-              if (periodScores != null) ...[
-                const _SectionTitle('Marcador por período'),
-                MatchPeriodScoresCard(scores: periodScores),
-              ],
-              if (!match.showKickoff && detail.topRated().isNotEmpty) ...[
-                _SectionTitle(_topRatedTitle(match, detail)),
-                if (match.isLive)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'Provisional',
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                TopRatedCard(
-                  key: const ValueKey('top-rated-card'),
-                  topRated: detail.topRated(),
-                  home: home,
-                  away: away,
-                ),
-                const _SectionTitle('Mejor puntuado por equipo'),
-                if (match.isLive)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'Provisional',
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                TeamTopRatedCard(
-                  key: const ValueKey('team-top-rated-card'),
-                  best: detail.bestRatedBySide(),
-                  home: home,
-                  away: away,
-                ),
-              ],
-              if (hasStats) ...[
-                const _SectionTitle('Estadísticas clave'),
-                Statistics(
-                  match,
-                  detail: detail,
-                  mode: StatisticsDisplayMode.compact,
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    onPressed: () => _tabs.animateTo(4),
-                    icon: const Icon(Icons.bar_chart_rounded, size: 18),
-                    label: const Text('Ver todas las estadísticas'),
-                  ),
-                ),
-              ],
-              if (!match.showKickoff) ...[
-                const _SectionTitle('Información del partido'),
-                MatchInfoCard(
-                  match: match,
-                  competition: competition,
-                  detail: detail,
-                  venue: venue,
-                ),
-                ...previewSections,
-              ],
-            ]),
-            _MatchTabList('live', [
-              if (data.demo) const DemoNotice(),
-              if (showEvents) ...[
-                const _SectionTitle('Eventos del partido'),
-                MatchTimeline(data, match, detail),
-              ] else
-                const _EmptySection(
-                  Icons.sports_soccer_rounded,
-                  'El partido aún no inicia',
-                ),
-            ]),
-            _MatchTabList('alineacion', [
-              if (data.demo) const DemoNotice(),
-              Lineups(data, match, detail),
-            ]),
-            _MatchTabList('tabla', [
-              if (data.demo) const DemoNotice(),
-              MatchStandingsTab(
-                data,
-                match.competitionId,
-                homeTeamId: match.homeId,
-                awayTeamId: match.awayId,
-                stage: detail.stage,
-                season: match.season,
-                compactContext: true,
-                refreshing: standingsRefreshing || _standingsManualRetry,
-                onRetry: _retryStandings,
-              ),
-            ]),
-            _MatchTabList('estadisticas', [
-              if (data.demo) const DemoNotice(),
-              _StatsLegend(home: home, away: away),
-              const SizedBox(height: 12),
-              Statistics(match, detail: detail),
-            ]),
-            _MatchTabList('cara-a-cara', [
-              if (data.demo) const DemoNotice(),
-              HeadToHeadTab(
-                preview: preview,
-                data: data,
-                match: match,
-                onRetry: () => ref.invalidate(matchPreviewProvider(widget.id)),
-              ),
-            ]),
-          ],
+          children: [for (final id in _allMatchTabs) tabViews[id]!],
         ),
       ),
     );

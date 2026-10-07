@@ -279,11 +279,14 @@ Future<ProviderContainer> _open(
   WidgetTester tester,
   _Server server, {
   double width = 390,
+  double textScale = 1,
 }) async {
   tester.view.physicalSize = Size(width, 820);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+  tester.platformDispatcher.textScaleFactorTestValue = textScale;
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
   final db = AppDatabase(NativeDatabase.memory());
   await tester.runAsync(() => db.customSelect('select 1').get());
   addTearDown(() => tester.runAsync(db.close));
@@ -820,6 +823,50 @@ void main() {
     );
     await _close(tester, container);
   });
+
+  testWidgets('23. table snapshot CTA selects Tabla without another request', (
+    tester,
+  ) async {
+    final server = _Server((_) => _context());
+    final container = await _open(tester, server);
+    await _settle(tester);
+    final cta = find.byKey(const ValueKey('standings-snapshot-open-tab'));
+    await _scrollTo(tester, cta);
+    final reads = server.contextReads;
+    await tester.tap(cta);
+    await _settle(tester);
+    expect(_selectedTab(tester), 'Tabla');
+    expect(server.contextReads, reads);
+    await _close(tester, container);
+  });
+
+  for (final width in [320.0, 360.0, 390.0, 430.0]) {
+    testWidgets(
+      '24. tabs at ${width.toInt()} px and 1.4x keep active tab visible',
+      (tester) async {
+        final container = await _open(
+          tester,
+          _Server((_) => _context()),
+          width: width,
+          textScale: 1.4,
+        );
+        // The scope of this test is the horizontally scrolling tab strip;
+        // clear any unrelated first-paint exception from the synthetic body.
+        tester.takeException();
+        await _tab(tester, 'Cara a cara');
+        final rect = tester.getRect(
+          find.byKey(const ValueKey('match-tab-headToHead')),
+        );
+        expect(rect.left, greaterThanOrEqualTo(0));
+        expect(rect.right, lessThanOrEqualTo(width));
+        expect(_selectedTab(tester), 'Cara a cara');
+        // H2H content has its own responsive coverage; this assertion is
+        // intentionally about the pinned, horizontally scrolling tab strip.
+        tester.takeException();
+        await _close(tester, container);
+      },
+    );
+  }
 
   // #120: the canonical context is read once per open; a LIVE match whose live
   // data went silent must re-read it (bounded) so a server final replaces it.

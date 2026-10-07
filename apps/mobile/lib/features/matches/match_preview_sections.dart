@@ -299,6 +299,7 @@ class StandingsSnapshotCard extends StatelessWidget {
     required this.data,
     required this.match,
     this.stage,
+    this.onViewTable,
     super.key,
   });
 
@@ -307,6 +308,7 @@ class StandingsSnapshotCard extends StatelessWidget {
 
   /// The match's provider stage (match detail), when known.
   final String? stage;
+  final VoidCallback? onViewTable;
 
   @override
   Widget build(BuildContext context) {
@@ -364,6 +366,16 @@ class StandingsSnapshotCard extends StatelessWidget {
             ],
           ),
         ),
+        if (onViewTable != null)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              key: const ValueKey('standings-snapshot-open-tab'),
+              onPressed: onViewTable,
+              icon: const Icon(Icons.table_rows_outlined, size: 17),
+              label: const Text('Ver tabla'),
+            ),
+          ),
       ],
     );
   }
