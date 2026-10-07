@@ -235,7 +235,10 @@ void main() {
         find.textContaining('Los datos pueden estar desactualizados'),
         findsNothing,
       );
-      expect(find.text('Sin partidos'), findsOneWidget);
+      expect(
+        find.text('No pudimos confirmar los partidos de este día.'),
+        findsOneWidget,
+      );
       expect(find.byIcon(Icons.calendar_month_outlined), findsOneWidget);
       expect(find.widgetWithText(ActionChip, '20/1/2030'), findsNothing);
       expect(tester.takeException(), isNull);
@@ -351,7 +354,7 @@ void main() {
     final swipe = find.byKey(const ValueKey('matches-date-swipe'));
     await tester.fling(swipe, const Offset(-300, 0), 1200);
     await tester.pumpAndSettle();
-    expect(find.text('Sin partidos'), findsOneWidget);
+    expect(find.text('No hay partidos para este día.'), findsOneWidget);
     await tester.fling(swipe, const Offset(300, 0), 1200);
     await tester.pumpAndSettle();
     await tester.tap(find.text('HOY'));
@@ -422,7 +425,7 @@ void main() {
   ) async {
     final repository = TestRepository(fail: true);
     await openApp(tester, repository: repository);
-    expect(find.text('No pudimos cargar esta fecha'), findsOneWidget);
+    expect(find.text('No pudimos cargar los partidos.'), findsOneWidget);
     repository.fail = false;
     await tester.tap(find.text('Reintentar'));
     await tester.pumpAndSettle();

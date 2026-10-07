@@ -245,6 +245,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     with SingleTickerProviderStateMixin {
   DateTime? date;
   String filter = 'Todos';
+  bool _retrying = false;
   // Competitions collapsed by the user in this session (headers stay).
   final Set<String> _collapsed = <String>{};
 
@@ -291,6 +292,19 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   void _toggleCollapsed(String competitionId) => setState(() {
     if (!_collapsed.remove(competitionId)) _collapsed.add(competitionId);
   });
+
+  Future<void> _retry(DateTime value) async {
+    if (_retrying) return;
+    setState(() => _retrying = true);
+    ref.invalidate(calendarSnapshotProvider(value));
+    try {
+      await ref.read(calendarSnapshotProvider(value).future);
+    } catch (_) {
+      // The same recoverable state remains visible.
+    } finally {
+      if (mounted) setState(() => _retrying = false);
+    }
+  }
 
   Future<void> _pickDate(BuildContext context, DateTime selected) async {
     final picked = await showDatePicker(
@@ -369,6 +383,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
+          final allGames = dedupeFixtures(data.onDate(selected, 'Todos'));
           final games = dedupeFixtures(data.onDate(selected, effectiveFilter));
 
           final followedGames =
@@ -501,35 +516,84 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             ..add(() => const SizedBox(height: 16));
 
           if (loading) {
-            feedItems.add(() => const LinearProgressIndicator());
             if (data.calendarPending) {
               feedItems.add(
-                () => const Padding(
-                  padding: EdgeInsets.only(top: 12),
-                  child: Text('Preparando los partidos de esta fecha…'),
+                () => const _MatchesStatusCard(
+                  key: ValueKey('matches-calendar-pending'),
+                  icon: Icons.calendar_month_outlined,
+                  title: 'Preparando los partidos de esta fecha…',
+                  message: 'El calendario estará disponible en breve.',
+                  loading: true,
                 ),
               );
+            } else {
+              feedItems.add(() => const _MatchesFeedSkeleton());
             }
           } else if (failed) {
             final error = ref
                 .read(effectiveCalendarSnapshotProvider(requestDate))
                 .error;
             feedItems.add(
-              () => Text(
-                classifyLoadError(error) == LoadFailure.other
-                    ? 'No pudimos cargar esta fecha'
-                    : loadErrorMessage(error),
+              () => _MatchesStatusCard(
+                key: const ValueKey('matches-load-error'),
+                icon: classifyLoadError(error) == LoadFailure.offline
+                    ? Icons.cloud_off_outlined
+                    : Icons.sync_problem_outlined,
+                title: classifyLoadError(error) == LoadFailure.offline
+                    ? 'Sin conexión.'
+                    : 'No pudimos cargar los partidos.',
+                message: 'Puedes cambiar de fecha o intentarlo nuevamente.',
+                actionLabel: _retrying ? 'Reintentando…' : 'Reintentar',
+                onAction: _retrying ? null : () => _retry(requestDate),
               ),
             );
+          } else if (data.stale && allGames.isEmpty) {
             feedItems.add(
-              () => TextButton(
-                onPressed: () =>
-                    ref.invalidate(calendarSnapshotProvider(requestDate)),
-                child: const Text('Reintentar'),
+              () => _MatchesStatusCard(
+                key: const ValueKey('matches-stale-empty'),
+                icon: Icons.cloud_sync_outlined,
+                title: 'No pudimos confirmar los partidos de este día.',
+                message: 'La información guardada puede estar incompleta.',
+                actionLabel: _retrying ? 'Reintentando…' : 'Reintentar',
+                onAction: _retrying ? null : () => _retry(requestDate),
+              ),
+            );
+          } else if (allGames.isEmpty) {
+            feedItems.add(
+              () => _MatchesStatusCard(
+                key: const ValueKey('matches-empty-day'),
+                icon: Icons.event_busy_outlined,
+                title: 'No hay partidos para este día.',
+                message: selected == anchor
+                    ? 'Prueba otra fecha para consultar el calendario.'
+                    : 'Puedes elegir otra fecha o volver a Hoy.',
+                actionLabel: selected == anchor ? null : 'Volver a Hoy',
+                onAction: selected == anchor ? null : () => _setDate(anchor),
               ),
             );
           } else if (games.isEmpty) {
-            feedItems.add(() => const EmptyState('Sin partidos', ''));
+            feedItems.add(
+              () => _MatchesStatusCard(
+                key: ValueKey('matches-empty-filter-$effectiveFilter'),
+                icon: effectiveFilter == 'En vivo'
+                    ? Icons.sensors_outlined
+                    : Icons.filter_alt_off_outlined,
+                title: switch (effectiveFilter) {
+                  'En vivo' => 'No hay partidos en vivo ahora.',
+                  'Próximos' => 'No hay próximos partidos.',
+                  'Finalizados' => 'No hay partidos finalizados.',
+                  _ => 'No hay partidos para este filtro.',
+                },
+                message: 'Los partidos del día siguen disponibles en Todos.',
+                actionLabel: 'Ver todos',
+                onAction: () => setState(() => filter = 'Todos'),
+              ),
+            );
+          } else if (data.stale) {
+            feedItems.add(
+              () =>
+                  const _SavedDataNotice(message: 'Mostrando datos guardados.'),
+            );
           }
 
           // Feed positions where a complete block ends: [0] = after
@@ -662,6 +726,181 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       ),
     );
   }
+}
+
+class _MatchesFeedSkeleton extends StatelessWidget {
+  const _MatchesFeedSkeleton();
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Cargando partidos',
+    liveRegion: true,
+    child: ExcludeSemantics(
+      child: Container(
+        key: const ValueKey('matches-loading-skeleton'),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: panel,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFF263238)),
+        ),
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SkeletonLine(width: 150, height: 16),
+            SizedBox(height: 14),
+            _SkeletonMatchRow(),
+            Divider(height: 22),
+            _SkeletonMatchRow(),
+            Divider(height: 22),
+            _SkeletonMatchRow(),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _SkeletonMatchRow extends StatelessWidget {
+  const _SkeletonMatchRow();
+
+  @override
+  Widget build(BuildContext context) => const Row(
+    children: [
+      _SkeletonLine(width: 36, height: 36, radius: 18),
+      SizedBox(width: 12),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SkeletonLine(width: 170, height: 12),
+            SizedBox(height: 8),
+            _SkeletonLine(width: 110, height: 10),
+          ],
+        ),
+      ),
+      SizedBox(width: 10),
+      _SkeletonLine(width: 44, height: 22),
+    ],
+  );
+}
+
+class _SkeletonLine extends StatelessWidget {
+  const _SkeletonLine({
+    required this.width,
+    required this.height,
+    this.radius = 6,
+  });
+
+  final double width;
+  final double height;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: width,
+    height: height,
+    decoration: BoxDecoration(
+      color: const Color(0xFF263238),
+      borderRadius: BorderRadius.circular(radius),
+    ),
+  );
+}
+
+class _MatchesStatusCard extends StatelessWidget {
+  const _MatchesStatusCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+    this.loading = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF263238)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: lime, size: 38),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: muted, height: 1.4),
+          ),
+          if (loading) ...[
+            const SizedBox(height: 18),
+            const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+          ],
+          if (actionLabel != null) ...[
+            const SizedBox(height: 18),
+            FilledButton.tonal(onPressed: onAction, child: Text(actionLabel!)),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+class _SavedDataNotice extends StatelessWidget {
+  const _SavedDataNotice({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Container(
+      key: const ValueKey('matches-saved-data-notice'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2429),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_done_outlined, color: muted, size: 18),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: muted, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 /// Logical px/s: a deliberate fling, not a slightly diagonal scroll.

@@ -603,20 +603,20 @@ void main() {
       expect(partial.showKickoff, isFalse);
 
       await _pump(tester, data: data);
-      // Played evidence past kickoff: score + "MARCADOR PARCIAL", no kickoff.
+      // Played evidence past kickoff: score + "Marcador parcial", no kickoff.
       final p = _row('m_es_partial');
       expect(
         find.descendant(of: p, matching: find.text('2 - 1')),
         findsOneWidget,
       );
       expect(
-        find.descendant(of: p, matching: find.text('MARCADOR PARCIAL')),
+        find.descendant(of: p, matching: find.text('Marcador parcial')),
         findsOneWidget,
       );
       // No evidence: dash + "POR CONFIRMAR", no kickoff time, no "Programado".
       final a = _row('m_es_awaiting');
       expect(
-        find.descendant(of: a, matching: find.text('POR CONFIRMAR')),
+        find.descendant(of: a, matching: find.text('Por confirmar')),
         findsOneWidget,
       );
       expect(find.descendant(of: a, matching: find.text('—')), findsOneWidget);
@@ -950,7 +950,7 @@ void main() {
           .selected,
       isTrue,
     );
-    expect(find.text('Sin partidos'), findsOneWidget);
+    expect(find.text('No hay partidos para este día.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
