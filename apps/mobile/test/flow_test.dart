@@ -378,7 +378,7 @@ void main() {
     final repository = TestRepository(fail: true);
     await openApp(tester, route: '/explore', repository: repository);
 
-    expect(find.text('No pudimos cargar la búsqueda'), findsOneWidget);
+    expect(find.text('No pudimos cargar los resultados.'), findsOneWidget);
     repository.fail = false;
 
     await tester.tap(find.text('Reintentar'));

@@ -382,7 +382,7 @@ void main() {
       expect(requests.map((r) => r.path), ['/v1/explore', '/v1/explore']);
       expect(requests.first.queryParameters, isEmpty);
       expect(requests[1].queryParameters['country'], 'CR');
-      expect(find.text('Competiciones destacadas'), findsOneWidget);
+      expect(find.text('Competiciones'), findsOneWidget);
       expect(find.text('Equipos sugeridos'), findsOneWidget);
       expect(find.text('COSTA RICA'), findsNothing);
       await tester.enterText(find.byType(TextField), 'm');
@@ -396,8 +396,11 @@ void main() {
       expect(requests.length, 3);
       expect(requests.last.queryParameters['q'], 'manchester');
       expect(requests.last.queryParameters['country'], 'CR');
-      expect(find.text('Home'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      // Discovery recommendations never leak into the query state while its
+      // own response is pending.
+      expect(find.text('Home'), findsNothing);
+      expect(find.text('Buscando “manchester”…'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await tester.enterText(find.byType(TextField), 'london');
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump(const Duration(milliseconds: 10));
@@ -414,7 +417,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
       expect(requests[3].cancelToken!.isCancelled, true);
       expect(requests.last.queryParameters['country'], 'ES');
-      expect(find.text('Home'), findsOneWidget);
+      expect(find.text('Home'), findsNothing);
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
       await tester.runAsync(countries.close);

@@ -111,7 +111,10 @@ void main() {
       }
       expect(_searches(requests), 1 + remoteSearchRetryDelays.length);
       expect(find.text('Buscando más jugadores…'), findsNothing);
-      expect(find.text('No encontramos resultados'), findsOneWidget);
+      expect(
+        find.text('No encontramos resultados para “julian alvarez”.'),
+        findsOneWidget,
+      );
       expect(
         find.text('Seguimos buscando; intenta de nuevo en unos segundos.'),
         findsOneWidget,

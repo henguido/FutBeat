@@ -323,7 +323,7 @@ void main() {
       await _settleIo(tester);
       // Content before any response, with the thin refresh bar.
       expect(server.requests, [null, 'CR']);
-      expect(find.text('Competiciones destacadas'), findsOneWidget);
+      expect(find.text('Competiciones'), findsOneWidget);
       expect(find.text('Stored League'), findsOneWidget);
       expect(find.text('Stored Club'), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
