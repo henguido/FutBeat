@@ -643,7 +643,10 @@ void main() {
         findsWidgets,
         reason: 'no flash/loss at step $step',
       );
-      expect(find.text('Sin alineaciones'), findsNothing);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsNothing,
+      );
     }
     await _close(tester, container);
   });
@@ -665,7 +668,10 @@ void main() {
         1 + standingsRetryDelays.length + standingsSilentRetryDelays.length,
       );
       await _tab(tester, 'Alineación');
-      expect(find.text('Sin alineaciones'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
       await _elapse(tester, const Duration(minutes: 2));
       expect(server.detailReads, detailReads);

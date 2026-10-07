@@ -161,7 +161,10 @@ void main() {
       await _showTab(tester, 'Alineación');
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
-      expect(find.text('Sin alineaciones'), findsNothing);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsNothing,
+      );
       expect(
         find.byKey(
           const ValueKey('match-section-loading-Cargando alineaciones…'),
@@ -174,7 +177,10 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
       }
       await tester.pumpAndSettle();
-      expect(find.text('Sin alineaciones'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsOneWidget,
+      );
       await _showTab(tester, 'Estadísticas');
       await tester.pumpAndSettle();
       expect(
@@ -704,7 +710,10 @@ void main() {
       );
       await tester.tap(find.text('Alineación'));
       await tester.pumpAndSettle();
-      expect(find.text('Sin alineaciones'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsOneWidget,
+      );
       context.add(Snapshot(payload(table: true)));
       await tester.pumpAndSettle();
       expect(find.text('Tabla'), findsOneWidget);

@@ -594,7 +594,10 @@ void main() {
       ),
     );
     await _tab(tester, 'Alineación');
-    await _tapPlayer(tester, find.text('Trinidad').first);
+    await _tapPlayer(
+      tester,
+      find.text('Maximiliano Alejandro de la Santísima Trinidad').first,
+    );
     expect(_sheet, findsOneWidget);
     expect(tester.takeException(), isNull);
     await _close(tester);
@@ -768,7 +771,7 @@ void main() {
             ],
     );
     await _tab(tester, 'Alineación');
-    await _tapPlayer(tester, find.text('Local').first);
+    await _tapPlayer(tester, find.text('Defensor Local').first);
     expect(_inSheet(find.text('Autogol')), findsWidgets);
     expect(_inSheet(find.text('Gol')), findsNothing);
     expect(
@@ -788,7 +791,7 @@ void main() {
       ),
     );
     await _tab(tester, 'Alineación');
-    await _tapPlayer(tester, find.text('Panel').first);
+    await _tapPlayer(tester, find.text('Arquero Panel').first);
     final team = _inSheet(find.byKey(const ValueKey('player-sheet-team')));
     expect(team, findsOneWidget);
     expect(

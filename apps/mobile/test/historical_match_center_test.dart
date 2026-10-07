@@ -461,7 +461,10 @@ void main() {
     expect(server.requestAware, 1);
     expect(server.readOnly, _scheduleLength);
     await _tab(tester, 'Alineación');
-    expect(find.text('Sin alineaciones'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay alineaciones disponibles.'),
+      findsOneWidget,
+    );
     expect(find.byType(CircularProgressIndicator), findsNothing);
     await _elapse(tester, const Duration(minutes: 3));
     expect(server.detailCalls.length, 1 + _scheduleLength);
@@ -501,7 +504,10 @@ void main() {
     await _tab(tester, 'Estadísticas');
     expect(find.text('Tiros a puerta'), findsWidgets);
     await _tab(tester, 'Alineación');
-    expect(find.text('Sin alineaciones'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay alineaciones disponibles.'),
+      findsOneWidget,
+    );
     await _close(tester, container);
   });
 
@@ -1138,7 +1144,7 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('formation alone keeps a pending lineup in its loading state', (
+  testWidgets('formation alone stays visible without inventing an XI', (
     tester,
   ) async {
     Map<String, dynamic> formationOnly({required bool pending}) {
@@ -1165,8 +1171,10 @@ void main() {
     await _mount(tester, container);
     await _elapse(tester, const Duration(seconds: 1));
     await _tab(tester, 'Alineación');
-    expect(find.text('Cargando alineaciones…'), findsOneWidget);
-    expect(find.text('Sin alineaciones'), findsNothing);
+    expect(find.text('4-3-3'), findsOneWidget);
+    expect(find.text('Titulares no disponibles'), findsOneWidget);
+    expect(find.text('Cargando alineaciones…'), findsNothing);
+    expect(find.text('Todavía no hay alineaciones disponibles.'), findsNothing);
     await _close(tester, container);
   });
 
@@ -1233,7 +1241,10 @@ void main() {
       await _tab(tester, 'En vivo');
       expect(find.text('Anotador Parcial'), findsWidgets);
       await _tab(tester, 'Alineación');
-      expect(find.text('Sin alineaciones'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsOneWidget,
+      );
       expect(find.byType(CircularProgressIndicator), findsNothing);
       await _elapse(tester, const Duration(minutes: 2));
       expect(server.detailCalls, [

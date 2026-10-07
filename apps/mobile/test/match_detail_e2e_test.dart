@@ -135,7 +135,10 @@ void main() {
       await _open(tester, container);
       await _tab(tester, 'Alineación');
 
-      expect(find.text('Sin alineaciones'), findsNothing);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsNothing,
+      );
       // Starters sit on the pitch (initials + surname); bench shows full name.
       for (final label in ['PC', 'DS', 'DV', 'Suplente Canonico', 'DT Local']) {
         expect(find.text(label), findsWidgets, reason: label);
@@ -186,7 +189,10 @@ void main() {
     final container = await _container(tester, api);
     await _open(tester, container);
     await _tab(tester, 'Alineación');
-    expect(find.text('Sin alineaciones'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay alineaciones disponibles.'),
+      findsOneWidget,
+    );
     await _tab(tester, 'Estadísticas');
     expect(
       find.text('Todavía no hay estadísticas disponibles.'),

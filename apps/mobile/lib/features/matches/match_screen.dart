@@ -2997,46 +2997,34 @@ class Lineups extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Players define a lineup. Some providers publish only the coaches (no
-    // starters, no bench); that is not a lineup and must not render as two
-    // lone "Entrenador" cards.
     final homeHasPlayers =
         detail.homeStarters.isNotEmpty || detail.homeSubstitutes.isNotEmpty;
     final awayHasPlayers =
         detail.awayStarters.isNotEmpty || detail.awaySubstitutes.isNotEmpty;
-    if (!homeHasPlayers && !awayHasPlayers) {
+    final homeHasInfo =
+        homeHasPlayers ||
+        detail.homeCoach != null ||
+        detail.homeFormation != null;
+    final awayHasInfo =
+        awayHasPlayers ||
+        detail.awayCoach != null ||
+        detail.awayFormation != null;
+    if (!homeHasInfo && !awayHasInfo) {
       if (detail.lineupPending) {
         return const _PendingSection('Cargando alineaciones…');
       }
-      final homeCoach = detail.homeCoach;
-      final awayCoach = detail.awayCoach;
-      if (homeCoach == null && awayCoach == null) {
-        return const _EmptySection(Icons.groups_outlined, 'Sin alineaciones');
-      }
-      return Column(
-        children: [
-          const _EmptySection(Icons.groups_outlined, 'Alineación no publicada'),
-          _CoachesOnly(
-            home: homeCoach == null
-                ? null
-                : (data.team(match.homeId), homeCoach),
-            away: awayCoach == null
-                ? null
-                : (data.team(match.awayId), awayCoach),
-          ),
-        ],
+      return const _EmptySection(
+        Icons.groups_outlined,
+        'Todavía no hay alineaciones disponibles.',
       );
     }
-    // Once one side has players, a coach-only side still gets its card (with
-    // an explicit "not published" note) so the coach is not lost.
-    final homeHasLineup = homeHasPlayers || detail.homeCoach != null;
-    final awayHasLineup = awayHasPlayers || detail.awayCoach != null;
 
     return Column(
       children: [
-        if (homeHasLineup)
+        if (homeHasInfo)
           _TeamLineup(
             team: data.team(match.homeId)!,
+            status: lineupPresentationState(detail.home),
             formation: detail.homeFormation,
             starters: detail.homeStarters,
             substitutes: detail.homeSubstitutes,
@@ -3044,10 +3032,11 @@ class Lineups extends StatelessWidget {
             incidents: detail.incidents,
             side: 'home',
           ),
-        if (homeHasLineup && awayHasLineup) const SizedBox(height: 14),
-        if (awayHasLineup)
+        if (homeHasInfo && awayHasInfo) const SizedBox(height: 14),
+        if (awayHasInfo)
           _TeamLineup(
             team: data.team(match.awayId)!,
+            status: lineupPresentationState(detail.away),
             formation: detail.awayFormation,
             starters: detail.awayStarters,
             substitutes: detail.awaySubstitutes,
@@ -3063,6 +3052,7 @@ class Lineups extends StatelessWidget {
 class _TeamLineup extends StatelessWidget {
   const _TeamLineup({
     required this.team,
+    required this.status,
     required this.formation,
     required this.starters,
     required this.substitutes,
@@ -3072,6 +3062,7 @@ class _TeamLineup extends StatelessWidget {
   });
 
   final Entity team;
+  final LineupPresentationState status;
   final String? formation;
   final List<Json> starters;
   final List<Json> substitutes;
@@ -3081,7 +3072,7 @@ class _TeamLineup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pitchRows = adaptiveFormationRows(formation, starters);
+    final pitchRows = formationPlayerRows(formation, starters);
     final accent = side == 'home' ? lime : awaySideColor;
     return Card(
       child: Padding(
@@ -3124,47 +3115,40 @@ class _TeamLineup extends StatelessWidget {
                       ),
                     ),
                   ),
+                if (status != LineupPresentationState.unknown) ...[
+                  const SizedBox(width: 6),
+                  _LineupStatusBadge(status),
+                ],
               ],
             ),
             const SizedBox(height: 12),
             if (starters.isNotEmpty) ...[
               const _LineupLabel('Titulares'),
               const SizedBox(height: 8),
-              _FormationPitch(pitchRows, incidents: incidents, side: side),
+              if (pitchRows != null)
+                _FormationPitch(pitchRows, incidents: incidents, side: side)
+              else
+                _LineupPlayerList(
+                  players: starters,
+                  side: side,
+                  incidents: incidents,
+                  role: 'titular',
+                ),
             ],
             if (substitutes.isNotEmpty) ...[
               const SizedBox(height: 16),
               const _LineupLabel('Suplentes'),
               const SizedBox(height: 8),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final columns = constraints.maxWidth >= 460 ? 3 : 2;
-                  return GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: substitutes.length,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: columns,
-                      mainAxisExtent: 70,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                    ),
-                    itemBuilder: (_, index) => _BenchPlayer(
-                      substitutes[index],
-                      side: side,
-                      events: lineupEventsForPlayer(
-                        substitutes[index],
-                        incidents,
-                        side,
-                      ),
-                    ),
-                  );
-                },
+              _LineupPlayerList(
+                players: substitutes,
+                side: side,
+                incidents: incidents,
+                role: 'suplente',
               ),
             ],
             if (starters.isEmpty && substitutes.isEmpty)
               const Text(
-                'Alineación no publicada',
+                'Titulares no disponibles',
                 style: TextStyle(color: muted),
               ),
             if (coach != null) ...[
@@ -3180,42 +3164,43 @@ class _TeamLineup extends StatelessWidget {
   }
 }
 
-/// Secondary info shown under "Alineación no publicada" when the provider
-/// sent only the coaches.
-class _CoachesOnly extends StatelessWidget {
-  const _CoachesOnly({required this.home, required this.away});
+enum LineupPresentationState { unknown, provisional, confirmed }
 
-  final (Entity?, Json)? home;
-  final (Entity?, Json)? away;
+/// Only an explicit side-level signal can produce a provisional/confirmed
+/// label. The mere presence of eleven players or a formation stays neutral.
+LineupPresentationState lineupPresentationState(Json side) {
+  final value = side['lineupStatus']?.toString().trim().toLowerCase();
+  return switch (value) {
+    'provisional' => LineupPresentationState.provisional,
+    'confirmed' => LineupPresentationState.confirmed,
+    _ => LineupPresentationState.unknown,
+  };
+}
+
+class _LineupStatusBadge extends StatelessWidget {
+  const _LineupStatusBadge(this.status);
+
+  final LineupPresentationState status;
 
   @override
-  Widget build(BuildContext context) {
-    Widget row((Entity?, Json) entry) => Row(
-      children: [
-        if (entry.$1 != null) ...[
-          EntityAvatar(entry.$1!, size: 26),
-          const SizedBox(width: 10),
-        ],
-        Expanded(child: _CoachTile(entry.$2)),
-      ],
-    );
-    return Card(
-      key: const ValueKey('lineup-coaches-only'),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _LineupLabel('Entrenadores'),
-            const SizedBox(height: 8),
-            if (home != null) row(home!),
-            if (home != null && away != null) const SizedBox(height: 8),
-            if (away != null) row(away!),
-          ],
-        ),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .06),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: _cardBorder),
+    ),
+    child: Text(
+      status == LineupPresentationState.confirmed
+          ? 'Confirmada'
+          : 'Provisional',
+      style: const TextStyle(
+        color: Colors.white70,
+        fontSize: 10,
+        fontWeight: FontWeight.w800,
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _LineupLabel extends StatelessWidget {
@@ -3266,54 +3251,7 @@ List<List<Json>>? formationPlayerRows(String? formation, List<Json> starters) {
 }
 
 List<List<Json>> adaptiveFormationRows(String? formation, List<Json> starters) {
-  final declared = formationPlayerRows(formation, starters);
-  if (declared != null) return declared;
-  if (starters.isEmpty) return const [];
-
-  final ordered = [...starters]
-    ..sort(
-      (a, b) => (a['lineupPosition'] as num? ?? 999).compareTo(
-        b['lineupPosition'] as num? ?? 999,
-      ),
-    );
-  final groups = <int, List<Json>>{};
-  for (final player in ordered) {
-    groups.putIfAbsent(_positionBand(player['position']), () => []).add(player);
-  }
-  if (groups.length > 1) {
-    return [
-      for (final key in groups.keys.toList()..sort((a, b) => b - a))
-        groups[key]!,
-    ];
-  }
-
-  final rows = <List<Json>>[];
-  for (var index = 0; index < ordered.length; index += 4) {
-    rows.add(ordered.sublist(index, (index + 4).clamp(0, ordered.length)));
-  }
-  return rows.reversed.toList();
-}
-
-int _positionBand(dynamic raw) {
-  final value = raw?.toString().toLowerCase() ?? '';
-  if (value.contains('goal') || value == 'gk' || value.contains('portero')) {
-    return 0;
-  }
-  if (value.contains('def') ||
-      value == 'cb' ||
-      value == 'lb' ||
-      value == 'rb') {
-    return 1;
-  }
-  if (value.contains('mid') || value.contains('medio') || value == 'cm') {
-    return 2;
-  }
-  if (value.contains('for') ||
-      value.contains('att') ||
-      value.contains('wing')) {
-    return 3;
-  }
-  return 2;
+  return formationPlayerRows(formation, starters) ?? const [];
 }
 
 class LineupPlayerEvent {
@@ -3498,7 +3436,8 @@ class _PitchPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final name = player['name']?.toString() ?? 'Jugador';
-    final number = shirtNumberOf(player['number'])?.toString() ?? '';
+    final number = _lineupShirtNumber(player)?.toString() ?? '';
+    final rating = _lineupRating(player);
 
     final content = Column(
       children: [
@@ -3517,12 +3456,8 @@ class _PitchPlayer extends StatelessWidget {
             ),
             if (number.isNotEmpty)
               Positioned(left: -7, bottom: -3, child: _NumberBadge(number)),
-            if (player['rating'] is num)
-              Positioned(
-                right: -9,
-                top: -5,
-                child: _RatingBadge(player['rating'] as num),
-              ),
+            if (rating != null)
+              Positioned(right: -9, top: -5, child: _RatingBadge(rating)),
             if (player['captain'] == true)
               const Positioned(left: -7, top: -5, child: _CaptainBadge()),
           ],
@@ -3553,10 +3488,15 @@ class _PitchPlayer extends StatelessWidget {
       ],
     );
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(28),
-      onTap: () => showMatchPlayerSheet(context, player, side),
-      child: content,
+    return Semantics(
+      button: true,
+      excludeSemantics: true,
+      label: lineupPlayerSemanticLabel(player, 'titular', events),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(28),
+        onTap: () => showMatchPlayerSheet(context, player, side),
+        child: content,
+      ),
     );
   }
 }
@@ -3609,16 +3549,83 @@ String? _positionLabel(dynamic raw) {
   return value;
 }
 
+int? _lineupShirtNumber(Json player) =>
+    shirtNumberOf(player['shirtNumber'] ?? player['number']);
+
+num? _lineupRating(Json player) {
+  final rating = player['rating'];
+  return rating is num && rating > 0 ? rating : null;
+}
+
+String lineupPlayerSemanticLabel(
+  Json player,
+  String role,
+  List<LineupPlayerEvent> events,
+) {
+  final parts = <String>[
+    player['name']?.toString().trim().isNotEmpty == true
+        ? player['name'].toString().trim()
+        : 'Jugador',
+    if (_lineupShirtNumber(player) case final number?) 'dorsal $number',
+    role,
+    ?_positionLabel(player['position']),
+    if (player['captain'] == true) 'capitán',
+    if (_lineupRating(player) case final rating?)
+      'rating ${rating.toDouble().toStringAsFixed(1).replaceAll('.', ' punto ')}',
+    for (final event in events)
+      '${eventLabel(event.type)}${event.minute == null ? '' : ' minuto ${event.minute}'}',
+  ];
+  return '${parts.join(', ')}.';
+}
+
+class _LineupPlayerList extends StatelessWidget {
+  const _LineupPlayerList({
+    required this.players,
+    required this.side,
+    required this.incidents,
+    required this.role,
+  });
+
+  final List<Json> players;
+  final String side;
+  final List<Json> incidents;
+  final String role;
+
+  @override
+  Widget build(BuildContext context) => ListView.separated(
+    shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    itemCount: players.length,
+    separatorBuilder: (_, _) => const SizedBox(height: 6),
+    itemBuilder: (_, index) {
+      final player = players[index];
+      return _BenchPlayer(
+        player,
+        side: side,
+        role: role,
+        events: lineupEventsForPlayer(player, incidents, side),
+      );
+    },
+  );
+}
+
 class _BenchPlayer extends StatelessWidget {
-  const _BenchPlayer(this.player, {required this.side, required this.events});
+  const _BenchPlayer(
+    this.player, {
+    required this.side,
+    required this.role,
+    required this.events,
+  });
   final Json player;
   final String side;
+  final String role;
   final List<LineupPlayerEvent> events;
 
   @override
   Widget build(BuildContext context) {
-    final number = shirtNumberOf(player['number'])?.toString() ?? '';
+    final number = _lineupShirtNumber(player)?.toString() ?? '';
     final position = _positionLabel(player['position']);
+    final rating = _lineupRating(player);
 
     final content = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -3655,15 +3662,24 @@ class _BenchPlayer extends StatelessWidget {
               ],
             ),
           ),
-          if (player['rating'] is num) _RatingBadge(player['rating'] as num),
+          if (player['captain'] == true) ...[
+            const _CaptainBadge(),
+            const SizedBox(width: 6),
+          ],
+          if (rating != null) _RatingBadge(rating),
         ],
       ),
     );
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => showMatchPlayerSheet(context, player, side),
-      child: content,
+    return Semantics(
+      button: true,
+      excludeSemantics: true,
+      label: lineupPlayerSemanticLabel(player, role, events),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => showMatchPlayerSheet(context, player, side),
+        child: content,
+      ),
     );
   }
 }
@@ -3673,28 +3689,43 @@ class _CoachTile extends StatelessWidget {
   final Json coach;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: .04),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: _cardBorder),
-    ),
-    child: Row(
-      children: [
-        _PlayerAvatar(coach, size: 38),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            coach['name']?.toString() ?? '',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w700),
+  Widget build(BuildContext context) {
+    final nationality = coach['nationality']?.toString().trim() ?? '';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _cardBorder),
+      ),
+      child: Row(
+        children: [
+          _PlayerAvatar(coach, size: 38),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  coach['name']?.toString() ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (nationality.isNotEmpty)
+                  Text(
+                    nationality,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: muted, fontSize: 11),
+                  ),
+              ],
+            ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
 
 /// Existing canonical photo only; the fallback stays underneath while the

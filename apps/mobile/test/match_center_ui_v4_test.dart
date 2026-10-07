@@ -39,7 +39,7 @@ void main() {
   });
 
   test(
-    'adaptive formation keeps partial lineups visible by real positions',
+    'adaptive formation never invents a pitch without a declared formation',
     () {
       final rows = adaptiveFormationRows(null, [
         {'name': 'Goalkeeper', 'position': 'Goalkeeper', 'lineupPosition': 1},
@@ -48,12 +48,7 @@ void main() {
         {'name': 'Forward', 'position': 'Forward', 'lineupPosition': 4},
       ]);
 
-      expect(rows.map((row) => row.single['name']).toList(), [
-        'Forward',
-        'Midfielder',
-        'Defender',
-        'Goalkeeper',
-      ]);
+      expect(rows, isEmpty);
     },
   );
 
@@ -95,6 +90,51 @@ void main() {
       expect(events.map((event) => event.minute).toList(), [63, 74]);
     },
   );
+
+  test('player semantics announce only real lineup data', () {
+    expect(
+      lineupPlayerSemanticLabel(
+        {
+          'name': 'Juan Pérez',
+          'shirtNumber': 10,
+          'position': 'Forward',
+          'captain': true,
+          'rating': 7.8,
+        },
+        'titular',
+        const [LineupPlayerEvent('GOAL', 63)],
+      ),
+      'Juan Pérez, dorsal 10, titular, Delantero, capitán, '
+      'rating 7 punto 8, Gol minuto 63.',
+    );
+    expect(
+      lineupPlayerSemanticLabel(
+        {'name': 'Jugador Parcial'},
+        'suplente',
+        const [],
+      ),
+      'Jugador Parcial, suplente.',
+    );
+  });
+
+  test('lineup status requires an explicit trusted signal', () {
+    expect(lineupPresentationState(const {}), LineupPresentationState.unknown);
+    expect(
+      lineupPresentationState(const {
+        'formation': '4-3-3',
+        'starters': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      }),
+      LineupPresentationState.unknown,
+    );
+    expect(
+      lineupPresentationState(const {'lineupStatus': 'provisional'}),
+      LineupPresentationState.provisional,
+    );
+    expect(
+      lineupPresentationState(const {'lineupStatus': 'confirmed'}),
+      LineupPresentationState.confirmed,
+    );
+  });
 
   test('stat numeric parser accepts numbers and percentages safely', () {
     expect(statNumericValue(12), 12);
@@ -197,7 +237,7 @@ void main() {
           'substitutes': [
             {'id': 'home-12', 'name': 'Suplente Local', 'number': '12'},
           ],
-          'coach': {'name': 'Entrenador Local'},
+          'coach': {'name': 'Entrenador Local', 'nationality': 'Costa Rica'},
         },
         'away': {
           'formation': null,
@@ -245,12 +285,15 @@ void main() {
       expect(find.text('Titulares'), findsNWidgets(2));
       expect(find.text('Suplentes'), findsOneWidget);
       expect(find.text('Entrenador Local'), findsOneWidget);
+      expect(find.text('Costa Rica'), findsOneWidget);
+      expect(find.text('Portero Visitante'), findsOneWidget);
       expect(find.text('63′'), findsOneWidget);
       expect(find.text('71′'), findsOneWidget);
+      expect(find.text('Alineación confirmada'), findsNothing);
       expect(tester.takeException(), isNull);
 
       // A provider may publish the bench/coach before its starters. Existing
-      // partial data must stay visible instead of becoming "Sin alineaciones"
+      // partial data must stay visible instead of becoming an empty state
       // or an empty card for the other side.
       final benchOnly = MatchDetail({
         'matchId': 'fb_match',
@@ -282,12 +325,15 @@ void main() {
       expect(find.text('Suplentes'), findsOneWidget);
       expect(find.text('Suplente Local'), findsOneWidget);
       expect(find.text('Entrenador Local'), findsOneWidget);
-      expect(find.text('Sin alineaciones'), findsNothing);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsNothing,
+      );
       expect(find.text('Equipo Visitante'), findsNothing);
       expect(tester.takeException(), isNull);
 
-      // Coaches without any player (GOAL sent only `type: coach` rows) is
-      // not a lineup: a clear empty state, coaches kept as secondary info.
+      // Coaches without players remain useful partial information. Each side
+      // stays separate and no confirmed lineup is inferred.
       final coachesOnly = MatchDetail({
         'matchId': 'fb_match',
         'available': true,
@@ -316,17 +362,19 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Alineación no publicada'), findsOneWidget);
-      expect(find.text('Entrenador'), findsNothing);
-      expect(find.text('Entrenadores'), findsOneWidget);
+      expect(find.text('Titulares no disponibles'), findsNWidgets(2));
+      expect(find.text('Entrenador'), findsNWidgets(2));
       expect(find.text('Entrenador Local'), findsOneWidget);
       expect(find.text('Entrenador Visitante'), findsOneWidget);
       expect(find.text('Titulares'), findsNothing);
-      expect(find.text('Sin alineaciones'), findsNothing);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsNothing,
+      );
       expect(tester.takeException(), isNull);
 
-      // One side with players, the other coach-only: the coach-only card
-      // states that its lineup is not published.
+      // One side with players, the other coach-only: useful partial data is
+      // preserved without inventing a lineup status.
       final oneSide = MatchDetail({
         ...coachesOnly.json,
         'home': {
@@ -348,9 +396,36 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Suplente Local'), findsOneWidget);
-      expect(find.text('Alineación no publicada'), findsOneWidget);
+      expect(find.text('Titulares no disponibles'), findsOneWidget);
       expect(find.text('Entrenador Visitante'), findsOneWidget);
       expect(tester.takeException(), isNull);
+
+      // A formation without an XI is useful metadata, but never becomes a
+      // fabricated pitch or a confirmed lineup.
+      final formationOnly = MatchDetail({
+        'matchId': 'fb_match',
+        'available': true,
+        'pending': false,
+        'home': {
+          'formation': '4-4-2',
+          'starters': <dynamic>[],
+          'substitutes': <dynamic>[],
+        },
+        'away': <String, dynamic>{},
+        'statistics': <dynamic>[],
+        'incidents': <dynamic>[],
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Lineups(snapshot, snapshot.matches.single, formationOnly),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('4-4-2'), findsOneWidget);
+      expect(find.text('Titulares no disponibles'), findsOneWidget);
+      expect(find.text('Alineación confirmada'), findsNothing);
     },
   );
 }
