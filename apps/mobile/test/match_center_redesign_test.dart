@@ -340,7 +340,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(tab);
     await tester.pumpAndSettle();
-    expect(find.text('Sin estadísticas'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay estadísticas disponibles.'),
+      findsOneWidget,
+    );
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 

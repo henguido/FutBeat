@@ -1625,42 +1625,107 @@ class Statistics extends StatelessWidget {
       if (detail?.statisticsPending == true) {
         return const _PendingSection('Cargando estadísticas…');
       }
-      return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
+      return const _EmptySection(
+        Icons.bar_chart_rounded,
+        'Todavía no hay estadísticas disponibles.',
+      );
     }
     final compact = mode == StatisticsDisplayMode.compact;
-    final ordered = orderedStatistics(displayableStatistics(stats));
-    if (ordered.isEmpty) {
-      return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
+    final viewModel = MatchStatisticsViewModel.from(stats);
+    if (viewModel.rows.isEmpty) {
+      return const _EmptySection(
+        Icons.bar_chart_rounded,
+        'Todavía no hay estadísticas disponibles.',
+      );
     }
-    final visible = compact ? ordered.take(4).toList() : ordered;
+    final visible = compact ? viewModel.rows.take(4).toList() : viewModel.rows;
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
         child: mode == StatisticsDisplayMode.compact
             ? Column(
                 children: [
-                  for (final stat in visible) _StatisticComparison(stat),
+                  for (final row in visible) _StatisticComparison(row),
                 ],
               )
-            : _FullStatistics(visible),
+            : MatchStatisticsSection(rows: visible),
       ),
     );
   }
+}
+
+/// Presentation model prepared once per statistics build. It normalizes
+/// aliases, removes duplicates/data-less rows and freezes a stable order
+/// without deriving any provider metric.
+class MatchStatisticsViewModel {
+  const MatchStatisticsViewModel(this.rows);
+
+  factory MatchStatisticsViewModel.from(List<Json> stats) =>
+      MatchStatisticsViewModel(
+        orderedStatistics(displayableStatistics(stats))
+            .map(MatchStatisticRowViewModel.from)
+            .toList(growable: false),
+      );
+
+  final List<MatchStatisticRowViewModel> rows;
+}
+
+class MatchStatisticRowViewModel {
+  const MatchStatisticRowViewModel({
+    required this.source,
+    required this.key,
+    required this.label,
+    required this.group,
+    required this.home,
+    required this.away,
+    required this.homeText,
+    required this.awayText,
+    required this.higherIsBetter,
+    required this.showsBar,
+  });
+
+  factory MatchStatisticRowViewModel.from(Json stat) {
+    final name = statisticName(stat);
+    final key = _statKey(name);
+    return MatchStatisticRowViewModel(
+      source: stat,
+      key: key,
+      label: _statLabel(name) ?? 'Estadística',
+      group: _statisticGroup(name),
+      home: statNumericValue(stat['home']),
+      away: statNumericValue(stat['away']),
+      homeText: _statValue(stat['home'], stat['unit']),
+      awayText: _statValue(stat['away'], stat['unit']),
+      higherIsBetter: statisticHigherIsBetter(name),
+      showsBar: statisticShowsComparisonBar(name),
+    );
+  }
+
+  final Json source;
+  final String key;
+  final String label;
+  final MatchStatisticGroup group;
+  final double? home;
+  final double? away;
+  final String homeText;
+  final String awayText;
+  final bool higherIsBetter;
+  final bool showsBar;
 }
 
 /// Provider statistic name: normalized rows use `label`, raw rows `type`.
 String statisticName(Json stat) =>
     (stat['label'] ?? stat['type'])?.toString() ?? '';
 
-enum _StatisticGroup { summary, attack, passes, defense, discipline, other }
+enum MatchStatisticGroup { summary, attack, passes, defense, discipline, other }
 
 const _statisticGroupLabels = {
-  _StatisticGroup.summary: 'Resumen',
-  _StatisticGroup.attack: 'Ataque',
-  _StatisticGroup.passes: 'Pases',
-  _StatisticGroup.defense: 'Defensa',
-  _StatisticGroup.discipline: 'Disciplina',
-  _StatisticGroup.other: 'Otras estadísticas',
+  MatchStatisticGroup.summary: 'Resumen',
+  MatchStatisticGroup.attack: 'Ataque',
+  MatchStatisticGroup.passes: 'Pases',
+  MatchStatisticGroup.defense: 'Defensa / duelos',
+  MatchStatisticGroup.discipline: 'Disciplina',
+  MatchStatisticGroup.other: 'Otras estadísticas',
 };
 
 const _possessionKeys = {
@@ -1683,8 +1748,11 @@ const _passKeys = {
   'total passes',
   'accurate passes',
   'passes accurate',
+  'successful passes',
   'passes %',
   'pass accuracy',
+  'successful passes percentage',
+  'passes percentage',
   'pases',
 };
 const _cornerKeys = {'corners', 'corner kicks', 'córners', 'saques de esquina'};
@@ -1699,14 +1767,63 @@ const _disciplineKeys = {
 
 int _statisticPriority(String name) {
   final key = _statKey(name);
-  if (_possessionKeys.contains(key)) return 0;
-  if (_xgKeys.contains(key)) return 1;
-  if (_totalShotKeys.contains(key)) return 2;
-  if (_onTargetKeys.contains(key)) return 3;
-  if (_passKeys.contains(key)) return 4;
-  if (_cornerKeys.contains(key)) return 5;
-  if (_disciplineKeys.contains(key)) return 6;
-  return 7;
+  final preferred = <String>[
+    'possession',
+    'ball possession',
+    'possession %',
+    'posesión',
+    'expected goals',
+    'expected goals (xg)',
+    'xg',
+    'shots',
+    'total shots',
+    'shots total',
+    'tiros',
+    'shots on target',
+    'shots on goal',
+    'on target',
+    'shot on goal',
+    'big chances',
+    'shots off target',
+    'shots off goal',
+    'off target',
+    'shot off goal',
+    'blocked shots',
+    'shots blocked',
+    'corners',
+    'corner kicks',
+    'córners',
+    'saques de esquina',
+    'offsides',
+    'attacks',
+    'dangerous attacks',
+    'passes',
+    'total passes',
+    'pases',
+    'accurate passes',
+    'passes accurate',
+    'successful passes',
+    'passes %',
+    'pass accuracy',
+    'successful passes percentage',
+    'passes percentage',
+    'recoveries',
+    'ball recoveries',
+    'tackles',
+    'duels won',
+    'interceptions',
+    'clearances',
+    'saves',
+    'goalkeeper saves',
+    'fouls',
+    'faltas',
+    'yellow cards',
+    'tarjetas amarillas',
+    'red cards',
+    'tarjetas rojas',
+  ];
+  final index = preferred.indexOf(key);
+  return index < 0 ? preferred.length : index;
 }
 
 /// Stable, deterministic priority. No row is deduplicated or synthesized.
@@ -1720,13 +1837,16 @@ List<Json> orderedStatistics(List<Json> stats) {
   return indexed.map((entry) => entry.$2).toList();
 }
 
-_StatisticGroup _statisticGroup(String name) {
+MatchStatisticGroup _statisticGroup(String name) {
   final key = _statKey(name);
-  if (_possessionKeys.contains(key) || _xgKeys.contains(key)) {
-    return _StatisticGroup.summary;
-  }
-  if (_totalShotKeys.contains(key) ||
+  if (_possessionKeys.contains(key) ||
+      _xgKeys.contains(key) ||
+      _totalShotKeys.contains(key) ||
       _onTargetKeys.contains(key) ||
+      key == 'big chances') {
+    return MatchStatisticGroup.summary;
+  }
+  if (_cornerKeys.contains(key) ||
       const {
         'shots off target',
         'shots off goal',
@@ -1740,27 +1860,32 @@ _StatisticGroup _statisticGroup(String name) {
         'shots outsidebox',
         'attacks',
         'dangerous attacks',
+        'offsides',
       }.contains(key)) {
-    return _StatisticGroup.attack;
+    return MatchStatisticGroup.attack;
   }
   if (_passKeys.contains(key) || const {'crosses', 'centros'}.contains(key)) {
-    return _StatisticGroup.passes;
+    return MatchStatisticGroup.passes;
   }
-  if (_cornerKeys.contains(key) ||
-      const {
-        'saves',
-        'goalkeeper saves',
-        'tackles',
-        'offsides',
-        'free kicks',
-        'throw ins',
-        'throw-ins',
-        'goal kicks',
-      }.contains(key)) {
-    return _StatisticGroup.defense;
+  if (const {
+    'saves',
+    'goalkeeper saves',
+    'tackles',
+    'recoveries',
+    'ball recoveries',
+    'interceptions',
+    'clearances',
+    'duels won',
+    'aerials won',
+    'free kicks',
+    'throw ins',
+    'throw-ins',
+    'goal kicks',
+  }.contains(key)) {
+    return MatchStatisticGroup.defense;
   }
-  if (_disciplineKeys.contains(key)) return _StatisticGroup.discipline;
-  return _StatisticGroup.other;
+  if (_disciplineKeys.contains(key)) return MatchStatisticGroup.discipline;
+  return MatchStatisticGroup.other;
 }
 
 /// Only explicit performance metrics get winner emphasis. Unknown and
@@ -1772,43 +1897,35 @@ bool statisticHigherIsBetter(String name) {
       _totalShotKeys.contains(key) ||
       _onTargetKeys.contains(key) ||
       _passKeys.contains(key) ||
-      _cornerKeys.contains(key) ||
-      const {
-        'shots off target',
-        'shots off goal',
-        'off target',
-        'shot off goal',
-        'blocked shots',
-        'shots blocked',
-        'shots inside box',
-        'shots insidebox',
-        'shots outside box',
-        'shots outsidebox',
-        'attacks',
-        'dangerous attacks',
-        'saves',
-        'goalkeeper saves',
-        'tackles',
-        'crosses',
-      }.contains(key);
+      const {'big chances', 'attacks', 'dangerous attacks'}.contains(key);
 }
 
-class _FullStatistics extends StatelessWidget {
-  const _FullStatistics(this.stats);
+/// Bars are limited to metrics where a relative comparison is useful. The
+/// value remains the provider value; xG and counts use only a relative scale,
+/// never a fabricated percentage.
+bool statisticShowsComparisonBar(String name) {
+  final key = _statKey(name);
+  return _possessionKeys.contains(key) ||
+      _xgKeys.contains(key) ||
+      _totalShotKeys.contains(key) ||
+      _onTargetKeys.contains(key) ||
+      _passKeys.contains(key);
+}
 
-  final List<Json> stats;
+class MatchStatisticsSection extends StatelessWidget {
+  const MatchStatisticsSection({required this.rows, super.key});
+
+  final List<MatchStatisticRowViewModel> rows;
 
   @override
   Widget build(BuildContext context) {
-    final grouped = <_StatisticGroup, List<Json>>{};
-    for (final stat in stats) {
-      grouped
-          .putIfAbsent(_statisticGroup(statisticName(stat)), () => [])
-          .add(stat);
+    final grouped = <MatchStatisticGroup, List<MatchStatisticRowViewModel>>{};
+    for (final row in rows) {
+      grouped.putIfAbsent(row.group, () => []).add(row);
     }
     return Column(
       children: [
-        for (final group in _StatisticGroup.values)
+        for (final group in MatchStatisticGroup.values)
           if (grouped[group]?.isNotEmpty == true) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 10, 4, 2),
@@ -1825,7 +1942,7 @@ class _FullStatistics extends StatelessWidget {
                 ),
               ),
             ),
-            for (final stat in grouped[group]!) _StatisticComparison(stat),
+            for (final row in grouped[group]!) _StatisticComparison(row),
           ],
       ],
     );
@@ -1833,27 +1950,29 @@ class _FullStatistics extends StatelessWidget {
 }
 
 class _StatisticComparison extends StatelessWidget {
-  const _StatisticComparison(this.stat);
+  const _StatisticComparison(this.row);
 
-  final Json stat;
+  final MatchStatisticRowViewModel row;
 
   @override
   Widget build(BuildContext context) {
-    final home = statNumericValue(stat['home']);
-    final away = statNumericValue(stat['away']);
+    final home = row.home;
+    final away = row.away;
     final comparable = home != null && away != null && home >= 0 && away >= 0;
     final total = comparable ? home + away : 0.0;
-    final higherIsBetter = statisticHigherIsBetter(statisticName(stat));
+    final higherIsBetter = row.higherIsBetter;
     final homeLeads = higherIsBetter && comparable && home > away;
     final awayLeads = higherIsBetter && comparable && away > home;
-    final label = _statLabel(statisticName(stat)) ?? 'Estadística';
-    final homeText = _statValue(stat['home'], stat['unit']);
-    final awayText = _statValue(stat['away'], stat['unit']);
+    final label = row.label;
+    final homeText = row.homeText;
+    final awayText = row.awayText;
 
     return Semantics(
       container: true,
       excludeSemantics: true,
-      label: '$label. Local $homeText. Visitante $awayText.',
+      label:
+          '$label: local ${_statSemanticValue(homeText)}, '
+          'visitante ${_statSemanticValue(awayText)}.',
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Column(
@@ -1864,7 +1983,7 @@ class _StatisticComparison extends StatelessWidget {
                   homeText,
                   color: lime,
                   highlighted: homeLeads,
-                  key: ValueKey('stat-${_statKey(statisticName(stat))}-home'),
+                  key: ValueKey('stat-${row.key}-home'),
                 ),
                 Expanded(
                   child: Padding(
@@ -1885,11 +2004,11 @@ class _StatisticComparison extends StatelessWidget {
                   awayText,
                   color: awaySideColor,
                   highlighted: awayLeads,
-                  key: ValueKey('stat-${_statKey(statisticName(stat))}-away'),
+                  key: ValueKey('stat-${row.key}-away'),
                 ),
               ],
             ),
-            if (comparable) ...[
+            if (row.showsBar && comparable && total > 0) ...[
               const SizedBox(height: 7),
               Row(
                 key: const ValueKey('stat-bars'),
@@ -2003,6 +2122,14 @@ String _statValue(dynamic value, dynamic unit) {
   return '$text$suffix';
 }
 
+String _statSemanticValue(String value) {
+  if (value == '—') return 'sin dato';
+  return value
+      .replaceAll('%', ' por ciento')
+      .replaceAll('.', ' punto ')
+      .replaceAll(',', ' coma ');
+}
+
 /// Canonical key of a provider statistic name: case, `_`/`-`, camelCase and
 /// a singular/plural last word ("Throw In", "throw_ins", "YellowCard") all
 /// map to the same key of [_statLabels] when one exists.
@@ -2073,6 +2200,8 @@ const _statLabels = {
   'throw-ins': 'Saques de banda',
   'goal kicks': 'Saques de meta',
   'tackles': 'Entradas',
+  'recoveries': 'Recuperaciones',
+  'ball recoveries': 'Recuperaciones',
   'crosses': 'Centros',
   'substitutions': 'Cambios',
   'shot on goal': 'Tiros a puerta',

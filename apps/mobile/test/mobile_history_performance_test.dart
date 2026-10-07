@@ -177,7 +177,10 @@ void main() {
       expect(find.text('Sin alineaciones'), findsOneWidget);
       await _showTab(tester, 'Estadísticas');
       await tester.pumpAndSettle();
-      expect(find.text('Sin estadísticas'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay estadísticas disponibles.'),
+        findsOneWidget,
+      );
       expect(repo.loads, 1);
       expect(repo.reads, 5);
       await tester.pumpWidget(const SizedBox());
@@ -695,7 +698,10 @@ void main() {
       expect(find.text('Tabla'), findsOneWidget);
       await tester.tap(find.text('Estadísticas'));
       await tester.pumpAndSettle();
-      expect(find.text('Sin estadísticas'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay estadísticas disponibles.'),
+        findsOneWidget,
+      );
       await tester.tap(find.text('Alineación'));
       await tester.pumpAndSettle();
       expect(find.text('Sin alineaciones'), findsOneWidget);

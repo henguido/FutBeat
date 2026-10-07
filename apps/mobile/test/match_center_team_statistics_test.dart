@@ -88,8 +88,8 @@ void main() {
         'Expected goals',
         'Total Shots',
         'Shots on Goal',
-        'Pass accuracy',
         'Corner Kicks',
+        'Pass accuracy',
         'Fouls',
         'Yellow Cards',
         'Red Cards',
@@ -149,13 +149,7 @@ void main() {
   testWidgets('full mode groups every known row; a type FutBeat cannot '
       'name is hidden, never shown as a raw provider key', (tester) async {
     await _pump(tester, match: _match(statistics: wideStats));
-    for (final group in [
-      'Resumen',
-      'Ataque',
-      'Pases',
-      'Defensa',
-      'Disciplina',
-    ]) {
+    for (final group in ['Resumen', 'Ataque', 'Pases', 'Disciplina']) {
       expect(find.text(group), findsOneWidget, reason: group);
     }
     expect(find.text('Goles esperados (xG)'), findsOneWidget);
@@ -260,7 +254,10 @@ void main() {
       ),
     );
     expect(find.text('Saques de banda'), findsNothing);
-    expect(find.text('Sin estadísticas'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay estadísticas disponibles.'),
+      findsOneWidget,
+    );
   });
 
   test('synonym provider keys never share one Spanish label twice', () {
@@ -400,7 +397,9 @@ void main() {
         ],
       ),
     );
-    expect(find.byKey(const ValueKey('stat-bars')), findsNWidgets(3));
+    // 0-0 never gets a deceptive bar and the one-sided pass value cannot be
+    // reconstructed. Only possession and xG are comparable here.
+    expect(find.byKey(const ValueKey('stat-bars')), findsNWidgets(2));
     expect(find.text('100%'), findsOneWidget);
     expect(find.text('100%%'), findsNothing);
     expect(find.text('1.25'), findsOneWidget);
@@ -413,7 +412,10 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsNothing);
 
     await _pump(tester, match: _match(), detail: _detail());
-    expect(find.text('Sin estadísticas'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay estadísticas disponibles.'),
+      findsOneWidget,
+    );
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
@@ -457,4 +459,72 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  test('view model groups real aliases without deriving values', () {
+    final model = MatchStatisticsViewModel.from(const [
+      {'label': 'Big Chances', 'home': 4, 'away': 2},
+      {'label': 'Corner Kicks', 'home': 7, 'away': 3},
+      {'label': 'Offsides', 'home': 1, 'away': 2},
+      {'label': 'Successful Passes', 'home': 401, 'away': null},
+      {'label': 'Ball Recoveries', 'home': 48, 'away': 44},
+      {'label': 'Metric Nobody Knows', 'home': 99, 'away': 99},
+    ]);
+
+    expect(model.rows.map((row) => row.label), [
+      'Ocasiones claras',
+      'Córners',
+      'Fueras de juego',
+      'Pases precisos',
+      'Recuperaciones',
+    ]);
+    expect(
+      model.rows.singleWhere((row) => row.label == 'Pases precisos').away,
+      isNull,
+    );
+  });
+
+  testWidgets('one-sided values stay neutral and semantics name missing data', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      match: _match(
+        statistics: const [
+          {'label': 'Expected Goals', 'home': 1.42, 'away': null},
+          {'label': 'Ball Possession', 'home': '54%', 'away': '46%'},
+        ],
+      ),
+    );
+
+    expect(find.text('—'), findsOneWidget);
+    expect(find.byKey(const ValueKey('stat-bars')), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Goles esperados (xG): local 1 punto 42, visitante sin dato.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsLabel(
+        'Posesión: local 54 por ciento, visitante 46 por ciento.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('discipline and equal zero counts have no comparison bars', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      match: _match(
+        statistics: const [
+          {'label': 'Shots', 'home': 0, 'away': 0},
+          {'label': 'Fouls', 'home': 14, 'away': 8},
+          {'label': 'Yellow Cards', 'home': 3, 'away': 1},
+        ],
+      ),
+    );
+    expect(find.byKey(const ValueKey('stat-bars')), findsNothing);
+  });
 }

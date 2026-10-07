@@ -188,7 +188,10 @@ void main() {
     await _tab(tester, 'Alineación');
     expect(find.text('Sin alineaciones'), findsOneWidget);
     await _tab(tester, 'Estadísticas');
-    expect(find.text('Sin estadísticas'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay estadísticas disponibles.'),
+      findsOneWidget,
+    );
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('0'), findsNothing);
     await _close(tester, container);
