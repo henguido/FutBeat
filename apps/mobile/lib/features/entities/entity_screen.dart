@@ -11,6 +11,7 @@ import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
+import 'competition_profile.dart';
 import 'player_profile.dart';
 import 'standings.dart';
 import 'team_profile.dart';
@@ -312,6 +313,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             enriching:
                 data.enrichmentPending &&
                 enrichmentAttempts < profileEnrichmentRetryDelays.length,
+          );
+        }
+        if (type == 'competition') {
+          return CompetitionProfileView(
+            data: data,
+            competition: entity,
+            matches: matches,
+            teams: competitionTeams(data, canonicalId),
           );
         }
         // Teams and players have dedicated profiles; this is the competition
