@@ -498,7 +498,10 @@ void main() {
           referee: 'Jesus Gil Manzano, Spain',
         ),
       );
-      expect(find.text('Liga Info · Final'), findsOneWidget);
+      expect(
+        find.text('Liga Info · Octavos de final · Final'),
+        findsOneWidget,
+      );
       expect(find.textContaining('Jornada'), findsNothing);
       await _showCard(tester);
       expect(

@@ -969,6 +969,13 @@ class MatchHero extends StatelessWidget {
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
     final round = matchRoundHeadline(detail.round);
+    final stage = matchStageLabel(
+      stage: detail.stage,
+      competitionName: competition.name,
+      round: detail.round,
+    );
+    final venue = detail.stadium ?? match.json['venue']?.toString().trim();
+    final periodScores = MatchPeriodScores.fromMatch(match, detail);
     // Scorers only once the match has started and a goal has a known side.
     final summary = match.showKickoff
         ? null
@@ -978,80 +985,168 @@ class MatchHero extends StatelessWidget {
         ? summary
         : null;
 
-    return Container(
-      key: const ValueKey('match-hero'),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [_headerTop, _headerBottom],
+    return Semantics(
+      container: true,
+      label: matchHeroSemanticLabel(context, match, home, away),
+      child: Container(
+        key: const ValueKey('match-hero'),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [_headerTop, _headerBottom],
+          ),
         ),
-      ),
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Competition first, clearly separated from the teams. Date,
-          // venue, country and season live in "Información del partido".
-          Material(
-            color: Colors.white.withValues(alpha: .06),
-            shape: const StadiumBorder(),
-            child: InkWell(
-              customBorder: const StadiumBorder(),
-              onTap: () => context.push('/competition/${competition.id}'),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 30),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.emoji_events_outlined,
-                        size: 14,
-                        color: lime,
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          [competition.name, ?round].join(' · '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Competition first, clearly separated from the teams. Date,
+            // venue, country and season live in "Información del partido".
+            Material(
+              color: Colors.white.withValues(alpha: .06),
+              shape: const StadiumBorder(),
+              child: InkWell(
+                customBorder: const StadiumBorder(),
+                onTap: () => context.push('/competition/${competition.id}'),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 30),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        EntityAvatar(competition, size: 16),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            [competition.name, ?stage, ?round].join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
-                      ),
-                      const Icon(
-                        Icons.chevron_right_rounded,
-                        size: 16,
-                        color: muted,
-                      ),
-                    ],
+                        const Icon(
+                          Icons.chevron_right_rounded,
+                          size: 16,
+                          color: muted,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _HeaderTeam(home, match, accent: lime)),
-              SizedBox(width: 120, child: _HeaderCenter(match)),
-              Expanded(child: _HeaderTeam(away, match, accent: awaySideColor)),
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: _HeaderTeam(home, match, accent: lime)),
+                SizedBox(width: 120, child: _HeaderCenter(match)),
+                Expanded(
+                  child: _HeaderTeam(away, match, accent: awaySideColor),
+                ),
+              ],
+            ),
+            if (scorers != null) ...[
+              const SizedBox(height: 8),
+              _HeaderScorers(home: scorers.home, away: scorers.away),
             ],
-          ),
-          if (scorers != null) ...[
-            const SizedBox(height: 8),
-            _HeaderScorers(home: scorers.home, away: scorers.away),
+            if (periodScores?.penalties case final penalties?) ...[
+              const SizedBox(height: 8),
+              _HeroScoreContext(
+                key: const ValueKey('hero-penalties'),
+                label: 'Penales',
+                score: penalties.label,
+              ),
+            ] else if (periodScores?.extraTime != null) ...[
+              const SizedBox(height: 8),
+              const _HeroScoreContext(
+                key: ValueKey('hero-extra-time'),
+                label: 'Tras prórroga',
+              ),
+            ],
+            if (match.showKickoff && venue != null && venue.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _HeroMetadataLine(icon: Icons.stadium_outlined, value: venue),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
+}
+
+String matchHeroSemanticLabel(
+  BuildContext context,
+  FootballMatch match,
+  Entity home,
+  Entity away,
+) {
+  if (match.showKickoff) {
+    return '${home.displayName} contra ${away.displayName}, '
+        '${matchDateLabel(match.startTime)} a las '
+        '${localTime(context, match.startTime)}';
+  }
+  final score = match.json['score'];
+  final result = score is Map
+      ? '${home.displayName} ${score['home']}, '
+            '${away.displayName} ${score['away']}'
+      : '${home.displayName} contra ${away.displayName}';
+  final status = match.statusLabel;
+  return status.isEmpty ? result : '$result, $status';
+}
+
+class _HeroScoreContext extends StatelessWidget {
+  const _HeroScoreContext({required this.label, this.score, super.key});
+
+  final String label;
+  final String? score;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .05),
+      borderRadius: BorderRadius.circular(9),
+    ),
+    child: Text(
+      [label, ?score].join(' · '),
+      style: const TextStyle(
+        color: Colors.white70,
+        fontSize: 11.5,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
+}
+
+class _HeroMetadataLine extends StatelessWidget {
+  const _HeroMetadataLine({required this.icon, required this.value});
+
+  final IconData icon;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      Icon(icon, size: 14, color: muted),
+      const SizedBox(width: 6),
+      Flexible(
+        child: Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: muted, fontSize: 11.5),
+        ),
+      ),
+    ],
+  );
 }
 
 class _HeaderTeam extends StatelessWidget {
@@ -2153,6 +2248,13 @@ class ScorerLine {
       : '$name ${minutes.join(', ')}';
 }
 
+String _heroGoalMinute(Json event) {
+  final minute = eventMinuteLabel(event);
+  if (event['ownGoal'] == true) return '$minute (a.g.)';
+  if (event['penalty'] == true) return '$minute (p.)';
+  return minute;
+}
+
 /// #99 header scorers from the already-deduplicated timeline (#121): only
 /// GOAL events with a known side. Name = the provider's structured
 /// playerName, else the canonical player entity of its playerId (the same
@@ -2203,7 +2305,7 @@ class ScorerLine {
     final byIdentity = <String, ScorerLine>{};
     for (final event in events) {
       final name = _scorerName(event, data, canonicalOf);
-      final minute = eventMinuteLabel(event);
+      final minute = _heroGoalMinute(event);
       if (name == null) {
         result.add(ScorerLine(null, [minute]));
         continue;

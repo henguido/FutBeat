@@ -9,9 +9,8 @@ import 'package:futbeat/core/theme.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:go_router/go_router.dart';
 
-// #99 Hero v2: competition line + teams + score/state centre + scorers.
-// Date and venue chips are gone from the hero (MatchInfoCard owns them);
-// the state shown is exactly the FootballMatch state (never the clock).
+// Hero v3: compact competition context + teams + score/state + scorers and
+// only the secondary metadata that helps at a glance.
 
 const _match = 'fb_match_hv';
 const _home = 'fb_team_hv_home';
@@ -75,15 +74,22 @@ Map<String, dynamic> _goal(String side, int minute, {String? name}) => {
 
 Map<String, dynamic> _detail({
   List<Map<String, dynamic>> incidents = const [],
+  String? stage,
+  String? round = '7',
+  String? stadium = 'Estadio Héroe',
+  String? referee = 'Árbitro Héroe',
+  Object? periodScores,
 }) => {
   'matchId': _match,
   'available': true,
   'pending': false,
   'hydrationNeeded': false,
   'detailLevel': 'full',
-  'round': '7',
-  'stadium': 'Estadio Héroe',
-  'referee': 'Árbitro Héroe',
+  'round': ?round,
+  'stage': ?stage,
+  'stadium': ?stadium,
+  'referee': ?referee,
+  'periodScores': ?periodScores,
   'home': <String, dynamic>{},
   'away': <String, dynamic>{},
   'statistics': const <dynamic>[],
@@ -133,6 +139,7 @@ Future<_Server> _open(
   Map<String, dynamic> Function(int read)? snapshots,
   Map<String, dynamic>? detail,
   double width = 360,
+  double textScale = 1,
 }) async {
   final server = _Server(
     snapshots ?? (_) => snapshot ?? _snapshot(),
@@ -140,8 +147,10 @@ Future<_Server> _open(
   );
   tester.view.physicalSize = Size(width, 844);
   tester.view.devicePixelRatio = 1;
+  tester.platformDispatcher.textScaleFactorTestValue = textScale;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
   final db = AppDatabase(NativeDatabase.memory());
   await tester.runAsync(() => db.customSelect('select 1').get());
   addTearDown(() => tester.runAsync(db.close));
@@ -203,8 +212,9 @@ Color? _textColor(WidgetTester tester, String text) =>
     tester.widget<Text>(_inHero(find.text(text))).style?.color;
 
 void main() {
-  testWidgets('1. PRE: kickoff time + date + PROGRAMADO, no score, no '
-      'date/venue chips', (tester) async {
+  testWidgets('1. PRE: kickoff, date, state and available venue; no score', (
+    tester,
+  ) async {
     await _open(
       tester,
       snapshot: _snapshot(
@@ -215,9 +225,9 @@ void main() {
     );
     expect(_inHero(find.text('PROGRAMADO')), findsOneWidget);
     expect(_inHero(find.textContaining(' - ')), findsNothing);
-    expect(_inHero(find.text('Estadio Héroe')), findsNothing);
+    expect(_inHero(find.text('Estadio Héroe')), findsOneWidget);
     expect(_inHero(find.byIcon(Icons.calendar_today_rounded)), findsNothing);
-    expect(_inHero(find.byIcon(Icons.location_on_outlined)), findsNothing);
+    expect(_inHero(find.byIcon(Icons.stadium_outlined)), findsOneWidget);
     // Time (big) and date (discreet) in the centre.
     final texts = tester
         .widgetList<Text>(_inHero(find.byType(Text)))
@@ -263,6 +273,52 @@ void main() {
     expect(_inHero(find.textContaining('EN VIVO')), findsNothing);
     expect(_inHero(find.byIcon(Icons.circle)), findsNothing);
     expect(_textColor(tester, '2 - 1'), Colors.white);
+    await _close(tester);
+  });
+
+  testWidgets('4b. EXTRA_TIME and PENALTIES use their existing states', (
+    tester,
+  ) async {
+    await _open(tester, snapshot: _snapshot(status: 'EXTRA_TIME', minute: 108));
+    expect(_inHero(find.text('PRÓRROGA')), findsOneWidget);
+    expect(_inHero(find.byIcon(Icons.circle)), findsOneWidget);
+    await _close(tester);
+
+    await _open(tester, snapshot: _snapshot(status: 'PENALTIES'));
+    expect(_inHero(find.text('PENALES')), findsOneWidget);
+    expect(_inHero(find.byIcon(Icons.circle)), findsOneWidget);
+    await _close(tester);
+  });
+
+  testWidgets('4c. final shootout and extra time stay separate from score', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      snapshot: _snapshot(score: const {'home': 2, 'away': 2}),
+      detail: _detail(
+        periodScores: const {
+          'fullTime': {'home': 2, 'away': 2},
+          'penalties': {'home': 4, 'away': 3},
+        },
+      ),
+    );
+    expect(_inHero(find.text('2 - 2')), findsOneWidget);
+    expect(_inHero(find.text('Penales · 4 - 3')), findsOneWidget);
+    expect(_inHero(find.text('6 - 5')), findsNothing);
+    await _close(tester);
+
+    await _open(
+      tester,
+      snapshot: _snapshot(score: const {'home': 3, 'away': 2}),
+      detail: _detail(
+        periodScores: const {
+          'fullTime': {'home': 2, 'away': 2},
+          'extraTime': {'home': 1, 'away': 0},
+        },
+      ),
+    );
+    expect(_inHero(find.text('Tras prórroga')), findsOneWidget);
     await _close(tester);
   });
 
@@ -329,6 +385,25 @@ void main() {
     });
   }
 
+  testWidgets('12b. 320 px with increased text scale does not overflow', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      width: 320,
+      textScale: 1.4,
+      snapshot: _snapshot(
+        status: 'LIVE',
+        minute: 108,
+        score: const {'home': 10, 'away': 11},
+        homeName: 'Selección Nacional Local de Nombre Extenso',
+        awayName: 'Selección Nacional Visitante de Nombre Extenso',
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    await _close(tester);
+  });
+
   testWidgets('13-17. scorers: home, away, grouped minutes, anonymous goals, '
       'limit + "+n"', (tester) async {
     await _open(
@@ -355,6 +430,48 @@ void main() {
     // 6 home lines, max 5 shown + "+1".
     expect(find.byKey(const ValueKey('scorer-home-5')), findsNothing);
     expect(_inHero(find.text('+1')), findsOneWidget);
+    await _close(tester);
+  });
+
+  testWidgets('17b. scorer summary marks penalties and own goals', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      detail: _detail(
+        incidents: [
+          {..._goal('home', 24, name: 'A. Penal'), 'penalty': true},
+          {..._goal('away', 51, name: 'B. Autogol'), 'ownGoal': true},
+        ],
+      ),
+    );
+    expect(_inHero(find.text('A. Penal 24′ (p.)')), findsOneWidget);
+    expect(_inHero(find.text('B. Autogol 51′ (a.g.)')), findsOneWidget);
+    await _close(tester);
+  });
+
+  testWidgets('17c. competition line includes useful stage and round once', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      detail: _detail(stage: 'Group Stage', round: 'Group A'),
+    );
+    expect(
+      _inHero(find.text('Liga Héroe · Fase de grupos · Grupo A')),
+      findsOneWidget,
+    );
+    await _close(tester);
+  });
+
+  testWidgets('17d. hero exposes a complete spoken match summary', (
+    tester,
+  ) async {
+    await _open(tester, snapshot: _snapshot(status: 'LIVE', minute: 78));
+    final semantics = tester.getSemantics(_hero);
+    expect(semantics.label, contains('Local Héroe 2'));
+    expect(semantics.label, contains('Visita Héroe 1'));
+    expect(semantics.label, contains('78′ · En vivo'));
     await _close(tester);
   });
 
