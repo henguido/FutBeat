@@ -46,15 +46,19 @@ String eventMinuteLabel(Json event) {
 
 int _eventTypeOrder(String type) => switch (type) {
   'KICKOFF' => 0,
-  'GOAL' => 1,
+  'GOAL' || 'OWN_GOAL' || 'PENALTY_GOAL' => 1,
   'MISSED_PENALTY' => 2,
   'YELLOW_CARD' => 3,
-  'RED_CARD' => 4,
-  'SUBSTITUTION' => 5,
-  'VAR' => 6,
-  'HALFTIME' => 7,
-  'FULL_TIME' => 8,
-  _ => 9,
+  'SECOND_YELLOW_CARD' || 'YELLOW_RED_CARD' => 4,
+  'RED_CARD' => 5,
+  'SUBSTITUTION' => 6,
+  'VAR' => 7,
+  'HALFTIME' => 8,
+  'SECOND_HALF' => 9,
+  'EXTRA_TIME' => 10,
+  'PENALTIES' => 11,
+  'FULL_TIME' => 12,
+  _ => 13,
 };
 
 // Football phase of an event: kickoff, first half (incl. 45+x), halftime,
@@ -65,10 +69,14 @@ int _timelinePhase(Json event) {
   return switch (event['type']) {
     'KICKOFF' => 0,
     'HALFTIME' => 2,
-    'FULL_TIME' => 5,
-    _ when minute is! int => 4,
+    'SECOND_HALF' => 3,
+    'EXTRA_TIME' => 5,
+    'PENALTIES' => 7,
+    'FULL_TIME' => 9,
+    _ when minute is! int => 8,
     _ when minute <= 45 => 1,
-    _ => 3,
+    _ when minute <= 90 => 4,
+    _ => 6,
   };
 }
 
@@ -92,7 +100,14 @@ int compareTimelineEvents(Json a, Json b) {
   return (a['id'] as String? ?? '').compareTo(b['id'] as String? ?? '');
 }
 
-const _phaseEvents = {'KICKOFF', 'HALFTIME', 'FULL_TIME'};
+const _phaseEvents = {
+  'KICKOFF',
+  'HALFTIME',
+  'SECOND_HALF',
+  'EXTRA_TIME',
+  'PENALTIES',
+  'FULL_TIME',
+};
 const _technicalEventCopy = 'Marcador actualizado';
 
 bool _isSynthetic(Json event) => event['synthetic'] == true;
@@ -931,6 +946,10 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
           'assistName',
           'playerId',
           'assistPlayerId',
+          'teamId',
+          'score',
+          'ownGoal',
+          'penalty',
         ])
           if (detail.incidents[i][key] != null) key: detail.incidents[i][key],
         'detailSource': true,

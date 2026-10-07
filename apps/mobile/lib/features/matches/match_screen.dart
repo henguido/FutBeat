@@ -2102,7 +2102,44 @@ String? timelineSide(Json event, FootballMatch match, Snapshot data) {
   return null;
 }
 
-const _neutralEvents = {'KICKOFF', 'HALFTIME', 'FULL_TIME'};
+const _neutralEvents = {
+  'KICKOFF',
+  'HALFTIME',
+  'SECOND_HALF',
+  'EXTRA_TIME',
+  'PENALTIES',
+  'FULL_TIME',
+};
+
+String timelineDisplayType(Json event) {
+  final type = event['type']?.toString() ?? 'OTHER';
+  if (type == 'GOAL' && event['ownGoal'] == true) return 'OWN_GOAL';
+  if (type == 'GOAL' && event['penalty'] == true) return 'PENALTY_GOAL';
+  return type;
+}
+
+String? timelineScoreAfter(Json event) {
+  final score = event['score'];
+  if (score is! Map) return null;
+  final home = score['home'], away = score['away'];
+  return home is int && away is int ? '$home–$away' : null;
+}
+
+String? _timelinePlayerId(Json event, Snapshot data, {bool assist = false}) {
+  final raw =
+      event[assist ? 'assistPlayerId' : 'canonicalPlayerId'] ??
+      event[assist ? 'assistPlayerId' : 'playerId'];
+  final id = raw?.toString();
+  return id != null && id.isNotEmpty && data.player(id) != null ? id : null;
+}
+
+String? _timelinePlayerName(Json event, Snapshot data, {bool assist = false}) {
+  final id = _timelinePlayerId(event, data, assist: assist);
+  final entity = id == null ? null : data.player(id);
+  final raw = event[assist ? 'assistName' : 'playerName']?.toString().trim();
+  if (entity != null) return entity.name;
+  return raw == null || raw.isEmpty ? null : raw;
+}
 
 /// One header line: a real scorer with all their minutes on one side, or an
 /// anonymous goal ("Gol 55′") that is never merged with another one.
@@ -2305,17 +2342,21 @@ class MatchTimeline extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          children: [
-            for (final event in timeline)
-              _neutralEvents.contains(event['type'])
-                  ? _TimelineDivider(event)
-                  : _TimelineRow(
-                      event: event,
-                      data: data,
-                      side: timelineSide(event, match, data),
-                    ),
-          ],
+        child: ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: timeline.length,
+          itemBuilder: (context, index) {
+            final event = timeline[index];
+            return _neutralEvents.contains(event['type'])
+                ? _TimelineDivider(event)
+                : _TimelineRow(
+                    event: event,
+                    data: data,
+                    side: timelineSide(event, match, data),
+                    emphasized: match.isLive && index == timeline.length - 1,
+                  );
+          },
         ),
       ),
     );
@@ -2331,35 +2372,39 @@ class _TimelineDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     final type = event['type']?.toString() ?? '';
     final line = Expanded(child: Container(height: 1, color: _cardBorder));
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      child: Row(
-        children: [
-          line,
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .06),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(eventIcon(type), size: 14, color: eventColor(type)),
-                const SizedBox(width: 5),
-                Text(
-                  eventLabel(type),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
+    return Semantics(
+      label: eventLabel(type),
+      header: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Row(
+          children: [
+            line,
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .06),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(eventIcon(type), size: 14, color: eventColor(type)),
+                  const SizedBox(width: 5),
+                  Text(
+                    eventLabel(type),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          line,
-        ],
+            line,
+          ],
+        ),
       ),
     );
   }
@@ -2370,16 +2415,22 @@ class _TimelineRow extends StatelessWidget {
     required this.event,
     required this.data,
     required this.side,
+    required this.emphasized,
   });
 
   final Json event;
   final Snapshot data;
   final String? side;
+  final bool emphasized;
 
   @override
   Widget build(BuildContext context) {
-    final type = event['type']?.toString() ?? '';
-    final player = data.player(event['playerId']?.toString() ?? '');
+    final type = timelineDisplayType(event);
+    final playerId = _timelinePlayerId(event, data);
+    final player = playerId == null ? null : data.player(playerId);
+    final playerName = _timelinePlayerName(event, data);
+    final assistId = _timelinePlayerId(event, data, assist: true);
+    final assistName = _timelinePlayerName(event, data, assist: true);
     final team = data.team(event['teamId']?.toString() ?? '');
     final rawLabel = event['label']?.toString().trim() ?? '';
     final detailParts = (event['detail']?.toString() ?? '')
@@ -2391,23 +2442,29 @@ class _TimelineRow extends StatelessWidget {
         ? rawLabel
         : eventLabel(type);
     final title =
-        player?.name ??
+        playerName ??
         (detailParts.isNotEmpty
             ? detailParts.first
             : rawLabel.isNotEmpty
             ? rawLabel
             : typeLabel);
-    final subtitle = <String>[
+    final metadata = <String>[
       if (title != typeLabel) typeLabel,
       for (final part in detailParts)
         if (part != title) part,
       if (side == null && team != null) team.displayName,
-    ].join(' · ');
+    ];
+    final score = timelineScoreAfter(event);
 
     final content = _TimelineContent(
       type: type,
       title: title,
-      subtitle: subtitle,
+      metadata: metadata,
+      playerId: playerId,
+      playerName: playerName,
+      assistName: assistName,
+      assistId: assistId,
+      score: score,
       alignEnd: side == 'home',
     );
     final minute = _MinuteBubble(eventMinuteLabel(event), type: type);
@@ -2436,13 +2493,37 @@ class _TimelineRow extends StatelessWidget {
       ),
     };
 
-    return InkWell(
-      onTap: player == null
-          ? null
-          : () => context.push('/player/${event['playerId']}'),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        child: row,
+    final semantic = [
+      eventMinuteLabel(event),
+      typeLabel,
+      ?playerName,
+      if (assistName != null) 'Asistencia de $assistName',
+      if (team != null) team.displayName,
+      if (score != null) 'Marcador $score',
+    ].join(', ');
+    return Semantics(
+      key: ValueKey(
+        'timeline-event-${event['id'] ?? type}-${eventMinuteLabel(event)}',
+      ),
+      label: semantic,
+      button: playerId != null,
+      child: Ink(
+        key: emphasized ? const ValueKey('timeline-latest-live') : null,
+        decoration: emphasized
+            ? BoxDecoration(
+                color: lime.withValues(alpha: .055),
+                border: const Border(left: BorderSide(color: lime, width: 2)),
+              )
+            : null,
+        child: InkWell(
+          onTap: player == null
+              ? null
+              : () => context.push('/player/$playerId'),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            child: row,
+          ),
+        ),
       ),
     );
   }
@@ -2486,34 +2567,64 @@ class _TimelineContent extends StatelessWidget {
   const _TimelineContent({
     required this.type,
     required this.title,
-    required this.subtitle,
+    required this.metadata,
+    required this.playerId,
+    required this.playerName,
+    required this.assistName,
+    required this.assistId,
+    required this.score,
     required this.alignEnd,
   });
 
   final String type;
   final String title;
-  final String subtitle;
+  final List<String> metadata;
+  final String? playerId;
+  final String? playerName;
+  final String? assistName;
+  final String? assistId;
+  final String? score;
   final bool alignEnd;
 
   @override
   Widget build(BuildContext context) {
+    final subtitle = metadata.join(' · ');
+    final isSubstitution = type == 'SUBSTITUTION';
     final text = Flexible(
       child: Column(
         crossAxisAlignment: alignEnd
             ? CrossAxisAlignment.end
             : CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: alignEnd ? TextAlign.end : TextAlign.start,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.2,
-              fontWeight: type == 'GOAL' ? FontWeight.w900 : FontWeight.w700,
-            ),
+          _TimelinePerson(
+            name: isSubstitution && assistName != null ? assistName! : title,
+            id: isSubstitution && assistName != null ? assistId : playerId,
+            prefix: isSubstitution
+                ? assistName != null
+                      ? '↑ '
+                      : playerName != null
+                      ? '↓ '
+                      : ''
+                : '',
+            alignEnd: alignEnd,
+            prominent:
+                type == 'GOAL' || type == 'OWN_GOAL' || type == 'PENALTY_GOAL',
           ),
+          if (isSubstitution && assistName != null && playerName != null)
+            _TimelinePerson(
+              name: title,
+              id: playerId,
+              prefix: '↓ ',
+              alignEnd: alignEnd,
+            ),
+          if (assistName != null && !isSubstitution)
+            _TimelinePerson(
+              name: assistName!,
+              id: assistId,
+              prefix: 'Asistencia: ',
+              alignEnd: alignEnd,
+              mutedStyle: true,
+            ),
           if (subtitle.isNotEmpty)
             Text(
               subtitle,
@@ -2521,6 +2632,17 @@ class _TimelineContent extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               textAlign: alignEnd ? TextAlign.end : TextAlign.start,
               style: const TextStyle(color: muted, fontSize: 11, height: 1.2),
+            ),
+          if (score != null)
+            Text(
+              score!,
+              key: ValueKey('timeline-score-$score'),
+              textAlign: alignEnd ? TextAlign.end : TextAlign.start,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
             ),
         ],
       ),
@@ -2537,6 +2659,50 @@ class _TimelineContent extends StatelessWidget {
   }
 }
 
+class _TimelinePerson extends StatelessWidget {
+  const _TimelinePerson({
+    required this.name,
+    required this.id,
+    required this.prefix,
+    required this.alignEnd,
+    this.prominent = false,
+    this.mutedStyle = false,
+  });
+
+  final String name;
+  final String? id;
+  final String prefix;
+  final bool alignEnd;
+  final bool prominent;
+  final bool mutedStyle;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: id == null ? null : () => context.push('/player/$id'),
+    borderRadius: BorderRadius.circular(4),
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 24),
+      child: Align(
+        alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
+        child: Text(
+          '$prefix$name',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: alignEnd ? TextAlign.end : TextAlign.start,
+          style: TextStyle(
+            color: mutedStyle ? muted : Colors.white,
+            decoration: id == null ? null : TextDecoration.underline,
+            decorationColor: muted,
+            fontSize: mutedStyle ? 11 : 13,
+            height: 1.2,
+            fontWeight: prominent ? FontWeight.w900 : FontWeight.w700,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 /// Distinct visual per event type (cards drawn as real cards).
 class EventGlyph extends StatelessWidget {
   const EventGlyph(this.type, {this.size = 28, super.key});
@@ -2547,8 +2713,13 @@ class EventGlyph extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = eventColor(type);
-    final isCard = type == 'YELLOW_CARD' || type == 'RED_CARD';
-    final isGoal = type == 'GOAL';
+    final isCard = const {
+      'YELLOW_CARD',
+      'SECOND_YELLOW_CARD',
+      'YELLOW_RED_CARD',
+      'RED_CARD',
+    }.contains(type);
+    final isGoal = const {'GOAL', 'OWN_GOAL', 'PENALTY_GOAL'}.contains(type);
     return Semantics(
       label: eventLabel(type),
       child: Container(
@@ -3504,33 +3675,44 @@ class EventBadge extends StatelessWidget {
 }
 
 IconData eventIcon(String type) => switch (type) {
-  'GOAL' => Icons.sports_soccer,
-  'YELLOW_CARD' || 'RED_CARD' => Icons.square_rounded,
+  'GOAL' || 'OWN_GOAL' || 'PENALTY_GOAL' => Icons.sports_soccer,
+  'YELLOW_CARD' ||
+  'SECOND_YELLOW_CARD' ||
+  'YELLOW_RED_CARD' ||
+  'RED_CARD' => Icons.square_rounded,
   'SUBSTITUTION' => Icons.swap_vert_rounded,
   'VAR' => Icons.tv_rounded,
   'MISSED_PENALTY' => Icons.cancel_outlined,
   'KICKOFF' => Icons.play_arrow_rounded,
   'HALFTIME' => Icons.pause_rounded,
+  'SECOND_HALF' => Icons.play_arrow_rounded,
+  'EXTRA_TIME' => Icons.more_time_rounded,
+  'PENALTIES' => Icons.sports_soccer_rounded,
   'FULL_TIME' => Icons.flag_rounded,
   _ => Icons.more_horiz_rounded,
 };
 
 Color eventColor(String type) => switch (type) {
   'GOAL' => lime,
+  'OWN_GOAL' => Colors.orangeAccent,
+  'PENALTY_GOAL' => lime,
   'YELLOW_CARD' => Colors.amber,
+  'SECOND_YELLOW_CARD' || 'YELLOW_RED_CARD' => Colors.deepOrangeAccent,
   'RED_CARD' => Colors.redAccent,
   'SUBSTITUTION' => Colors.lightBlueAccent,
   'VAR' => Colors.purpleAccent,
   'MISSED_PENALTY' => Colors.orangeAccent,
-  'KICKOFF' || 'FULL_TIME' => Colors.white,
-  'HALFTIME' => muted,
+  'KICKOFF' || 'SECOND_HALF' || 'FULL_TIME' => Colors.white,
+  'HALFTIME' || 'EXTRA_TIME' || 'PENALTIES' => muted,
   _ => muted,
 };
 
 String eventLabel(String type) => switch (type) {
   'GOAL' => 'Gol',
   'OWN_GOAL' => 'Autogol',
+  'PENALTY_GOAL' => 'Gol · Penal',
   'YELLOW_CARD' => 'Tarjeta amarilla',
+  'SECOND_YELLOW_CARD' || 'YELLOW_RED_CARD' => 'Segunda amarilla',
   'RED_CARD' => 'Tarjeta roja',
   'SUBSTITUTION' => 'Sustitución',
   'SUB_IN' => 'Entró',
@@ -3540,6 +3722,9 @@ String eventLabel(String type) => switch (type) {
   'MISSED_PENALTY' => 'Penal fallado',
   'KICKOFF' => 'Inicio',
   'HALFTIME' => 'Medio tiempo',
+  'SECOND_HALF' => 'Segundo tiempo',
+  'EXTRA_TIME' => 'Tiempo extra',
+  'PENALTIES' => 'Penales',
   'FULL_TIME' => 'Final',
   _ => 'Evento',
 };
