@@ -14,7 +14,7 @@ import '../../shared/widgets.dart';
 
 /// "Favoritos" is only for matches of a favourite TEAM (never a followed
 /// league, never a single followed match: those only mark the follow).
-bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
+bool isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
     follows.contains('team:${match.homeId}') ||
     follows.contains('team:${match.awayId}');
 
@@ -373,7 +373,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
 
           final followedGames =
               games
-                  .where((match) => _isFollowedTeamMatch(match, follows))
+                  .where((match) => isFollowedTeamMatch(match, follows))
                   .toList()
                 ..sort((a, b) => a.startTime.compareTo(b.startTime));
           final followedIds = followedGames.map((match) => match.id).toSet();

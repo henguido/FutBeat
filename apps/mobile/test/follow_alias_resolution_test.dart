@@ -169,6 +169,8 @@ void main() {
     );
     await tester.runAsync(() => pumpEventQueue());
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Competiciones'));
+    await tester.pumpAndSettle();
 
     expect(find.text('Primera División'), findsOneWidget);
     expect(find.text('Costa-Rica Liga FPD'), findsNothing);
