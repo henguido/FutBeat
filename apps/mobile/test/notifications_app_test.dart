@@ -15,20 +15,53 @@ import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
 import 'package:futbeat/core/push_messages.dart';
 import 'package:futbeat/features/profile/notification_options.dart';
-import 'package:futbeat/features/profile/profile_screen.dart';
+import 'package:futbeat/features/profile/notifications_screen_v2.dart';
 import 'package:go_router/go_router.dart';
 
-class _Tokens implements PushTokenSource {
-  @override
-  Future<String?> currentToken() => requestToken();
+class _Tokens implements PushTokenSource, NotificationPermissionReader {
+  _Tokens([this.token, this.permission = DeviceNotificationPermission.unknown]);
 
-  _Tokens([this.token]);
   final String? token;
+  DeviceNotificationPermission permission;
+  int permissionReads = 0;
+  int permissionRequests = 0;
+
   @override
-  Future<String?> requestToken() async => token;
+  Future<String?> currentToken() async => token;
+
+  @override
+  Future<String?> requestToken() async {
+    permissionRequests += 1;
+    if (permission == DeviceNotificationPermission.notRequested) {
+      permission = DeviceNotificationPermission.allowed;
+    }
+    return token;
+  }
+
+  @override
+  Future<DeviceNotificationPermission> permissionStatus() async {
+    permissionReads += 1;
+    return permission;
+  }
 
   @override
   Stream<String> get rotations => const Stream.empty();
+}
+
+class _ScreenPushService extends PushService {
+  _ScreenPushService(
+    super.config,
+    super.database,
+    super.tokens, {
+    required super.dio,
+    required super.pushConfigured,
+  });
+
+  @override
+  Future<void> enable({bool prompt = true}) async {
+    token = await (prompt ? tokens.requestToken() : tokens.currentToken());
+    enabled = token != null;
+  }
 }
 
 /// Fake Supabase: [status] maps an RPC name to a forced HTTP error status.
@@ -88,21 +121,33 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
   bool pushConfigured = false,
   DateTime Function()? clock,
   String? token,
+  _Tokens? tokens,
+  bool screenEnable = false,
 }) async {
   FlutterSecureStorage.setMockInitialValues({});
   final db = AppDatabase(NativeDatabase.memory());
   final http = _Http(status: status);
-  final service = PushService(
-    const LiveRealtimeConfig(
-      supabaseUrl: 'https://supabase.test',
-      publicKey: 'publishable-test-key',
-    ),
-    db,
-    _Tokens(token),
-    dio: http.dio,
-    pushConfigured: pushConfigured,
-    clock: clock,
+  const config = LiveRealtimeConfig(
+    supabaseUrl: 'https://supabase.test',
+    publicKey: 'publishable-test-key',
   );
+  final source = tokens ?? _Tokens(token);
+  final service = screenEnable
+      ? _ScreenPushService(
+          config,
+          db,
+          source,
+          dio: http.dio,
+          pushConfigured: pushConfigured,
+        )
+      : PushService(
+          config,
+          db,
+          source,
+          dio: http.dio,
+          pushConfigured: pushConfigured,
+          clock: clock,
+        );
   return (service: service, db: db, http: http);
 }
 
@@ -217,17 +262,17 @@ void main() {
 
     test('options list the approved types in order with server keys', () {
       expect(notificationOptions.map((o) => o.title), [
-        'Inicio de partido',
-        'Gol',
-        'Gol anulado/corregido',
-        'Tarjeta roja',
-        'Resultado final',
-        'Jugador favorito titular',
-        'Jugador favorito en el banquillo',
-        'Entra al campo',
-        'Sale del campo',
-        'Noticias',
-        'Transferencias',
+        'Avísame al iniciar el partido',
+        'Avísame cuando haya un gol',
+        'Avísame si corrigen o anulan un gol',
+        'Avísame cuando haya una tarjeta roja',
+        'Avísame al terminar el partido',
+        'Jugador seguido en la alineación titular',
+        'Jugador seguido en el banquillo',
+        'Jugador seguido entra al campo',
+        'Jugador seguido sale del campo',
+        'Noticias de tus seguidos',
+        'Transferencias de tus seguidos',
       ]);
       const base = UserProfileSettings();
       for (final option in notificationOptions) {
@@ -672,7 +717,7 @@ void main() {
     expect(value.http.rpc('futbeat_sync_user_profile_v3'), isEmpty);
   });
 
-  testWidgets('Perfil shows the approved alert switches in order', (
+  testWidgets('Notificaciones shows the approved alert switches in order', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(800, 6000);
@@ -703,7 +748,7 @@ void main() {
             (ref, keys) async => _emptySnapshot,
           ),
         ],
-        child: const MaterialApp(home: ProfileScreen()),
+        child: const MaterialApp(home: NotificationsScreenV2()),
       ),
     );
     await tester.pump(const Duration(milliseconds: 500));
@@ -713,10 +758,186 @@ void main() {
         .toList();
     expect(titles, notificationOptions.map((o) => o.title).toList());
 
-    await tester.tap(find.text('Tarjeta roja'));
+    await tester.tap(find.text('Avísame cuando haya una tarjeta roja'));
     await tester.pump(const Duration(milliseconds: 300));
     final saved = await value.service.loadProfileSettings();
     expect(saved.notifyRedCards, isFalse);
     expect(saved.notifyCards, isFalse);
   });
+
+  testWidgets(
+    'opening notifications reads status without requesting permission',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final tokens = _Tokens(
+        'token-test',
+        DeviceNotificationPermission.notRequested,
+      );
+      final value = await _service(pushConfigured: true, tokens: tokens);
+      addTearDown(() async {
+        value.service.dispose();
+        await value.db.close();
+      });
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [pushServiceProvider.overrideWithValue(value.service)],
+          child: const MaterialApp(home: NotificationsScreenV2()),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('No solicitadas'), findsOneWidget);
+      expect(tokens.permissionReads, 1);
+      expect(tokens.permissionRequests, 0);
+      expect(value.http.calls, isEmpty);
+      expect(
+        find.text('Inicia sesión para activarlas en este dispositivo.'),
+        findsOneWidget,
+      );
+      expect(find.text('PARTIDOS'), findsOneWidget);
+      expect(find.text('EQUIPOS Y JUGADORES'), findsOneWidget);
+      expect(find.text('OTROS'), findsOneWidget);
+      expect(find.byType(SwitchListTile), findsNWidgets(11));
+    },
+  );
+
+  testWidgets('explicit activation is the only path that requests permission', (
+    tester,
+  ) async {
+    final tokens = _Tokens(
+      'token-test',
+      DeviceNotificationPermission.notRequested,
+    );
+    final value = await _service(
+      pushConfigured: true,
+      tokens: tokens,
+      screenEnable: true,
+    );
+    addTearDown(() async {
+      value.service.dispose();
+      await value.db.close();
+    });
+    value.service.session = {
+      'access_token': 'access-test',
+      'refresh_token': 'refresh-test',
+      'user': {'id': 'user-a'},
+    };
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [pushServiceProvider.overrideWithValue(value.service)],
+        child: const MaterialApp(home: NotificationsScreenV2()),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(tokens.permissionRequests, 0);
+
+    await tester.tap(find.byKey(const ValueKey('enable-notifications')));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(tokens.permissionRequests, 1);
+    expect(find.text('Permitidas'), findsOneWidget);
+    expect(find.text('Activas en este dispositivo.'), findsOneWidget);
+  });
+
+  testWidgets(
+    'denied permission keeps preferences editable without retry CTA',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final tokens = _Tokens('token-test', DeviceNotificationPermission.denied);
+      final value = await _service(pushConfigured: true, tokens: tokens);
+      addTearDown(() async {
+        value.service.dispose();
+        await value.db.close();
+      });
+      value.service.session = {
+        'access_token': 'access-test',
+        'refresh_token': 'refresh-test',
+        'user': {'id': 'user-a'},
+      };
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [pushServiceProvider.overrideWithValue(value.service)],
+          child: const MaterialApp(home: NotificationsScreenV2()),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Denegadas'), findsOneWidget);
+      expect(find.byKey(const ValueKey('enable-notifications')), findsNothing);
+      expect(find.byType(SwitchListTile), findsNWidgets(11));
+      await tester.tap(find.text('Avísame al iniciar el partido'));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(
+        (await value.service.loadProfileSettings()).notifyKickoff,
+        isFalse,
+      );
+      expect(tokens.permissionRequests, 0);
+    },
+  );
+
+  testWidgets('offline save keeps the local preference and explains sync', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final value = await _service(status: {'futbeat_sync_user_profile_v3': 500});
+    addTearDown(() async {
+      value.service.dispose();
+      await value.db.close();
+    });
+    value.service.session = {
+      'access_token': 'access-test',
+      'refresh_token': 'refresh-test',
+      'user': {'id': 'user-a'},
+    };
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [pushServiceProvider.overrideWithValue(value.service)],
+        child: const MaterialApp(home: NotificationsScreenV2()),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('Avísame al iniciar el partido'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(
+      find.text(
+        'Guardado en este dispositivo. Se sincronizará cuando haya conexión.',
+      ),
+      findsOneWidget,
+    );
+    expect((await value.service.loadProfileSettings()).notifyKickoff, isFalse);
+  });
+
+  for (final width in [320.0, 360.0, 390.0]) {
+    testWidgets('notifications layout has no overflow at ${width.toInt()}dp', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 1500);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final value = await _service();
+      addTearDown(() async {
+        value.service.dispose();
+        await value.db.close();
+      });
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [pushServiceProvider.overrideWithValue(value.service)],
+          child: const MaterialApp(home: NotificationsScreenV2()),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

@@ -43,7 +43,10 @@ void main() {
       notifyTransfers: false,
     );
     final before = settings.toJson();
-    expect(notificationSummary(settings), contains('Inicio de partido'));
+    expect(
+      notificationSummary(settings),
+      contains('Avísame al iniciar el partido'),
+    );
     expect(settings.toJson(), before);
   });
 

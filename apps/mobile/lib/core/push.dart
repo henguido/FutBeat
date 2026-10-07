@@ -329,7 +329,36 @@ abstract interface class PushTokenSource {
   Stream<String> get rotations;
 }
 
-class FirebasePushTokens implements PushTokenSource {
+enum DeviceNotificationPermission { allowed, denied, notRequested, unknown }
+
+/// Optional, read-only capability for token sources that can inspect the
+/// operating-system permission without showing its prompt.
+abstract interface class NotificationPermissionReader {
+  Future<DeviceNotificationPermission> permissionStatus();
+}
+
+class FirebasePushTokens
+    implements PushTokenSource, NotificationPermissionReader {
+  @override
+  Future<DeviceNotificationPermission> permissionStatus() async {
+    try {
+      await ensureFirebase();
+      final status =
+          (await FirebaseMessaging.instance.getNotificationSettings())
+              .authorizationStatus;
+      return switch (status) {
+        AuthorizationStatus.authorized ||
+        AuthorizationStatus.provisional => DeviceNotificationPermission.allowed,
+        AuthorizationStatus.denied || AuthorizationStatus.deniedPermanently =>
+          DeviceNotificationPermission.denied,
+        AuthorizationStatus.notDetermined =>
+          DeviceNotificationPermission.notRequested,
+      };
+    } catch (_) {
+      return DeviceNotificationPermission.unknown;
+    }
+  }
+
   @override
   Future<String?> requestToken() async {
     await ensureFirebase();
@@ -444,6 +473,18 @@ class PushService {
   final PushTokenSource tokens;
   final Dio dio;
   final DateTime Function() clock;
+
+  /// Reads Android/iOS permission once without requesting it. Test and
+  /// platform token sources that cannot expose the state degrade safely.
+  Future<DeviceNotificationPermission> notificationPermission() async {
+    final source = tokens;
+    if (source is NotificationPermissionReader) {
+      return (source as NotificationPermissionReader).permissionStatus();
+    }
+    return enabled
+        ? DeviceNotificationPermission.allowed
+        : DeviceNotificationPermission.unknown;
+  }
 
   /// Upper bound for the background server sign-out; its requests are
   /// cancelled when it fires.
