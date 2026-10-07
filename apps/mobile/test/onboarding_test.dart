@@ -583,6 +583,37 @@ void main() {
     expect(visibleTexts(tester).where(isRawCode), isEmpty);
   });
 
+  testWidgets('progress reflects the real step without changing the flow', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+    await pumpOnboarding(tester, database: db);
+
+    expect(find.text('Paso 1 de 7'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('onboarding-next')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Paso 2 de 7'), findsOneWidget);
+    expect(find.text('Equipos'), findsOneWidget);
+  });
+
+  testWidgets('compact width uses a readable two-column choice grid', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+    await pumpOnboarding(tester, database: db, width: 320);
+    await tester.tap(find.byKey(const ValueKey('onboarding-next')));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final grid = tester.widget<GridView>(find.byType(GridView).first);
+    final delegate =
+        grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+    expect(delegate.crossAxisCount, 2);
+  });
+
   testWidgets('offline: country and steps still work without a catalog', (
     tester,
   ) async {
@@ -859,7 +890,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
       }
       final goals = tester.widget<SwitchListTile>(
-        find.widgetWithText(SwitchListTile, 'Gol'),
+        find.widgetWithText(SwitchListTile, 'Avísame cuando haya un gol'),
       );
       expect(goals.value, isFalse);
       expect(find.text('Alertas guardadas'), findsOneWidget);

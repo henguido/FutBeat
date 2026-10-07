@@ -696,7 +696,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       : ListView(
                           keyboardDismissBehavior:
                               ScrollViewKeyboardDismissBehavior.onDrag,
-                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                          padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
                           children: [
                             if (widget.reentry)
                               const Padding(
@@ -747,32 +747,49 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         : OnboardingStep.welcome;
     final canSkip = step < OnboardingStep.summary;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(4, 4, 8, 6),
+      child: Column(
         children: [
-          IconButton(
-            tooltip: 'Atrás',
-            onPressed: busy || step <= first ? null : _back,
-            icon: const Icon(Icons.arrow_back_rounded),
+          Row(
+            children: [
+              IconButton(
+                tooltip: 'Atrás',
+                onPressed: busy || step <= first ? null : _back,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              Expanded(
+                child: Text(
+                  'Paso $step de ${onboardingStepCount - 1}',
+                  key: const ValueKey('onboarding-step-label'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (canSkip)
+                TextButton(
+                  onPressed: busy ? null : _finish,
+                  child: const Text('Saltar'),
+                )
+              else
+                const SizedBox(width: 56),
+            ],
           ),
-          Expanded(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
                 key: const ValueKey('onboarding-progress'),
                 value: step / (onboardingStepCount - 1),
                 minHeight: 4,
+                backgroundColor: panel,
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          if (canSkip)
-            TextButton(
-              onPressed: busy ? null : _finish,
-              child: const Text('Saltar'),
-            )
-          else
-            const SizedBox(width: 48),
         ],
       ),
     );
@@ -780,7 +797,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Widget _footer() => SafeArea(
     top: false,
-    minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+    minimum: const EdgeInsets.fromLTRB(18, 8, 18, 12),
     child: SizedBox(
       width: double.infinity,
       height: 52,
@@ -788,7 +805,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         key: const ValueKey('onboarding-next'),
         onPressed: busy ? null : _next,
         child: Text(
-          step == onboardingStepCount - 1 ? 'Ir a Partidos' : 'Continuar',
+          _primaryActionLabel,
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
       ),
@@ -805,7 +822,33 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     _ => 'Todo listo',
   };
 
-  String? get _subtitle => step == OnboardingStep.players ? 'Opcional.' : null;
+  String get _primaryActionLabel {
+    if (step == OnboardingStep.summary) return 'Ir a Partidos';
+    final service = ref.read(pushServiceProvider);
+    if (step == OnboardingStep.account &&
+        service.accountConfigured &&
+        !service.authenticated) {
+      return 'Continuar sin cuenta';
+    }
+    return 'Continuar';
+  }
+
+  String? get _subtitle => switch (step) {
+    OnboardingStep.country =>
+      'Tu país ayuda a mostrar primero los partidos más relevantes.',
+    OnboardingStep.teams =>
+      'Tus equipos aparecerán primero. Puedes elegir todos los que quieras.',
+    OnboardingStep.competitions =>
+      'Sigue ligas y torneos sin mezclarlos con tus equipos favoritos.',
+    OnboardingStep.players =>
+      'Opcional. Podrás recibir noticias y eventos de quienes sigues.',
+    OnboardingStep.alerts =>
+      'Decide qué quieres recibir. Puedes cambiarlo después.',
+    OnboardingStep.account =>
+      'Inicia sesión para conservar tus preferencias en otros dispositivos.',
+    OnboardingStep.summary => 'Tu configuración está lista.',
+    _ => null,
+  };
 
   Widget _welcomeStep() => LayoutBuilder(
     // Scrolls on short screens (landscape); spacers fill tall ones.
@@ -873,6 +916,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     letterSpacing: 3,
                   ),
                 ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Partidos, equipos y jugadores que te importan, en un solo lugar.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: muted, height: 1.4),
+                ),
                 const Spacer(flex: 4),
                 SizedBox(
                   height: 56,
@@ -920,53 +969,112 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final code = onboardingCountryCode(preference);
     final name = countryDisplayName(code);
     final flag = countryFlag(code);
-    return Material(
-      color: panel,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        key: const ValueKey('onboarding-country'),
-        borderRadius: BorderRadius.circular(20),
-        onTap: countryBusy
-            ? null
-            : () => _pickCountry(code, preference.selectedCountry),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
-          decoration: BoxDecoration(
+    final suggested = isSuggestedOnboardingCountry(preference);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: panel,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            key: const ValueKey('onboarding-country'),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: name == null ? const Color(0xFF2B373D) : lime,
-              width: name == null ? 1 : 2,
+            onTap: countryBusy
+                ? null
+                : () => _pickCountry(code, preference.selectedCountry),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: name == null ? const Color(0xFF2B373D) : lime,
+                  width: name == null ? 1 : 2,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Text(flag ?? '🌍', style: const TextStyle(fontSize: 44)),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name == null
+                              ? 'SIN ELEGIR'
+                              : suggested
+                              ? 'SUGERIDO'
+                              : 'SELECCIONADO',
+                          style: const TextStyle(
+                            color: lime,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          name ?? 'Elegir país',
+                          key: const ValueKey('onboarding-country-name'),
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    name == null ? '' : 'Cambiar',
+                    style: const TextStyle(
+                      color: lime,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Icon(Icons.expand_more_rounded),
+                ],
+              ),
             ),
           ),
-          child: Row(
-            children: [
-              Text(flag ?? '🌍', style: const TextStyle(fontSize: 44)),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  name ?? 'Elegir país',
-                  key: const ValueKey('onboarding-country-name'),
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              Text(
-                name == null ? '' : 'Cambiar',
-                style: const TextStyle(
-                  color: lime,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const Icon(Icons.expand_more_rounded),
-            ],
-          ),
         ),
-      ),
+        const SizedBox(height: 12),
+        Text(
+          suggested
+              ? 'Lo detectamos en este dispositivo. Tócalo para confirmarlo o elegir otro.'
+              : 'Tu elección manual se conservará aunque cambie la región del dispositivo.',
+          style: const TextStyle(color: muted, height: 1.35),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
+
+  Widget _emptyState({
+    required IconData icon,
+    required String title,
+    required String description,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 28),
+    child: Column(
+      children: [
+        Icon(icon, color: muted, size: 38),
+        const SizedBox(height: 10),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          description,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: muted, height: 1.35),
+        ),
+      ],
+    ),
+  );
 
   /// [current] is the country shown (maybe the suggestion); picking it
   /// still records a manual choice when none was saved yet.
@@ -1073,9 +1181,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             _choiceCard(choice, type, follows, redirects),
         ]),
         if (entities.isEmpty && !(searchState ?? catalogState).isLoading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 20),
-            child: Text('Sin sugerencias', textAlign: TextAlign.center),
+          _emptyState(
+            icon: type == 'team'
+                ? Icons.shield_outlined
+                : Icons.emoji_events_outlined,
+            title: query.length >= 2 ? 'Sin resultados' : 'Sin sugerencias',
+            description: query.length >= 2
+                ? 'Prueba con otro nombre.'
+                : 'Puedes continuar y cambiarlo después.',
           ),
       ],
     );
@@ -1147,26 +1260,29 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           grid(section.players),
         ],
         if (players.isEmpty && !(searchState ?? catalogState).isLoading)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 20),
-            child: Text(
-              query.length >= 2 ? 'Sin resultados' : 'Busca a tus jugadores',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: muted),
-            ),
+          _emptyState(
+            icon: Icons.person_search_outlined,
+            title: query.length >= 2
+                ? 'Sin resultados'
+                : 'Busca a tus jugadores',
+            description: query.length >= 2
+                ? 'Prueba con otro nombre.'
+                : 'Este paso es opcional y puedes continuar.',
           ),
       ],
     );
   }
 
-  Widget _grid(List<Widget> tiles) => GridView.count(
-    crossAxisCount: 3,
-    shrinkWrap: true,
-    physics: const NeverScrollableScrollPhysics(),
-    mainAxisSpacing: 10,
-    crossAxisSpacing: 10,
-    childAspectRatio: .78,
-    children: tiles,
+  Widget _grid(List<Widget> tiles) => LayoutBuilder(
+    builder: (context, constraints) => GridView.count(
+      crossAxisCount: constraints.maxWidth < 330 ? 2 : 3,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 10,
+      crossAxisSpacing: 10,
+      childAspectRatio: constraints.maxWidth < 330 ? 1.02 : .78,
+      children: tiles,
+    ),
   );
 
   /// A merged card: its ids normalized (canonical ids plus every known
@@ -1394,10 +1510,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             child: const Text('Iniciar sesión'),
           ),
         ),
-        const SizedBox(height: 6),
-        TextButton(
-          onPressed: busy ? null : _next,
-          child: const Text('Continuar sin cuenta'),
+        const SizedBox(height: 14),
+        const Text(
+          'También puedes continuar como invitado. No perderás lo que elegiste en este dispositivo.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: muted, height: 1.35),
         ),
       ],
     );
