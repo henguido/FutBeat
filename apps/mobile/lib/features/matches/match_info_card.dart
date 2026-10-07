@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
 import '../../core/relevance.dart';
@@ -14,6 +15,7 @@ class MatchInfoItem {
     required this.icon,
     required this.label,
     required this.value,
+    required this.group,
     this.secondary,
   });
 
@@ -21,8 +23,18 @@ class MatchInfoItem {
   final IconData icon;
   final String label;
   final String value;
+  final MatchInfoGroup group;
   final String? secondary;
 }
+
+enum MatchInfoGroup { match, venue, officials, conditions }
+
+String matchInfoGroupLabel(MatchInfoGroup group) => switch (group) {
+  MatchInfoGroup.match => 'Partido',
+  MatchInfoGroup.venue => 'Sede',
+  MatchInfoGroup.officials => 'Oficiales',
+  MatchInfoGroup.conditions => 'Transmisión y condiciones',
+};
 
 String? _present(Object? value) {
   final text = value?.toString().trim() ?? '';
@@ -194,6 +206,7 @@ List<MatchInfoItem> matchInfoItems({
       icon: Icons.emoji_events_outlined,
       label: 'Competición',
       value: competition.name,
+      group: MatchInfoGroup.match,
       secondary: country,
     ),
     MatchInfoItem(
@@ -201,6 +214,7 @@ List<MatchInfoItem> matchInfoItems({
       icon: Icons.calendar_today_rounded,
       label: 'Fecha',
       value: matchDateLabel(match.startTime),
+      group: MatchInfoGroup.match,
       secondary: localKickoffTime,
     ),
     if (round != null)
@@ -209,6 +223,7 @@ List<MatchInfoItem> matchInfoItems({
         icon: Icons.format_list_numbered_rounded,
         label: isMatchdayRound(round) ? 'Jornada' : 'Ronda',
         value: isMatchdayRound(round) ? round : matchPhaseLabel(round)!,
+        group: MatchInfoGroup.match,
         secondary: season == null ? null : 'Temporada $season',
       )
     else if (season != null)
@@ -217,6 +232,7 @@ List<MatchInfoItem> matchInfoItems({
         icon: Icons.format_list_numbered_rounded,
         label: 'Temporada',
         value: season,
+        group: MatchInfoGroup.match,
       ),
     if (stage != null)
       MatchInfoItem(
@@ -224,6 +240,7 @@ List<MatchInfoItem> matchInfoItems({
         icon: Icons.account_tree_outlined,
         label: 'Fase',
         value: stage,
+        group: MatchInfoGroup.match,
       ),
     if (stadium != null)
       MatchInfoItem(
@@ -231,6 +248,7 @@ List<MatchInfoItem> matchInfoItems({
         icon: Icons.stadium_outlined,
         label: 'Estadio',
         value: stadium,
+        group: MatchInfoGroup.venue,
       ),
     if (referee != null)
       MatchInfoItem(
@@ -238,6 +256,7 @@ List<MatchInfoItem> matchInfoItems({
         icon: Icons.sports_rounded,
         label: 'Árbitro',
         value: referee.name,
+        group: MatchInfoGroup.officials,
         secondary: referee.country,
       ),
   ];
@@ -245,7 +264,7 @@ List<MatchInfoItem> matchInfoItems({
 
 const _tileBorder = Color(0xFF2B373D);
 
-class MatchInfoCard extends StatelessWidget {
+class MatchInfoCard extends StatefulWidget {
   const MatchInfoCard({
     required this.match,
     required this.competition,
@@ -264,47 +283,68 @@ class MatchInfoCard extends StatelessWidget {
   static const _gap = 8.0;
 
   @override
+  State<MatchInfoCard> createState() => _MatchInfoCardState();
+}
+
+class _MatchInfoCardState extends State<MatchInfoCard> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
     final items = matchInfoItems(
-      match: match,
-      competition: competition,
-      detail: detail,
-      venue: venue,
-      localKickoffTime: localTime(context, match.startTime),
+      match: widget.match,
+      competition: widget.competition,
+      detail: widget.detail,
+      venue: widget.venue,
+      localKickoffTime: localTime(context, widget.match.startTime),
     );
-    final lead = items.first;
-    final rest = items.skip(1).toList();
+    // Phase and round are already compactly visible in Hero V3. In a long
+    // card they are the first details collapsed; date, venue and officials
+    // remain visible. Nothing is discarded and short cards never collapse.
+    final canCollapse = items.length > 5;
+    final visible = !canCollapse || _expanded
+        ? items
+        : items
+              .where((item) => item.id != 'round' && item.id != 'stage')
+              .toList(growable: false);
     return Card(
       key: const ValueKey('match-info-card'),
       child: Padding(
         padding: const EdgeInsets.all(10),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final twoColumns = constraints.maxWidth >= _twoColumnMinWidth;
-            // Pairs share one row of equal height; an odd last tile (or a
-            // narrow screen) takes the whole row, so there is never a hole.
-            final rows = <List<MatchInfoItem>>[
-              for (var i = 0; i < rest.length; i += twoColumns ? 2 : 1)
-                rest.sublist(
-                  i,
-                  twoColumns ? (i + 2).clamp(0, rest.length) : i + 1,
-                ),
-            ];
+            final twoColumns =
+                constraints.maxWidth >= MatchInfoCard._twoColumnMinWidth;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _MatchInfoTile(lead, prominent: true),
-                for (final row in rows) ...[
-                  const SizedBox(height: _gap),
-                  IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        for (var i = 0; i < row.length; i++) ...[
-                          if (i > 0) const SizedBox(width: _gap),
-                          Expanded(child: _MatchInfoTile(row[i])),
-                        ],
-                      ],
+                for (final group in MatchInfoGroup.values)
+                  if (visible.any((item) => item.group == group)) ...[
+                    _MatchInfoGroupSection(
+                      group: group,
+                      items: visible
+                          .where((item) => item.group == group)
+                          .toList(growable: false),
+                      twoColumns: twoColumns,
+                      competitionId: widget.competition.id,
+                    ),
+                    if (group != visible.last.group)
+                      const SizedBox(height: MatchInfoCard._gap),
+                  ],
+                if (canCollapse) ...[
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      key: const ValueKey('match-info-toggle'),
+                      onPressed: () => setState(() => _expanded = !_expanded),
+                      icon: Icon(
+                        _expanded
+                            ? Icons.expand_less_rounded
+                            : Icons.expand_more_rounded,
+                        size: 18,
+                      ),
+                      label: Text(_expanded ? 'Ver menos' : 'Ver más'),
                     ),
                   ),
                 ],
@@ -317,75 +357,158 @@ class MatchInfoCard extends StatelessWidget {
   }
 }
 
+class _MatchInfoGroupSection extends StatelessWidget {
+  const _MatchInfoGroupSection({
+    required this.group,
+    required this.items,
+    required this.twoColumns,
+    required this.competitionId,
+  });
+
+  final MatchInfoGroup group;
+  final List<MatchInfoItem> items;
+  final bool twoColumns;
+  final String competitionId;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <List<MatchInfoItem>>[
+      for (var i = 0; i < items.length; i += twoColumns ? 2 : 1)
+        items.sublist(i, twoColumns ? (i + 2).clamp(0, items.length) : i + 1),
+    ];
+    return Semantics(
+      container: true,
+      label: matchInfoGroupLabel(group),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 2, 4, 6),
+            child: Text(
+              matchInfoGroupLabel(group).toUpperCase(),
+              style: const TextStyle(
+                color: muted,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: .7,
+              ),
+            ),
+          ),
+          for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) ...[
+            if (rowIndex > 0) const SizedBox(height: MatchInfoCard._gap),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < rows[rowIndex].length; i++) ...[
+                    if (i > 0) const SizedBox(width: MatchInfoCard._gap),
+                    Expanded(
+                      child: _MatchInfoTile(
+                        rows[rowIndex][i],
+                        prominent: rows[rowIndex][i].id == 'competition',
+                        onTap: rows[rowIndex][i].id == 'competition'
+                            ? () => context.push('/competition/$competitionId')
+                            : null,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _MatchInfoTile extends StatelessWidget {
-  const _MatchInfoTile(this.item, {this.prominent = false});
+  const _MatchInfoTile(this.item, {this.prominent = false, this.onTap});
 
   final MatchInfoItem item;
   final bool prominent;
+  final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => Container(
-    key: ValueKey('match-info-${item.id}'),
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: prominent ? .06 : .035),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: _tileBorder),
-    ),
-    child: Row(
-      children: [
-        Container(
-          width: prominent ? 36 : 30,
-          height: prominent ? 36 : 30,
-          decoration: BoxDecoration(
-            color: (prominent ? lime : Colors.white).withValues(alpha: .1),
-            borderRadius: BorderRadius.circular(9),
+  Widget build(BuildContext context) {
+    final secondary = item.secondary;
+    final content = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: prominent ? .06 : .035),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _tileBorder),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: prominent ? 36 : 30,
+            height: prominent ? 36 : 30,
+            decoration: BoxDecoration(
+              color: (prominent ? lime : Colors.white).withValues(alpha: .1),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Icon(
+              item.icon,
+              size: prominent ? 19 : 16,
+              color: prominent ? lime : muted,
+            ),
           ),
-          child: Icon(
-            item.icon,
-            size: prominent ? 19 : 16,
-            color: prominent ? lime : muted,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                item.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: muted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                item.value,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: prominent ? 15 : 13,
-                  fontWeight: FontWeight.w800,
-                  height: 1.2,
-                ),
-              ),
-              if (item.secondary != null) ...[
-                const SizedBox(height: 2),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  item.secondary!,
+                  item.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: muted, fontSize: 11.5),
+                  style: const TextStyle(
+                    color: muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
+                const SizedBox(height: 2),
+                Text(
+                  item.value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: prominent ? 15 : 13,
+                    fontWeight: FontWeight.w800,
+                    height: 1.2,
+                  ),
+                ),
+                if (secondary != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    secondary,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: muted, fontSize: 11.5),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+    return Semantics(
+      key: ValueKey('match-info-${item.id}'),
+      button: onTap != null,
+      label:
+          '${item.label}: ${item.value}'
+          '${secondary == null ? '' : '. $secondary'}.',
+      excludeSemantics: true,
+      child: onTap == null
+          ? content
+          : InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: onTap,
+              child: content,
+            ),
+    );
+  }
 }

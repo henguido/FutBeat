@@ -8,6 +8,7 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/matches/match_info_card.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
+import 'package:go_router/go_router.dart';
 
 // #99 "Información del partido" v2: only facts the app already has
 // (competition + country, round/season, date and local time, venue,
@@ -498,12 +499,13 @@ void main() {
           referee: 'Jesus Gil Manzano, Spain',
         ),
       );
-      expect(
-        find.text('Liga Info · Octavos de final · Final'),
-        findsOneWidget,
-      );
+      expect(find.text('Liga Info · Octavos de final · Final'), findsOneWidget);
       expect(find.textContaining('Jornada'), findsNothing);
       await _showCard(tester);
+      await tester.tap(
+        _inCard(find.byKey(const ValueKey('match-info-toggle'))),
+      );
+      await tester.pumpAndSettle();
       expect(
         _inCard(find.byKey(const ValueKey('match-info-stage'))),
         findsOneWidget,
@@ -542,7 +544,78 @@ void main() {
       await _close(tester);
     });
 
-    for (final width in [360.0, 390.0, 430.0]) {
+    testWidgets('groups, collapse and semantics keep secondary facts clear', (
+      tester,
+    ) async {
+      await _open(
+        tester,
+        detail: _detail(
+          round: 'Final',
+          stage: 'Group Stage',
+          referee: 'José María Sánchez, Spain',
+        ),
+      );
+      await _showCard(tester);
+      for (final heading in ['PARTIDO', 'SEDE', 'OFICIALES']) {
+        expect(_inCard(find.text(heading)), findsOneWidget);
+      }
+      expect(
+        _inCard(find.bySemanticsLabel(RegExp('Estadio: Estadio Info'))),
+        findsOneWidget,
+      );
+      expect(
+        _inCard(find.bySemanticsLabel(RegExp('Árbitro: José María Sánchez'))),
+        findsOneWidget,
+      );
+      expect(
+        _inCard(find.byKey(const ValueKey('match-info-stage'))),
+        findsNothing,
+      );
+      await tester.tap(
+        _inCard(find.byKey(const ValueKey('match-info-toggle'))),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        _inCard(find.byKey(const ValueKey('match-info-stage'))),
+        findsOneWidget,
+      );
+      expect(_inCard(find.text('Ver menos')), findsOneWidget);
+      await _close(tester);
+    });
+
+    testWidgets('competition uses the existing canonical route', (
+      tester,
+    ) async {
+      final data = Snapshot(_snapshot());
+      final match = data.match(_match)!;
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, _) => Scaffold(
+              body: MatchInfoCard(
+                match: match,
+                competition: data.competition(match.competitionId)!,
+                detail: MatchDetail(_detail()),
+                venue: 'Estadio Info',
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/competition/:id',
+            builder: (_, state) =>
+                Text('Competición ${state.pathParameters['id']}'),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.tap(find.byKey(const ValueKey('match-info-competition')));
+      await tester.pumpAndSettle();
+      expect(find.text('Competición fb_comp_ic'), findsOneWidget);
+    });
+
+    for (final width in [320.0, 360.0, 390.0, 430.0]) {
       testWidgets('8/9/10. ${width.toInt()} px with very long names: no '
           'overflow', (tester) async {
         await _open(
