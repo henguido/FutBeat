@@ -230,7 +230,9 @@ jobs:
           $quotaReserve = 350
           $calendarRequestBudget = 180
           $calendarRequestsUsed = 0
-          $batchSize = 3
+          # One date per ingest call: a large date is stored in sub-batches
+          # (futbeat-global-ingest v39) and takes ~40-50 s of the 90 s call.
+          $batchSize = 1
           $batchDates = New-Object System.Collections.Generic.List[string]
           $batchEvents = New-Object System.Collections.Generic.List[object]
           $batchCoverage = New-Object System.Collections.Generic.List[object]
@@ -289,6 +291,9 @@ jobs:
                 events = $batchEvents.ToArray()
               })
               Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
+              if (@($calendarResult.deferredDates).Count -gt 0) {
+                Write-Output "CALENDAR_INGEST_DEFERRED dates=$(@($calendarResult.deferredDates) -join ',')"
+              }
 
               $batchDates = New-Object System.Collections.Generic.List[string]
               $batchEvents = New-Object System.Collections.Generic.List[object]
