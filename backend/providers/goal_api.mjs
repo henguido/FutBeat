@@ -83,7 +83,7 @@ function trustedMedia(value, kind, receivedAt) {
   };
 }
 
-function statusOf(fixture) {
+function statusOf(fixture, receivedAt) {
   const status = clean(fixture?.matchStatus).toUpperCase();
   const period = clean(fixture?.matchPeriod).toUpperCase();
 
@@ -100,6 +100,15 @@ function statusOf(fixture) {
   }
 
   if (['FINISHED', 'AFTER_ET', 'AFTER_PEN', 'AWARDED'].includes(status)) {
+    const kickoff = Date.parse(clean(fixture?.kickoffUtc));
+    const observed = Date.parse(clean(receivedAt));
+    // A calendar answer can contain contradictory historical/provider data.
+    // Terminal evidence is only admissible at or after this fixture's UTC
+    // kickoff. Keep the fixture visible as scheduled and scoreless otherwise;
+    // later, coherent provider evidence can still advance it normally.
+    if (!Number.isFinite(observed) || observed < kickoff) {
+      return 'SCHEDULED';
+    }
     return 'VERIFIED';
   }
 
@@ -117,6 +126,9 @@ export async function normalizeGoalApiFixtures(
 ) {
   if (!Array.isArray(rawFixtures)) throw new Error('Invalid GOAL API fixtures');
   if (typeof resolve !== 'function') throw new Error('GOAL API resolver is required');
+  // receivedAt is the trusted ingest observation time and becomes snapshot
+  // provenance. Without a valid instant there is no safe chronology decision:
+  // reject the whole snapshot instead of silently downgrading terminal rows.
   if (!Number.isFinite(Date.parse(receivedAt))) throw new Error('Invalid receivedAt');
 
   const competitions = new Map();
@@ -212,7 +224,7 @@ export async function normalizeGoalApiFixtures(
         shortName: '',
       });
 
-    const status = statusOf(fixture);
+    const status = statusOf(fixture, receivedAt);
     // Same rule as every other GOAL writer (reset running totals after the
     // match keep their full-time result).
     const { home: homeScore, away: awayScore } = goalFixtureScore(fixture ?? {});

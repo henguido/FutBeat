@@ -187,6 +187,105 @@ test('GOAL API final lifecycle maps extra time and penalties to verified', async
   assert.deepEqual(snapshot.matches[0].score, { home: 0, away: 0 });
 });
 
+test('GOAL API calendar never verifies a fixture before its UTC kickoff', async () => {
+  const receivedAt = '2026-09-18T04:40:00.000Z';
+  const snapshot = await normalizeGoalApiFixtures(
+    [fixture({
+      kickoffUtc: '2026-09-19T01:00:00.000Z',
+      matchStatus: 'FINISHED',
+      matchPeriod: 'FINISHED',
+      homeTeamScore: '2',
+      awayTeamScore: '1',
+    })],
+    resolver(),
+    receivedAt,
+  );
+
+  assert.equal(snapshot.matches[0].status, 'SCHEDULED');
+  assert.equal(snapshot.matches[0].score, null);
+});
+
+test('GOAL API terminal chronology rejects absent or invalid receivedAt before snapshot creation', async () => {
+  const raw = fixture({
+    matchStatus: 'FINISHED',
+    matchPeriod: 'FINISHED',
+    homeTeamScore: '2',
+    awayTeamScore: '1',
+  });
+
+  for (const receivedAt of [undefined, null, '', 'not-an-instant']) {
+    await assert.rejects(
+      normalizeGoalApiFixtures([raw], resolver(), receivedAt),
+      /Invalid receivedAt/,
+    );
+  }
+});
+
+test('GOAL API terminal chronology accepts kickoff equality and historical imports', async () => {
+  const raw = fixture({
+    matchStatus: 'FINISHED',
+    matchPeriod: 'FINISHED',
+    homeTeamScore: '2',
+    awayTeamScore: '1',
+  });
+
+  for (const receivedAt of [raw.kickoffUtc, '2030-01-01T00:00:00.000Z']) {
+    const snapshot = await normalizeGoalApiFixtures([raw], resolver(), receivedAt);
+    assert.equal(snapshot.matches[0].status, 'VERIFIED');
+    assert.deepEqual(snapshot.matches[0].score, { home: 2, away: 1 });
+  }
+});
+
+test('GOAL API corrected future kickoff cannot leak any terminal status as VERIFIED', async () => {
+  for (const matchStatus of ['FINISHED', 'AFTER_ET', 'AFTER_PEN', 'AWARDED']) {
+    const snapshot = await normalizeGoalApiFixtures(
+      [fixture({
+        kickoffUtc: '2026-09-20T01:00:00.000Z',
+        matchStatus,
+        matchPeriod: 'FINISHED',
+        homeTeamScore: '2',
+        awayTeamScore: '1',
+      })],
+      resolver(),
+      '2026-09-18T04:40:00.000Z',
+    );
+
+    assert.equal(snapshot.matches[0].status, 'SCHEDULED');
+    assert.equal(snapshot.matches[0].score, null);
+  }
+});
+
+test('GOAL API terminal chronology compares instants, not local calendar dates', async () => {
+  const raw = fixture({
+    kickoffUtc: '2026-09-18T23:30:00-06:00',
+    matchStatus: 'FINISHED',
+    matchPeriod: 'FINISHED',
+    homeTeamScore: '2',
+    awayTeamScore: '1',
+  });
+  const before = await normalizeGoalApiFixtures(
+    [raw], resolver(), '2026-09-19T05:29:59.000Z',
+  );
+  const after = await normalizeGoalApiFixtures(
+    [raw], resolver(), '2026-09-19T05:30:01.000Z',
+  );
+
+  assert.equal(before.matches[0].status, 'SCHEDULED');
+  assert.equal(before.matches[0].score, null);
+  assert.equal(after.matches[0].status, 'VERIFIED');
+  assert.deepEqual(after.matches[0].score, { home: 2, away: 1 });
+});
+
+test('GOAL API keeps postponed, cancelled, suspended and abandoned explicit', async () => {
+  for (const matchStatus of ['POSTPONED', 'CANCELLED', 'SUSPENDED', 'ABANDONED']) {
+    const snapshot = await normalizeGoalApiFixtures(
+      [fixture({ matchStatus })], resolver(), '2026-09-18T04:40:00Z',
+    );
+    assert.equal(snapshot.matches[0].status, matchStatus);
+    assert.equal(snapshot.matches[0].score, null);
+  }
+});
+
 test('GOAL API media outside its delivery host is rejected', async () => {
   const bad = fixture({
     homeTeam: {
