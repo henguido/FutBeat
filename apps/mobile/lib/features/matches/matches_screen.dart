@@ -421,8 +421,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                 preference?.pinnedCompetitionIds ?? const <String>[],
           );
           final feedItems = <Widget Function()>[];
+          final compactAdAfter = <int>{};
 
-          void addCompetition(Entity competition) {
+          void addCompetition(Entity competition, int ordinal) {
             final competitionMatches =
                 remainingByCompetition[competition.id] ??
                 const <FootballMatch>[];
@@ -443,6 +444,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                 onOpen: () => context.push('/competition/${competition.id}'),
                 onToggle: () => _toggleCollapsed(collapseKey),
                 canToggle: effectiveFilter != 'En vivo',
+                flushAdBelow: adsAllowed && compactAdAfter.contains(ordinal),
               ),
             );
             feedItems.add(
@@ -615,7 +617,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                   .putIfAbsent(match.competitionId, () => <FootballMatch>[])
                   .add(match);
             }
-            for (final entry in favoriteGroups.entries) {
+            final favoriteEntries = favoriteGroups.entries
+                .where((entry) => data.competition(entry.key) != null)
+                .toList();
+            for (final (index, entry) in favoriteEntries.indexed) {
               final competition = data.competition(entry.key);
               if (competition == null) continue;
               final collapseKey = 'favorite:${competition.id}';
@@ -632,6 +637,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                   onOpen: () => context.push('/competition/${competition.id}'),
                   onToggle: () => _toggleCollapsed(collapseKey),
                   canToggle: effectiveFilter != 'En vivo',
+                  flushAdBelow:
+                      adsAllowed &&
+                      index == favoriteEntries.length - 1 &&
+                      compactAdAfter.contains(0),
                 ),
               );
               feedItems.add(
@@ -652,9 +661,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           var groups = 0;
           for (final competition in orderedCompetitions) {
             final before = feedItems.length;
-            addCompetition(competition);
+            final ordinal = groups + 1;
+            addCompetition(competition, ordinal);
             if (feedItems.length > before) {
-              blockEnds[++groups] = feedItems.length;
+              groups = ordinal;
+              blockEnds[groups] = feedItems.length;
               blockGapCounts[groups] = 1;
             }
           }
@@ -668,6 +679,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             groups: groups,
             filter: effectiveFilter,
           );
+          compactAdAfter.addAll(slots);
           for (final (index, after) in slots.indexed.toList().reversed) {
             final at = blockEnds[after];
             if (at == null) continue;
@@ -1031,6 +1043,7 @@ class CompetitionMatchGroupCard extends StatelessWidget {
     required this.onOpen,
     required this.onToggle,
     required this.canToggle,
+    this.flushAdBelow = false,
     super.key,
   });
 
@@ -1042,6 +1055,7 @@ class CompetitionMatchGroupCard extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback onToggle;
   final bool canToggle;
+  final bool flushAdBelow;
 
   // Same visibility rule as before (a provider country), localized text only.
   String? get region =>
@@ -1065,7 +1079,7 @@ class CompetitionMatchGroupCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         side: const BorderSide(color: Color(0xFF2A3438)),
       ),
-      margin: const EdgeInsets.only(top: 4, bottom: 8),
+      margin: EdgeInsets.only(top: 4, bottom: flushAdBelow ? 0 : 8),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

@@ -1494,6 +1494,14 @@ void main() {
         findsNWidgets(15),
         reason: 'the five ad transitions replace, rather than stack on, gaps',
       );
+      final groupAboveAd = tester.widget<Card>(
+        find.byKey(const ValueKey('competition-group-competition-c_0')),
+      );
+      final groupWithoutAd = tester.widget<Card>(
+        find.byKey(const ValueKey('competition-group-competition-c_1')),
+      );
+      expect(groupAboveAd.margin, const EdgeInsets.only(top: 4));
+      expect(groupWithoutAd.margin, const EdgeInsets.only(top: 4, bottom: 8));
       final text = layout(tester);
       // Every ad is followed by a group header, never by a match row.
       expect(RegExp('A(?!H)').hasMatch(text), isFalse, reason: text);
@@ -1546,6 +1554,23 @@ void main() {
     testWidgets('a short feed gets few or no ad slots', (tester) async {
       await _pump(tester, data: manyGroups(3), size: const Size(390, 9000));
       expect(find.byType(AdSlot), findsOneWidget);
+      final group = tester.widget<Card>(
+        find.byKey(const ValueKey('competition-group-competition-c_0')),
+      );
+      expect(
+        group.margin,
+        const EdgeInsets.only(top: 4, bottom: 8),
+        reason: 'without an available ad, normal group spacing remains',
+      );
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is SizedBox &&
+              widget.key?.toString().contains('competition-gap-') == true,
+        ),
+        findsNWidgets(3),
+        reason: 'no gap is consumed by an unavailable ad',
+      );
     });
   });
 }
