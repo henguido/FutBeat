@@ -1029,11 +1029,6 @@ class CompetitionMatchGroupCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final displayCompetition = entityWithCanonicalMedia(
-      data,
-      competition,
-      data.competitions,
-    );
     final liveCount = matches.where((match) => match.isLive).length;
     return Card(
       key: ValueKey('competition-group-$scope-${competition.id}'),
@@ -1062,12 +1057,7 @@ class CompetitionMatchGroupCard extends StatelessWidget {
                         constraints: const BoxConstraints(minHeight: 48),
                         child: Row(
                           children: [
-                            SizedBox(
-                              key: ValueKey(
-                                'competition-logo-${competition.id}',
-                              ),
-                              child: EntityAvatar(displayCompetition, size: 36),
-                            ),
+                            EntityAvatar(competition, size: 32),
                             const SizedBox(width: 10),
                             Expanded(
                               child: Column(
@@ -1154,7 +1144,7 @@ class CompetitionMatchGroupCard extends StatelessWidget {
           if (!collapsed) ...[
             const Divider(height: 1, color: Color(0xFF2A3438)),
             Padding(
-              padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
+              padding: const EdgeInsets.fromLTRB(12, 4, 8, 6),
               child: _CompetitionMatchRows(matches: matches, data: data),
             ),
           ],
@@ -1246,9 +1236,7 @@ String? competitionMatchSubgroupLabel(FootballMatch match) {
   return null;
 }
 
-/// Group-aware wrapper around the approved, full-size match card. The wrapper
-/// keeps stable feed keys/tests while [MatchCard] remains the single visual
-/// implementation used by grouped and profile feeds.
+/// One-line feed row. Same data rules as [MatchCard] (showKickoff/statusLabel).
 class FeedMatchRow extends StatelessWidget {
   const FeedMatchRow(this.match, this.data, {this.caption, super.key});
 
@@ -1259,58 +1247,163 @@ class FeedMatchRow extends StatelessWidget {
   final String? caption;
 
   @override
-  Widget build(BuildContext context) =>
-      MatchCard(match, data, caption: caption, preserveStatusCase: true);
-}
-
-/// Keeps the entity's identity/name but borrows VERIFIED media from its
-/// canonical equivalent (or one of its redirected aliases) in this snapshot.
-/// This is intentionally URL-agnostic and fails closed when no verified media
-/// exists; it only repairs sparse calendar rows from already trusted data.
-Entity entityWithCanonicalMedia(
-  Snapshot data,
-  Entity entity,
-  Iterable<Entity> candidates,
-) {
-  if (entity.imageUrl != null) return entity;
-  final canonicalId = data.resolveEntityId(entity.id);
-  for (final candidate in candidates) {
-    if (candidate.imageUrl == null) continue;
-    if (candidate.id != canonicalId &&
-        data.resolveEntityId(candidate.id) != canonicalId) {
-      continue;
+  Widget build(BuildContext context) {
+    final home = data.team(match.homeId)!;
+    final away = data.team(match.awayId)!;
+    final latestEvent = match.latestEvent;
+    // Past kickoff with no evidence of play: never an upcoming kickoff.
+    final unconfirmed = match.isAwaitingUpdate && !match.hasPlayedEvidence;
+    final status = unconfirmed ? 'Por confirmar' : match.statusLabel;
+    final centre = unconfirmed
+        ? '—'
+        : match.showKickoff
+        ? localTime(context, match.startTime)
+        : match.score;
+    void open() =>
+        context.push('/match/${match.id}', extra: data.forMatch(match.id));
+    const nameStyle = TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600);
+    final second = <Widget>[
+      if (caption != null)
+        Text(
+          caption!,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: muted, fontSize: 10),
+        ),
+      if (match.isLive && latestEvent != null)
+        Text(
+          'Último: ${eventMinuteLabel(latestEvent)} · '
+          '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: lime,
+            fontSize: 10.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+    ];
+    final label = StringBuffer(
+      '${home.displayName} contra ${away.displayName}, $centre',
+    );
+    if (status.isNotEmpty) label.write(', $status');
+    if (caption != null) label.write(', $caption');
+    if (match.isLive && latestEvent != null) {
+      label.write(
+        ', Último: ${eventMinuteLabel(latestEvent)} · '
+        '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
+      );
     }
-    return Entity({...entity.json, 'media': candidate.json['media']});
+    // The row opens the match; the star (a sibling, never nested) follows it.
+    return Row(
+      children: [
+        Expanded(
+          child: Semantics(
+            button: true,
+            excludeSemantics: true,
+            label: label.toString(),
+            onTap: open,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: open,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          EntityAvatar(home, size: 22),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              home.displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: nameStyle,
+                            ),
+                          ),
+                          SizedBox(
+                            width: 84,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    centre,
+                                    maxLines: 1,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                if (status.isNotEmpty)
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      status,
+                                      maxLines: 1,
+                                      style: TextStyle(
+                                        color: match.isLive ? lime : muted,
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              away.displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.right,
+                              style: nameStyle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          EntityAvatar(away, size: 22),
+                        ],
+                      ),
+                      for (final line in second)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: line,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        FollowButton(
+          'match',
+          match.id,
+          key: ValueKey('feed-follow-${match.id}'),
+          label: '${home.displayName} contra ${away.displayName}',
+          compact: true,
+        ),
+      ],
+    );
   }
-  return entity;
 }
 
 class MatchCard extends StatelessWidget {
-  const MatchCard(
-    this.match,
-    this.data, {
-    this.caption,
-    this.preserveStatusCase = false,
-    super.key,
-  });
+  const MatchCard(this.match, this.data, {super.key});
 
   final FootballMatch match;
   final Snapshot data;
-  final String? caption;
-  final bool preserveStatusCase;
 
   @override
   Widget build(BuildContext context) {
-    final home = entityWithCanonicalMedia(
-      data,
-      data.team(match.homeId)!,
-      data.teams,
-    );
-    final away = entityWithCanonicalMedia(
-      data,
-      data.team(match.awayId)!,
-      data.teams,
-    );
+    final home = data.team(match.homeId)!;
+    final away = data.team(match.awayId)!;
     final latestEvent = match.latestEvent;
     // A scheduled row whose kickoff already passed without any evidence of
     // play is not allowed to masquerade as an upcoming match.
@@ -1349,9 +1442,7 @@ class MatchCard extends StatelessWidget {
                       child: status.isEmpty
                           ? const SizedBox.shrink()
                           : Text(
-                              preserveStatusCase
-                                  ? status
-                                  : status.toUpperCase(),
+                              status.toUpperCase(),
                               style: TextStyle(
                                 color: match.isLive ? lime : muted,
                                 fontSize: 10,
@@ -1372,10 +1463,7 @@ class MatchCard extends StatelessWidget {
                     Expanded(
                       child: Column(
                         children: [
-                          SizedBox(
-                            key: ValueKey('team-crest-${match.id}-home'),
-                            child: EntityAvatar(home),
-                          ),
+                          EntityAvatar(home),
                           const SizedBox(height: 9),
                           Text(
                             home.displayName,
@@ -1421,10 +1509,7 @@ class MatchCard extends StatelessWidget {
                     Expanded(
                       child: Column(
                         children: [
-                          SizedBox(
-                            key: ValueKey('team-crest-${match.id}-away'),
-                            child: EntityAvatar(away),
-                          ),
+                          EntityAvatar(away),
                           const SizedBox(height: 9),
                           Text(
                             away.displayName,
@@ -1465,15 +1550,6 @@ class MatchCard extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                ],
-                if (caption != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    caption!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: muted, fontSize: 11),
                   ),
                 ],
               ],

@@ -51,84 +51,6 @@ class _Repository implements FootballRepository {
 
 const _longHome = 'Club Deportivo Universitario Metropolitano de Occidente';
 const _longAway = 'Asociación Deportiva Atlética Internacional Fronteriza';
-const _competitionLogo = 'https://media.example.test/liga-fpd.png';
-const _interCrest = 'https://media.example.test/inter-san-carlos.png';
-const _perezCrest = 'https://media.example.test/perez-zeledon.png';
-
-String? _networkUrl(Image image) {
-  final provider = image.image;
-  return provider is NetworkImage ? provider.url : null;
-}
-
-Snapshot _costaRicaMediaSnapshot({bool verifiedMedia = true}) {
-  final today = costaRicaNow();
-  Map<String, dynamic> media(String url) => {
-    'url': url,
-    'verificationStatus': verifiedMedia ? 'VERIFIED' : 'PENDING',
-  };
-  return Snapshot({
-    'schemaVersion': 1,
-    'demo': false,
-    'updatedAt': DateTime.now().toUtc().toIso8601String(),
-    'entityRedirects': {
-      'fb_comp_cr': 'fb_comp_cr_canonical',
-      'fb_team_inter_alias': 'fb_team_inter_canonical',
-      'fb_team_pz_alias': 'fb_team_pz_canonical',
-    },
-    'competitions': [
-      {
-        'id': 'fb_comp_cr',
-        'name': 'Costa-Rica Liga FPD',
-        'shortName': 'CL',
-        'country': 'Costa Rica',
-      },
-      {
-        'id': 'fb_comp_cr_canonical',
-        'name': 'Primera División',
-        'country': 'Costa Rica',
-        'media': media(_competitionLogo),
-      },
-    ],
-    'teams': [
-      {
-        'id': 'fb_team_inter_alias',
-        'name': 'Inter de San Carlos',
-        'shortName': 'Id',
-      },
-      {
-        'id': 'fb_team_inter_canonical',
-        'name': 'Inter San Carlos',
-        'media': media(_interCrest),
-      },
-      {'id': 'fb_team_pz_alias', 'name': 'Pérez Zeledón', 'shortName': 'PZ'},
-      {
-        'id': 'fb_team_pz_canonical',
-        'name': 'Municipal Pérez Zeledón',
-        'media': media(_perezCrest),
-      },
-    ],
-    'players': <dynamic>[],
-    'matches': [
-      {
-        'id': 'm_cr_media',
-        'competitionId': 'fb_comp_cr',
-        'homeTeamId': 'fb_team_inter_alias',
-        'awayTeamId': 'fb_team_pz_alias',
-        'startTime': DateTime.utc(
-          today.year,
-          today.month,
-          today.day,
-          18,
-        ).toIso8601String(),
-        'status': 'SCHEDULED',
-        'score': const <String, dynamic>{},
-        'events': <dynamic>[],
-        'statistics': <dynamic>[],
-      },
-    ],
-    'standings': <dynamic>[],
-  });
-}
 
 Snapshot _snapshot({
   bool adjacentMatches = false,
@@ -502,75 +424,6 @@ void main() {
     expect(find.byType(FeedMatchRow), findsNWidgets(3));
   });
 
-  testWidgets('group keeps the approved full-size match presentation', (
-    tester,
-  ) async {
-    await _pump(tester, data: _snapshot(exactlyThreeOneCompetition: true));
-    final row = _row('m_cr_live');
-    expect(tester.getSize(row).height, greaterThanOrEqualTo(120));
-    expect(
-      tester.getSize(find.byKey(const ValueKey('team-crest-m_cr_live-home'))),
-      const Size(42, 42),
-    );
-    expect(
-      tester.getSize(find.byKey(const ValueKey('competition-logo-c_cr'))),
-      const Size(36, 36),
-    );
-    expect(find.byType(CompetitionMatchGroupCard), findsOneWidget);
-  });
-
-  testWidgets('Costa Rica aliases reuse verified canonical logos and crests', (
-    tester,
-  ) async {
-    await _pump(tester, data: _costaRicaMediaSnapshot());
-    List<String?> urlsWithin(Key key) => tester
-        .widgetList<Image>(
-          find.descendant(of: find.byKey(key), matching: find.byType(Image)),
-        )
-        .map(_networkUrl)
-        .toList();
-
-    expect(
-      urlsWithin(const ValueKey('competition-logo-fb_comp_cr')),
-      contains(_competitionLogo),
-    );
-    expect(
-      urlsWithin(const ValueKey('team-crest-m_cr_media-home')),
-      contains(_interCrest),
-    );
-    expect(
-      urlsWithin(const ValueKey('team-crest-m_cr_media-away')),
-      contains(_perezCrest),
-    );
-  });
-
-  testWidgets('missing or unverified media still fails closed to initials', (
-    tester,
-  ) async {
-    await _pump(tester, data: _costaRicaMediaSnapshot(verifiedMedia: false));
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('competition-logo-fb_comp_cr')),
-        matching: find.text('CL'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('team-crest-m_cr_media-home')),
-        matching: find.text('Id'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('team-crest-m_cr_media-away')),
-        matching: find.text('PZ'),
-      ),
-      findsOneWidget,
-    );
-  });
-
   testWidgets('two competitions render as two group cards', (tester) async {
     await _pump(tester);
     expect(find.byType(CompetitionMatchGroupCard), findsNWidgets(2));
@@ -867,7 +720,7 @@ void main() {
         find.byType(FeedMatchRow),
       )) {
         final size = tester.getSize(_row(row.match.id));
-        expect(size.height, greaterThanOrEqualTo(120));
+        expect(size.height, greaterThanOrEqualTo(48));
         expect(size.width, lessThanOrEqualTo(width));
       }
     });
@@ -883,7 +736,7 @@ void main() {
     )) {
       expect(
         tester.getSize(_row(row.match.id)).height,
-        greaterThanOrEqualTo(120),
+        greaterThanOrEqualTo(48),
       );
     }
     expect(find.text('Saprissa'), findsOneWidget);
@@ -949,7 +802,7 @@ void main() {
     final name = tester.widget<Text>(
       find.descendant(of: _row('m_es_long'), matching: find.text(_longHome)),
     );
-    expect(name.maxLines, 3);
+    expect(name.maxLines, 1);
     expect(name.overflow, TextOverflow.ellipsis);
     expect(tester.takeException(), isNull);
   });
