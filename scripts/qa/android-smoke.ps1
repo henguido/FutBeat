@@ -5,6 +5,7 @@ param(
     [string]$OutputDir,
     [switch]$SkipInstall,
     [switch]$SkipScreenshots,
+    [switch]$TestAds,
     [switch]$Verbose
 )
 
@@ -67,6 +68,9 @@ $data = @{
     AndroidVersion = 'No disponible'; ApiLevel = 'No disponible'; Resolution = 'No disponible'
     Density = 'No disponible'; Locale = 'No disponible'; TimeZone = 'No disponible'
     LaunchResult = 'No ejecutado'; RelaunchResult = 'No ejecutado'; CrashCount = 0
+    AdsQaMode = $(if ($TestAds) { 'TEST' } else { 'NORMAL' })
+    AdConfigurationExpected = $(if ($TestAds) { 'enabled' } else { 'not asserted (fail-closed allowed)' })
+    AdsArtifactVerification = $(if ($TestAds) { 'Pendiente' } else { 'No requerida' })
     DeepLinks = $deepLinks; Screenshots = $screenshots; LogcatPath = $logcatPath; Warnings = $warnings
 }
 
@@ -75,6 +79,10 @@ try {
     if (-not (Test-Path -LiteralPath $ApkPath -PathType Leaf)) { throw "El APK no existe: '$ApkPath'." }
     $data.ApkPath = $ApkPath
     $data.Sha256 = Get-FileSha256 -Path $ApkPath
+    if ($TestAds) {
+        [void](Assert-QaAdsTestArtifact -ApkPath $ApkPath)
+        $data.AdsArtifactVerification = 'PASS (marca de build y SHA-256 coinciden)'
+    }
     $resolvedAdb = Resolve-AdbPath -AdbPath $AdbPath
     Write-Detail "ADB: $resolvedAdb"
 

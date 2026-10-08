@@ -100,6 +100,32 @@ function Get-FileSha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-QaArtifactManifestPath {
+    param([Parameter(Mandatory)][string]$ApkPath)
+    return "$([System.IO.Path]::GetFullPath($ApkPath)).qa.json"
+}
+
+function Assert-QaAdsTestArtifact {
+    param([Parameter(Mandatory)][string]$ApkPath)
+    $manifestPath = Get-QaArtifactManifestPath -ApkPath $ApkPath
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "No se encontró la marca Ads TEST '$manifestPath'. Genera el APK con scripts/qa/build-android-qa.ps1 -TestAds."
+    }
+    try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json }
+    catch { throw "La marca Ads TEST no es JSON válido: '$manifestPath'." }
+    if ($manifest.schemaVersion -ne 1 -or $manifest.package -ne $script:FutBeatPackage) {
+        throw 'La marca Ads TEST no corresponde al formato/package esperado.'
+    }
+    if ($manifest.qaMode -ne 'TEST' -or $manifest.adsExpected -ne $true) {
+        throw 'El APK no está marcado como una compilación Ads TEST habilitada.'
+    }
+    $actualSha = Get-FileSha256 -Path $ApkPath
+    if ($manifest.sha256 -ne $actualSha) {
+        throw 'La huella del APK no coincide con su marca Ads TEST; el artefacto pudo ser reemplazado.'
+    }
+    return $manifest
+}
+
 function New-QaReport {
     param([Parameter(Mandatory)][hashtable]$Data)
     $screenshots = if ($Data.Screenshots -and @($Data.Screenshots).Count -gt 0) { (@($Data.Screenshots) | ForEach-Object { "- `$_" }) -join "`n" } else { '- Ninguna' }
@@ -121,6 +147,12 @@ function New-QaReport {
 - Version code: $($Data.VersionCode)
 - Instalación: $($Data.InstallResult)
 - Duración instalación: $($Data.InstallDuration)
+
+## Publicidad QA
+
+- Ads QA mode: $($Data.AdsQaMode)
+- Ad configuration expected: $($Data.AdConfigurationExpected)
+- Verificación del artefacto: $($Data.AdsArtifactVerification)
 
 ## Dispositivo
 

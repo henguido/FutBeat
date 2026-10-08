@@ -432,8 +432,11 @@ void main() {
       expect(slots(20, favorites: true), [0, 3, 7, 11, 15]);
     });
 
-    test('without favourites: after the 2nd group, then every 4', () {
-      expect(slots(20), [2, 6, 10, 14, 18]);
+    test('without favourites: approved spaced candidates, capped at 5', () {
+      expect(slots(20), [1, 3, 6, 9, 12]);
+      expect(slots(13), [1, 3, 6, 9, 12]);
+      // Group 18 is the next policy candidate, but the daily cap is 5.
+      expect(slots(200), isNot(contains(18)));
     });
 
     test('never more than 5 per day', () {
@@ -444,30 +447,29 @@ void main() {
     test('short feeds: few or no slots, never at the end', () {
       expect(slots(0), isEmpty);
       expect(slots(1), isEmpty);
-      expect(slots(2), isEmpty);
-      expect(slots(3), [2]);
+      expect(slots(2), [1]);
+      expect(slots(3), [1]);
+      expect(slots(4), [1, 3]);
       expect(slots(0, favorites: true), isEmpty);
       expect(slots(1, favorites: true), [0]);
       expect(slots(3, favorites: true), [0]);
       expect(slots(4, favorites: true), [0, 3]);
     });
 
-    test('slots are spaced (never consecutive) and never in LIVE', () {
-      for (final favorites in [true, false]) {
-        final list = slots(40, favorites: favorites);
-        for (var i = 1; i < list.length; i++) {
-          expect(list[i] - list[i - 1], greaterThanOrEqualTo(3));
-        }
-      }
+    test('policy is explicit for every filter and LIVE has none', () {
+      expect(slots(40, favorites: true), [0, 3, 7, 11, 15]);
+      expect(slots(40), [1, 3, 6, 9, 12]);
       expect(slots(20, f: 'En vivo'), isEmpty);
       expect(slots(20, favorites: true, f: 'En vivo'), isEmpty);
-      expect(slots(20, f: 'Próximos'), [2, 6, 10, 14, 18]);
+      expect(slots(20, f: 'Próximos'), [1, 3, 6, 9, 12]);
     });
   });
 
-  testWidgets('a feed with fewer groups has no ad slot', (tester) async {
+  testWidgets('a two-group feed places one ad between complete groups', (
+    tester,
+  ) async {
     await _pump(tester);
-    expect(find.byType(AdSlot), findsNothing);
+    expect(find.byType(AdSlot), findsOneWidget);
     expect(find.byType(FeedMatchRow), findsNWidgets(6));
   });
 
@@ -1450,7 +1452,7 @@ void main() {
       return items.map((i) => i.$2).join();
     }
 
-    testWidgets('without favourites: after group 2, then every 4, between '
+    testWidgets('without favourites: after groups 1, 3, 6, 9 and 12, between '
         'complete groups only', (tester) async {
       await _pump(tester, data: manyGroups(20), size: const Size(390, 60000));
       expect(find.byType(AdSlot), findsNWidgets(5));
@@ -1458,8 +1460,8 @@ void main() {
       // Every ad is followed by a group header, never by a match row.
       expect(RegExp('A(?!H)').hasMatch(text), isFalse, reason: text);
       expect(text.contains('AA'), isFalse);
-      // Two complete groups (header + 2 rows each) before the first ad.
-      expect(text.startsWith('HMMHMMA'), isTrue, reason: text);
+      // One complete group (header + 2 rows) before the first ad.
+      expect(text.startsWith('HMMA'), isTrue, reason: text);
       expect(tester.takeException(), isNull);
     });
 

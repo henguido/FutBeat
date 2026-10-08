@@ -154,7 +154,8 @@ const feedAdMaxSlots = 5;
 /// Where the Partidos feed may show an ad, as the number of complete
 /// competition groups before each slot (0 = right after the FAVORITOS
 /// block). With favourites: after them, then after groups 3, 7, 11, 15.
-/// Without: after groups 2, 6, 10, 14, 18. A slot always has feed content
+/// Without: after groups 1, 3, 6, 9, 12 (18 is the next candidate, but the
+/// daily cap is already reached). A slot always has feed content
 /// after it (never at the end, never two in a row, never inside a group),
 /// at most [feedAdMaxSlots], and none in the LIVE view. Whether a slot
 /// shows anything is [adsAllowedProvider]'s call (never for Premium).
@@ -165,13 +166,13 @@ List<int> feedAdSlots({
 }) {
   if (filter == 'En vivo') return const [];
   final slots = <int>[];
-  if (favorites && groups >= 1) slots.add(0);
-  for (
-    var after = favorites ? 3 : 2;
-    after < groups && slots.length < feedAdMaxSlots;
-    after += 4
-  ) {
-    slots.add(after);
+  final candidates = favorites
+      ? const [0, 3, 7, 11, 15]
+      : const [1, 3, 6, 9, 12, 18];
+  for (final after in candidates) {
+    if (slots.length == feedAdMaxSlots) break;
+    // Never reserve an ad at the end of the feed.
+    if (after < groups) slots.add(after);
   }
   return slots;
 }
