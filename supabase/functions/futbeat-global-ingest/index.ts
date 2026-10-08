@@ -1681,11 +1681,24 @@ Deno.serve(async (request) => {
       // read above (a fixture only reuses a match of its own 5-minute bucket,
       // which never crosses a UTC date).
       const groups = calendarDateGroups(events, dates);
+      // One date per call when the batch holds a large date: the workflow
+      // sends up to three dates under a 90 s client timeout, and one large
+      // date in sub-batches already takes ~40-50 s. The first date is
+      // ingested; the others are returned as deferredDates (no store, no
+      // coverage), so the calendar plan picks them again on a later run.
+      const oneDatePerCall = [...groups.values()].some(
+        (list) => list.length > CALENDAR_SUB_BATCH_MAX,
+      );
+      const deferredDates: string[] = [];
       const competitionIds = new Set<string>();
       const teamIds = new Set<string>();
       const byDate: unknown[] = [];
       let accepted = 0;
       for (const [date, dateEvents] of groups) {
+        if (oneDatePerCall && storedDates.length > 0) {
+          deferredDates.push(date);
+          continue;
+        }
         currentDate = date;
         const dateMs: Record<string, number> = {};
         stageMsByDate[date] = dateMs;
@@ -1828,6 +1841,7 @@ Deno.serve(async (request) => {
           stageMs: (closeStage(), stageMs),
           stageMsByDate,
           ...(Object.keys(stageMsBySubBatch).length > 0 ? { stageMsBySubBatch } : {}),
+          ...(deferredDates.length > 0 ? { deferredDates } : {}),
           transport: "github-actions-oidc",
           provider: input.source,
           mode,
@@ -1845,6 +1859,7 @@ Deno.serve(async (request) => {
         resolvedMatches,
         mode,
         result: { matches: accepted, coveredDates: storedDates.length, byDate },
+        ...(deferredDates.length > 0 ? { deferredDates } : {}),
       });
     }
 

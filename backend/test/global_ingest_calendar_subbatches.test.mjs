@@ -275,3 +275,45 @@ test('SQL finalize: refuses unstored ids and invalid payloads; service_role only
   assert.equal(grants.includes('authenticated'), false);
   assert.ok(grants.includes('service_role'));
 }));
+
+const NEXT = '2026-09-20';
+const smallOn = (date, n, prefix) => Array.from({ length: n }, (_, i) => ({
+  ...fixture(`${prefix}-${i}`, i * 10), kickoffUtc: new Date(Date.parse(`${date}T00:00:00.000Z`) + i * 600000).toISOString(),
+}));
+
+test('one date per call: a batch with a large date ingests only its first date; the rest are deferred (no store, no coverage)', () => withDb(async (db) => {
+  const h = harness(db);
+  const events = [...bigDay(400), ...smallOn(NEXT, 2, 'next')];
+  const { status, value } = await h.calendar(events, [DAY, NEXT]);
+  assert.equal(status, 200, JSON.stringify(value));
+  assert.deepEqual(plain(value.deferredDates), [NEXT]);
+  assert.equal(value.result.coveredDates, 1);
+  assert.equal(value.accepted, 400);
+  assert.ok(h.of('futbeat_read_ingest_context').every((c) => c.body.p_to < `${NEXT}T00:00:00.000Z`), 'no read for the deferred date');
+  assert.equal(h.of('futbeat_finalize_calendar_date').length, 1);
+  // The workflow sends the batch size as each date's count (unchanged contract).
+  assert.deepEqual(await coverageRows(db), [{ d: DAY, fixture_count: 402 }]);
+  assert.equal(await count(db, "select count(*)::int n from futbeat_private.calendar_matches where start_time >= $1::timestamptz", [`${NEXT}T00:00:00Z`]), 0);
+  const { metadata } = await lastLedger(db);
+  assert.deepEqual(metadata.deferredDates, [NEXT]);
+}));
+
+test('one date per call: a small first date is ingested and the large one waits for the next call', () => withDb(async (db) => {
+  const h = harness(db);
+  const events = [...smallOn('2026-09-18', 3, 'prev'), ...bigDay(400)];
+  const { status, value } = await h.calendar(events, ['2026-09-18', DAY]);
+  assert.equal(status, 200, JSON.stringify(value));
+  assert.deepEqual(plain(value.deferredDates), [DAY]);
+  assert.equal(h.of('futbeat_store_calendar_range').length, 1);
+  assert.equal(h.of('futbeat_finalize_calendar_date').length, 0);
+  assert.deepEqual((await coverageRows(db)).map((r) => r.d), ['2026-09-18']);
+}));
+
+test('batches of small dates only keep every date in one call (no deferral)', () => withDb(async (db) => {
+  const h = harness(db);
+  const events = [...smallOn('2026-09-18', 3, 'a'), ...smallOn(DAY, 3, 'b'), ...smallOn(NEXT, 3, 'c')];
+  const { status, value } = await h.calendar(events, ['2026-09-18', DAY, NEXT]);
+  assert.equal(status, 200, JSON.stringify(value));
+  assert.equal(value.deferredDates, undefined);
+  assert.equal(value.result.coveredDates, 3);
+}));
