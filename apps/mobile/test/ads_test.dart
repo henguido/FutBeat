@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/ads.dart';
 import 'package:futbeat/core/entitlements.dart';
+import 'package:futbeat/features/matches/matches_screen.dart';
 import 'package:futbeat/features/profile/ads_privacy_tile.dart';
 
 class _MemoryStore implements EntitlementStore {
@@ -160,6 +161,7 @@ class _Harness {
     // says otherwise; [withoutUmp] = no consent platform at all.
     _Ump? ump,
     bool withoutUmp = false,
+    bool inFeedSection = false,
   }) async {
     // Never awaited: unlistened when ads are off.
     addTearDown(() => unawaited(accounts.close()));
@@ -175,16 +177,31 @@ class _Harness {
             withoutUmp ? null : (ump ?? _Ump()),
           ),
         ],
-        child: const MaterialApp(
+        child: MaterialApp(
           home: Scaffold(
-            body: Column(
-              children: [
-                Text('Antes'),
-                AdSlot(AdPlacement.matchesFeed),
-                Text('Después'),
-                AdsPrivacyOptionsTile(),
-              ],
-            ),
+            body: inFeedSection
+                ? const Column(
+                    children: [
+                      CompetitionFeedSection(
+                        group: SizedBox(
+                          key: ValueKey('test-competition-group'),
+                          height: 100,
+                        ),
+                        ad: AdSlot(AdPlacement.matchesFeed),
+                      ),
+                      SizedBox(key: ValueKey('test-next-section'), height: 20),
+                      Text('Antes'),
+                      AdsPrivacyOptionsTile(),
+                    ],
+                  )
+                : const Column(
+                    children: [
+                      Text('Antes'),
+                      AdSlot(AdPlacement.matchesFeed),
+                      Text('Después'),
+                      AdsPrivacyOptionsTile(),
+                    ],
+                  ),
           ),
         ),
       ),
@@ -272,7 +289,7 @@ void main() {
         final bannerBlock = find.byKey(const ValueKey('ad-matchesFeed'));
         expect(banner, findsOneWidget);
         expect(tester.getSize(banner), const Size(320, 50));
-        expect(tester.getSize(bannerBlock), Size(width, 58));
+        expect(tester.getSize(bannerBlock), Size(width, 50));
         expect(tester.getCenter(banner).dx, width / 2);
         expect(
           find.descendant(of: slot, matching: find.byType(Card)),
@@ -286,10 +303,10 @@ void main() {
           find.descendant(of: slot, matching: find.byType(Container)),
           findsNothing,
         );
-        final padding = tester.widget<Padding>(
+        expect(
           find.descendant(of: slot, matching: find.byType(Padding)),
+          findsNothing,
         );
-        expect(padding.padding, const EdgeInsets.only(bottom: 8));
         expect(tester.takeException(), isNull);
       },
     );
@@ -308,8 +325,45 @@ void main() {
     final banner = find.byKey(const ValueKey('fake-ad'));
     final bannerBlock = find.byKey(const ValueKey('ad-matchesFeed'));
     expect(tester.getSize(banner), const Size(468, 60));
-    expect(tester.getSize(bannerBlock), const Size(540, 68));
+    expect(tester.getSize(bannerBlock), const Size(540, 60));
     expect(tester.getCenter(banner).dx, 270);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final size in [const Size(320, 50), const Size(468, 60)]) {
+    testWidgets(
+      'feed section has 0px group-to-ad and 12px after ${size.width.toInt()}x${size.height.toInt()}',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(540, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final h = _Harness();
+        h.loader.bannerSize = size;
+        await h.pump(tester, inFeedSection: true);
+        await h.account(tester, null);
+
+        final group = find.byKey(const ValueKey('test-competition-group'));
+        final ad = find.byKey(const ValueKey('ad-matchesFeed'));
+        final next = find.byKey(const ValueKey('test-next-section'));
+        expect(tester.getTopLeft(ad).dy, tester.getBottomLeft(group).dy);
+        expect(tester.getTopLeft(next).dy - tester.getBottomLeft(ad).dy, 12);
+        expect(tester.getSize(find.byKey(const ValueKey('fake-ad'))), size);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('no-fill reserves no ad height and keeps normal 12px spacing', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.loader.noFill = true;
+    await h.pump(tester, inFeedSection: true);
+    await h.account(tester, null);
+
+    final group = find.byKey(const ValueKey('test-competition-group'));
+    final next = find.byKey(const ValueKey('test-next-section'));
+    expect(find.byKey(const ValueKey('ad-matchesFeed')), findsNothing);
+    expect(tester.getTopLeft(next).dy - tester.getBottomLeft(group).dy, 12);
     expect(tester.takeException(), isNull);
   });
 

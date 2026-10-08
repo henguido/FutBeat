@@ -537,15 +537,12 @@ class _AdSlotState extends ConsumerState<AdSlot>
     }
     final ad = _ad;
     if (ad == null) return const SizedBox.shrink();
-    return Padding(
+    return Center(
       key: ValueKey('ad-${widget.placement.name}'),
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Center(
-        child: SizedBox(
-          width: ad.size.width,
-          height: ad.size.height,
-          child: ad.widget(),
-        ),
+      child: SizedBox(
+        width: ad.size.width,
+        height: ad.size.height,
+        child: ad.widget(),
       ),
     );
   }

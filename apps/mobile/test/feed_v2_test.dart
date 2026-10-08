@@ -1485,30 +1485,34 @@ void main() {
         adsAllowed: true,
       );
       expect(find.byType(AdSlot), findsNWidgets(5));
-      expect(
-        find.byWidgetPredicate(
-          (widget) =>
-              widget is SizedBox &&
-              widget.key?.toString().contains('competition-gap-') == true,
+      expect(find.byKey(const ValueKey('competition-gap-c_0')), findsNothing);
+      final firstSectionFinder = find.byKey(
+        const ValueKey('feed-section-competition-c_0'),
+      );
+      final firstSection = tester.widget<CompetitionFeedSection>(
+        firstSectionFinder,
+      );
+      expect(firstSection.group, isA<CompetitionMatchGroupCard>());
+      expect(firstSection.ad, isA<AdSlot>());
+      final sectionColumn = tester.widget<Column>(
+        find.descendant(
+          of: firstSectionFinder,
+          matching: find.byKey(
+            const ValueKey('competition-feed-section-layout'),
+          ),
         ),
-        findsNWidgets(15),
-        reason: 'the five ad transitions replace, rather than stack on, gaps',
       );
-      final groupAboveAd = tester.widget<Card>(
-        find.byKey(const ValueKey('competition-group-competition-c_0')),
-      );
-      final groupWithoutAd = tester.widget<Card>(
-        find.byKey(const ValueKey('competition-group-competition-c_1')),
-      );
+      expect(sectionColumn.children[0], same(firstSection.group));
+      expect(sectionColumn.children[1], same(firstSection.ad));
+      expect(sectionColumn.children[2], isA<SizedBox>());
+      expect((sectionColumn.children[2] as SizedBox).height, 12);
       expect(
-        groupAboveAd.margin,
-        const EdgeInsets.only(top: 4),
-        reason: 'the precomputed slot makes flushAdBelow true for ordinal 1',
-      );
-      expect(
-        groupWithoutAd.margin,
-        const EdgeInsets.only(top: 4, bottom: 8),
-        reason: 'an ordinal without an immediate slot keeps normal spacing',
+        tester
+            .widget<Card>(
+              find.byKey(const ValueKey('competition-group-competition-c_0')),
+            )
+            .margin,
+        EdgeInsets.zero,
       );
       final text = layout(tester);
       // Every ad is followed by a group header, never by a match row.
@@ -1559,26 +1563,26 @@ void main() {
       expect(RegExp('A(?!H)').hasMatch(layout(tester)), isFalse);
     });
 
-    testWidgets('a short feed gets few or no ad slots', (tester) async {
+    testWidgets('ads unavailable collapse to normal section spacing', (
+      tester,
+    ) async {
       await _pump(tester, data: manyGroups(3), size: const Size(390, 9000));
       expect(find.byType(AdSlot), findsOneWidget);
-      final group = tester.widget<Card>(
-        find.byKey(const ValueKey('competition-group-competition-c_0')),
+      expect(find.byKey(const ValueKey('ad-matchesFeed')), findsNothing);
+      final section = tester.widget<CompetitionFeedSection>(
+        find.byKey(const ValueKey('feed-section-competition-c_0')),
       );
-      expect(
-        group.margin,
-        const EdgeInsets.only(top: 4, bottom: 8),
-        reason: 'without an available ad, normal group spacing remains',
-      );
-      expect(
-        find.byWidgetPredicate(
-          (widget) =>
-              widget is SizedBox &&
-              widget.key?.toString().contains('competition-gap-') == true,
+      final column = tester.widget<Column>(
+        find.descendant(
+          of: find.byKey(const ValueKey('feed-section-competition-c_0')),
+          matching: find.byKey(
+            const ValueKey('competition-feed-section-layout'),
+          ),
         ),
-        findsNWidgets(3),
-        reason: 'no gap is consumed by an unavailable ad',
       );
+      expect(section.ad, isA<AdSlot>());
+      expect((column.children.last as SizedBox).height, 12);
+      expect(tester.getSize(find.byType(AdSlot).first).height, 0);
     });
   });
 }

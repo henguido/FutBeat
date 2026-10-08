@@ -384,7 +384,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
-          final adsAllowed = ref.watch(adsAllowedProvider);
           final allGames = dedupeFixtures(data.onDate(selected, 'Todos'));
           final games = dedupeFixtures(data.onDate(selected, effectiveFilter));
 
@@ -422,8 +421,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           );
 
           // Resolve every regular block and its ad cadence before creating
-          // any group widget. In particular, [flushAdBelow] must not depend
-          // on a set that is populated later in this build.
+          // any section. Cadence decides which section owns an ad; the
+          // section owns the group/ad/next-section layout.
           final visibleCompetitions = orderedCompetitions
               .where(
                 (competition) =>
@@ -436,10 +435,17 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             groups: visibleCompetitions.length,
             filter: effectiveFilter,
           );
-          final compactAdAfter = adsAllowed
-              ? plannedAdSlots.toSet()
-              : const <int>{};
           final feedItems = <Widget Function()>[];
+
+          AdSlot? adAfter(int ordinal) {
+            final slotIndex = plannedAdSlots.indexOf(ordinal);
+            if (slotIndex < 0) return null;
+            final day = requestDate.toIso8601String().substring(0, 10);
+            return AdSlot(
+              AdPlacement.matchesFeed,
+              key: ValueKey('feed-ad-$day-$slotIndex'),
+            );
+          }
 
           void addCompetition(Entity competition, int ordinal) {
             final competitionMatches =
@@ -453,22 +459,19 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                 effectiveFilter != 'En vivo' &&
                 _collapsed.contains(collapseKey);
             feedItems.add(
-              () => CompetitionMatchGroupCard(
-                scope: 'competition',
-                competition: competition,
-                matches: competitionMatches,
-                data: data,
-                collapsed: collapsed,
-                onOpen: () => context.push('/competition/${competition.id}'),
-                onToggle: () => _toggleCollapsed(collapseKey),
-                canToggle: effectiveFilter != 'En vivo',
-                flushAdBelow: adsAllowed && compactAdAfter.contains(ordinal),
-              ),
-            );
-            feedItems.add(
-              () => SizedBox(
-                key: ValueKey('competition-gap-${competition.id}'),
-                height: 8,
+              () => CompetitionFeedSection(
+                key: ValueKey('feed-section-competition-${competition.id}'),
+                group: CompetitionMatchGroupCard(
+                  scope: 'competition',
+                  competition: competition,
+                  matches: competitionMatches,
+                  data: data,
+                  collapsed: collapsed,
+                  onOpen: () => context.push('/competition/${competition.id}'),
+                  onToggle: () => _toggleCollapsed(collapseKey),
+                  canToggle: effectiveFilter != 'En vivo',
+                ),
+                ad: adAfter(ordinal),
               ),
             );
           }
@@ -623,10 +626,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             );
           }
 
-          // Feed positions where a complete block ends: [0] = after
-          // FAVORITOS, then after each competition group (ads go only there).
-          final blockEnds = <int, int>{};
-          final blockGapCounts = <int, int>{};
           if (followedGames.isNotEmpty) {
             feedItems.add(() => const _FeedHeading(title: 'FAVORITOS'));
             final favoriteGroups = <String, List<FootballMatch>>{};
@@ -646,31 +645,23 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                   effectiveFilter != 'En vivo' &&
                   _collapsed.contains(collapseKey);
               feedItems.add(
-                () => CompetitionMatchGroupCard(
-                  scope: 'favorite',
-                  competition: competition,
-                  matches: entry.value,
-                  data: data,
-                  collapsed: collapsed,
-                  onOpen: () => context.push('/competition/${competition.id}'),
-                  onToggle: () => _toggleCollapsed(collapseKey),
-                  canToggle: effectiveFilter != 'En vivo',
-                  flushAdBelow:
-                      adsAllowed &&
-                      index == favoriteEntries.length - 1 &&
-                      compactAdAfter.contains(0),
-                ),
-              );
-              feedItems.add(
-                () => SizedBox(
-                  key: ValueKey('favorite-gap-${competition.id}'),
-                  height: 8,
+                () => CompetitionFeedSection(
+                  key: ValueKey('feed-section-favorite-${competition.id}'),
+                  group: CompetitionMatchGroupCard(
+                    scope: 'favorite',
+                    competition: competition,
+                    matches: entry.value,
+                    data: data,
+                    collapsed: collapsed,
+                    onOpen: () =>
+                        context.push('/competition/${competition.id}'),
+                    onToggle: () => _toggleCollapsed(collapseKey),
+                    canToggle: effectiveFilter != 'En vivo',
+                  ),
+                  ad: index == favoriteEntries.length - 1 ? adAfter(0) : null,
                 ),
               );
             }
-            feedItems.add(() => const SizedBox(height: 4));
-            blockEnds[0] = feedItems.length;
-            blockGapCounts[0] = 2;
           }
 
           // Then every competition with its remaining matches. Favourite-team
@@ -679,31 +670,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           for (final (index, competition) in visibleCompetitions.indexed) {
             final ordinal = index + 1;
             addCompetition(competition, ordinal);
-            blockEnds[ordinal] = feedItems.length;
-            blockGapCounts[ordinal] = 1;
-          }
-
-          // Discreet ads between complete blocks (see [feedAdSlots]). Each
-          // slot is keyed by date and position: a date change builds new
-          // slots, never mixing or duplicating the previous day's ads. Built
-          // lazily by the list, so a slot loads only when scrolled near.
-          for (final (index, after)
-              in plannedAdSlots.indexed.toList().reversed) {
-            final at = blockEnds[after];
-            if (at == null) continue;
-            // A normal group-to-group transition keeps its 8 px rhythm.
-            // Around an ad, replace the artificial trailing spacer instead:
-            // the group Card margins plus the banner's own minimal padding
-            // provide the separation without leaving an empty band.
-            final gapCount = adsAllowed ? (blockGapCounts[after] ?? 0) : 0;
-            final insertAt = at - gapCount;
-            if (gapCount > 0) feedItems.removeRange(insertAt, at);
-            final day = requestDate.toIso8601String().substring(0, 10);
-            final key = ValueKey('feed-ad-$day-$index');
-            feedItems.insert(
-              insertAt,
-              () => AdSlot(AdPlacement.matchesFeed, key: key),
-            );
           }
 
           // Horizontal fling = previous/next day. Vertical scrolling and
@@ -1037,10 +1003,31 @@ class _FeedHeading extends StatelessWidget {
   );
 }
 
+/// A structural feed unit: group, optional ad, then the transition to the
+/// next unit. The ad is a sibling of the card, never part of its surface.
+class CompetitionFeedSection extends StatelessWidget {
+  const CompetitionFeedSection({required this.group, this.ad, super.key});
+
+  final Widget group;
+  final Widget? ad;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    key: const ValueKey('competition-feed-section-layout'),
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      group,
+      ?ad,
+      const SizedBox(
+        key: ValueKey('competition-feed-section-spacing'),
+        height: 12,
+      ),
+    ],
+  );
+}
+
 /// A complete competition block: identity, optional subgroup labels and every
-/// surviving match row. Keeping the rows inside the card makes the visual
-/// hierarchy match the feed's canonical grouping and gives ads a safe block
-/// boundary.
+/// surviving match row.
 class CompetitionMatchGroupCard extends StatelessWidget {
   const CompetitionMatchGroupCard({
     required this.scope,
@@ -1051,7 +1038,6 @@ class CompetitionMatchGroupCard extends StatelessWidget {
     required this.onOpen,
     required this.onToggle,
     required this.canToggle,
-    this.flushAdBelow = false,
     super.key,
   });
 
@@ -1063,7 +1049,6 @@ class CompetitionMatchGroupCard extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback onToggle;
   final bool canToggle;
-  final bool flushAdBelow;
 
   // Same visibility rule as before (a provider country), localized text only.
   String? get region =>
@@ -1087,7 +1072,7 @@ class CompetitionMatchGroupCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         side: const BorderSide(color: Color(0xFF2A3438)),
       ),
-      margin: EdgeInsets.only(top: 4, bottom: flushAdBelow ? 0 : 8),
+      margin: EdgeInsets.zero,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
