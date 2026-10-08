@@ -250,6 +250,50 @@ function calendarDateGroups(
   return groups;
 }
 
+// Production 2026-10-08 (#158/#159, v38): the date 2026-09-19 (1,477
+// fixtures) hit 57014 under the API role's 8 s statement timeout at
+// read-current (8.6 s) and then at store (11.0 s); 2026-09-18 (430) stored
+// in 6.0 s. A date with more fixtures than this is ingested in balanced
+// sub-batches (resolve-base, read-current, normalize and store each), stored
+// with an empty coverage (adds/updates only, nothing deleted), and finalized
+// once with futbeat_finalize_calendar_date (deletes and coverage for the
+// whole date). A date at or below it keeps the single-store path.
+const CALENDAR_SUB_BATCH_MAX = 300;
+
+// Kickoff order; a cut only falls between 5-minute kickoff buckets (the
+// match reuse key, see goal_api.mjs), so two fixtures that may resolve to
+// the same match are always in the same sub-batch. Missing kickoffs first.
+function calendarSubBatches(
+  events: Array<Record<string, unknown>>,
+  max: number,
+) {
+  if (events.length <= max) return [events];
+  const bucketOf = (event: Record<string, unknown>) => {
+    const kickoff = Date.parse(String(event?.kickoffUtc ?? ""));
+    return Number.isFinite(kickoff) ? Math.floor(kickoff / 300000) : -Infinity;
+  };
+  const sorted = events
+    .map((event, index) => ({ event, index, bucket: bucketOf(event) }))
+    .sort((a, b) =>
+      a.bucket === b.bucket ? a.index - b.index : a.bucket < b.bucket ? -1 : 1
+    );
+  const target = Math.ceil(events.length / Math.ceil(events.length / max));
+  const batches: Array<Array<Record<string, unknown>>> = [];
+  let current: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < sorted.length;) {
+    let j = i;
+    while (j < sorted.length && sorted[j].bucket === sorted[i].bucket) j += 1;
+    if (current.length > 0 && current.length + (j - i) > target) {
+      batches.push(current);
+      current = [];
+    }
+    for (let k = i; k < j; k += 1) current.push(sorted[k].event);
+    i = j;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
 function addResolvedRows(
   target: Map<string, string>,
   rows: unknown,
@@ -1577,6 +1621,11 @@ Deno.serve(async (request) => {
   let currentDate: string | null = null;
   const storedDates: string[] = [];
   let closeDateStage = () => {};
+  // Large dates (see CALENDAR_SUB_BATCH_MAX): stage times per sub-batch, the
+  // sub-batch in progress and how many of the current date are stored.
+  const stageMsBySubBatch: Record<string, Array<Record<string, number>>> = {};
+  let currentSubBatch: number | null = null;
+  let storedSubBatches = 0;
 
   try {
     // GOAL: only the existing competitions/teams/matches of this batch
@@ -1642,52 +1691,120 @@ Deno.serve(async (request) => {
         stageMsByDate[date] = dateMs;
         let dateStage = "";
         let dateStageStarted = performance.now();
+        let subMs: Record<string, number> | null = null;
         const setDateStage = (next: string) => {
           const now = performance.now();
           if (dateStage) {
-            dateMs[dateStage] = Math.round(
-              (dateMs[dateStage] ?? 0) + now - dateStageStarted,
-            );
+            const spent = now - dateStageStarted;
+            dateMs[dateStage] = Math.round((dateMs[dateStage] ?? 0) + spent);
+            if (subMs) {
+              subMs[dateStage] = Math.round((subMs[dateStage] ?? 0) + spent);
+            }
           }
           dateStage = next;
           dateStageStarted = now;
         };
         closeDateStage = () => setDateStage("");
+        const onStage = (next: string) => {
+          setStage(next);
+          setDateStage(next);
+        };
+        const dateCoverage = coverage.filter((item) => String(item.date) === date);
+        const subBatches = calendarSubBatches(dateEvents, CALENDAR_SUB_BATCH_MAX);
+        currentSubBatch = null;
+        storedSubBatches = 0;
 
-        const normalized = await normalizeGoalBatch(
-          provider,
-          dateEvents,
-          async (resolved: Map<string, string>) =>
-            withCalendar(await readExisting(dateEvents, resolved)),
-          receivedAt,
-          (next) => {
-            setStage(next);
-            setDateStage(next);
-          },
-        );
-        resolvedBase += normalized.resolvedBase;
-        resolvedMatches += normalized.resolvedMatches;
+        if (subBatches.length <= 1) {
+          const normalized = await normalizeGoalBatch(
+            provider,
+            dateEvents,
+            async (resolved: Map<string, string>) =>
+              withCalendar(await readExisting(dateEvents, resolved)),
+            receivedAt,
+            onStage,
+          );
+          resolvedBase += normalized.resolvedBase;
+          resolvedMatches += normalized.resolvedMatches;
 
-        setStage("store");
-        setDateStage("store");
-        byDate.push(
-          await rpc(
-            "futbeat_store_calendar_range",
-            {
-              p_provider: provider,
-              p_received_at: receivedAt,
-              p_coverage: coverage.filter((item) => String(item.date) === date),
-              p_snapshot: normalized.snapshot,
-            },
-            60000,
-          ),
-        );
+          onStage("store");
+          byDate.push(
+            await rpc(
+              "futbeat_store_calendar_range",
+              {
+                p_provider: provider,
+                p_received_at: receivedAt,
+                p_coverage: dateCoverage,
+                p_snapshot: normalized.snapshot,
+              },
+              60000,
+            ),
+          );
+          accepted += normalized.snapshot.matches.length;
+          for (const item of normalized.snapshot.competitions) competitionIds.add(item.id);
+          for (const item of normalized.snapshot.teams) teamIds.add(item.id);
+        } else {
+          // Sub-batches: each one adds/updates its own matches (empty
+          // coverage: nothing deleted, the date not marked covered). Only
+          // when every sub-batch is stored, one finalize applies the date's
+          // deletes and coverage against ALL its match ids. A failure halfway
+          // leaves the date uncovered (planned again) and deletes nothing.
+          const dateMatchIds = new Set<string>();
+          const subRecords: Array<Record<string, number>> = [];
+          stageMsBySubBatch[date] = subRecords;
+          for (const [index, subEvents] of subBatches.entries()) {
+            currentSubBatch = index;
+            subMs = { fixtures: subEvents.length };
+            subRecords.push(subMs);
+            const normalized = await normalizeGoalBatch(
+              provider,
+              subEvents,
+              async (resolved: Map<string, string>) =>
+                withCalendar(await readExisting(subEvents, resolved)),
+              receivedAt,
+              onStage,
+            );
+            resolvedBase += normalized.resolvedBase;
+            resolvedMatches += normalized.resolvedMatches;
+
+            onStage("store");
+            await rpc(
+              "futbeat_store_calendar_range",
+              {
+                p_provider: provider,
+                p_received_at: receivedAt,
+                p_coverage: [],
+                p_snapshot: normalized.snapshot,
+              },
+              60000,
+            );
+            setDateStage("");
+            subMs = null;
+            storedSubBatches = index + 1;
+            for (const item of normalized.snapshot.matches) dateMatchIds.add(item.id);
+            for (const item of normalized.snapshot.competitions) competitionIds.add(item.id);
+            for (const item of normalized.snapshot.teams) teamIds.add(item.id);
+          }
+          currentSubBatch = null;
+
+          onStage("finalize");
+          byDate.push(
+            await rpc(
+              "futbeat_finalize_calendar_date",
+              {
+                p_provider: provider,
+                p_received_at: receivedAt,
+                p_date: date,
+                p_count: Number(dateCoverage[0]?.count ?? 0),
+                p_match_ids: [...dateMatchIds].sort(),
+              },
+              60000,
+            ),
+          );
+          accepted += dateMatchIds.size;
+        }
         closeDateStage();
         closeDateStage = () => {};
         storedDates.push(date);
-        accepted += normalized.snapshot.matches.length;
-        for (const item of normalized.snapshot.competitions) competitionIds.add(item.id);
-        for (const item of normalized.snapshot.teams) teamIds.add(item.id);
       }
       currentDate = null;
 
@@ -1710,6 +1827,7 @@ Deno.serve(async (request) => {
           resolvedMatches,
           stageMs: (closeStage(), stageMs),
           stageMsByDate,
+          ...(Object.keys(stageMsBySubBatch).length > 0 ? { stageMsBySubBatch } : {}),
           transport: "github-actions-oidc",
           provider: input.source,
           mode,
@@ -1826,8 +1944,20 @@ Deno.serve(async (request) => {
       error instanceof Error ? error.message.slice(0, 500) : "unknown";
     closeDateStage();
     // Calendar: the failed date and the dates stored before it (complete).
+    // A large date also names the failed sub-batch and how many of its
+    // sub-batches were stored (adds/updates only; the date stays uncovered).
     const calendarProgress = mode === "calendar"
-      ? { stageMsByDate, failedDate: currentDate, storedDates }
+      ? {
+        stageMsByDate,
+        failedDate: currentDate,
+        storedDates,
+        ...(Object.keys(stageMsBySubBatch).length > 0
+          ? { stageMsBySubBatch }
+          : {}),
+        ...(currentSubBatch !== null
+          ? { failedSubBatch: currentSubBatch, storedSubBatches }
+          : {}),
+      }
       : {};
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId,
