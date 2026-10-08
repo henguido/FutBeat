@@ -1068,6 +1068,21 @@ void main() {
       expect(find.text('Continuar'), findsOneWidget);
     });
 
+    testWidgets('Account > Iniciar sesión exposes complete shared auth UI', (
+      tester,
+    ) async {
+      await start(tester);
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-login')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AuthSheet), findsOneWidget);
+      expect(sheetTitle(tester), 'Iniciar sesión');
+      expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-forgot')), findsOneWidget);
+    });
+
     testWidgets('closing the sheet keeps the onboarding step', (tester) async {
       final service = await start(tester);
       await toAccount(tester);
@@ -1079,6 +1094,73 @@ void main() {
       expect(find.text('Crear cuenta'), findsOneWidget);
       expect(find.text('Continuar sin cuenta'), findsOneWidget);
     });
+
+    testWidgets('opening and closing auth preserves country and follows', (
+      tester,
+    ) async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final db = AppDatabase(NativeDatabase.memory());
+      final service = _SheetAuth(db);
+      addTearDown(() async {
+        service.dispose();
+        await db.close();
+      });
+      await db.savePreference(detectedCountry: 'CR', selectedCountry: 'CR');
+      await db.addFollows({'team:team_cr', 'player:player_cr'});
+      await tester.runAsync(service.restore);
+      await pumpOnboarding(
+        tester,
+        database: db,
+        pushService: service,
+        livePreference: true,
+        liveFollows: true,
+      );
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-signup')));
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.byType(AuthSheet))).pop();
+      await tester.pumpAndSettle();
+
+      final preference = await tester.runAsync(
+        () => db.watchPreference().first,
+      );
+      final follows = await tester.runAsync(() => db.watchFollows().first);
+      expect(preference?.selectedCountry, 'CR');
+      expect(follows, {'team:team_cr', 'player:player_cr'});
+      expect(find.text('Crear cuenta'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    for (final width in [320.0, 360.0, 390.0]) {
+      testWidgets('Account auth sheet has no overflow at ${width.toInt()}px', (
+        tester,
+      ) async {
+        FlutterSecureStorage.setMockInitialValues({});
+        final db = AppDatabase(NativeDatabase.memory());
+        final service = _SheetAuth(db);
+        addTearDown(() async {
+          service.dispose();
+          await db.close();
+        });
+        await tester.runAsync(service.restore);
+        await pumpOnboarding(
+          tester,
+          database: db,
+          pushService: service,
+          width: width,
+        );
+        await toAccount(tester);
+        await tester.tap(
+          find.byKey(const ValueKey('onboarding-account-signup')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+        expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+        expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
   });
 
   group('onboarding v2', () {
