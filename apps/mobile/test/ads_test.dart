@@ -266,8 +266,10 @@ void main() {
 
         final banner = find.byKey(const ValueKey('fake-ad'));
         final slot = find.byType(AdSlot);
+        final bannerBlock = find.byKey(const ValueKey('ad-matchesFeed'));
         expect(banner, findsOneWidget);
         expect(tester.getSize(banner), const Size(320, 50));
+        expect(tester.getSize(bannerBlock), Size(width, 56));
         expect(tester.getCenter(banner).dx, width / 2);
         expect(
           find.descendant(of: slot, matching: find.byType(Card)),
@@ -284,7 +286,7 @@ void main() {
         final padding = tester.widget<Padding>(
           find.descendant(of: slot, matching: find.byType(Padding)),
         );
-        expect(padding.padding, const EdgeInsets.symmetric(vertical: 8));
+        expect(padding.padding, const EdgeInsets.symmetric(vertical: 3));
         expect(tester.takeException(), isNull);
       },
     );

@@ -538,7 +538,7 @@ class _AdSlotState extends ConsumerState<AdSlot>
     if (ad == null) return const SizedBox.shrink();
     return Padding(
       key: ValueKey('ad-${widget.placement.name}'),
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 3),
       child: Center(
         child: SizedBox(
           width: ad.size.width,
