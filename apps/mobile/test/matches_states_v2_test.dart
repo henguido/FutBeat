@@ -38,7 +38,13 @@ Snapshot _data({
               'competitionId': 'competition',
               'homeTeamId': 'home',
               'awayTeamId': 'away',
-              'startTime': '2026-10-07T18:00:00-06:00',
+              // Relative to the real clock: Match.isUpcoming reads
+              // DateTime.now(), so a fixed kickoff stops being "Próximos"
+              // once that time of day has passed.
+              'startTime': DateTime.now()
+                  .toUtc()
+                  .add(const Duration(hours: 2))
+                  .toIso8601String(),
               'status': status,
               'events': <dynamic>[],
               'statistics': <dynamic>[],
