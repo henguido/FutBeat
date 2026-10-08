@@ -12,10 +12,12 @@
 -- for ONE UTC date, against the full set of match ids of that date:
 --   * deletes the GOAL calendar index rows of the date absent from the set;
 --   * records the date's coverage (fetched_at, fixture_count).
--- Guard: every id of the set must already be a stored match. A sub-batch that
--- was not stored (failure halfway) can never make its matches disappear: the
--- ingest only calls this after all sub-batches succeeded, and this refuses
--- otherwise. Idempotent: the same set twice deletes nothing the second time.
+-- Guard: every id of the set must already be indexed as a GOAL match inside
+-- this exact provider date. Checking entities alone is insufficient: a match
+-- entity may pre-exist for another date even when this sub-batch was not
+-- stored. A failed/omitted sub-batch therefore cannot finalize coverage or
+-- make matches disappear. Idempotent: the same set twice deletes nothing the
+-- second time.
 -- No provider call, no entity payload write.
 
 create or replace function futbeat_private.futbeat_finalize_calendar_date(
@@ -55,11 +57,14 @@ begin
   select count(*) into v_missing
     from unnest(v_ids) u(match_id)
     where not exists(
-      select 1 from futbeat_private.entities e
-      where e.id = u.match_id and e.kind = 'match'
+      select 1 from futbeat_private.calendar_matches cm
+      where cm.match_id = u.match_id
+        and cm.source = 'GOAL API'
+        and cm.start_time >= (p_date::timestamp at time zone 'UTC')
+        and cm.start_time < ((p_date + 1)::timestamp at time zone 'UTC')
     );
   if v_missing > 0 then
-    raise exception 'calendar finalize %: % match ids are not stored', p_date, v_missing;
+    raise exception 'calendar finalize %: % match ids are not indexed for provider date', p_date, v_missing;
   end if;
 
   delete from futbeat_private.calendar_matches cm

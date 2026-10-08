@@ -253,7 +253,7 @@ function calendarDateGroups(
 // Production 2026-10-08 (#158/#159, v38): the date 2026-09-19 (1,477
 // fixtures) hit 57014 under the API role's 8 s statement timeout at
 // read-current (8.6 s) and then at store (11.0 s); 2026-09-18 (430) stored
-// in 6.0 s. A date with more fixtures than this is ingested in balanced
+// in 6.0 s. A date with more fixtures than this is ingested in bounded
 // sub-batches (resolve-base, read-current, normalize and store each), stored
 // with an empty coverage (adds/updates only, nothing deleted), and finalized
 // once with futbeat_finalize_calendar_date (deletes and coverage for the
@@ -277,13 +277,15 @@ function calendarSubBatches(
     .sort((a, b) =>
       a.bucket === b.bucket ? a.index - b.index : a.bucket < b.bucket ? -1 : 1
     );
-  const target = Math.ceil(events.length / Math.ceil(events.length / max));
   const batches: Array<Array<Record<string, unknown>>> = [];
   let current: Array<Record<string, unknown>> = [];
   for (let i = 0; i < sorted.length;) {
     let j = i;
     while (j < sorted.length && sorted[j].bucket === sorted[i].bucket) j += 1;
-    if (current.length > 0 && current.length + (j - i) > target) {
+    if (j - i > max) {
+      throw new Error("kickoff bucket exceeds calendar sub-batch maximum");
+    }
+    if (current.length > 0 && current.length + (j - i) > max) {
       batches.push(current);
       current = [];
     }

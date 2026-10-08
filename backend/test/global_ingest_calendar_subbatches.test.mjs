@@ -90,7 +90,7 @@ const lastLedger = async (db) =>
   (await db.query("select status, metadata from futbeat_private.provider_call_ledger where call_kind='calendar-ingest' order by id desc limit 1")).rows[0];
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-test('sub-batches: kickoff order, balanced, a 5-minute bucket is never split, missing kickoffs first', () => withDb(async (db) => {
+test('sub-batches: kickoff order, bounded/minimal, a 5-minute bucket is never split, missing kickoffs first', () => withDb(async (db) => {
   const { context } = harness(db);
   assert.equal(context.CALENDAR_SUB_BATCH_MAX, undefined, 'const is module-scoped');
   const small = [fixture('s1', 10), fixture('s2', 5)];
@@ -109,13 +109,17 @@ test('sub-batches: kickoff order, balanced, a 5-minute bucket is never split, mi
     assert.ok(bucket(batches[i - 1].at(-1)) < bucket(batches[i][0]), `cut ${i} falls between buckets`);
   }
 
-  // 12 fixtures in one bucket + 2 elsewhere, max 5: the bucket stays whole.
+  const productionScale = context.calendarSubBatches(bigDay(1477, 'production-scale'), 300);
+  assert.equal(productionScale.length, 5);
+  assert.ok(productionScale.every((part) => part.length <= 300));
+  assert.equal(productionScale.flat().length, 1477);
+
+  // A bucket larger than the hard maximum cannot satisfy both invariants.
+  // Fail closed before any store instead of silently creating an oversized
+  // sub-batch or splitting fixtures that share the reuse bucket.
   const crowded = [...Array.from({ length: 12 }, (_, i) => fixture(`c${i}`, 600)), fixture('early', 10), fixture('late', 900),
     { apiId: 'nokick', kickoffUtc: '' }];
-  const parts = context.calendarSubBatches(crowded, 5);
-  assert.equal(parts[0][0].apiId, 'nokick');
-  assert.equal(parts.filter((p) => p.some((e) => e.apiId.startsWith('c'))).length, 1, 'one batch holds the whole bucket');
-  assert.equal(parts.flat().length, 15);
+  assert.throws(() => context.calendarSubBatches(crowded, 5), /kickoff bucket exceeds calendar sub-batch maximum/);
 }));
 
 test('one date at or below 300 fixtures: unchanged single store with its coverage, no finalize', () => withDb(async (db) => {
@@ -170,6 +174,23 @@ test('large date (700): 3 sub-batches, read-current per sub-window, stores witho
   for (const key of ['resolve-base', 'read-current', 'store', 'finalize']) {
     assert.equal(typeof metadata.stageMsByDate[DAY][key], 'number', key);
   }
+}));
+
+test('production-scale date (1,477): minimum 5 bounded stores and one finalize', () => withDb(async (db) => {
+  const h = harness(db);
+  const { status, value } = await h.calendar(bigDay(1477, 'production-scale-e2e'), [DAY]);
+  assert.equal(status, 200, JSON.stringify(value));
+  assert.equal(value.accepted, 1477);
+  assert.equal(h.of('futbeat_read_ingest_context').length, 5);
+  const stores = h.of('futbeat_store_calendar_range');
+  assert.equal(stores.length, 5);
+  assert.ok(stores.every((call) => call.body.p_snapshot.matches.length <= 300));
+  assert.ok(stores.every((call) => call.body.p_coverage.length === 0));
+  assert.equal(h.of('futbeat_finalize_calendar_date').length, 1);
+  assert.equal(await calendarRows(db), 1477);
+  assert.deepEqual(await coverageRows(db), [{ d: DAY, fixture_count: 1477 }]);
+  const { metadata } = await lastLedger(db);
+  assert.equal(metadata.stageMsBySubBatch[DAY].length, 5);
 }));
 
 test('large date: a sub-batch never deletes another sub-batch; the finalize removes only a fixture GOAL no longer lists', () => withDb(async (db) => {
@@ -261,11 +282,18 @@ test('SQL finalize: refuses unstored ids and invalid payloads; service_role only
   const stored = (await db.query("select match_id from futbeat_private.calendar_matches order by 1")).rows.map((r) => r.match_id);
   const call = (ids, provider = 'goal_api', n = 3) => db.query(
     'select public.futbeat_finalize_calendar_date($1,now(),$2::date,$3,$4::jsonb) v', [provider, DAY, n, JSON.stringify(ids)]);
-  await assert.rejects(call([...stored, 'fb_match_never_stored']), /not stored/);
+  await assert.rejects(call([...stored, 'fb_match_never_stored']), /not indexed for provider date/);
+  await db.query(`insert into futbeat_private.entities(id,kind,payload) values(
+    'fb_match_other_date','match',jsonb_build_object(
+      'id','fb_match_other_date','startTime','2026-09-20T12:00:00Z',
+      'provenance',jsonb_build_object('source','GOAL API','receivedAt',now())))`);
+  await assert.rejects(call([...stored, 'fb_match_other_date']), /not indexed for provider date/);
   await assert.rejects(call(stored, 'other'), /Invalid calendar date finalize payload/);
   await assert.rejects(call([1, 2]), /Invalid calendar date finalize payload/);
   await assert.rejects(call(stored, 'goal_api', -1), /Invalid calendar date finalize payload/);
-  assert.equal(await calendarRows(db), 3, 'a refused finalize deletes nothing');
+  assert.equal(await count(db, `select count(*)::int n from futbeat_private.calendar_matches
+    where source='GOAL API' and start_time >= $1::timestamptz and start_time < $2::timestamptz`,
+    [`${DAY}T00:00:00Z`, `${NEXT}T00:00:00Z`]), 3, 'a refused finalize deletes nothing from its date');
   const ok = (await call(stored.slice(1))).rows[0].v;
   assert.deepEqual(ok, { matches: 2, deleted: 1, coveredDates: 1 });
   assert.deepEqual((await call(stored.slice(1))).rows[0].v, { matches: 2, deleted: 0, coveredDates: 1 }, 'idempotent');
