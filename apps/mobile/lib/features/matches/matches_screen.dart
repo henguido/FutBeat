@@ -420,8 +420,26 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             pinnedCompetitionIds:
                 preference?.pinnedCompetitionIds ?? const <String>[],
           );
+
+          // Resolve every regular block and its ad cadence before creating
+          // any group widget. In particular, [flushAdBelow] must not depend
+          // on a set that is populated later in this build.
+          final visibleCompetitions = orderedCompetitions
+              .where(
+                (competition) =>
+                    (remainingByCompetition[competition.id]?.isNotEmpty ??
+                    false),
+              )
+              .toList(growable: false);
+          final plannedAdSlots = feedAdSlots(
+            favorites: followedGames.isNotEmpty,
+            groups: visibleCompetitions.length,
+            filter: effectiveFilter,
+          );
+          final compactAdAfter = adsAllowed
+              ? plannedAdSlots.toSet()
+              : const <int>{};
           final feedItems = <Widget Function()>[];
-          final compactAdAfter = <int>{};
 
           void addCompetition(Entity competition, int ordinal) {
             final competitionMatches =
@@ -658,29 +676,19 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           // Then every competition with its remaining matches. Favourite-team
           // fixtures were removed above, so every canonical match is rendered
           // exactly once.
-          var groups = 0;
-          for (final competition in orderedCompetitions) {
-            final before = feedItems.length;
-            final ordinal = groups + 1;
+          for (final (index, competition) in visibleCompetitions.indexed) {
+            final ordinal = index + 1;
             addCompetition(competition, ordinal);
-            if (feedItems.length > before) {
-              groups = ordinal;
-              blockEnds[groups] = feedItems.length;
-              blockGapCounts[groups] = 1;
-            }
+            blockEnds[ordinal] = feedItems.length;
+            blockGapCounts[ordinal] = 1;
           }
 
           // Discreet ads between complete blocks (see [feedAdSlots]). Each
           // slot is keyed by date and position: a date change builds new
           // slots, never mixing or duplicating the previous day's ads. Built
           // lazily by the list, so a slot loads only when scrolled near.
-          final slots = feedAdSlots(
-            favorites: followedGames.isNotEmpty,
-            groups: groups,
-            filter: effectiveFilter,
-          );
-          compactAdAfter.addAll(slots);
-          for (final (index, after) in slots.indexed.toList().reversed) {
+          for (final (index, after)
+              in plannedAdSlots.indexed.toList().reversed) {
             final at = blockEnds[after];
             if (at == null) continue;
             // A normal group-to-group transition keeps its 8 px rhythm.

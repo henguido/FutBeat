@@ -253,9 +253,10 @@ typedef PlatformBannerFactory = PlatformBanner Function(
   required void Function() onFailed,
 });
 
-/// In-feed banner sized to the screen width (Google's anchored adaptive
-/// size, height known before loading: no layout jump), falling back to the
-/// standard 320x50 banner.
+/// In-feed banner sized to the screen width using Google's large anchored
+/// adaptive format. The effective size is whatever Google returns (for
+/// example, a test creative may report 468x60); 320x50 is only the fallback
+/// when no adaptive size is available.
 class _GoogleBanner implements PlatformBanner {
   _GoogleBanner(
     this.unitId, {

@@ -40,10 +40,12 @@ class _Source implements EntitlementSource {
 }
 
 class _FakeAd implements LoadedAd {
+  _FakeAd({this.size = const Size(320, 50)});
+
   bool disposed = false;
 
   @override
-  Size get size => const Size(320, 50);
+  final Size size;
 
   @override
   Widget widget() => const ColoredBox(
@@ -61,6 +63,7 @@ class _Loader implements AdLoader {
   final loaded = <_FakeAd>[];
   bool noFill = false;
   bool throws = false;
+  Size bannerSize = const Size(320, 50);
 
   @override
   Future<LoadedAd?> loadBanner(
@@ -70,7 +73,7 @@ class _Loader implements AdLoader {
     requests.add((unitId: unitId, personalized: personalized));
     if (throws) throw StateError('AdMob crashed');
     if (noFill) return null;
-    final ad = _FakeAd();
+    final ad = _FakeAd(size: bannerSize);
     loaded.add(ad);
     return ad;
   }
@@ -256,7 +259,7 @@ void main() {
 
   for (final width in [320.0, 360.0, 390.0]) {
     testWidgets(
-      'feed banner is native-sized, centered and unwrapped at ${width.toInt()}px',
+      'fallback-sized banner is centered and unwrapped at ${width.toInt()}px',
       (tester) async {
         await tester.binding.setSurfaceSize(Size(width, 800));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -291,6 +294,24 @@ void main() {
       },
     );
   }
+
+  testWidgets('renders the effective adaptive size returned by Google', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(540, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final h = _Harness();
+    h.loader.bannerSize = const Size(468, 60);
+    await h.pump(tester);
+    await h.account(tester, null);
+
+    final banner = find.byKey(const ValueKey('fake-ad'));
+    final bannerBlock = find.byKey(const ValueKey('ad-matchesFeed'));
+    expect(tester.getSize(banner), const Size(468, 60));
+    expect(tester.getSize(bannerBlock), const Size(540, 68));
+    expect(tester.getCenter(banner).dx, 270);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('PREMIUM never requests an ad, even while its cache loads', (
     tester,

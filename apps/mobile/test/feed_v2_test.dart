@@ -1500,8 +1500,16 @@ void main() {
       final groupWithoutAd = tester.widget<Card>(
         find.byKey(const ValueKey('competition-group-competition-c_1')),
       );
-      expect(groupAboveAd.margin, const EdgeInsets.only(top: 4));
-      expect(groupWithoutAd.margin, const EdgeInsets.only(top: 4, bottom: 8));
+      expect(
+        groupAboveAd.margin,
+        const EdgeInsets.only(top: 4),
+        reason: 'the precomputed slot makes flushAdBelow true for ordinal 1',
+      );
+      expect(
+        groupWithoutAd.margin,
+        const EdgeInsets.only(top: 4, bottom: 8),
+        reason: 'an ordinal without an immediate slot keeps normal spacing',
+      );
       final text = layout(tester);
       // Every ad is followed by a group header, never by a match row.
       expect(RegExp('A(?!H)').hasMatch(text), isFalse, reason: text);
