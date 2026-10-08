@@ -297,6 +297,7 @@ Future<List<String>> _pump(
   AppDatabase? db,
   String? country,
   DateTime Function()? now,
+  bool adsAllowed = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -351,6 +352,7 @@ Future<List<String>> _pump(
         temporaryInterestsProvider.overrideWith(
           (ref) => Stream.value(<String>{}),
         ),
+        if (adsAllowed) adsAllowedProvider.overrideWithValue(true),
       ],
       child: MaterialApp.router(routerConfig: router),
     ),
@@ -1476,8 +1478,22 @@ void main() {
 
     testWidgets('without favourites: after groups 1, 3, 6, 9 and 12, between '
         'complete groups only', (tester) async {
-      await _pump(tester, data: manyGroups(20), size: const Size(390, 60000));
+      await _pump(
+        tester,
+        data: manyGroups(20),
+        size: const Size(390, 60000),
+        adsAllowed: true,
+      );
       expect(find.byType(AdSlot), findsNWidgets(5));
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is SizedBox &&
+              widget.key?.toString().contains('competition-gap-') == true,
+        ),
+        findsNWidgets(15),
+        reason: 'the five ad transitions replace, rather than stack on, gaps',
+      );
       final text = layout(tester);
       // Every ad is followed by a group header, never by a match row.
       expect(RegExp('A(?!H)').hasMatch(text), isFalse, reason: text);

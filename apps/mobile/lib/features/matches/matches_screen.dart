@@ -384,6 +384,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
+          final adsAllowed = ref.watch(adsAllowedProvider);
           final allGames = dedupeFixtures(data.onDate(selected, 'Todos'));
           final games = dedupeFixtures(data.onDate(selected, effectiveFilter));
 
@@ -444,7 +445,12 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                 canToggle: effectiveFilter != 'En vivo',
               ),
             );
-            feedItems.add(() => const SizedBox(height: 8));
+            feedItems.add(
+              () => SizedBox(
+                key: ValueKey('competition-gap-${competition.id}'),
+                height: 8,
+              ),
+            );
           }
 
           feedItems
@@ -600,6 +606,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           // Feed positions where a complete block ends: [0] = after
           // FAVORITOS, then after each competition group (ads go only there).
           final blockEnds = <int, int>{};
+          final blockGapCounts = <int, int>{};
           if (followedGames.isNotEmpty) {
             feedItems.add(() => const _FeedHeading(title: 'FAVORITOS'));
             final favoriteGroups = <String, List<FootballMatch>>{};
@@ -627,10 +634,16 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                   canToggle: effectiveFilter != 'En vivo',
                 ),
               );
-              feedItems.add(() => const SizedBox(height: 8));
+              feedItems.add(
+                () => SizedBox(
+                  key: ValueKey('favorite-gap-${competition.id}'),
+                  height: 8,
+                ),
+              );
             }
             feedItems.add(() => const SizedBox(height: 4));
             blockEnds[0] = feedItems.length;
+            blockGapCounts[0] = 2;
           }
 
           // Then every competition with its remaining matches. Favourite-team
@@ -642,6 +655,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             addCompetition(competition);
             if (feedItems.length > before) {
               blockEnds[++groups] = feedItems.length;
+              blockGapCounts[groups] = 1;
             }
           }
 
@@ -657,10 +671,17 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           for (final (index, after) in slots.indexed.toList().reversed) {
             final at = blockEnds[after];
             if (at == null) continue;
+            // A normal group-to-group transition keeps its 8 px rhythm.
+            // Around an ad, replace the artificial trailing spacer instead:
+            // the group Card margins plus the banner's own minimal padding
+            // provide the separation without leaving an empty band.
+            final gapCount = adsAllowed ? (blockGapCounts[after] ?? 0) : 0;
+            final insertAt = at - gapCount;
+            if (gapCount > 0) feedItems.removeRange(insertAt, at);
             final day = requestDate.toIso8601String().substring(0, 10);
             final key = ValueKey('feed-ad-$day-$index');
             feedItems.insert(
-              at,
+              insertAt,
               () => AdSlot(AdPlacement.matchesFeed, key: key),
             );
           }
