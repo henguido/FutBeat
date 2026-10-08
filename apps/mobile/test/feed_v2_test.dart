@@ -521,6 +521,28 @@ void main() {
     expect(find.byType(CompetitionMatchGroupCard), findsOneWidget);
   });
 
+  testWidgets('large match cards share the competition group surface', (
+    tester,
+  ) async {
+    await _pump(tester, data: _snapshot(exactlyThreeOneCompetition: true));
+    final card = tester.widget<Card>(
+      find.byKey(const ValueKey('match-card-m_cr_live')),
+    );
+    final shape = card.shape! as RoundedRectangleBorder;
+
+    expect(card.margin, EdgeInsets.zero);
+    expect(card.color, Colors.transparent);
+    expect(card.elevation, 0);
+    expect(shape.borderRadius, BorderRadius.zero);
+    expect(shape.side, BorderSide.none);
+    expect(tester.getSize(_row('m_cr_live')).height, greaterThanOrEqualTo(120));
+    expect(
+      tester.getSize(find.byKey(const ValueKey('team-crest-m_cr_live-home'))),
+      const Size(42, 42),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Costa Rica aliases reuse verified canonical logos and crests', (
     tester,
   ) async {

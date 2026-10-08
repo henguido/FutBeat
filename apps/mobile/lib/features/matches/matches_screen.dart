@@ -1154,10 +1154,7 @@ class CompetitionMatchGroupCard extends StatelessWidget {
           ),
           if (!collapsed) ...[
             const Divider(height: 1, color: Color(0xFF2A3438)),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(6, 6, 6, 8),
-              child: _CompetitionMatchRows(matches: matches, data: data),
-            ),
+            _CompetitionMatchRows(matches: matches, data: data),
           ],
         ],
       ),
@@ -1260,8 +1257,13 @@ class FeedMatchRow extends StatelessWidget {
   final String? caption;
 
   @override
-  Widget build(BuildContext context) =>
-      MatchCard(match, data, caption: caption, preserveStatusCase: true);
+  Widget build(BuildContext context) => MatchCard(
+    match,
+    data,
+    caption: caption,
+    preserveStatusCase: true,
+    embeddedInGroup: true,
+  );
 }
 
 /// Keeps the entity's identity/name but borrows VERIFIED media from its
@@ -1292,6 +1294,7 @@ class MatchCard extends StatelessWidget {
     this.data, {
     this.caption,
     this.preserveStatusCase = false,
+    this.embeddedInGroup = false,
     super.key,
   });
 
@@ -1299,6 +1302,7 @@ class MatchCard extends StatelessWidget {
   final Snapshot data;
   final String? caption;
   final bool preserveStatusCase;
+  final bool embeddedInGroup;
 
   @override
   Widget build(BuildContext context) {
@@ -1332,13 +1336,25 @@ class MatchCard extends StatelessWidget {
 
     return Card(
       key: ValueKey('match-card-${match.id}'),
+      color: embeddedInGroup ? Colors.transparent : null,
+      surfaceTintColor: embeddedInGroup ? Colors.transparent : null,
+      elevation: embeddedInGroup ? 0 : null,
+      margin: embeddedInGroup ? EdgeInsets.zero : null,
+      shape: embeddedInGroup
+          ? const RoundedRectangleBorder(
+              borderRadius: BorderRadius.zero,
+              side: BorderSide.none,
+            )
+          : null,
       child: Semantics(
         key: ValueKey('match-card-action-${match.id}'),
         container: true,
         button: true,
         label: semanticLabel,
         child: InkWell(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: embeddedInGroup
+              ? BorderRadius.zero
+              : BorderRadius.circular(18),
           onTap: open,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
