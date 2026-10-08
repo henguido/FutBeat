@@ -8,6 +8,11 @@ import 'profile_widgets.dart';
 import 'standings.dart';
 import 'team_profile.dart' show matchDayLabel;
 
+const double _competitionHeaderLogoSize = 74;
+const double _competitionMatchTeamLogoSize = 26;
+const double _competitionTeamGridLogoSize = 44;
+const double _competitionStandingsTeamLogoSize = 26;
+
 class CompetitionProfileView extends StatelessWidget {
   const CompetitionProfileView({
     required this.data,
@@ -88,7 +93,11 @@ class CompetitionProfileView extends StatelessWidget {
       ]),
       'Tabla' => ProfileTabList('tabla', [
         if (data.demo) const DemoNotice(),
-        Standings(data, competition.id),
+        Standings(
+          data,
+          competition.id,
+          teamAvatarSize: _competitionStandingsTeamLogoSize,
+        ),
       ]),
       'Equipos' => ProfileTabList('equipos', [
         if (data.demo) const DemoNotice(),
@@ -168,7 +177,13 @@ class CompetitionHeader extends StatelessWidget {
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: profileCardBorder),
             ),
-            child: EntityAvatar(competition, size: 64),
+            child: SizedBox(
+              key: const ValueKey('competition-profile-logo'),
+              child: EntityAvatar(
+                competition,
+                size: _competitionHeaderLogoSize,
+              ),
+            ),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -296,7 +311,14 @@ class CompetitionMatchRow extends StatelessWidget {
               const SizedBox(height: 7),
               Row(
                 children: [
-                  Expanded(child: _CompetitionMatchTeam(home)),
+                  Expanded(
+                    child: _CompetitionMatchTeam(
+                      home,
+                      avatarKey: ValueKey(
+                        'competition-match-${match.id}-home-logo',
+                      ),
+                    ),
+                  ),
                   SizedBox(
                     width: 68,
                     child: Text(
@@ -305,7 +327,15 @@ class CompetitionMatchRow extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
                   ),
-                  Expanded(child: _CompetitionMatchTeam(away, trailing: true)),
+                  Expanded(
+                    child: _CompetitionMatchTeam(
+                      away,
+                      trailing: true,
+                      avatarKey: ValueKey(
+                        'competition-match-${match.id}-away-logo',
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -317,8 +347,13 @@ class CompetitionMatchRow extends StatelessWidget {
 }
 
 class _CompetitionMatchTeam extends StatelessWidget {
-  const _CompetitionMatchTeam(this.team, {this.trailing = false});
+  const _CompetitionMatchTeam(
+    this.team, {
+    required this.avatarKey,
+    this.trailing = false,
+  });
   final Entity team;
+  final Key avatarKey;
   final bool trailing;
 
   @override
@@ -328,7 +363,10 @@ class _CompetitionMatchTeam extends StatelessWidget {
         : MainAxisAlignment.start,
     children: [
       if (!trailing) ...[
-        EntityAvatar(team, size: 22),
+        SizedBox(
+          key: avatarKey,
+          child: EntityAvatar(team, size: _competitionMatchTeamLogoSize),
+        ),
         const SizedBox(width: 6),
       ],
       Flexible(
@@ -340,7 +378,13 @@ class _CompetitionMatchTeam extends StatelessWidget {
           style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
         ),
       ),
-      if (trailing) ...[const SizedBox(width: 6), EntityAvatar(team, size: 22)],
+      if (trailing) ...[
+        const SizedBox(width: 6),
+        SizedBox(
+          key: avatarKey,
+          child: EntityAvatar(team, size: _competitionMatchTeamLogoSize),
+        ),
+      ],
     ],
   );
 }
@@ -377,7 +421,13 @@ class CompetitionTeamsGrid extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      EntityAvatar(team, size: 38),
+                      SizedBox(
+                        key: ValueKey('competition-team-${team.id}-logo'),
+                        child: EntityAvatar(
+                          team,
+                          size: _competitionTeamGridLogoSize,
+                        ),
+                      ),
                       const SizedBox(height: 7),
                       Text(
                         team.displayName,

@@ -224,4 +224,49 @@ void main() {
     await _openTab(tester, 'Partidos');
     expect(find.text('Sin partidos disponibles'), findsOneWidget);
   });
+
+  for (final width in [320.0, 360.0, 390.0]) {
+    testWidgets(
+      'competition-only logos keep their enlarged size at ${width.toInt()} px',
+      (tester) async {
+        await _pump(tester, _payload(), size: Size(width, 844));
+
+        expect(
+          tester.getSize(
+            find.byKey(const ValueKey('competition-profile-logo')),
+          ),
+          const Size.square(74),
+        );
+        expect(
+          tester.getSize(
+            find.byKey(const ValueKey('competition-match-next-home-logo')),
+          ),
+          const Size.square(26),
+        );
+        expect(
+          tester.getSize(
+            find.byKey(const ValueKey('competition-team-home-logo')).first,
+          ),
+          const Size.square(44),
+        );
+
+        await _openTab(tester, 'Tabla');
+        expect(
+          tester.getSize(
+            find.byKey(const ValueKey('standings-team-home-logo')),
+          ),
+          const Size.square(26),
+        );
+
+        await _openTab(tester, 'Equipos');
+        expect(
+          tester.getSize(
+            find.byKey(const ValueKey('competition-team-home-logo')),
+          ),
+          const Size.square(44),
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }

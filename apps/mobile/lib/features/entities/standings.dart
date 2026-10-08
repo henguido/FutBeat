@@ -276,6 +276,7 @@ class Standings extends StatefulWidget {
     this.season,
     this.stage,
     this.contextRows,
+    this.teamAvatarSize = 22,
   });
 
   final Snapshot data;
@@ -306,6 +307,10 @@ class Standings extends StatefulWidget {
   /// Match Center only: keep the focused sides and nearby context instead
   /// of rendering a very long group. Null renders the full resolved group.
   final int? contextRows;
+
+  /// Profile-specific visual override. Every existing consumer keeps the
+  /// established 22 px presentation unless it opts in explicitly.
+  final double teamAvatarSize;
 
   @override
   State<Standings> createState() => _StandingsState();
@@ -504,6 +509,7 @@ class _StandingsState extends State<Standings> {
         columns: _compactColumns,
         highlightedTeams: highlighted,
         liveTeamIds: live,
+        teamAvatarSize: widget.teamAvatarSize,
       ),
       StandingsView.form => _Table(
         key: const ValueKey('standings-form'),
@@ -512,6 +518,7 @@ class _StandingsState extends State<Standings> {
         highlightedTeams: highlighted,
         liveTeamIds: live,
         form: _form,
+        teamAvatarSize: widget.teamAvatarSize,
       ),
       StandingsView.full => LayoutBuilder(
         builder: (context, constraints) => SingleChildScrollView(
@@ -529,6 +536,7 @@ class _StandingsState extends State<Standings> {
               columns: _fullColumns,
               highlightedTeams: highlighted,
               liveTeamIds: live,
+              teamAvatarSize: widget.teamAvatarSize,
             ),
           ),
         ),
@@ -761,6 +769,7 @@ class _Table extends StatelessWidget {
     required this.columns,
     required this.highlightedTeams,
     required this.liveTeamIds,
+    required this.teamAvatarSize,
     this.form,
     super.key,
   });
@@ -769,6 +778,7 @@ class _Table extends StatelessWidget {
   final List<_Column> columns;
   final Map<String, Color> highlightedTeams;
   final Set<String> liveTeamIds;
+  final double teamAvatarSize;
   final StandingsForm? form;
 
   @override
@@ -792,6 +802,7 @@ class _Table extends StatelessWidget {
               divider: i > 0,
               // Stored rows may carry an alias; Forma is keyed canonically.
               form: form?.results(entries[i].formTeamId) ?? const [],
+              teamAvatarSize: teamAvatarSize,
             ),
         ],
       ),
@@ -862,6 +873,7 @@ class _TeamRow extends StatelessWidget {
     required this.live,
     required this.divider,
     required this.form,
+    required this.teamAvatarSize,
   });
 
   final _Entry entry;
@@ -869,6 +881,7 @@ class _TeamRow extends StatelessWidget {
   final Color? accent;
   final bool live;
   final bool divider;
+  final double teamAvatarSize;
 
   /// Newest first; empty = no data (a dash, never an invented result).
   final List<String> form;
@@ -936,7 +949,10 @@ class _TeamRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              EntityAvatar(team, size: 22),
+              SizedBox(
+                key: ValueKey('standings-team-${entry.teamId}-logo'),
+                child: EntityAvatar(team, size: teamAvatarSize),
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
