@@ -879,6 +879,11 @@ void main() {
   testWidgets('22. each tab keeps its scroll position', (tester) async {
     final container = await _open(tester, _Server((_) => _context()));
     await _scrollTo(tester, find.byKey(const ValueKey('recent-form')));
+    // Near the end of a short Previa, scrollUntilVisible can overshoot;
+    // measure once the bounce is back inside the scroll extent.
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
     final before = tester.getTopLeft(find.byKey(const ValueKey('recent-form')));
     await _tab(tester, 'Cara a cara');
     await _tab(tester, 'Previa');
