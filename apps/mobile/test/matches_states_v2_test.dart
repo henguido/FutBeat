@@ -10,7 +10,19 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/matches/matches_screen.dart';
 
-final _today = DateTime(2026, 10, 7);
+// Keep the selected calendar day and its synthetic match on the same date.
+// A fixed 2026-10-07 day paired with DateTime.now() made these tests start
+// failing as soon as the real clock advanced to 2026-10-08.
+final _suiteClock = DateTime.now();
+final _today = DateTime(
+  _suiteClock.year,
+  _suiteClock.month,
+  _suiteClock.day + 1,
+);
+final _todayKey =
+    '${_today.year.toString().padLeft(4, '0')}-'
+    '${_today.month.toString().padLeft(2, '0')}-'
+    '${_today.day.toString().padLeft(2, '0')}';
 
 Snapshot _data({
   String? status,
@@ -38,12 +50,11 @@ Snapshot _data({
               'competitionId': 'competition',
               'homeTeamId': 'home',
               'awayTeamId': 'away',
-              // Relative to the real clock: Match.isUpcoming reads
-              // DateTime.now(), so a fixed kickoff stops being "Próximos"
-              // once that time of day has passed.
-              'startTime': DateTime.now()
+              // Tomorrow at noon is both in the selected calendar day and
+              // safely upcoming according to Match.isUpcoming's real clock.
+              'startTime': _today
+                  .add(const Duration(hours: 12))
                   .toUtc()
-                  .add(const Duration(hours: 2))
                   .toIso8601String(),
               'status': status,
               'events': <dynamic>[],
@@ -134,7 +145,7 @@ void main() {
 
     expect(find.text('No hay partidos para este día.'), findsOneWidget);
     expect(find.byKey(const ValueKey('matches-empty-day')), findsOneWidget);
-    expect(find.byKey(const ValueKey('feed-ad-2026-10-07-0')), findsNothing);
+    expect(find.byKey(ValueKey('feed-ad-$_todayKey-0')), findsNothing);
   });
 
   testWidgets('filters have specific empty states and return to Todos', (
@@ -180,7 +191,7 @@ void main() {
     expect(find.text('No pudimos cargar los partidos.'), findsOneWidget);
     expect(find.text('Sin conexión.'), findsNothing);
     expect(find.byKey(const ValueKey('matches-load-error')), findsOneWidget);
-    expect(find.byKey(const ValueKey('feed-ad-2026-10-07-0')), findsNothing);
+    expect(find.byKey(ValueKey('feed-ad-$_todayKey-0')), findsNothing);
 
     await tester.tap(find.text('Reintentar'));
     await tester.pumpAndSettle();
