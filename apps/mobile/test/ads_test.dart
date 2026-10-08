@@ -254,6 +254,42 @@ void main() {
     },
   );
 
+  for (final width in [320.0, 360.0, 390.0]) {
+    testWidgets(
+      'feed banner is native-sized, centered and unwrapped at ${width.toInt()}px',
+      (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final h = _Harness();
+        await h.pump(tester);
+        await h.account(tester, null);
+
+        final banner = find.byKey(const ValueKey('fake-ad'));
+        final slot = find.byType(AdSlot);
+        expect(banner, findsOneWidget);
+        expect(tester.getSize(banner), const Size(320, 50));
+        expect(tester.getCenter(banner).dx, width / 2);
+        expect(
+          find.descendant(of: slot, matching: find.byType(Card)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: slot, matching: find.byType(DecoratedBox)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: slot, matching: find.byType(Container)),
+          findsNothing,
+        );
+        final padding = tester.widget<Padding>(
+          find.descendant(of: slot, matching: find.byType(Padding)),
+        );
+        expect(padding.padding, const EdgeInsets.symmetric(vertical: 8));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('PREMIUM never requests an ad, even while its cache loads', (
     tester,
   ) async {
