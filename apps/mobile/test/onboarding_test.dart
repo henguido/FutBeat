@@ -1025,6 +1025,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(AuthSheet), findsOneWidget);
       expect(sheetTitle(tester), 'Iniciar sesión');
+      expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
       expect(find.byType(NavigationBar), findsNothing);
     });
 
@@ -1036,6 +1039,9 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('onboarding-account-signup')));
       await tester.pumpAndSettle();
       expect(sheetTitle(tester), 'Crear cuenta');
+      expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
     });
 
     testWidgets('Account > Iniciar sesión signs in and stays on the step', (
@@ -1564,6 +1570,7 @@ class _SheetAuth extends PushService {
         ),
         db,
         _NoTokens(),
+        oauthEnabled: true,
       );
 
   /// What the account had on the server (see [PushService.accountHadData]).

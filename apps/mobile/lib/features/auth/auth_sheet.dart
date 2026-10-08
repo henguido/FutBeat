@@ -165,9 +165,15 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final providers =
-        ref.watch(oauthProvidersProvider).asData?.value ??
-        const <OAuthProvider>{};
+    final service = ref.watch(pushServiceProvider);
+    // The build flag is the authority for whether this release offers social
+    // auth. Do not make the buttons disappear while the public GoTrue
+    // `/settings` request is loading, offline, or temporarily unavailable:
+    // that reduced the sheet to email-only on physical devices even though
+    // the existing PKCE flow was configured and usable.
+    final providers = service.accountConfigured && service.oauthEnabled
+        ? OAuthProvider.values
+        : const <OAuthProvider>[];
     final verb = signup ? 'Crear cuenta' : 'Iniciar sesión';
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),

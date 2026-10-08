@@ -243,6 +243,7 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
     dio: fake.dio,
     clock: () => fake.now,
     signOutCleanupTimeout: cleanupTimeout,
+    oauthEnabled: true,
   );
   addTearDown(() async {
     service.dispose();
@@ -1293,6 +1294,21 @@ void main() {
     expect(find.byKey(const ValueKey('account-password-reset')), findsNothing);
   });
 
+  testWidgets('Facebook account delegates its password to Facebook', (
+    tester,
+  ) async {
+    final value = await _service();
+    value.service.session = _session(provider: 'facebook');
+    await _pumpProfile(
+      tester,
+      value.service,
+      value.db,
+      child: const AccountSecurityScreen(),
+    );
+    expect(find.text('Gestionada por Facebook'), findsOneWidget);
+    expect(find.byKey(const ValueKey('account-password-reset')), findsNothing);
+  });
+
   testWidgets('email account exposes password recovery', (tester) async {
     final value = await _service();
     value.service.session = _session(provider: 'email');
@@ -1349,6 +1365,8 @@ void main() {
       tester.widget<Text>(find.byKey(const ValueKey('auth-title'))).data,
       'Crear cuenta',
     );
+    expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+    expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
     Navigator.of(tester.element(find.byKey(const ValueKey('auth-title'))))
         .pop();
     await tester.pumpAndSettle();
@@ -1358,6 +1376,8 @@ void main() {
       tester.widget<Text>(find.byKey(const ValueKey('auth-title'))).data,
       'Iniciar sesión',
     );
+    expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+    expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
   });
 
   testWidgets('invalid input is caught before any request', (tester) async {

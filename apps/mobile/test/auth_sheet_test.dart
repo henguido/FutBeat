@@ -18,11 +18,16 @@ const _config = LiveRealtimeConfig(
 );
 
 class _Tokens implements PushTokenSource {
+  int requests = 0;
+
   @override
   Future<String?> currentToken() => requestToken();
 
   @override
-  Future<String?> requestToken() async => null;
+  Future<String?> requestToken() async {
+    requests++;
+    return null;
+  }
 
   @override
   Stream<String> get rotations => const Stream.empty();
@@ -196,16 +201,12 @@ void main() {
     Future<bool?> open(
       WidgetTester tester,
       PushService value,
-      AuthMode mode, {
-      Set<OAuthProvider> providers = const {},
-    }) async {
+      AuthMode mode,
+    ) async {
       bool? result;
       await tester.pumpWidget(
         ProviderScope(
-          overrides: [
-            pushServiceProvider.overrideWithValue(value),
-            oauthProvidersProvider.overrideWith((ref) async => providers),
-          ],
+          overrides: [pushServiceProvider.overrideWithValue(value)],
           child: MaterialApp(
             home: Scaffold(
               body: Builder(
@@ -324,24 +325,55 @@ void main() {
       expect(title(tester), 'Iniciar sesión');
     });
 
-    testWidgets('social buttons only for enabled providers', (tester) async {
-      final value = _FakeAuth(db);
+    testWidgets('build without social auth hides provider buttons', (
+      tester,
+    ) async {
+      final value = _FakeAuth(db, oauthEnabled: false);
       await open(tester, value, AuthMode.signup);
       expect(find.byKey(const ValueKey('auth-google')), findsNothing);
       expect(find.byKey(const ValueKey('auth-facebook')), findsNothing);
     });
 
-    testWidgets('enabled providers get their buttons', (tester) async {
+    testWidgets('configured build always exposes Google and Facebook', (
+      tester,
+    ) async {
       final value = _FakeAuth(db);
-      await open(
-        tester,
-        value,
-        AuthMode.signup,
-        providers: {OAuthProvider.google, OAuthProvider.facebook},
-      );
+      await open(tester, value, AuthMode.signup);
       expect(find.text('Continuar con Google'), findsOneWidget);
       expect(find.text('Continuar con Facebook'), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
     });
+
+    testWidgets('opening and switching auth never requests notifications', (
+      tester,
+    ) async {
+      final tokens = _Tokens();
+      final value = _FakeAuth(db, tokens: tokens);
+      await open(tester, value, AuthMode.login);
+      expect(tokens.requests, 0);
+      await tester.tap(find.byKey(const ValueKey('auth-switch')));
+      await tester.pumpAndSettle();
+      expect(tokens.requests, 0);
+    });
+
+    for (final width in [320.0, 360.0, 390.0]) {
+      testWidgets('complete auth fits ${width.toInt()}px with large text', (
+        tester,
+      ) async {
+        tester.view.physicalSize = Size(width, 800);
+        tester.view.devicePixelRatio = 1;
+        tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await open(tester, _FakeAuth(db), AuthMode.login);
+        expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+        expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+        expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
+        expect(find.byKey(const ValueKey('auth-forgot')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
 
     testWidgets('email sign-in closes with a session', (tester) async {
       final value = _FakeAuth(db);
@@ -470,12 +502,7 @@ void main() {
       tester,
     ) async {
       final value = _FakeAuth(db)..cancelOAuth = true;
-      await open(
-        tester,
-        value,
-        AuthMode.login,
-        providers: {OAuthProvider.google},
-      );
+      await open(tester, value, AuthMode.login);
       await tester.tap(find.byKey(const ValueKey('auth-google')));
       await tester.pumpAndSettle();
       expect(value.oauth, [OAuthProvider.google]);
@@ -486,12 +513,7 @@ void main() {
 
     testWidgets('social sign-in success closes the sheet', (tester) async {
       final value = _FakeAuth(db);
-      await open(
-        tester,
-        value,
-        AuthMode.login,
-        providers: {OAuthProvider.facebook},
-      );
+      await open(tester, value, AuthMode.login);
       await tester.tap(find.byKey(const ValueKey('auth-facebook')));
       await tester.pumpAndSettle();
       expect(value.authenticated, isTrue);
@@ -502,7 +524,8 @@ void main() {
 
 /// Records the calls; sessions are set without a server.
 class _FakeAuth extends PushService {
-  _FakeAuth(AppDatabase db) : super(_config, db, _Tokens());
+  _FakeAuth(AppDatabase db, {bool oauthEnabled = true, _Tokens? tokens})
+    : super(_config, db, tokens ?? _Tokens(), oauthEnabled: oauthEnabled);
 
   final signIns = <String>[];
   final signUps = <String>[];
