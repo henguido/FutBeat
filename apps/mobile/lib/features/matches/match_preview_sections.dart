@@ -499,7 +499,8 @@ class PreviewHeadToHeadSection extends StatelessWidget {
     loading: () => const SizedBox.shrink(),
     error: (_, _) => const SizedBox.shrink(),
     data: (value) {
-      final meetings = value.h2hMeetings.take(3).toList();
+      // Same canonical dedupe and newest-first order as the Cara a cara tab.
+      final meetings = prepareH2hMeetings(value.h2hMeetings).take(3).toList();
       if (meetings.isEmpty) return const SizedBox.shrink();
       Entity? team(String id) => data.team(id) ?? value.team(id);
       String? competitionName(String? id) =>
