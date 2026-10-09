@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { runChunksWithTimeoutRetry } from '../../supabase/functions/_shared/chunked_rpc.ts';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
@@ -73,7 +74,7 @@ function harness(options = {}) {
   const worker = edge(pagination + '\n' + workerSource, fetch, logs);
   if (options.realIngest) {
     ingestHandler = edge(ingestSource, fetch, logs, {
-      collectGoalApiPlayerIdentities, normalizeGoalApiSquad,
+      collectGoalApiPlayerIdentities, normalizeGoalApiSquad, runChunksWithTimeoutRetry,
       createRemoteJWKSet: () => () => { throw new Error('OIDC must not run'); },
       jwtVerify: () => { throw new Error('OIDC must not run'); },
     }).handler;

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { runChunksWithTimeoutRetry } from '../../supabase/functions/_shared/chunked_rpc.ts';
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
@@ -217,6 +218,7 @@ function ingest(db, { rejectShapeCapture = false } = {}) {
       workflow_ref: 'henguido/FutBeat/.github/workflows/standings.yml@refs/heads/main' } }),
     isGoalStandingsNoData,
     goalStandingsShape,
+    runChunksWithTimeoutRetry,
   });
   vm.runInContext(stripTypeScriptTypes(stripImports(ingestSource)), context);
   return async (body) => {

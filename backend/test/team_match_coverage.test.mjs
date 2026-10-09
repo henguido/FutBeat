@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { runChunksWithTimeoutRetry } from '../../supabase/functions/_shared/chunked_rpc.ts';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
@@ -339,7 +340,7 @@ function harness(db, provider) {
   };
   const worker = edge((paginationSource + '\n' + liveEventsSource).replace(/^export /gm, '') + '\n' + workerSource, fetch, logs);
   ingest = edge(ingestSource, fetch, logs, {
-    collectGoalApiBaseIdentities, normalizeGoalApiFixtures,
+    collectGoalApiBaseIdentities, normalizeGoalApiFixtures, runChunksWithTimeoutRetry,
     createRemoteJWKSet: () => () => { throw new Error('OIDC must not run'); },
     jwtVerify: () => { throw new Error('OIDC must not run'); },
   }).handler;
