@@ -132,7 +132,7 @@ test('SQL: same signature, STABLE, SECURITY DEFINER, empty search_path, service_
   }
   const src = await migration('20261007010000_ingest_context_single_pass.sql');
   assert.doesNotMatch(src, /lateral \(select futbeat_private\.futbeat_apply_entity_redirects_snapshot/i, 'no flattened LATERAL');
-  const code = src.split('\n').map((line) => line.replace(/--.*$/, '')).join('\n');
+  const code = src.split(/\r?\n/).map((line) => line.replace(/--.*$/, '')).join('\n');
   assert.equal(code.match(/futbeat_apply_entity_redirects_snapshot\(/g).length, 1, 'redirects applied once');
   assert.doesNotMatch(code, /\b(insert|update|delete)\b/i, 'read-only');
 }));
