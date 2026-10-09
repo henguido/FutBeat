@@ -193,6 +193,60 @@ test('production-scale date (1,477): minimum 5 bounded stores and one finalize',
   assert.equal(metadata.stageMsBySubBatch[DAY].length, 5);
 }));
 
+test('large date finalizes only fixtures whose normalized kickoff belongs to the requested UTC date', () => withDb(async (db) => {
+  const withKickoff = (id, kickoffUtc) => ({ ...fixture(id, 0), kickoffUtc });
+  const adjacent = [
+    withKickoff('next-z', '2026-09-20T00:00:00Z'),
+    withKickoff('next-offset', '2026-09-19T23:30:00-02:00'),
+    withKickoff('prev-z', '2026-09-18T23:59:59Z'),
+    withKickoff('prev-offset', '2026-09-19T00:30:00+02:00'),
+  ];
+  const events = [
+    ...bigDay(1470, 'requested'),
+    withKickoff('requested-start', `${DAY}T00:00:00Z`),
+    withKickoff('requested-end', `${DAY}T23:59:59Z`),
+    ...adjacent,
+    withKickoff('invalid-kickoff', 'not-a-timestamp'),
+  ];
+  assert.equal(events.length, 1477);
+
+  const h = harness(db);
+  const first = await h.calendar(events, [DAY]);
+  assert.equal(first.status, 200, JSON.stringify(first.value));
+  assert.equal(first.value.accepted, 1476, 'all valid fixtures are stored, including adjacent dates');
+  assert.equal(h.of('futbeat_store_calendar_range').length, 5);
+  assert.ok(h.of('futbeat_store_calendar_range').every((call) => call.body.p_coverage.length === 0));
+
+  const finalizes = h.of('futbeat_finalize_calendar_date');
+  assert.equal(finalizes.length, 1);
+  assert.equal(finalizes[0].body.p_date, DAY);
+  assert.equal(finalizes[0].body.p_match_ids.length, 1472);
+  const adjacentIds = (await db.query(`select canonical_id from futbeat_private.provider_entities
+    where provider='goal_api' and kind='match' and external_id = any($1::text[]) order by canonical_id`,
+    [adjacent.map((item) => item.apiId)])).rows.map((row) => row.canonical_id);
+  assert.equal(adjacentIds.length, 4, 'every adjacent fixture was stored additively');
+  assert.ok(adjacentIds.every((id) => !finalizes[0].body.p_match_ids.includes(id)), 'adjacent ids never finalize the requested date');
+
+  const indexedByDate = await db.query(`select (start_time at time zone 'UTC')::date::text d, count(*)::int n
+    from futbeat_private.calendar_matches where source='GOAL API' group by 1 order by 1`);
+  assert.deepEqual(indexedByDate.rows, [
+    { d: '2026-09-18', n: 2 },
+    { d: DAY, n: 1472 },
+    { d: '2026-09-20', n: 2 },
+  ]);
+  assert.deepEqual(await coverageRows(db), [{ d: DAY, fixture_count: 1477 }], 'coverage is published once only for the requested date');
+  assert.equal(await count(db, `select count(*)::int n from futbeat_private.provider_entities
+    where provider='goal_api' and kind='match' and external_id='invalid-kickoff'`), 0, 'invalid kickoff fails closed');
+
+  const matches = await count(db, "select count(*)::int n from futbeat_private.entities where kind='match'");
+  const mappings = await count(db, "select count(*)::int n from futbeat_private.provider_entities where provider='goal_api'");
+  const retry = await harness(db).calendar(events, [DAY]);
+  assert.equal(retry.status, 200, JSON.stringify(retry.value));
+  assert.equal(await count(db, "select count(*)::int n from futbeat_private.entities where kind='match'"), matches);
+  assert.equal(await count(db, "select count(*)::int n from futbeat_private.provider_entities where provider='goal_api'"), mappings);
+  assert.deepEqual(await coverageRows(db), [{ d: DAY, fixture_count: 1477 }], 'retry remains idempotent');
+}));
+
 test('large date: a sub-batch never deletes another sub-batch; the finalize removes only a fixture GOAL no longer lists', () => withDb(async (db) => {
   const day = bigDay(700);
   const gone = fixture('gone', 700);

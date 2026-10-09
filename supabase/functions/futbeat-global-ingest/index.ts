@@ -1761,9 +1761,11 @@ Deno.serve(async (request) => {
           // Sub-batches: each one adds/updates its own matches (empty
           // coverage: nothing deleted, the date not marked covered). Only
           // when every sub-batch is stored, one finalize applies the date's
-          // deletes and coverage against ALL its match ids. A failure halfway
-          // leaves the date uncovered (planned again) and deletes nothing.
-          const dateMatchIds = new Set<string>();
+          // deletes and coverage against all IDs whose normalized kickoff is
+          // in that exact UTC date. Adjacent-date fixtures remain additive.
+          // A failure halfway leaves the date uncovered and deletes nothing.
+          const storedMatchIds = new Set<string>();
+          const finalizationMatchIds = new Set<string>();
           const subRecords: Array<Record<string, number>> = [];
           stageMsBySubBatch[date] = subRecords;
           for (const [index, subEvents] of subBatches.entries()) {
@@ -1795,7 +1797,16 @@ Deno.serve(async (request) => {
             setDateStage("");
             subMs = null;
             storedSubBatches = index + 1;
-            for (const item of normalized.snapshot.matches) dateMatchIds.add(item.id);
+            for (const item of normalized.snapshot.matches) {
+              storedMatchIds.add(item.id);
+              const kickoff = Date.parse(String(item.startTime ?? ""));
+              if (
+                Number.isFinite(kickoff) &&
+                new Date(kickoff).toISOString().slice(0, 10) === date
+              ) {
+                finalizationMatchIds.add(item.id);
+              }
+            }
             for (const item of normalized.snapshot.competitions) competitionIds.add(item.id);
             for (const item of normalized.snapshot.teams) teamIds.add(item.id);
           }
@@ -1810,12 +1821,12 @@ Deno.serve(async (request) => {
                 p_received_at: receivedAt,
                 p_date: date,
                 p_count: Number(dateCoverage[0]?.count ?? 0),
-                p_match_ids: [...dateMatchIds].sort(),
+                p_match_ids: [...finalizationMatchIds].sort(),
               },
               60000,
             ),
           );
-          accepted += dateMatchIds.size;
+          accepted += storedMatchIds.size;
         }
         closeDateStage();
         closeDateStage = () => {};
