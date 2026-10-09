@@ -31,3 +31,19 @@ flutter build apk --debug `
 
 Production builds must enable only providers that are configured and tested
 in Supabase and their respective provider consoles.
+
+## First Internal Testing AAB
+
+The release build command in `android-signing.md` does not currently pass
+OAuth flags. With the defaults above, that build would hide both social
+providers. Before building the first AAB, pass each decision explicitly:
+
+```powershell
+--dart-define=FUTBEAT_OAUTH_GOOGLE_ENABLED=true `
+--dart-define=FUTBEAT_OAUTH_FACEBOOK_ENABLED=false
+```
+
+Google still needs the final release build verified. Keep Facebook false until
+Meta Live and physical QA on that build are confirmed. These flags belong in
+the final build command or its define file; the debug QA build above does not
+configure the release artifact.

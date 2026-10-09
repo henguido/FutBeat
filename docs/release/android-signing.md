@@ -8,7 +8,7 @@ FutBeat release builds are fail-closed: they never fall back to the Android debu
 2. Store the keystore outside the repository in an encrypted, backed-up location.
 3. Copy `apps/mobile/android/key.properties.example` to `apps/mobile/android/key.properties`.
 4. Fill in `storeFile`, `storePassword`, `keyAlias`, and `keyPassword`. The real file and `*.jks`/`*.keystore` files are ignored by Git and must never be shared or committed.
-5. From `apps/mobile`, run `flutter build appbundle --release`.
+5. From `apps/mobile`, run the controlled `flutter build appbundle --release` command with the approved public build configuration. Set Google and Facebook independently as described in [OAuth provider availability](OAUTH-PROVIDER-AVAILABILITY.md); the bare command leaves both disabled.
 6. Enrol the app in Google Play App Signing. The local upload key signs uploads; Google manages the separate app-signing key used for distribution.
 7. Keep a tested, encrypted backup of the upload key and its credentials. Losing it requires Play's upload-key reset process.
 
