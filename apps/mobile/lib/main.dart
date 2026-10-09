@@ -12,6 +12,7 @@ import 'core/billing.dart';
 import 'core/database.dart';
 import 'core/entity_media.dart';
 import 'core/models.dart';
+import 'core/password_reset_links.dart';
 import 'core/providers.dart';
 import 'core/theme.dart';
 import 'core/push.dart';
@@ -206,8 +207,12 @@ class StartupGate extends ConsumerWidget {
 }
 
 class FutBeatApp extends ConsumerStatefulWidget {
-  const FutBeatApp({super.key, this.router});
+  const FutBeatApp({super.key, this.router, this.resetLinks});
   final GoRouter? router;
+
+  /// Password-reset links; Android's app links when null (tests inject
+  /// their own stream).
+  final Stream<Uri>? resetLinks;
   @override
   ConsumerState<FutBeatApp> createState() => _FutBeatAppState();
 }
@@ -219,26 +224,27 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   PushMessageRouter? pushMessages;
   bool followPromptChecked = false;
   StreamSubscription<Uri>? links;
+  late final resetLinks = PasswordResetLinkQueue(
+    router: router,
+    handle: (link, navigator) => handlePasswordResetLink(
+      link,
+      service: ref.read(pushServiceProvider),
+      navigator: navigator,
+      messenger: messenger.currentState,
+      onSignedIn: _afterRecovery,
+    ),
+  );
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Password-reset links (the initial one included), Android only.
-    if (Platform.isAndroid) {
-      links = AppLinks().uriLinkStream.listen(
-        (link) => unawaited(
-          handlePasswordResetLink(
-            link,
-            service: ref.read(pushServiceProvider),
-            navigator: router.routerDelegate.navigatorKey.currentState,
-            messenger: messenger.currentState,
-            onSignedIn: _afterRecovery,
-          ),
-        ),
-        onError: (_) {},
-      );
-    }
+    // Password-reset links (the initial one included), Android only. Queued
+    // until the router has left /start (see PasswordResetLinkQueue).
+    final linkSource =
+        widget.resetLinks ??
+        (Platform.isAndroid ? AppLinks().uriLinkStream : null);
+    links = linkSource?.listen(resetLinks.add, onError: (_) {});
     // Null unless the build has the push flags: nothing runs otherwise.
     final source = ref.read(pushMessageSourceProvider);
     if (source != null) {
@@ -326,6 +332,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     WidgetsBinding.instance.removeObserver(this);
     pushMessages?.dispose();
     unawaited(links?.cancel());
+    resetLinks.dispose();
     if (widget.router == null) router.dispose();
     super.dispose();
   }
