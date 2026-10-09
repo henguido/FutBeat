@@ -47,14 +47,35 @@ Map<String, dynamic> _session([String provider = 'email']) => {
 /// GoTrue fake: `/settings` and the PKCE token exchange; every other
 /// account call answers empty.
 class _GoTrue {
-  _GoTrue({this.external = const {'google': true, 'facebook': true}}) {
+  _GoTrue({
+    this.external = const {'google': true, 'facebook': true},
+    this.settingsData,
+    this.settingsFailure,
+    this.settingsStatusCode = 503,
+  }) {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
           calls.add(options);
           Object? data = <String, dynamic>{};
           if (options.path.endsWith('/auth/v1/settings')) {
-            data = {'external': external};
+            final failure = settingsFailure;
+            if (failure != null) {
+              handler.reject(
+                DioException(
+                  requestOptions: options,
+                  type: failure,
+                  response: failure == DioExceptionType.badResponse
+                      ? Response(
+                          requestOptions: options,
+                          statusCode: settingsStatusCode,
+                        )
+                      : null,
+                ),
+              );
+              return;
+            }
+            data = settingsData ?? {'external': external};
           } else if (options.path.contains('grant_type=pkce')) {
             data = _session('google');
           }
@@ -67,6 +88,9 @@ class _GoTrue {
   }
 
   final Map<String, bool> external;
+  final Object? settingsData;
+  final DioExceptionType? settingsFailure;
+  final int settingsStatusCode;
   final dio = Dio();
   final calls = <RequestOptions>[];
 
@@ -88,6 +112,7 @@ void main() {
   PushService service(
     _GoTrue http, {
     bool oauth = true,
+    Set<OAuthProvider>? allowedProviders,
     OAuthBrowser? browser,
   }) {
     final value = PushService(
@@ -96,6 +121,8 @@ void main() {
       _Tokens(),
       dio: http.dio,
       oauthEnabled: oauth,
+      oauthAllowedProviders:
+          allowedProviders ?? (oauth ? OAuthProvider.values.toSet() : const {}),
       oauthBrowser: browser,
     );
     addTearDown(value.dispose);
@@ -107,14 +134,181 @@ void main() {
       'a build without social sign-in offers none and asks nothing',
       () async {
         final http = _GoTrue();
-        expect(await service(http, oauth: false).oauthProviders(), isEmpty);
+        final availability = await service(
+          http,
+          oauth: false,
+        ).oauthProviderAvailability();
+        expect(availability.effectiveProviders, isEmpty);
+        expect(
+          availability.states.values,
+          everyElement(OAuthProviderAvailabilityState.notConfiguredInBuild),
+        );
         expect(http.calls, isEmpty);
       },
     );
 
-    test('only providers enabled in Supabase are offered', () async {
-      final http = _GoTrue(external: {'google': true, 'facebook': false});
-      expect(await service(http).oauthProviders(), {OAuthProvider.google});
+    for (final testCase
+        in <({bool google, bool facebook, Set<OAuthProvider> expected})>[
+          (
+            google: true,
+            facebook: true,
+            expected: {OAuthProvider.google, OAuthProvider.facebook},
+          ),
+          (google: true, facebook: false, expected: {OAuthProvider.google}),
+          (google: false, facebook: true, expected: {OAuthProvider.facebook}),
+          (google: false, facebook: false, expected: {}),
+        ]) {
+      test('valid settings google=${testCase.google} '
+          'facebook=${testCase.facebook} are authoritative', () async {
+        final availability = await service(
+          _GoTrue(
+            external: {
+              'google': testCase.google,
+              'facebook': testCase.facebook,
+            },
+          ),
+        ).oauthProviderAvailability();
+        expect(availability.effectiveProviders, testCase.expected);
+        expect(availability.hasTemporaryFailure, isFalse);
+      });
+    }
+
+    test(
+      'server enabled cannot override a provider excluded by build',
+      () async {
+        final availability = await service(
+          _GoTrue(),
+          allowedProviders: const {OAuthProvider.google},
+        ).oauthProviderAvailability();
+        expect(availability.effectiveProviders, {OAuthProvider.google});
+        expect(
+          availability.states[OAuthProvider.facebook],
+          OAuthProviderAvailabilityState.notConfiguredInBuild,
+        );
+      },
+    );
+
+    for (final failure in DioExceptionType.values.where(
+      (value) =>
+          value == DioExceptionType.connectionError ||
+          value == DioExceptionType.connectionTimeout ||
+          value == DioExceptionType.receiveTimeout ||
+          value == DioExceptionType.badCertificate ||
+          value == DioExceptionType.badResponse ||
+          value == DioExceptionType.unknown,
+    )) {
+      test('temporary $failure uses the independent build allowlist', () async {
+        final availability = await service(
+          _GoTrue(settingsFailure: failure),
+          allowedProviders: const {OAuthProvider.google},
+        ).oauthProviderAvailability();
+        expect(availability.effectiveProviders, {OAuthProvider.google});
+        expect(availability.hasTemporaryFailure, isTrue);
+        expect(
+          availability.states[OAuthProvider.facebook],
+          OAuthProviderAvailabilityState.notConfiguredInBuild,
+        );
+      });
+    }
+
+    for (final status in [500, 503]) {
+      test('HTTP $status uses fallback and is not cached', () async {
+        final http = _GoTrue(
+          settingsFailure: DioExceptionType.badResponse,
+          settingsStatusCode: status,
+        );
+        final value = service(http);
+        expect(
+          (await value.oauthProviderAvailability()).hasTemporaryFailure,
+          isTrue,
+        );
+        expect(
+          (await value.oauthProviderAvailability()).hasTemporaryFailure,
+          isTrue,
+        );
+        expect(http.called('/auth/v1/settings'), hasLength(2));
+      });
+    }
+
+    for (final malformed in <Object?>[
+      'not-json',
+      const <String, Object?>{},
+      const {'external': 'invalid'},
+      const {
+        'external': {'google': true},
+      },
+    ]) {
+      test(
+        'malformed settings $malformed use fallback and are not cached',
+        () async {
+          final http = _GoTrue(settingsData: malformed);
+          final value = service(http);
+          expect(
+            (await value.oauthProviderAvailability()).hasTemporaryFailure,
+            isTrue,
+          );
+          expect(
+            (await value.oauthProviderAvailability()).hasTemporaryFailure,
+            isTrue,
+          );
+          expect(http.called('/auth/v1/settings'), hasLength(2));
+        },
+      );
+    }
+
+    test(
+      'a valid result is cached and a later failure cannot erase it',
+      () async {
+        final http = _GoTrue(external: {'google': true, 'facebook': false});
+        final value = service(http);
+        expect((await value.oauthProviderAvailability()).effectiveProviders, {
+          OAuthProvider.google,
+        });
+        http.dio.interceptors.clear();
+        http.dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) => handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.connectionError,
+              ),
+            ),
+          ),
+        );
+        expect((await value.oauthProviderAvailability()).effectiveProviders, {
+          OAuthProvider.google,
+        });
+        expect(http.called('/auth/v1/settings'), hasLength(1));
+      },
+    );
+
+    test('a valid retry replaces the temporary build fallback', () async {
+      final http = _GoTrue(settingsFailure: DioExceptionType.connectionError);
+      final value = service(http);
+      final fallback = await value.oauthProviderAvailability();
+      expect(fallback.hasTemporaryFailure, isTrue);
+      expect(fallback.effectiveProviders, {
+        OAuthProvider.google,
+        OAuthProvider.facebook,
+      });
+
+      http.dio.interceptors.clear();
+      http.dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) => handler.resolve(
+            Response(
+              requestOptions: options,
+              statusCode: 200,
+              data: {
+                'external': {'google': false, 'facebook': true},
+              },
+            ),
+          ),
+        ),
+      );
+      final verified = await value.oauthProviderAvailability();
+      expect(verified.hasTemporaryFailure, isFalse);
+      expect(verified.effectiveProviders, {OAuthProvider.facebook});
     });
   });
 
@@ -192,6 +386,16 @@ void main() {
     test('refused when this build has no social sign-in', () async {
       await expectLater(
         service(_GoTrue(), oauth: false).signInWithOAuth(OAuthProvider.google),
+        throwsStateError,
+      );
+    });
+
+    test('a provider excluded by build is refused independently', () async {
+      await expectLater(
+        service(
+          _GoTrue(),
+          allowedProviders: const {OAuthProvider.google},
+        ).signInWithOAuth(OAuthProvider.facebook),
         throwsStateError,
       );
     });
@@ -344,6 +548,46 @@ void main() {
       expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
     });
 
+    testWidgets(
+      'temporary settings failure keeps build providers and retries',
+      (tester) async {
+        final value = _FakeAuth(
+          db,
+          availability: OAuthProviderAvailability.temporaryFailure(const {
+            OAuthProvider.google,
+          }),
+        );
+        await open(tester, value, AuthMode.login);
+        expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+        expect(find.byKey(const ValueKey('auth-facebook')), findsNothing);
+        expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('auth-oauth-temporary')),
+          findsOneWidget,
+        );
+        final before = value.availabilityRequests;
+        await tester.tap(find.byKey(const ValueKey('auth-oauth-retry')));
+        await tester.pumpAndSettle();
+        expect(value.availabilityRequests, greaterThan(before));
+      },
+    );
+
+    testWidgets('server-confirmed disabled hides provider buttons', (
+      tester,
+    ) async {
+      final value = _FakeAuth(
+        db,
+        availability: OAuthProviderAvailability.fromServer(
+          buildProviders: const {OAuthProvider.google, OAuthProvider.facebook},
+          enabledProviders: const {},
+        ),
+      );
+      await open(tester, value, AuthMode.signup);
+      expect(find.byKey(const ValueKey('auth-google')), findsNothing);
+      expect(find.byKey(const ValueKey('auth-facebook')), findsNothing);
+      expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
+    });
+
     testWidgets('opening and switching auth never requests notifications', (
       tester,
     ) async {
@@ -382,7 +626,12 @@ void main() {
         ProviderScope(
           overrides: [
             pushServiceProvider.overrideWithValue(value),
-            oauthProvidersProvider.overrideWith((ref) async => const {}),
+            oauthProvidersProvider.overrideWith(
+              (ref) async => OAuthProviderAvailability.fromServer(
+                buildProviders: const {},
+                enabledProviders: const {},
+              ),
+            ),
           ],
           child: MaterialApp(
             home: Scaffold(
@@ -524,8 +773,30 @@ void main() {
 
 /// Records the calls; sessions are set without a server.
 class _FakeAuth extends PushService {
-  _FakeAuth(AppDatabase db, {bool oauthEnabled = true, _Tokens? tokens})
-    : super(_config, db, tokens ?? _Tokens(), oauthEnabled: oauthEnabled);
+  _FakeAuth(
+    AppDatabase db, {
+    bool oauthEnabled = true,
+    _Tokens? tokens,
+    OAuthProviderAvailability? availability,
+  }) : availability =
+           availability ??
+           OAuthProviderAvailability.fromServer(
+             buildProviders: oauthEnabled
+                 ? OAuthProvider.values.toSet()
+                 : const {},
+             enabledProviders: oauthEnabled
+                 ? OAuthProvider.values.toSet()
+                 : const {},
+           ),
+       super(
+         _config,
+         db,
+         tokens ?? _Tokens(),
+         oauthEnabled: oauthEnabled,
+         oauthAllowedProviders: oauthEnabled
+             ? OAuthProvider.values.toSet()
+             : const {},
+       );
 
   final signIns = <String>[];
   final signUps = <String>[];
@@ -534,6 +805,14 @@ class _FakeAuth extends PushService {
   String? rejectSignIn;
   bool cancelOAuth = false;
   bool existingAccount = false;
+  OAuthProviderAvailability availability;
+  int availabilityRequests = 0;
+
+  @override
+  Future<OAuthProviderAvailability> oauthProviderAvailability() async {
+    availabilityRequests++;
+    return availability;
+  }
 
   @override
   Future<void> signIn(String email, String password) async {

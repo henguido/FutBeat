@@ -1653,10 +1653,21 @@ class _SheetAuth extends PushService {
         db,
         _NoTokens(),
         oauthEnabled: true,
+        oauthAllowedProviders: const {
+          OAuthProvider.google,
+          OAuthProvider.facebook,
+        },
       );
 
   /// What the account had on the server (see [PushService.accountHadData]).
   final bool? hadData;
+
+  @override
+  Future<OAuthProviderAvailability> oauthProviderAvailability() async =>
+      OAuthProviderAvailability.fromServer(
+        buildProviders: const {OAuthProvider.google, OAuthProvider.facebook},
+        enabledProviders: const {OAuthProvider.google, OAuthProvider.facebook},
+      );
 
   @override
   Future<void> signIn(String email, String password) async {

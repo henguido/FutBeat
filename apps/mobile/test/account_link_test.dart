@@ -148,6 +148,10 @@ void main() {
       _Tokens(),
       dio: server.dio,
       oauthEnabled: true,
+      oauthAllowedProviders: const {
+        OAuthProvider.google,
+        OAuthProvider.facebook,
+      },
       oauthBrowser: (_, _) async =>
           'com.futbeat.futbeat://login-callback?code=one-time',
     );
@@ -403,6 +407,10 @@ void main() {
         tokens,
         dio: server.dio,
         oauthEnabled: true,
+        oauthAllowedProviders: const {
+          OAuthProvider.google,
+          OAuthProvider.facebook,
+        },
         oauthBrowser: (_, _) async =>
             'com.futbeat.futbeat://login-callback?code=one-time',
         pushConfigured: true,

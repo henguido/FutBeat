@@ -402,6 +402,51 @@ enum OAuthProvider {
   final String id;
 }
 
+enum OAuthProviderAvailabilityState {
+  knownEnabled,
+  knownDisabled,
+  unknownTemporaryFailure,
+  notConfiguredInBuild,
+}
+
+class OAuthProviderAvailability {
+  const OAuthProviderAvailability(this.states);
+
+  factory OAuthProviderAvailability.fromServer({
+    required Set<OAuthProvider> buildProviders,
+    required Set<OAuthProvider> enabledProviders,
+  }) => OAuthProviderAvailability({
+    for (final provider in OAuthProvider.values)
+      provider: !buildProviders.contains(provider)
+          ? OAuthProviderAvailabilityState.notConfiguredInBuild
+          : enabledProviders.contains(provider)
+          ? OAuthProviderAvailabilityState.knownEnabled
+          : OAuthProviderAvailabilityState.knownDisabled,
+  });
+
+  factory OAuthProviderAvailability.temporaryFailure(
+    Set<OAuthProvider> buildProviders,
+  ) => OAuthProviderAvailability({
+    for (final provider in OAuthProvider.values)
+      provider: buildProviders.contains(provider)
+          ? OAuthProviderAvailabilityState.unknownTemporaryFailure
+          : OAuthProviderAvailabilityState.notConfiguredInBuild,
+  });
+
+  final Map<OAuthProvider, OAuthProviderAvailabilityState> states;
+
+  Set<OAuthProvider> get effectiveProviders => {
+    for (final entry in states.entries)
+      if (entry.value == OAuthProviderAvailabilityState.knownEnabled ||
+          entry.value == OAuthProviderAvailabilityState.unknownTemporaryFailure)
+        entry.key,
+  };
+
+  bool get hasTemporaryFailure => states.values.contains(
+    OAuthProviderAvailabilityState.unknownTemporaryFailure,
+  );
+}
+
 /// Opens [url] in a browser tab and completes with the redirect URL once it
 /// reaches [callbackScheme]. Throws [OAuthCancelled] when the user closes it.
 typedef OAuthBrowser = Future<String> Function(Uri url, String callbackScheme);
@@ -455,9 +500,14 @@ class PushService {
     bool? pushConfigured,
     OAuthBrowser? oauthBrowser,
     bool? oauthEnabled,
+    Set<OAuthProvider>? oauthAllowedProviders,
+    this.oauthSettingsTimeout = const Duration(seconds: 3),
   }) : clock = clock ?? DateTime.now,
        oauthBrowser = oauthBrowser ?? _customTabBrowser,
        oauthEnabled = oauthEnabled ?? oauthConfigured,
+       oauthAllowedProviders = Set.unmodifiable(
+         oauthAllowedProviders ?? configuredOAuthProviders,
+       ),
        pushConfigured = pushConfigured ?? configured,
        dio =
            dio ??
@@ -498,10 +548,27 @@ class PushService {
   /// [oauthConfigured] unless a test overrides it.
   final bool oauthEnabled;
 
+  /// Providers this binary is allowed to offer. This is a local fallback,
+  /// not proof that the provider is enabled in Supabase.
+  final Set<OAuthProvider> oauthAllowedProviders;
+
+  final Duration oauthSettingsTimeout;
+
   /// Social sign-in needs `com.futbeat.futbeat://login-callback` in the
-  /// Supabase redirect allow list, which the app cannot check: builds opt
-  /// in with FUTBEAT_OAUTH_ENABLED once it is configured.
-  static const oauthConfigured = bool.fromEnvironment('FUTBEAT_OAUTH_ENABLED');
+  /// Supabase redirect allow list, which the app cannot check. Each provider
+  /// opts in independently; absent defines are deliberately fail-closed.
+  static const googleOAuthConfigured = bool.fromEnvironment(
+    'FUTBEAT_OAUTH_GOOGLE_ENABLED',
+  );
+  static const facebookOAuthConfigured = bool.fromEnvironment(
+    'FUTBEAT_OAUTH_FACEBOOK_ENABLED',
+  );
+  static const oauthConfigured =
+      googleOAuthConfigured || facebookOAuthConfigured;
+  static const configuredOAuthProviders = <OAuthProvider>{
+    if (googleOAuthConfigured) OAuthProvider.google,
+    if (facebookOAuthConfigured) OAuthProvider.facebook,
+  };
   static const oauthCallbackScheme = 'com.futbeat.futbeat';
   static const oauthRedirect = '$oauthCallbackScheme://login-callback';
   static const passwordResetHost = 'futbeat.com';
@@ -708,36 +775,65 @@ class PushService {
     await _startSession(next);
   }
 
-  /// Social providers enabled in Supabase Auth (public `/settings`), empty
-  /// when social sign-in is off for this build or the answer is unknown.
-  Future<Set<OAuthProvider>> oauthProviders() async {
-    if (!accountConfigured || !oauthEnabled) return const {};
+  Set<OAuthProvider> get buildOAuthProviders =>
+      accountConfigured && oauthEnabled ? oauthAllowedProviders : const {};
+
+  /// Provider availability from Supabase's public `/settings` endpoint.
+  /// A valid response is authoritative. Temporary failures use the explicit
+  /// per-provider build allowlist and are deliberately not cached, so opening
+  /// Auth again retries. Only valid server results live for this service
+  /// session.
+  Future<OAuthProviderAvailability> oauthProviderAvailability() async {
+    final buildProviders = buildOAuthProviders;
+    if (buildProviders.isEmpty) {
+      return OAuthProviderAvailability.temporaryFailure(const {});
+    }
     final known = _oauthProviders;
-    if (known != null) return known;
-    try {
-      final response = await dio.get<dynamic>(
-        '${config.supabaseUrl}/auth/v1/settings',
-        options: Options(headers: {'apikey': config.publicKey}),
+    if (known != null) {
+      return OAuthProviderAvailability.fromServer(
+        buildProviders: buildProviders,
+        enabledProviders: known,
       );
+    }
+    try {
+      final response = await dio
+          .get<dynamic>(
+            '${config.supabaseUrl}/auth/v1/settings',
+            options: Options(headers: {'apikey': config.publicKey}),
+          )
+          .timeout(oauthSettingsTimeout);
       final external = response.data is Map
           ? (response.data as Map)['external']
           : null;
-      return _oauthProviders = {
-        for (final provider in OAuthProvider.values)
-          if (external is Map && external[provider.id] == true) provider,
+      if (external is! Map ||
+          OAuthProvider.values.any(
+            (provider) => external[provider.id] is! bool,
+          )) {
+        throw const FormatException('Invalid GoTrue provider settings');
+      }
+      final enabled = {
+        for (final provider in buildProviders)
+          if (external[provider.id] == true) provider,
       };
+      _oauthProviders = enabled;
+      return OAuthProviderAvailability.fromServer(
+        buildProviders: buildProviders,
+        enabledProviders: enabled,
+      );
     } catch (_) {
-      // Not cached: the next auth screen asks again.
-      return const {};
+      return OAuthProviderAvailability.temporaryFailure(buildProviders);
     }
   }
+
+  Future<Set<OAuthProvider>> oauthProviders() async =>
+      (await oauthProviderAvailability()).effectiveProviders;
 
   /// Google / Facebook through Supabase Auth with PKCE: the provider page
   /// opens in a browser tab, the redirect brings back a one-time code and
   /// only the code exchange creates the session. No provider secret lives
   /// in the app.
   Future<void> signInWithOAuth(OAuthProvider provider) async {
-    if (!accountConfigured || !oauthEnabled) {
+    if (!buildOAuthProviders.contains(provider)) {
       throw StateError('Social sign-in is not configured');
     }
     await _awaitSignOutCleanup();

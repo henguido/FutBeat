@@ -244,6 +244,7 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
     clock: () => fake.now,
     signOutCleanupTimeout: cleanupTimeout,
     oauthEnabled: true,
+    oauthAllowedProviders: const {OAuthProvider.google, OAuthProvider.facebook},
   );
   addTearDown(() async {
     service.dispose();

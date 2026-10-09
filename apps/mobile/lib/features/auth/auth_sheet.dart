@@ -8,10 +8,12 @@ import '../profile/password_reset_sheet.dart';
 
 enum AuthMode { login, signup }
 
-/// Social providers this build can offer (see [PushService.oauthProviders]).
-final oauthProvidersProvider = FutureProvider<Set<OAuthProvider>>(
-  (ref) => ref.watch(pushServiceProvider).oauthProviders(),
-);
+/// Auto-dispose makes reopening Auth retry `/settings` while the last result
+/// remains unknown. Valid results are cached by [PushService] for its session.
+final oauthProvidersProvider =
+    FutureProvider.autoDispose<OAuthProviderAvailability>(
+      (ref) => ref.watch(pushServiceProvider).oauthProviderAvailability(),
+    );
 
 /// Sign in / create an account without leaving the current screen. Completes
 /// with `true` once there is a valid session; the caller stays where it was.
@@ -165,15 +167,9 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final service = ref.watch(pushServiceProvider);
-    // The build flag is the authority for whether this release offers social
-    // auth. Do not make the buttons disappear while the public GoTrue
-    // `/settings` request is loading, offline, or temporarily unavailable:
-    // that reduced the sheet to email-only on physical devices even though
-    // the existing PKCE flow was configured and usable.
-    final providers = service.accountConfigured && service.oauthEnabled
-        ? OAuthProvider.values
-        : const <OAuthProvider>[];
+    final availability = ref.watch(oauthProvidersProvider);
+    final providerState = availability.asData?.value;
+    final providers = providerState?.effectiveProviders ?? const {};
     final verb = signup ? 'Crear cuenta' : 'Iniciar sesión';
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -226,6 +222,37 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
                         child: Text('o', style: TextStyle(color: muted)),
                       ),
                       Expanded(child: Divider()),
+                    ],
+                  ),
+                ),
+              if (availability.isLoading)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: LinearProgressIndicator(
+                    key: ValueKey('auth-oauth-loading'),
+                    minHeight: 2,
+                  ),
+                )
+              else if (providerState?.hasTemporaryFailure == true)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    key: const ValueKey('auth-oauth-temporary'),
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'No se pudo verificar el acceso social. '
+                          'Puedes intentarlo o reintentar la consulta.',
+                          style: TextStyle(color: muted, fontSize: 12),
+                        ),
+                      ),
+                      TextButton(
+                        key: const ValueKey('auth-oauth-retry'),
+                        onPressed: busy
+                            ? null
+                            : () => ref.invalidate(oauthProvidersProvider),
+                        child: const Text('Reintentar'),
+                      ),
                     ],
                   ),
                 ),
