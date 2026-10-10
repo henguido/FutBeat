@@ -1,7 +1,7 @@
 name: futbeat
 description: "FutBeat: el latido del fútbol. App nativa Android e iOS."
 publish_to: 'none'
-version: 1.0.0+2
+version: 1.0.0+3
 
 environment:
   sdk: ^3.13.3
