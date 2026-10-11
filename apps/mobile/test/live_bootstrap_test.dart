@@ -14,6 +14,7 @@ Json liveRow(
   int home = 0,
   int away = 0,
   required DateTime updatedAt,
+  DateTime? changedAt,
 }) => {
   'match_id': id,
   'provider': 'goal_api',
@@ -25,7 +26,7 @@ Json liveRow(
   'revision': revision,
   'event_count': 0,
   'latest_events': <dynamic>[],
-  'changed_at': updatedAt.toUtc().toIso8601String(),
+  'changed_at': (changedAt ?? updatedAt).toUtc().toIso8601String(),
   'updated_at': updatedAt.toUtc().toIso8601String(),
 };
 
@@ -36,6 +37,7 @@ class FakeSupabase {
     Iterable<Json> rows, {
     this.maxRows = 1000,
     this.realtime = true,
+    this.sendDate = true,
   }) {
     for (final row in rows) {
       this.rows[row['match_id'] as String] = row;
@@ -45,6 +47,7 @@ class FakeSupabase {
   final Map<String, Json> rows = {};
   final int maxRows;
   final bool realtime;
+  final bool sendDate;
   final List<Uri> restRequests = [];
   final Set<int> failingRequests = {};
   final List<WebSocket> sockets = [];
@@ -81,7 +84,11 @@ class FakeSupabase {
       final index = restRequests.length;
       restRequests.add(request.uri);
       beforeAnswer?.call(index);
-      request.response.headers.date = DateTime.now().toUtc();
+      if (sendDate) {
+        request.response.headers.date = DateTime.now().toUtc();
+      } else {
+        request.response.headers.removeAll(HttpHeaders.dateHeader);
+      }
       if (failingRequests.contains(index)) {
         request.response.statusCode = 503;
         request.response.write('{"message":"unavailable"}');
@@ -90,11 +97,11 @@ class FakeSupabase {
       }
       final q = request.uri.queryParameters;
       var result = rows.values.toList();
-      final since = q['updated_at'];
+      final since = q['changed_at'];
       if (since != null) {
         final from = DateTime.parse(since.substring('gte.'.length));
         result = result
-            .where((r) => !DateTime.parse(r['updated_at']).isBefore(from))
+            .where((r) => !DateTime.parse(r['changed_at']).isBefore(from))
             .toList();
       }
       final after = q['match_id'];
@@ -183,7 +190,8 @@ void main() {
           expect(page['order'], 'match_id.asc');
           expect(page['limit'], '250');
           expect(page['select'], liveBootstrapColumns);
-          expect(page['updated_at'], startsWith('gte.'));
+          expect(page['changed_at'], startsWith('gte.'));
+          expect(page.containsKey('updated_at'), isFalse);
           expect(page['match_id'], 'gt.${id(2499)}');
         } finally {
           dio.close(force: true);
@@ -484,6 +492,210 @@ void main() {
       final subscription = client.watch().listen((_) {});
       try {
         await until(() => server.restRequests.length >= 4);
+      } finally {
+        await subscription.cancel();
+        dio.close(force: true);
+        await server.stop();
+      }
+    });
+  });
+
+  group('hardening: changed_at window, races and late rows', () {
+    Map<String, LiveMatchUpdate> reconcileWindow(
+      Map<String, LiveMatchUpdate> current,
+      LiveBootstrapRead read,
+      DateTime since,
+    ) => reconcileLiveBootstrapSnapshot(
+      current,
+      read.rows,
+      keysBeforeRequest: current.keys.toSet(),
+      serverNow: read.serverNow,
+      deviceNow: now,
+      complete: read.complete,
+      removableSince: since.add(policy.removalMargin),
+    );
+
+    test('a row rewritten without a change (old changed_at, fresh '
+        'updated_at) is not read, and its overlay is kept', () async {
+      final old = now.subtract(const Duration(days: 5));
+      final server = FakeSupabase([
+        liveRow(id(1), status: 'VERIFIED', updatedAt: now, changedAt: old),
+        liveRow(id(2), updatedAt: now),
+      ]);
+      await server.start();
+      final dio = Dio();
+      try {
+        final since = now.subtract(policy.window);
+        final read = await fetchLiveBootstrap(
+          dio,
+          LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+          policy,
+          since: since,
+        );
+        expect(read.complete, isTrue);
+        expect(read.rows.map((r) => r['match_id']), [id(2)]);
+        final result = reconcileWindow(
+          {id(1): overlay(id(1), status: 'VERIFIED', receivedAt: old)},
+          read,
+          since,
+        );
+        expect(result.containsKey(id(1)), isTrue);
+        expect(result.containsKey(id(2)), isTrue);
+      } finally {
+        dio.close(force: true);
+        await server.stop();
+      }
+    });
+
+    test('changes between pages never remove a valid overlay; a row pruned '
+        'mid-read is removed', () async {
+      final rows = [
+        for (var i = 0; i < 600; i++)
+          liveRow(id(i * 2), updatedAt: now.subtract(const Duration(hours: 1))),
+      ];
+      final server = FakeSupabase(rows);
+      server.beforeAnswer = (request) {
+        if (request != 1) return;
+        // Behind the cursor (already read): a goal.
+        server.rows[id(2)] = liveRow(
+          id(2),
+          revision: 2,
+          home: 1,
+          updatedAt: now,
+        );
+        // Ahead of the cursor: a goal and a prune.
+        server.rows[id(1000)] = liveRow(
+          id(1000),
+          revision: 2,
+          home: 2,
+          updatedAt: now,
+        );
+        server.rows.remove(id(1100));
+        // Behind the cursor and new to the window: read next cycle.
+        server.rows[id(3)] = liveRow(id(3), updatedAt: now);
+      };
+      await server.start();
+      final dio = Dio();
+      try {
+        final since = now.subtract(policy.window);
+        final read = await fetchLiveBootstrap(
+          dio,
+          LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+          policy,
+          since: since,
+        );
+        expect(read.complete, isTrue);
+        final current = {
+          for (final row in rows)
+            row['match_id'] as String: LiveMatchUpdate.fromJson(
+              row,
+              receivedAt: now.subtract(const Duration(hours: 1)),
+            ),
+        };
+        final result = reconcileWindow(current, read, since);
+        expect(result.length, 599);
+        expect(result.containsKey(id(1100)), isFalse, reason: 'pruned');
+        expect(result[id(1000)]!.homeScore, 2);
+        expect(result.containsKey(id(2)), isTrue);
+        final ids = read.rows.map((r) => r['match_id']).toList();
+        expect(ids.toSet().length, ids.length);
+      } finally {
+        dio.close(force: true);
+        await server.stop();
+      }
+    });
+
+    test(
+      'hitting maxPages is partial and exhausted: nothing removed',
+      () async {
+        final server = FakeSupabase([
+          for (var i = 0; i < 30; i++) liveRow(id(i), updatedAt: now),
+        ]);
+        await server.start();
+        final dio = Dio();
+        try {
+          final since = now.subtract(policy.window);
+          final read = await fetchLiveBootstrap(
+            dio,
+            LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+            const LiveBootstrapPolicy(pageSize: 10, maxPages: 2),
+            since: since,
+          );
+          expect(
+            [read.complete, read.exhausted, read.rows.length],
+            [false, true, 20],
+          );
+          final result = reconcileWindow(
+            {id(25): overlay(id(25), receivedAt: now)},
+            read,
+            since,
+          );
+          expect(result.containsKey(id(25)), isTrue);
+        } finally {
+          dio.close(force: true);
+          await server.stop();
+        }
+      },
+    );
+
+    test('a late REST row never undoes a newer realtime correction', () {
+      final realtime = LiveMatchUpdate.fromJson(
+        liveRow(id(4), revision: 6, home: 1, away: 1, updatedAt: now),
+        receivedAt: now,
+      );
+      final read = (
+        rows: [
+          liveRow(
+            id(4),
+            revision: 5,
+            home: 2,
+            away: 1,
+            updatedAt: now.subtract(const Duration(minutes: 2)),
+          ),
+        ],
+        complete: true,
+        exhausted: false,
+        serverNow: now,
+      );
+      final result = reconcileWindow(
+        {id(4): realtime},
+        read,
+        now.subtract(policy.window),
+      );
+      expect(result[id(4)]!.revision, 6);
+      expect([result[id(4)]!.homeScore, result[id(4)]!.awayScore], [1, 1]);
+    });
+
+    test('without a server Date header a pruned row is still removed and the '
+        'others stay', () async {
+      final server = FakeSupabase(
+        [liveRow(id(1), updatedAt: now), liveRow(id(2), updatedAt: now)],
+        realtime: false,
+        sendDate: false,
+      );
+      await server.start();
+      final dio = Dio();
+      final client = LiveRealtimeClient(
+        LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+        dio,
+        retryDelay: const Duration(seconds: 30),
+        refreshInterval: const Duration(milliseconds: 40),
+      );
+      var latest = <String, LiveMatchUpdate>{};
+      final subscription = client.watch().listen((value) => latest = value);
+      Future<void> until(bool Function() done) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        while (!done()) {
+          if (DateTime.now().isAfter(deadline)) fail('timed out');
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }
+
+      try {
+        await until(() => latest.length == 2);
+        server.rows.remove(id(2));
+        await until(() => !latest.containsKey(id(2)));
+        expect(latest.containsKey(id(1)), isTrue);
       } finally {
         await subscription.cancel();
         dio.close(force: true);

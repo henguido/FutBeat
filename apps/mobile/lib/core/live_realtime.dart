@@ -11,9 +11,10 @@ import 'models.dart';
 /// skew-free receipt time (#120: an old LIVE row never looks fresh).
 ///
 /// Absence only means "deleted on the server" when the answer is [complete]
-/// (every page read). With [removableSince] (device time) the request covered
-/// only rows updated since then: an overlay observed before it was simply not
-/// asked for, so it is kept. A partial answer never removes anything.
+/// (every page read). With [removableSince] (server time, compared with
+/// [LiveMatchUpdate.changedAt]) the request covered only rows changed since
+/// then: an overlay whose last change is older was simply not asked for, so
+/// it is kept. A partial answer never removes anything.
 Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
   Map<String, LiveMatchUpdate> current,
   Iterable<Json> rows, {
@@ -68,18 +69,18 @@ Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
         before.contains(matchId) &&
         !fetched.contains(matchId) &&
         (removableSince == null ||
-            !(update.receivedAt ?? update.changedAt).toUtc().isBefore(
-              removableSince.toUtc(),
-            )),
+            !update.changedAt.toUtc().isBefore(removableSince.toUtc())),
   );
   return result;
 }
 
-/// How the REST bootstrap reads `live_match_updates`: only the rows updated
-/// inside [window] (an older LIVE row is ignored by the overlay after
-/// [LiveMatchUpdate.staleAfter]; an older terminal row is already in the
-/// stored snapshots), in [pageSize] pages by primary key, far below the
-/// PostgREST row cap (1000), so a short page reliably means "last page".
+/// How the REST bootstrap reads `live_match_updates`: only the rows whose
+/// state CHANGED inside [window] (`changed_at`, indexed; `updated_at` is also
+/// rewritten when nothing changed, days later). An older LIVE row is ignored
+/// by the overlay after [LiveMatchUpdate.staleAfter]; an older terminal row is
+/// already in the stored snapshots. Pages of [pageSize] by primary key (a
+/// key never moves, so a row cannot be skipped by a concurrent update), far
+/// below the PostgREST row cap (1000): a short page reliably means "last".
 class LiveBootstrapPolicy {
   const LiveBootstrapPolicy({
     this.window = const Duration(hours: 72),
@@ -95,8 +96,8 @@ class LiveBootstrapPolicy {
   /// Safety bound (pageSize x maxPages rows); reaching it is a partial read.
   final int maxPages;
 
-  /// Overlays this close to the window start are never removed (boundary,
-  /// clock and paging races): only rows clearly inside the window are.
+  /// Overlays whose last change is this close to the window start are never
+  /// removed (boundary races): only rows clearly inside the window are.
   final Duration removalMargin;
 
   /// While the realtime channel is joined, the periodic REST check runs at
@@ -109,15 +110,17 @@ const liveBootstrapColumns =
     'match_id,provider,external_match_id,status,minute,home_score,away_score,'
     'revision,event_count,latest_events,changed_at,updated_at';
 
-/// One bootstrap read: the rows, whether every page was read, and the server
-/// time of the first answer (HTTP `Date`).
+/// One bootstrap read: the rows, whether every page was read, whether it
+/// stopped at [LiveBootstrapPolicy.maxPages] (partial, but not worth an
+/// immediate retry), and the server time of the first answer (HTTP `Date`).
 typedef LiveBootstrapRead = ({
   List<Json> rows,
   bool complete,
+  bool exhausted,
   DateTime? serverNow,
 });
 
-/// Reads the rows updated since [since] page by page (keyset on
+/// Reads the rows changed since [since] (server time) page by page (keyset on
 /// `match_id`). A failure after some pages returns what was read as a
 /// partial answer; a failure on the first page throws.
 Future<LiveBootstrapRead> fetchLiveBootstrap(
@@ -129,8 +132,8 @@ Future<LiveBootstrapRead> fetchLiveBootstrap(
   final rows = <Json>[];
   DateTime? serverNow;
   String? after;
-  LiveBootstrapRead partial() =>
-      (rows: rows, complete: false, serverNow: serverNow);
+  LiveBootstrapRead partial({bool exhausted = false}) =>
+      (rows: rows, complete: false, exhausted: exhausted, serverNow: serverNow);
   for (var page = 0; page < policy.maxPages; page++) {
     final Response<dynamic> response;
     try {
@@ -165,13 +168,18 @@ Future<LiveBootstrapRead> fetchLiveBootstrap(
         .toList();
     rows.addAll(pageRows);
     if (data.length < policy.pageSize) {
-      return (rows: rows, complete: true, serverNow: serverNow);
+      return (
+        rows: rows,
+        complete: true,
+        exhausted: false,
+        serverNow: serverNow,
+      );
     }
     final last = pageRows.isEmpty ? null : pageRows.last['match_id'];
     if (last is! String || last == after) return partial();
     after = last;
   }
-  return partial();
+  return partial(exhausted: true);
 }
 
 class LiveRealtimeConfig {
@@ -237,7 +245,7 @@ class LiveRealtimeConfig {
       Uri.parse('$supabaseUrl/rest/v1/live_match_updates')
           .replace(queryParameters: const {'select': '*'});
 
-  /// One bootstrap page: rows updated since [since] (server time), ordered
+  /// One bootstrap page: rows changed since [since] (server time), ordered
   /// by primary key, after the keyset cursor [after].
   Uri bootstrapPageUri({
     required DateTime since,
@@ -246,7 +254,7 @@ class LiveRealtimeConfig {
   }) => Uri.parse('$supabaseUrl/rest/v1/live_match_updates').replace(
     queryParameters: {
       'select': liveBootstrapColumns,
-      'updated_at': 'gte.${since.toUtc().toIso8601String()}',
+      'changed_at': 'gte.${since.toUtc().toIso8601String()}',
       if (after != null) 'match_id': 'gt.$after',
       'order': 'match_id.asc',
       'limit': '$limit',
@@ -349,20 +357,17 @@ class LiveRealtimeClient {
           keysBeforeRequest: before,
           serverNow: serverNow,
           deviceNow: deviceNow,
-          // Without a server time the window cannot be placed on the device
-          // clock: nothing is removed.
-          complete: read.complete && serverNow != null,
-          removableSince: serverNow == null
-              ? null
-              : deviceNow
-                    .subtract(serverNow.difference(since))
-                    .add(policy.removalMargin),
+          complete: read.complete,
+          // Same clock as the query: the server compared `changed_at` with
+          // this exact [since], so no device/server mapping is involved.
+          removableSince: since.add(policy.removalMargin),
         );
         state
           ..clear()
           ..addAll(reconciled);
-        // A partial read is retried on the next tick, joined or not.
-        lastBootstrap = read.complete ? deviceNow : null;
+        // A failed or cut read is retried on the next tick, joined or not; a
+        // read that hit maxPages is not (it would only repeat the same cut).
+        lastBootstrap = read.complete || read.exhausted ? deviceNow : null;
         emit();
       } catch (_) {
         /* Keep HTTP snapshot and the last valid overlay. */
