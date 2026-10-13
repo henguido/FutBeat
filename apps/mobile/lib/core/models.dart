@@ -487,6 +487,7 @@ class LiveMatchUpdate {
       'FINISHED_PENDING_VERIFICATION',
       'VERIFIED',
       'POSTPONED',
+      'SUSPENDED',
       'ABANDONED',
       'CANCELLED',
     };

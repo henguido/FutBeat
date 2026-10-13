@@ -133,6 +133,7 @@ void main() {
       'FINISHED_PENDING_VERIFICATION',
       'VERIFIED',
       'POSTPONED',
+      'SUSPENDED',
       'ABANDONED',
       'CANCELLED',
     ]) {
@@ -154,6 +155,30 @@ void main() {
         );
       }
     }
+  });
+
+  test('suspended match resumes only with a new canonical snapshot', () {
+    final suspended = _match(
+      status: 'SUSPENDED',
+      score: {'home': 1, 'away': 0},
+      minute: 58,
+    );
+    final delayedLive = _update(status: 'LIVE', minute: 57, home: 1, away: 0);
+    expect(delayedLive.applyTo(suspended), same(suspended));
+    final resumed = _match(
+      status: 'LIVE',
+      score: {'home': 1, 'away': 0},
+      minute: 59,
+    );
+    expect(
+      FootballMatch(
+        delayedLive.applyTo(
+          resumed,
+          now: _kickoff.add(const Duration(hours: 3)),
+        ),
+      ).isLive,
+      isTrue,
+    );
   });
 
   test('D. canonical scheduled + valid LIVE update => becomes LIVE', () {
