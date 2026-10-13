@@ -151,9 +151,9 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         databaseProvider.overrideWithValue(db),
-        entitySnapshotProvider.overrideWith((ref, request) async {
+        entitySnapshotProvider.overrideWith((ref, request) {
           loads.add(loads.length);
-          return Snapshot(payload(loads.length - 1));
+          return Stream.value(Snapshot(payload(loads.length - 1)));
         }),
         followsProvider.overrideWith((ref) => Stream.value({})),
       ],

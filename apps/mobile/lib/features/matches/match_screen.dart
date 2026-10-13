@@ -631,7 +631,14 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       detail: detail,
       home: home,
       away: away,
-      child: page,
+      child: data.stale || detail.offlineStale
+          ? Banner(
+              message: 'Datos guardados',
+              location: BannerLocation.topEnd,
+              color: Colors.deepOrange,
+              child: page,
+            )
+          : page,
     );
   }
 }

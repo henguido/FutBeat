@@ -141,7 +141,7 @@ Future<void> _pumpTeam(
       databaseProvider.overrideWithValue(db),
       if (media != null) entityMediaProvider.overrideWithValue(media),
       entitySnapshotProvider.overrideWith(
-        (ref, request) async => Snapshot(payload),
+        (ref, request) => Stream.value(Snapshot(payload)),
       ),
       followsProvider.overrideWith((ref) => Stream.value({})),
     ],

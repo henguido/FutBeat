@@ -166,7 +166,8 @@ void main() {
         databaseProvider.overrideWithValue(db),
         // The server hydrates the crest while the profile is open.
         entitySnapshotProvider.overrideWith(
-          (ref, request) async => Snapshot(_payload(crest: reads++ > 0)),
+          (ref, request) =>
+              Stream.value(Snapshot(_payload(crest: reads++ > 0))),
         ),
         followsProvider.overrideWith((ref) => Stream.value({})),
       ],

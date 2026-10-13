@@ -245,22 +245,156 @@ class ApiRepository implements FootballRepository {
     }
   }
 
+  bool _publicSnapshotMatches(
+    String key,
+    Snapshot snapshot,
+    Map<String, dynamic>? parameters,
+  ) {
+    final id = parameters?['id'];
+    if (id is! String || !id.startsWith('fb_')) {
+      return false;
+    }
+    if (key != 'match-context:$id' &&
+        key != 'entity:${parameters?['type']}:$id') {
+      return false;
+    }
+    final canonical = snapshot.resolveEntityId(id);
+    if (key.startsWith('match-context:')) return snapshot.match(id) != null;
+    if (!key.startsWith('entity:')) return false;
+    return switch (parameters?['type']) {
+      'team' => snapshot.team(canonical) != null,
+      'player' => snapshot.player(canonical) != null,
+      _ => false,
+    };
+  }
+
+  void _persistPublicJson(String key, Json raw) {
+    final db = database;
+    if (db == null || _containsPrivateCacheField(raw)) return;
+    late final Future<void> write;
+    write = db
+        .savePublicSnapshot('public:$key', jsonEncode(raw))
+        .catchError((Object _) {})
+        .whenComplete(() => _diskWrites.remove(write));
+    _diskWrites.add(write);
+  }
+
+  static const _privateCacheFields = {
+    'accesstoken',
+    'refreshtoken',
+    'idtoken',
+    'token',
+    'tokenhash',
+    'providertoken',
+    'providerrefreshtoken',
+    'apikey',
+    'servicekey',
+    'password',
+    'secret',
+    'authorization',
+    'cookie',
+    'session',
+    'userid',
+    'email',
+    'follows',
+    'preferences',
+  };
+
+  bool _containsPrivateCacheField(Object? value) {
+    if (value is Map) {
+      for (final entry in value.entries) {
+        final key = entry.key.toString().toLowerCase().replaceAll(
+          RegExp('[^a-z0-9]'),
+          '',
+        );
+        if (_privateCacheFields.contains(key) ||
+            _containsPrivateCacheField(entry.value)) {
+          return true;
+        }
+      }
+    } else if (value is List) {
+      return value.any(_containsPrivateCacheField);
+    }
+    return false;
+  }
+
+  Future<Snapshot?> _readPublicSnapshot(
+    String key,
+    Map<String, dynamic>? parameters,
+  ) async {
+    try {
+      final row = await database?.readPublicSnapshot('public:$key');
+      if (row == null ||
+          DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
+              publicSnapshotRetention) {
+        return null;
+      }
+      final raw = jsonDecode(row.payload) as Json;
+      final candidate = Snapshot(raw);
+      if (!_publicSnapshotMatches(key, candidate, parameters)) {
+        return null;
+      }
+      return _canonical(raw).asStale();
+    } catch (_) {
+      // Corrupt or obsolete entries cannot hide the original network error.
+      return null;
+    }
+  }
+
   Future<Snapshot> _loadSnapshot(
     String key,
     String path, {
     Map<String, dynamic>? queryParameters,
   }) async {
     try {
-      final snapshot = _canonical(
-        await _getJson(path, queryParameters: queryParameters),
-      );
+      final raw = await _getJson(path, queryParameters: queryParameters);
+      final snapshot = _canonical(raw);
+      final previous = _snapshotCache[key];
+      if (_publicSnapshotMatches(key, snapshot, queryParameters) &&
+          previous != null &&
+          snapshot.updatedAt.isBefore(previous.updatedAt)) {
+        return previous.asStale();
+      }
       _remember(key, snapshot);
+      if (_publicSnapshotMatches(key, snapshot, queryParameters)) {
+        _persistPublicJson(key, raw);
+      }
       return snapshot;
     } catch (error, stack) {
       final cached = _snapshotCache[key];
       if (cached != null) return cached.asStale();
+      final stored = await _readPublicSnapshot(key, queryParameters);
+      if (stored != null) {
+        _remember(key, stored);
+        return stored;
+      }
       Error.throwWithStackTrace(error, stack);
     }
+  }
+
+  Stream<Snapshot> watchPublicEntity(String type, String id) async* {
+    final key = 'entity:$type:$id';
+    final stored =
+        _snapshotCache[key] ??
+        await _readPublicSnapshot(key, {'type': type, 'id': id});
+    if (stored != null) {
+      _remember(key, stored);
+      yield stored.asStale();
+    }
+    final answer = await loadEntity(type, id);
+    if (stored == null || !answer.stale) yield answer;
+  }
+
+  Stream<Snapshot> watchPublicMatchContext(String id) async* {
+    final key = 'match-context:$id';
+    final stored =
+        _snapshotCache[key] ?? await _readPublicSnapshot(key, {'id': id});
+    if (stored != null) {
+      _remember(key, stored);
+      yield stored.asStale();
+    }
+    final answer = await loadMatchContext(id);
+    if (stored == null || !answer.stale) yield answer;
   }
 
   @override
@@ -711,6 +845,34 @@ class ApiRepository implements FootballRepository {
     queryParameters: {'id': id},
   );
 
+  Future<MatchDetail?> readStoredMatchDetail(String id) async {
+    if (!id.startsWith('fb_')) {
+      return null;
+    }
+    try {
+      final row = await database?.readPublicSnapshot('public:match-detail:$id');
+      if (row == null ||
+          DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
+              publicSnapshotRetention) {
+        return null;
+      }
+      final raw = jsonDecode(row.payload) as Json;
+      final detail = MatchDetail({
+        ...raw,
+        'offlineStale': true,
+      }, blockedAliasIds: media?.revokedDisplayAliases ?? const {});
+      return detail.available && detail.matchId == id ? detail : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void persistMatchDetail(String id, MatchDetail detail) {
+    if (id.startsWith('fb_') && detail.available && detail.matchId == id) {
+      _persistPublicJson('match-detail:$id', detail.sourceJson);
+    }
+  }
+
   /// Recent form + head-to-head (DB-only on the server: never registers
   /// demand nor calls a provider). One attempt: it is optional content.
   Future<MatchPreview> loadMatchPreview(String id) async => MatchPreview(
@@ -1024,6 +1186,7 @@ class ApiRepository implements FootballRepository {
         );
         // Remember accepted requests only. Errors/timeouts remain retryable.
         _detailRequested.add(id);
+        persistMatchDetail(id, detail);
         return detail;
       } finally {
         _detailRequestInFlight.remove(id);
@@ -1034,15 +1197,19 @@ class ApiRepository implements FootballRepository {
   Future<MatchDetail> readMatchDetail(
     String id, {
     CancelToken? cancelToken,
-  }) async => MatchDetail(
-    await _getJson(
-      '/v1/match-detail',
-      queryParameters: {'id': id, 'request': '0'},
-      maxAttempts: 1,
-      cancelToken: cancelToken,
-    ),
-    blockedAliasIds: media?.revokedDisplayAliases ?? const {},
-  );
+  }) async {
+    final detail = MatchDetail(
+      await _getJson(
+        '/v1/match-detail',
+        queryParameters: {'id': id, 'request': '0'},
+        maxAttempts: 1,
+        cancelToken: cancelToken,
+      ),
+      blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+    );
+    persistMatchDetail(id, detail);
+    return detail;
+  }
 
   /// Tabla v2 "Forma" (#158), loaded only when the user opens it. DB-only on
   /// the server. One attempt: the table itself is already on screen.
@@ -1194,20 +1361,22 @@ final entitySnapshotReceivedAtProvider =
 /// Kept for the session (not autoDispose) so a re-opened profile paints its
 /// last answer at once; [revalidateEntitySnapshot] refreshes it on re-entry.
 final entitySnapshotProvider =
-    FutureProvider.family<Snapshot, ({String type, String id})>((
+    StreamProvider.family<Snapshot, ({String type, String id})>((
       ref,
       request,
-    ) async {
+    ) async* {
       final repository = ref.watch(repositoryProvider);
-      final snapshot = repository is ApiRepository
-          ? await repository.loadEntity(request.type, request.id)
-          : await repository.load();
-      if (ref.mounted) {
-        ref.read(entitySnapshotReceivedAtProvider)[request] = ref.read(
-          clockProvider,
-        )();
+      final answers = repository is ApiRepository
+          ? repository.watchPublicEntity(request.type, request.id)
+          : Stream.fromFuture(repository.load());
+      await for (final snapshot in answers) {
+        if (ref.mounted && !snapshot.stale) {
+          ref.read(entitySnapshotReceivedAtProvider)[request] = ref.read(
+            clockProvider,
+          )();
+        }
+        yield snapshot;
       }
-      return snapshot;
     });
 
 /// Called when a profile screen is (re-)entered: an answer already held for
@@ -1378,15 +1547,19 @@ void _retainSettled(Ref ref) {
   ref.onDispose(expiry.cancel);
 }
 
-final matchContextSnapshotProvider = FutureProvider.autoDispose
-    .family<Snapshot, String>((ref, id) async {
+final matchContextSnapshotProvider = StreamProvider.autoDispose
+    .family<Snapshot, String>((ref, id) async* {
       final repository = ref.watch(repositoryProvider);
-      final value = await (repository is ApiRepository
-          ? repository.loadMatchContext(id)
-          : repository.load());
-      // Data still arriving is re-read, never pinned by the retention cache.
-      if (ref.mounted && !value.standingsPending) _retainSettled(ref);
-      return value;
+      final answers = repository is ApiRepository
+          ? repository.watchPublicMatchContext(id)
+          : Stream.fromFuture(repository.load());
+      await for (final value in answers) {
+        // Data still arriving is re-read, never pinned by the retention cache.
+        if (ref.mounted && !value.stale && !value.standingsPending) {
+          _retainSettled(ref);
+        }
+        yield value;
+      }
     });
 
 /// Recent form + head-to-head of a match, loaded after (and independently
@@ -1702,6 +1875,7 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
       'pending': next.pending,
       'hydrationNeeded': next.hydrationNeeded,
       'coverage': coverage,
+      'offlineStale': next.available ? next.offlineStale : current.offlineStale,
     },
     blockedAliasIds: {...current.blockedAliasIds, ...next.blockedAliasIds},
   );
@@ -1740,6 +1914,10 @@ final matchDetailProvider = StreamProvider.autoDispose
       var current =
           memory[id]?.withBlockedAliases(blockedAliases) ??
           MatchDetail.waiting(id);
+      if (!current.available && repository is ApiRepository) {
+        current = await repository.readStoredMatchDetail(id) ?? current;
+        if (current.available) remember(current);
+      }
       yield current;
       if (disposed) return;
       try {

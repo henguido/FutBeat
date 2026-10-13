@@ -305,10 +305,18 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ? const <Entity>[]
             : orderedTeamCompetitions(data, teamId);
         if (type == 'team') {
-          return _teamView(data, entity, matches, teamCompetitions);
+          final view = _teamView(data, entity, matches, teamCompetitions);
+          return data.stale
+              ? Banner(
+                  message: 'Datos guardados',
+                  location: BannerLocation.topEnd,
+                  color: Colors.deepOrange,
+                  child: view,
+                )
+              : view;
         }
         if (type == 'player') {
-          return PlayerProfileView(
+          final view = PlayerProfileView(
             data: data,
             player: entity,
             team: team,
@@ -318,6 +326,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                 enrichmentAttempts < profileEnrichmentRetryDelays.length,
             matchContext: widget.playerMatchContext,
           );
+          return data.stale
+              ? Banner(
+                  message: 'Datos guardados',
+                  location: BannerLocation.topEnd,
+                  color: Colors.deepOrange,
+                  child: view,
+                )
+              : view;
         }
         if (type == 'competition') {
           return CompetitionProfileView(

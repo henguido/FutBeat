@@ -122,7 +122,7 @@ Future<void> _pumpPlayer(
     overrides: [
       databaseProvider.overrideWithValue(db),
       entitySnapshotProvider.overrideWith(
-        (ref, request) async => Snapshot(payload),
+        (ref, request) => Stream.value(Snapshot(payload)),
       ),
       followsProvider.overrideWith((ref) => Stream.value({})),
     ],

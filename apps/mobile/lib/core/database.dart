@@ -44,9 +44,8 @@ class CalendarSnapshots extends Table {
   Set<Column> get primaryKey => {calendarDate};
 }
 
-/// Last answer of a public catalog read (Explorar suggestions), so the
-/// screen paints at once on the next app start while it revalidates. Public,
-/// non-personal data; bounded to a handful of keys.
+/// Last public API answers. Catalog and offline profile/detail entries use
+/// separate key prefixes and separate eviction budgets; no account data.
 class CatalogSnapshots extends Table {
   TextColumn get cacheKey => text()();
   TextColumn get payload => text()();
@@ -67,6 +66,7 @@ class CatalogSnapshots extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor])
     : super(executor ?? driftDatabase(name: 'futbeat'));
+  DateTime? _lastPublicPruneAt;
   @override
   int get schemaVersion => 5;
   @override
@@ -335,6 +335,7 @@ class AppDatabase extends _$AppDatabase {
     );
     final old =
         await (select(catalogSnapshots)
+              ..where((row) => row.cacheKey.like('public:%').not())
               ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
               ..limit(100, offset: maxCatalogSnapshots))
             .get();
@@ -345,10 +346,74 @@ class AppDatabase extends _$AppDatabase {
           .go();
     }
   }
+
+  /// Only validated public match/entity responses belong here. Reject a
+  /// single oversized answer so the entire offline partition stays bounded.
+  Future<void> savePublicSnapshot(String key, String payload) async {
+    if (!key.startsWith('public:') ||
+        utf8.encode(payload).length > maxPublicSnapshotBytes) {
+      return;
+    }
+    await _pruneExpiredPublicSnapshots();
+    await into(catalogSnapshots).insertOnConflictUpdate(
+      CatalogSnapshotsCompanion.insert(
+        cacheKey: key,
+        payload: payload,
+        savedAt: DateTime.now().toUtc(),
+      ),
+    );
+    final old =
+        await (select(catalogSnapshots)
+              ..where((row) => row.cacheKey.like('public:%'))
+              ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
+              ..limit(100, offset: maxPublicSnapshots))
+            .get();
+    if (old.isNotEmpty) {
+      await (delete(catalogSnapshots)..where(
+            (row) => row.cacheKey.isIn(old.map((item) => item.cacheKey)),
+          ))
+          .go();
+    }
+  }
+
+  Future<CatalogSnapshot?> readPublicSnapshot(String key) async {
+    if (!key.startsWith('public:')) return null;
+    await _pruneExpiredPublicSnapshots();
+    final row = await readCatalogEntry(key);
+    if (row == null) return null;
+    if (DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
+        publicSnapshotRetention) {
+      await (delete(
+        catalogSnapshots,
+      )..where((entry) => entry.cacheKey.equals(key))).go();
+      return null;
+    }
+    return row;
+  }
+
+  Future<void> _pruneExpiredPublicSnapshots() async {
+    final now = DateTime.now().toUtc();
+    if (_lastPublicPruneAt != null &&
+        now.difference(_lastPublicPruneAt!) < const Duration(hours: 24)) {
+      return;
+    }
+    await (delete(catalogSnapshots)..where(
+          (row) =>
+              row.cacheKey.like('public:%') &
+              row.savedAt.isSmallerThanValue(
+                now.subtract(publicSnapshotRetention),
+              ),
+        ))
+        .go();
+    _lastPublicPruneAt = now;
+  }
 }
 
 /// Stored catalog answers kept on the device (global + recent countries).
 const maxCatalogSnapshots = 8;
+const maxPublicSnapshots = 32;
+const maxPublicSnapshotBytes = 256 * 1024;
+const publicSnapshotRetention = Duration(days: 7);
 
 class CountryPreference {
   const CountryPreference({

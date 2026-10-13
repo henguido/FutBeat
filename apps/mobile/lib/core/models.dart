@@ -604,6 +604,9 @@ class MatchDetail {
   /// Something persisted is displayable (score, events, metadata, a partial
   /// provider observation...). It does NOT mean the detail is complete.
   bool get available => json['available'] == true;
+
+  /// Last public detail shown from device storage while revalidating/offline.
+  bool get offlineStale => json['offlineStale'] == true;
   bool get pending => json['pending'] == true;
 
   /// Server-side answer to "would registering demand still help?" (fetchable,

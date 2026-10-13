@@ -128,7 +128,7 @@ void main() {
           databaseProvider.overrideWithValue(db),
           repositoryProvider.overrideWithValue(repo),
           matchContextSnapshotProvider.overrideWith(
-            (ref, id) async => Snapshot(payload()),
+            (ref, id) => Stream.value(Snapshot(payload())),
           ),
           followsProvider.overrideWith((ref) => Stream.value({})),
           liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
@@ -609,7 +609,7 @@ void main() {
             databaseProvider.overrideWithValue(db),
             repositoryProvider.overrideWithValue(ApiRepository(Dio())),
             matchContextSnapshotProvider.overrideWith(
-              (ref, id) async => Snapshot(payload(table: hasTable)),
+              (ref, id) => Stream.value(Snapshot(payload(table: hasTable))),
             ),
             matchDetailProvider.overrideWith((ref, id) {
               detailStarts++;
@@ -677,7 +677,7 @@ void main() {
           databaseProvider.overrideWithValue(db),
           repositoryProvider.overrideWithValue(ApiRepository(Dio())),
           matchContextSnapshotProvider.overrideWith(
-            (ref, id) => context.stream.first,
+            (ref, id) => context.stream,
           ),
           matchDetailProvider.overrideWith(
             (ref, id) => Stream.value(MatchDetail.empty(id)),

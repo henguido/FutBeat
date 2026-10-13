@@ -156,7 +156,7 @@ Future<void> _pump(
     overrides: [
       databaseProvider.overrideWithValue(db),
       entitySnapshotProvider.overrideWith(
-        (ref, request) async => Snapshot(profile),
+        (ref, request) => Stream.value(Snapshot(profile)),
       ),
       followsProvider.overrideWith((ref) => Stream.value({})),
       // No profile context server in these tests (#161 has its own).
