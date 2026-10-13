@@ -43,6 +43,28 @@ This document authorizes no build, upload, deployment or production change.
 
 ## Pending gates and risks
 
+### LIVE contract audit — 2026-10-13: BLOCKED
+
+The owner confirmed that Claude is still working on Supabase production.
+Therefore the entry condition for remote verification is not met. No SQL,
+REST request, migration, policy change or index change was run in this audit.
+The production table, columns, index, `anon` grant/RLS policy and pagination
+remain **unverified**, not failed. Do not infer deployment from migration files.
+
+Local evidence only: Flutter selects `match_id`, `provider`,
+`external_match_id`, `status`, `minute`, `home_score`, `away_score`, `revision`,
+`event_count`, `latest_events`, `changed_at` and `updated_at`. Its bootstrap
+filters `changed_at >= <UTC cursor>`, orders by `match_id.asc`, pages by
+`match_id > <last key>` and requests 250 rows per page. The repository migration
+creates those columns, grants `SELECT` to `anon`, enables RLS with a public
+read policy, and defines `live_match_updates_changed_idx`. There is no proven
+local-contract difference; equivalence to production cannot yet be asserted.
+
+When Claude confirms production work has ended and the instance is stable,
+run the bounded metadata and one-row REST checks below. Stop after a timeout
+or degradation signal. Until then, the LIVE gate is open and the release
+recommendation remains **NO-GO for an AAB**.
+
 1. Confirm the production LIVE table, columns, index, grants and policy with
    the metadata-only queries below. Run only while Supabase is healthy; stop
    after a timeout or signs of saturation. Do not use a table-wide count.
@@ -61,8 +83,10 @@ This document authorizes no build, upload, deployment or production change.
    filters match, but actual Play-installed link handling has not been proven.
 
 **Decision:** GO for local release preparation, **NO-GO for a signed AAB**
-until LIVE production compatibility, controlled build configuration and
-device-QA plan are ready. No production SQL or REST check was run while Claude
+until LIVE production compatibility and controlled build configuration are
+verified. The physical-QA plan is prepared in
+`ANDROID-1.0.0-4-PHYSICAL-QA.md`, but no device test has been executed. No
+production SQL or REST check was run while Claude
 was intervening in Supabase.
 
 Metadata SQL (read only; no row scan):
