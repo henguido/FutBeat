@@ -23,7 +23,7 @@ Map<String, dynamic> _row(String team, int position, int? subgroup) => {
   'points': 9 - position,
 };
 
-Snapshot _snapshot({required bool split}) => Snapshot({
+Snapshot _snapshot({required bool split, bool sameNames = false}) => Snapshot({
   'schemaVersion': 1,
   'demo': false,
   'updatedAt': '2026-10-05T12:00:00Z',
@@ -31,7 +31,8 @@ Snapshot _snapshot({required bool split}) => Snapshot({
     {'id': _comp, 'name': 'Nations', 'season': '2026'},
   ],
   'teams': [
-    for (final id in _teams) {'id': id, 'name': 'Equipo $id'},
+    for (final id in _teams)
+      {'id': id, 'name': sameNames ? 'Atlético' : 'Equipo $id'},
   ],
   'players': <dynamic>[],
   'matches': <dynamic>[],
@@ -60,6 +61,17 @@ void main() {
     expect(groups, hasLength(1));
     expect(groups.single.label, 'League A · Subgrupo 2');
     expect(groups.single.rows.map((r) => r['teamId']), _teams.sublist(4));
+  });
+
+  test('homonymous teams are selected by canonical ID, not display name', () {
+    final data = _snapshot(split: true, sameNames: true);
+    final groups = standingsGroups(
+      standingsTableFor(data, _comp),
+      data,
+      focusTeamIds: {_teams[5], _teams[6]},
+    )!;
+    expect(groups, hasLength(1));
+    expect(groups.single.rows.map((row) => row['teamId']), _teams.sublist(4));
   });
 
   test('competition view lists each sub-group separately, never merged', () {

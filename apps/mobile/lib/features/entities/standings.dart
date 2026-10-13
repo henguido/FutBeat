@@ -81,9 +81,9 @@ Set<String> standingsLabelTokens(String? text) {
 ///        one labelled group of the table (every normalized token of the
 ///        label is in the stage, see [standingsLabelTokens]) and that group
 ///        holds them all: that group;
-///     2. the table's server hint `currentGroup` (every recent match of the
-///        competition was played in that phase) is a labelled group holding
-///        them all: that group;
+///     2. without a match stage, the table's server hint `currentGroup`
+///        (every recent match of the competition was played in that phase)
+///        is a labelled group holding them all: that group;
 ///     3. exactly one of them is unlabelled: that one, the competition's
 ///        overall table, labelled [overallStandingsLabel];
 ///     4. otherwise (e.g. "Grupo A" plus a ranking of third-placed teams):
@@ -177,9 +177,11 @@ List<StandingsGroup>? standingsGroups(
         return [named.single];
       }
     }
-    // 2. The server's evidence-based current phase.
+    // 2. The current phase is only a fallback when the match has no stage.
+    // A historical or knockout match with a different explicit stage must
+    // not silently inherit today's phase table.
     final current = table['currentGroup']?.toString().trim() ?? '';
-    if (current.isNotEmpty) {
+    if (stageTokens.isEmpty && current.isNotEmpty) {
       final hinted = [
         for (final group in whole)
           if (group.stage == current ||

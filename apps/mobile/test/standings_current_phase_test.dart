@@ -115,6 +115,14 @@ void main() {
     expect(_labels(data, _match, stage: 'Apertura'), ['Apertura']);
   });
 
+  test('an explicit unmatched match stage never borrows the current phase', () {
+    final data = _snapshot(currentGroup: 'Clausura');
+    expect(_labels(data, _match, stage: 'Cuartos de final'), [
+      overallStandingsLabel,
+    ]);
+    expect(_labels(data, _match, stage: 'Apertura - final'), ['Apertura']);
+  });
+
   test('no reliable signal: the annual table, labelled "Tabla general"', () {
     final data = _snapshot();
     expect(_labels(data, _match), [overallStandingsLabel]);
