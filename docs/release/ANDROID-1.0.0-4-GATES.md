@@ -3,6 +3,22 @@
 Base: `bd178a2` (R8, LIVE bootstrap/hardening and offline public cache).
 This document authorizes no build, upload, deployment or production change.
 
+## Consolidated local candidate — 2026-10-13
+
+- The candidate is now `codex/flutter-fixes-integration-15` at `8546b78`,
+  descended from the previous candidate `419c863` through `361bd48` and
+  `8546b78`. The previous candidate branch remains unchanged.
+- `361bd48` prevents an old scheduled snapshot from resuming a suspended
+  match without newer canonical evidence. `8546b78` keeps standings within
+  the match's actual phase and group when those are available, without
+  inventing missing standings.
+- Relative to `419c863`, only five Flutter implementation/test files changed.
+  The Android package, version, signing configuration, R8 rules, OAuth,
+  AdMob, Push and Premium configuration remain unchanged.
+- These fixes passed local integration validation. They do not close the
+  production LIVE-contract or physical-device QA gates below. No AAB is
+  authorized by this designation.
+
 ## Verified gates (2026-10-13)
 
 - Git source `bd178a2` is clean; this isolated branch preserves R8, LIVE and
