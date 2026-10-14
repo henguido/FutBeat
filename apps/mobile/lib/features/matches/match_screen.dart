@@ -2518,7 +2518,7 @@ String _heroGoalMinute(Json event) {
         result.add(ScorerLine(null, [minute]));
         continue;
       }
-      final identity = _scorerIdentity(event, name, canonicalOf);
+      final identity = _scorerIdentity(event, name, canonicalOf, data);
       final existing = byIdentity[identity];
       if (existing != null) {
         existing.minutes.add(minute);
@@ -2567,9 +2567,10 @@ String _scorerIdentity(
   Json event,
   String name,
   Map<String, String> canonicalOf,
+  Snapshot data,
 ) {
   final canonicalId = _canonicalScorerId(event, canonicalOf);
-  if (canonicalId != null) return 'id:$canonicalId';
+  if (canonicalId != null) return 'id:${data.resolveEntityId(canonicalId)}';
   final providerId = event['detailSource'] == true
       ? event['playerId']?.toString().trim() ?? ''
       : '';

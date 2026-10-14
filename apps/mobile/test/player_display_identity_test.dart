@@ -98,6 +98,58 @@ void main() {
     expect(presentPlayers(rows), hasLength(2));
   });
 
+  test('server redirect prefers the canonical row over a co-present alias', () {
+    final alias = _player(
+      'fb_player_synthetic_alias',
+      'Jugador Parcial',
+      'fb_team_synthetic_club',
+      17,
+    );
+    final canonical = _player(
+      'fb_player_synthetic_root',
+      'Jugador Completo',
+      'fb_team_synthetic_national',
+      9,
+      dob: '1998-05-06',
+      media: {'url': 'https://media.example.test/player.png'},
+    );
+    final raw = _snapshot([alias, canonical]);
+    raw['entityRedirects'] = {
+      alias['id']: 'fb_player_synthetic_mid',
+      'fb_player_synthetic_mid': canonical['id'],
+    };
+    final snapshot = Snapshot(raw);
+    expect(snapshot.player(alias['id'] as String)?.id, canonical['id']);
+    expect(snapshot.player(alias['id'] as String)?.name, 'Jugador Completo');
+    expect(snapshot.player(canonical['id'] as String)?.id, canonical['id']);
+
+    final noRoot = _snapshot([alias]);
+    noRoot['entityRedirects'] = {alias['id']: canonical['id']};
+    expect(
+      Snapshot(noRoot).player(alias['id'] as String)?.id,
+      alias['id'],
+      reason: 'a missing canonical row must not erase the available alias',
+    );
+  });
+
+  test('same name, country and position never imply a player redirect', () {
+    final first = _player(
+      'fb_player_synthetic_one',
+      'Alex Rivera',
+      'fb_team_synthetic_club',
+      10,
+    );
+    final second = _player(
+      'fb_player_synthetic_two',
+      'Alex Rivera',
+      'fb_team_synthetic_national',
+      10,
+    );
+    final snapshot = Snapshot(_snapshot([first, second]));
+    expect(snapshot.player(first['id'] as String)?.id, first['id']);
+    expect(snapshot.player(second['id'] as String)?.id, second['id']);
+  });
+
   test('conflicting DOB never collapses an adjudicated pair', () {
     final conflict = {...shortVera, 'dateOfBirth': '2006-01-01'};
     final shown = presentPlayers([conflict, richVera]);

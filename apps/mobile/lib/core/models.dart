@@ -1338,8 +1338,11 @@ class Snapshot {
   }
 
   Entity? team(String id) => _teamsById[id];
-  Entity? player(String id) =>
-      _playersById[id] ?? _playersById[resolveEntityId(id)];
+  Entity? player(String id) {
+    final canonicalId = resolveEntityId(id);
+    return _playersById[canonicalId] ?? _playersById[id];
+  }
+
   Entity? competition(String id) => _competitionsById[id];
   FootballMatch? match(String id) => _matchesById[id];
   List<FootballMatch> onDate(DateTime date, String filter) =>
