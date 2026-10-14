@@ -18,3 +18,21 @@ node_modules/
 supabase/.temp/
 *.log
 .superpowers/
+
+# Local agent worktrees and generated code graphs (never repository sources).
+.claude/
+graphify-out/
+
+# Installable release artifacts stay in controlled release storage, not Git.
+*.apk
+*.aab
+*.apks
+*.idsig
+
+# Editor/recovery leftovers. Keep real source and audit artifacts visible.
+*.tmp
+*.temp
+*.swp
+*.swo
+*.orig
+*.rej
