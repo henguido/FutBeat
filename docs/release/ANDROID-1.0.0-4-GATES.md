@@ -3,9 +3,32 @@
 Base: `bd178a2` (R8, LIVE bootstrap/hardening and offline public cache).
 This document authorizes no build, upload, deployment or production change.
 
-## Consolidated local candidate — 2026-10-13
+## Current local candidate — 2026-10-14
 
-- The candidate is now `codex/flutter-fixes-integration-15` at `8546b78`,
+- `codex/player-identity-integration-16` at `ae9f2db` directly descends from
+  `6dda155`. It retains R8 `e13cbac`, LIVE hardening `f36a2d6`, offline cache
+  `bd178a2`, suspended-state fix `361bd48`, and standings-phase fix `8546b78`.
+- The only difference from `6dda155` is four Flutter implementation/test
+  files. `Snapshot.player` prefers the server-redirected canonical row when
+  both rows exist, and Match Center groups goal events by the same redirected
+  ID. There are no new identity mappings, automatic name-based merges, or
+  backend-contract changes. Issue #217 remains open for global reconciliation.
+- In this candidate worktree, 86 affected tests, 254 release-focused tests,
+  and all 1,215 Flutter tests passed; `flutter analyze` found no issues.
+  Package, version `1.0.0+4`, R8,
+  OAuth, Push, Premium, and AdMob release guards are unchanged.
+- The ignored signing and production-AdMob input files prepared in the
+  previous candidate worktree were **not copied** here. Provision and verify
+  them in this isolated worktree only through the controlled release process
+  before any separately authorized build. See
+  `ANDROID-1.0.0-4-BUILD-READINESS.md`.
+- The production LIVE contract remains unverified while Claude is working on
+  Supabase. Physical QA on Galaxy A32 and S25 Ultra remains unexecuted.
+  Therefore this designation is **NO-GO for generating an AAB now**.
+
+## Previous local candidate — 2026-10-13
+
+- The candidate at that stage was `codex/flutter-fixes-integration-15` at `8546b78`,
   descended from the previous candidate `419c863` through `361bd48` and
   `8546b78`. The previous candidate branch remains unchanged.
 - `361bd48` prevents an old scheduled snapshot from resuming a suspended
@@ -99,8 +122,8 @@ recommendation remains **NO-GO for an AAB**.
    filters match, but actual Play-installed link handling has not been proven.
 
 **Decision:** GO for local release preparation, **NO-GO for a signed AAB**
-until LIVE production compatibility and controlled build configuration are
-verified. The physical-QA plan is prepared in
+until LIVE production compatibility and controlled build configuration in
+the current worktree are verified. The physical-QA plan is prepared in
 `ANDROID-1.0.0-4-PHYSICAL-QA.md`, but no device test has been executed. No
 production SQL or REST check was run while Claude
 was intervening in Supabase.
