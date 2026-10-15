@@ -1232,8 +1232,14 @@ class ApiRepository implements FootballRepository {
   );
 }
 
+/// One build-level switch for every Supabase-backed client. Demo snapshots
+/// must never inherit the Android defaults for production Auth or LIVE.
+final demoModeProvider = Provider<bool>(
+  (ref) => const bool.fromEnvironment('FUTBEAT_USE_DEMO'),
+);
+
 final repositoryProvider = Provider<FootballRepository>((ref) {
-  const useDemo = bool.fromEnvironment('FUTBEAT_USE_DEMO');
+  final useDemo = ref.watch(demoModeProvider);
   const baseUrl = String.fromEnvironment(
     'FUTBEAT_API_URL',
     defaultValue:
@@ -1991,7 +1997,9 @@ final matchDetailProvider = StreamProvider.autoDispose
     });
 
 final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(
-  (ref) => LiveRealtimeConfig.fromEnvironment(),
+  (ref) => ref.watch(demoModeProvider)
+      ? const LiveRealtimeConfig(supabaseUrl: '', publicKey: '')
+      : LiveRealtimeConfig.fromEnvironment(),
 );
 
 final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
@@ -2006,7 +2014,9 @@ final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
 });
 
 final liveMatchUpdatesProvider = StreamProvider<Map<String, LiveMatchUpdate>>(
-  (ref) => ref.watch(liveRealtimeClientProvider).watch(),
+  (ref) => ref.watch(demoModeProvider)
+      ? Stream.value(const <String, LiveMatchUpdate>{})
+      : ref.watch(liveRealtimeClientProvider).watch(),
 );
 
 final effectiveSnapshotProvider = Provider<AsyncValue<Snapshot>>((ref) {
