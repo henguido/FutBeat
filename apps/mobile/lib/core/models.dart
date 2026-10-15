@@ -495,8 +495,20 @@ class LiveMatchUpdate {
     // never downgrade or rewrite it, however late its changedAt. Corrections
     // after the final arrive as a new canonical snapshot, not through here.
     if (terminalStatuses.contains(match['status'] as String?)) return match;
+    // A result overlay dated before this fixture's kickoff is contradictory
+    // provisional evidence (or an incorrectly matched provider row). A new
+    // canonical VERIFIED snapshot was accepted above, even if its kickoff is
+    // still future: only the backend can establish that an early final is
+    // genuine. Explicit postponements/cancellations may precede kickoff.
+    if (status == 'FINISHED_PENDING_VERIFICATION' || status == 'VERIFIED') {
+      final kickoff = DateTime.tryParse(match['startTime'] as String? ?? '');
+      if (kickoff != null && changedAt.toUtc().isBefore(kickoff.toUtc())) {
+        return match;
+      }
+    }
     // #120: a silent LIVE overlay (missed DELETE, failed refresh) must not
-    // keep a match "EN VIVO"; terminal overlays always apply.
+    // keep a match "EN VIVO"; chronologically coherent terminal overlays do
+    // not expire merely because their last update is old.
     const liveStatuses = {'LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'};
     if (liveStatuses.contains(status) &&
         (now ?? DateTime.now()).toUtc().difference(
@@ -1233,8 +1245,13 @@ class Snapshot {
         .where((row) => row['id'] == id)
         .firstOrNull;
 
+    final canonicalCompetitionId = resolveEntityId(target.competitionId);
     final matchStandings = standings
-        .where((table) => table['competitionId'] == target.competitionId)
+        .where(
+          (table) =>
+              resolveEntityId(table['competitionId']?.toString() ?? '') ==
+              canonicalCompetitionId,
+        )
         .toList();
     final teamIds = <String>{target.homeId, target.awayId};
     for (final table in matchStandings) {
@@ -1244,6 +1261,7 @@ class Snapshot {
         if (teamId != null && teamId.isNotEmpty) teamIds.add(teamId);
       }
     }
+    final canonicalTeamIds = teamIds.map(resolveEntityId).toSet();
 
     final playerIds = <String>{};
     for (final event in target.events) {
@@ -1258,22 +1276,28 @@ class Snapshot {
       final playerId = event['playerId']?.toString();
       if (playerId != null && playerId.isNotEmpty) playerIds.add(playerId);
     }
+    final canonicalPlayerIds = playerIds.map(resolveEntityId).toSet();
 
     final contextTeams = [
       for (final team in _sourceJson['teams'] as List? ?? const [])
-        if (team is Map && teamIds.contains(team['id']?.toString())) team,
+        if (team is Map &&
+            canonicalTeamIds.contains(
+              resolveEntityId(team['id']?.toString() ?? ''),
+            ))
+          team,
     ];
     final contextPlayers = [
       for (final player in _sourceJson['players'] as List? ?? const [])
         if (player is Map &&
-            (playerIds.contains(player['id']?.toString()) ||
-                teamIds.contains(player['teamId']?.toString())))
+            (canonicalPlayerIds.contains(
+                  resolveEntityId(player['id']?.toString() ?? ''),
+                ) ||
+                canonicalTeamIds.contains(
+                  resolveEntityId(player['teamId']?.toString() ?? ''),
+                )))
           player,
     ];
-    final sourceCompetition = (_sourceJson['competitions'] as List? ?? const [])
-        .whereType<Map>()
-        .where((row) => row['id'] == target.competitionId)
-        .firstOrNull;
+    final sourceCompetition = competition(target.competitionId)?.json;
 
     final source = <String, dynamic>{
       'schemaVersion': 1,
@@ -1337,13 +1361,21 @@ class Snapshot {
         : Snapshot.unpresented(source);
   }
 
-  Entity? team(String id) => _teamsById[id];
+  Entity? team(String id) {
+    final canonicalId = resolveEntityId(id);
+    return _teamsById[canonicalId] ?? _teamsById[id];
+  }
+
   Entity? player(String id) {
     final canonicalId = resolveEntityId(id);
     return _playersById[canonicalId] ?? _playersById[id];
   }
 
-  Entity? competition(String id) => _competitionsById[id];
+  Entity? competition(String id) {
+    final canonicalId = resolveEntityId(id);
+    return _competitionsById[canonicalId] ?? _competitionsById[id];
+  }
+
   FootballMatch? match(String id) => _matchesById[id];
   List<FootballMatch> onDate(DateTime date, String filter) =>
       matches

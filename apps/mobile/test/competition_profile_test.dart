@@ -196,6 +196,22 @@ void main() {
     expect(find.text('Partido next'), findsOneWidget);
   });
 
+  testWidgets('keeps a match stored under a competition redirect', (
+    tester,
+  ) async {
+    final payload = _payload();
+    payload['entityRedirects'] = {'fb_comp_alias': 'fb_comp'};
+    (payload['matches'] as List<dynamic>)[1]['competitionId'] = 'fb_comp_alias';
+
+    await _pump(tester, payload);
+    await _openTab(tester, 'Partidos');
+
+    expect(
+      find.byKey(const ValueKey('competition-match-next')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('opens participating team profiles', (tester) async {
     await _pump(tester, _payload());
     await _openTab(tester, 'Equipos');

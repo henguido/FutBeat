@@ -179,6 +179,196 @@ void main() {
     },
   );
 
+  test('terminal overlay observed before a future kickoff stays scheduled', () {
+    final kickoff = DateTime.now().toUtc().add(const Duration(hours: 2));
+    final canonical = <String, dynamic>{
+      'id': 'fb_match_future_synthetic',
+      'competitionId': 'fb_comp_synthetic',
+      'homeTeamId': 'fb_team_home_synthetic',
+      'awayTeamId': 'fb_team_away_synthetic',
+      'startTime': kickoff.toIso8601String(),
+      'status': 'SCHEDULED',
+      'score': null,
+      'events': <dynamic>[],
+    };
+    LiveMatchUpdate terminal(
+      DateTime observed, {
+      String status = 'FINISHED_PENDING_VERIFICATION',
+    }) => LiveMatchUpdate(
+      matchId: 'fb_match_future_synthetic',
+      provider: 'goal_api',
+      externalMatchId: 'provider_fixture_synthetic',
+      status: status,
+      minute: 90,
+      homeScore: 2,
+      awayScore: 1,
+      revision: 1,
+      eventCount: 0,
+      changedAt: observed,
+    );
+
+    for (final status in ['FINISHED_PENDING_VERIFICATION', 'VERIFIED']) {
+      final before = terminal(
+        kickoff.subtract(const Duration(seconds: 1)),
+        status: status,
+      ).applyTo(canonical, now: kickoff.subtract(const Duration(seconds: 1)));
+      expect(before['status'], 'SCHEDULED');
+      expect(before['score'], isNull);
+      expect(FootballMatch(before).statusLabel, 'Programado');
+    }
+
+    final atKickoff = terminal(kickoff).applyTo(canonical, now: kickoff);
+    expect(atKickoff['status'], 'FINISHED_PENDING_VERIFICATION');
+    expect(atKickoff['score'], {'home': 2, 'away': 1});
+
+    final cancelled = terminal(
+      kickoff.subtract(const Duration(hours: 1)),
+      status: 'CANCELLED',
+    ).applyTo(canonical, now: kickoff.subtract(const Duration(hours: 1)));
+    expect(cancelled['status'], 'CANCELLED');
+    final postponed = terminal(
+      kickoff.subtract(const Duration(hours: 1)),
+      status: 'POSTPONED',
+    ).applyTo(canonical, now: kickoff.subtract(const Duration(hours: 1)));
+    expect(postponed['status'], 'POSTPONED');
+
+    // A corrected kickoff is canonical evidence of an earlier schedule.
+    // The same provider observation is no longer premature against it.
+    final movedEarlier = {
+      ...canonical,
+      'startTime': kickoff.subtract(const Duration(hours: 3)).toIso8601String(),
+    };
+    final afterMovedKickoff = terminal(
+      kickoff.subtract(const Duration(hours: 1)),
+    ).applyTo(movedEarlier, now: kickoff.subtract(const Duration(hours: 1)));
+    expect(afterMovedKickoff['status'], 'FINISHED_PENDING_VERIFICATION');
+    expect(afterMovedKickoff['score'], {'home': 2, 'away': 1});
+
+    // A newly confirmed canonical final outranks even an older contradictory
+    // overlay. A later corrected canonical score also remains authoritative.
+    for (final score in [
+      {'home': 2, 'away': 1},
+      {'home': 3, 'away': 1},
+    ]) {
+      final confirmed = {...canonical, 'status': 'VERIFIED', 'score': score};
+      expect(
+        identical(
+          terminal(kickoff.subtract(const Duration(minutes: 30)))
+              .applyTo(confirmed, now: kickoff),
+          confirmed,
+        ),
+        isTrue,
+      );
+      expect(
+        FootballMatch(confirmed).score,
+        '${score['home']} - ${score['away']}',
+      );
+    }
+
+    // A delayed older terminal frame cannot overwrite a newer live frame.
+    final newerLive = {
+      ...movedEarlier,
+      'status': 'LIVE',
+      'liveChangedAt': kickoff.toIso8601String(),
+      'liveProvider': 'goal_api',
+      'liveRevision': 5,
+    };
+    expect(
+      identical(
+        terminal(kickoff.subtract(const Duration(minutes: 10)))
+            .applyTo(newerLive, now: kickoff),
+        newerLive,
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'premature terminal chronology compares UTC instants across offsets',
+    () {
+      final kickoff = DateTime.parse('2030-01-01T00:30:00-06:00');
+      final canonical = <String, dynamic>{
+        'id': 'fb_match_offset_synthetic',
+        'startTime': '2030-01-01T00:30:00-06:00',
+        'status': 'SCHEDULED',
+        'score': null,
+        'events': <dynamic>[],
+      };
+      LiveMatchUpdate finalAt(DateTime observed) => LiveMatchUpdate(
+        matchId: 'fb_match_offset_synthetic',
+        provider: 'goal_api',
+        externalMatchId: 'offset_synthetic',
+        status: 'FINISHED_PENDING_VERIFICATION',
+        minute: 90,
+        homeScore: 1,
+        awayScore: 0,
+        revision: 1,
+        eventCount: 0,
+        changedAt: observed,
+      );
+
+      expect(
+        finalAt(kickoff.subtract(const Duration(seconds: 1)))
+            .applyTo(canonical)['status'],
+        'SCHEDULED',
+      );
+      expect(
+        finalAt(kickoff).applyTo(canonical)['status'],
+        'FINISHED_PENDING_VERIFICATION',
+      );
+    },
+  );
+
+  test(
+    'canonical early final and score correction remain visible on their day',
+    () {
+      final raw = jsonDecode(
+        File('assets/demo.snapshot.json').readAsStringSync(),
+      ) as Json;
+      final original = Map<String, dynamic>.from(
+        (raw['matches'] as List).first as Map,
+      );
+      final kickoff = DateTime.now().toUtc().add(const Duration(hours: 2));
+      Snapshot confirmed(int homeScore) => Snapshot({
+        ...raw,
+        'demo': false,
+        'matches': [
+          {
+            ...original,
+            'startTime': kickoff.toIso8601String(),
+            'status': 'VERIFIED',
+            'score': {'home': homeScore, 'away': 1},
+          },
+        ],
+      });
+      final overlay = LiveMatchUpdate(
+        matchId: original['id'] as String,
+        provider: 'goal_api',
+        externalMatchId: 'early_final_synthetic',
+        status: 'FINISHED_PENDING_VERIFICATION',
+        minute: 90,
+        homeScore: 2,
+        awayScore: 1,
+        revision: 1,
+        eventCount: 0,
+        changedAt: kickoff.subtract(const Duration(minutes: 30)),
+      );
+
+      for (final expectedHome in [2, 3]) {
+        final snapshot = confirmed(expectedHome);
+        final shown = snapshot.withLiveUpdates({overlay.matchId: overlay});
+        final match = shown.match(overlay.matchId)!;
+        expect(match.status, 'VERIFIED');
+        expect(match.score, '$expectedHome - 1');
+        expect(
+          shown.onDate(match.startTime, 'Finalizados').map((m) => m.id),
+          contains(overlay.matchId),
+        );
+        expect(shown.matches, hasLength(1));
+      }
+    },
+  );
+
   group('#120 live overlay receipt time', () {
     final serverNow = DateTime.utc(2026, 9, 26, 20);
     // Device clock deliberately one hour ahead of the server.

@@ -69,6 +69,46 @@ void main() {
     expect(broken.match('fb_match_orphan'), isNull);
     expect(broken.matches.length, (json['matches'] as List).length);
   });
+  test('a redirected team and competition keep a valid calendar match', () {
+    final original = Map<String, dynamic>.from(
+      (json['matches'] as List).first as Map,
+    );
+    final canonicalTeam = original['homeTeamId'] as String;
+    final canonicalCompetition = original['competitionId'] as String;
+    final redirected = Snapshot({
+      ...json,
+      'competitions': [
+        {'id': 'fb_comp_alias_synthetic', 'name': 'Nombre antiguo'},
+        ...(json['competitions'] as List),
+      ],
+      'entityRedirects': {
+        'fb_team_alias_synthetic': 'fb_team_mid_synthetic',
+        'fb_team_mid_synthetic': canonicalTeam,
+        'fb_comp_alias_synthetic': canonicalCompetition,
+      },
+      'matches': [
+        {
+          ...original,
+          'id': 'fb_match_redirected_synthetic',
+          'homeTeamId': 'fb_team_alias_synthetic',
+          'competitionId': 'fb_comp_alias_synthetic',
+        },
+      ],
+    });
+    expect(redirected.team('fb_team_alias_synthetic')?.id, canonicalTeam);
+    expect(
+      redirected.competition('fb_comp_alias_synthetic')?.id,
+      canonicalCompetition,
+    );
+    expect(redirected.match('fb_match_redirected_synthetic'), isNotNull);
+    final context = redirected.forMatch('fb_match_redirected_synthetic');
+    expect(context.match('fb_match_redirected_synthetic'), isNotNull);
+    expect(context.team('fb_team_alias_synthetic')?.id, canonicalTeam);
+    expect(
+      context.competition('fb_comp_alias_synthetic')?.id,
+      canonicalCompetition,
+    );
+  });
   test('unknown IDs are safe and unsupported contract fails', () {
     expect(data.match('missing'), isNull);
     expect(

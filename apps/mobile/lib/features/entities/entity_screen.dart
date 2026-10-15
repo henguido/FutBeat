@@ -295,9 +295,10 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             data.matches
                 .where(
                   (m) => type == 'competition'
-                      ? m.competitionId == canonicalId
+                      ? data.resolveEntityId(m.competitionId) == canonicalId
                       : teamId != null &&
-                            (m.homeId == teamId || m.awayId == teamId),
+                            (data.resolveEntityId(m.homeId) == teamId ||
+                                data.resolveEntityId(m.awayId) == teamId),
                 )
                 .toList()
               ..sort((a, b) => a.startTime.compareTo(b.startTime));

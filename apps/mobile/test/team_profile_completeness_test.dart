@@ -205,6 +205,25 @@ final _matchRows = find.byWidgetPredicate(
 
 void main() {
   group('Partidos', () {
+    testWidgets('a canonical team keeps a fixture stored under its redirect', (
+      tester,
+    ) async {
+      final profile = _snapshot(
+        matches: [
+          _match(
+            'm_alias_team_synthetic',
+            const Duration(days: 2),
+            home: 'fb_team_alias_synthetic',
+          ),
+        ],
+      );
+      profile['entityRedirects'] = {'fb_team_alias_synthetic': 'fb_team'};
+      expect(Snapshot(profile).match('m_alias_team_synthetic'), isNotNull);
+      await _pump(tester, profile);
+      await _openTab(tester, 'Partidos');
+      expect(_matchRow('m_alias_team_synthetic'), findsOneWidget);
+    });
+
     testWidgets(
       'national team: Próximos and Resultados from every competition',
       (tester) async {

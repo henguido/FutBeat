@@ -584,14 +584,14 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('team-crest-m_cr_media-home')),
-        matching: find.text('Id'),
+        matching: find.text('IS'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('team-crest-m_cr_media-away')),
-        matching: find.text('PZ'),
+        matching: find.text('MP'),
       ),
       findsOneWidget,
     );
