@@ -17,10 +17,13 @@ This document authorizes no build, upload, deployment or production change.
   and all 1,215 Flutter tests passed; `flutter analyze` found no issues.
   Package, version `1.0.0+4`, R8,
   OAuth, Push, Premium, and AdMob release guards are unchanged.
-- The ignored signing and production-AdMob input files prepared in the
-  previous candidate worktree were **not copied** here. Provision and verify
-  them in this isolated worktree only through the controlled release process
-  before any separately authorized build. See
+- The two existing ignored signing and production-AdMob input files were
+  copied without overwrite from the previous candidate and matched by
+  SHA-256. The referenced keystore exists; its upload certificate matches
+  the preserved AAB `1.0.0+3` and the historically recorded Play upload
+  certificate. AdMob IDs have production format, a common non-test publisher,
+  and the local flags match the approved values. Git ignores both files.
+  No secret or private value was added to version control. See
   `ANDROID-1.0.0-4-BUILD-READINESS.md`.
 - The production LIVE contract remains unverified while Claude is working on
   Supabase. Physical QA on Galaxy A32 and S25 Ultra remains unexecuted.
@@ -113,17 +116,19 @@ recommendation remains **NO-GO for an AAB**.
    An empty but successful response validates the request shape, not data
    freshness. Repeat with a second keyset page only if a first row exists and
    the service remains healthy.
-3. Before any authorized build, provide the existing ignored signing
-   configuration and the same non-test AdMob App ID/banner unit in the
-   controlled environment. Their values are deliberately absent here; do not
-   copy passwords, keystores or service keys into Git. Verify the final build
+3. Before any authorized build, recheck the existing ignored signing
+   configuration and load the approved non-test AdMob App ID/banner unit into
+   the controlled build environment. The ignored file is not loaded
+   automatically. Their values are deliberately absent here; do not copy
+   passwords, keystores or service keys into Git. Verify the final build
    flags, version code and signer from the resulting artifact.
 4. Physical QA on both devices remains mandatory. App Links JSON and source
    filters match, but actual Play-installed link handling has not been proven.
 
-**Decision:** GO for local release preparation, **NO-GO for a signed AAB**
-until LIVE production compatibility and controlled build configuration in
-the current worktree are verified. The physical-QA plan is prepared in
+**Decision:** GO for local release preparation; signing and AdMob inputs are
+prepared in the current worktree. **NO-GO for a signed AAB** until LIVE
+production compatibility is verified and a separate build is authorized.
+The physical-QA plan is prepared in
 `ANDROID-1.0.0-4-PHYSICAL-QA.md`, but no device test has been executed. No
 production SQL or REST check was run while Claude
 was intervening in Supabase.

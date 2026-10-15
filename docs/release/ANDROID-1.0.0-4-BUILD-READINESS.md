@@ -32,18 +32,26 @@ upload, installation, deployment, or production change.
   banner unit from one publisher. The earlier worktree prepared those values
   in an ignored local file; this does not prove a future AAB's effective IDs.
 
-## Controlled build inputs — still absent from this worktree
+## Controlled build inputs — prepared locally, not used in a build
 
 The previous candidate worktree has ignored local
 `apps/mobile/android/key.properties` and
-`apps/mobile/.env.android-release.local`. Neither file was copied to the
-current candidate. No credentials or AdMob IDs are recorded in Git or this
-document. Before a separately authorized build, provision the existing
-upload-key reference and approved production AdMob inputs in this isolated
-worktree, then independently verify the keystore certificate, the exact
-input files, and the effective environment. Do not create a new key or use
-Google test IDs. The ignored AdMob file is **not** loaded automatically by
-Flutter.
+`apps/mobile/.env.android-release.local`. Both were copied without overwrite
+to the current candidate and verified byte-identical by SHA-256. The keystore
+path in the local signing configuration is absolute and resolves; the
+certificate was checked with `keytool` and matches the preserved AAB
+`1.0.0+3` (SHA-256
+`D11958185D1AF8F1874A0AF5A2855A5AFA2BB1E76A1F118FA89ECDBE027FDC0C`).
+Its public certificate SHA-256 also matches the historically recorded Play
+**upload** certificate; Play was not rechecked in this task. The App ID and
+feed banner are non-test, correctly formatted, and share one publisher. The
+local Google/Facebook/Push/test-ads flags match the approved values. Both
+private input files remain ignored by Git and have no broad read ACL entries.
+
+No passwords, private keys or AdMob IDs are recorded in Git or this document.
+Before a separately authorized build, recheck the exact files and effective
+environment. Do not create a new key or use Google test IDs. The ignored
+AdMob file is **not** loaded automatically by Flutter.
 
 | Release flag | Required value |
 | --- | --- |
@@ -69,8 +77,9 @@ Play-distributed App Links; test those on both physical devices.
    250-row pagination remain unverified. Do not query Supabase while Claude
    is intervening; perform only the separately authorized bounded check
    after the instance is stable.
-2. This worktree has no ignored signing or production-AdMob input files.
-   Controlled provisioning and verification are required before build.
+2. Signing and AdMob inputs are prepared locally, but no release task was
+   run. Recheck file availability and effective environment immediately
+   before a separately authorized build; inspect the eventual artifact.
 3. Galaxy A32 and S25 Ultra physical QA has not been executed. It gates
    tester distribution after a separately authorized, verified AAB and
    controlled Play installation.
