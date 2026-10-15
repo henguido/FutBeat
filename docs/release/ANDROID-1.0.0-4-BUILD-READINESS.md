@@ -1,10 +1,30 @@
 # Android 1.0.0+4 — signed-build readiness (local only)
 
-Updated 2026-10-14. Current candidate: `codex/player-identity-integration-16`
-at `ae9f2db`; parent `6dda155`. This record does not authorize a build,
+Updated 2026-10-15. Current candidate: `codex/android-functional-integration-40`
+at `86a09c7`; parent `e92e973`. This record does not authorize a build,
 upload, installation, deployment, or production change.
 
-## Verified in this candidate
+## Candidate freeze delta
+
+- `86a09c7` contains the five functional fixes from `daa94aa` with the same
+  stable patch-id. Its nine changed files are exclusively Flutter source and
+  tests; Android signing, R8, OAuth, AdMob, package and backend contracts are
+  unchanged from `e92e973`.
+- Focused tests passed 207/207, full Flutter suite 1,224/1,224, and
+  `flutter analyze` passed. The candidate is locally reviewable but not
+  approved for an AAB.
+- This newly created worktree does **not** contain ignored
+  `apps/mobile/android/key.properties` or
+  `apps/mobile/.env.android-release.local`. The historical certificate and
+  AdMob checks below belong to a previous worktree; they do not establish
+  effective signing or ad configuration here. Provision existing approved
+  inputs securely, without printing or committing secrets, and recheck their
+  certificate/production-ID properties before any authorized build.
+- LIVE production contract verification and physical QA remain pending.
+  The three contradictory SCHEDULED/FINAL real fixtures still require
+  backend evidence. **NO-GO to generate or distribute an AAB now.**
+
+## Verified in the preceding candidate
 
 - R8 `e13cbac`, LIVE hardening `f36a2d6`, offline cache `bd178a2`,
   suspended-state fix `361bd48`, standings-phase fix `8546b78`, and player
@@ -32,12 +52,12 @@ upload, installation, deployment, or production change.
   banner unit from one publisher. The earlier worktree prepared those values
   in an ignored local file; this does not prove a future AAB's effective IDs.
 
-## Controlled build inputs — prepared locally, not used in a build
+## Historical controlled build inputs — not present in this worktree
 
-The previous candidate worktree has ignored local
+An earlier candidate worktree has ignored local
 `apps/mobile/android/key.properties` and
 `apps/mobile/.env.android-release.local`. Both were copied without overwrite
-to the current candidate and verified byte-identical by SHA-256. The keystore
+to the then-current candidate and verified byte-identical by SHA-256. The keystore
 path in the local signing configuration is absolute and resolves; the
 certificate was checked with `keytool` and matches the preserved AAB
 `1.0.0+3` (SHA-256
@@ -77,13 +97,13 @@ Play-distributed App Links; test those on both physical devices.
    250-row pagination remain unverified. Do not query Supabase while Claude
    is intervening; perform only the separately authorized bounded check
    after the instance is stable.
-2. Signing and AdMob inputs are prepared locally, but no release task was
-   run. Recheck file availability and effective environment immediately
+2. Signing and AdMob inputs are absent from this worktree and no release task
+   was run. Provision them securely and recheck effective environment immediately
    before a separately authorized build; inspect the eventual artifact.
 3. Galaxy A32 and S25 Ultra physical QA has not been executed. It gates
    tester distribution after a separately authorized, verified AAB and
    controlled Play installation.
 
-**Decision: NO-GO to generate an AAB now.** The player-identity patch is
-locally validated and can remain in the candidate, but it does not close
+**Decision: NO-GO to generate an AAB now.** The five functional fixes are
+locally validated and can remain in the candidate, but they do not close
 issue #217 or any of the release gates above.

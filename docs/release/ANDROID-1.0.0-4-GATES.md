@@ -3,7 +3,31 @@
 Base: `bd178a2` (R8, LIVE bootstrap/hardening and offline public cache).
 This document authorizes no build, upload, deployment or production change.
 
-## Current local candidate — 2026-10-14
+## Frozen local candidate — 2026-10-15
+
+- Branch `codex/android-functional-integration-40` at `86a09c7` directly
+  descends from the protected `e92e973` candidate. The protected branch was
+  not moved. The nine-file Flutter-only patch is equivalent by stable patch-id
+  to reviewed functional commit `daa94aa`
+  (`09457974e6ba3cbe789cdc0aee461cf2f91514ec`).
+- The patch covers missing club/national-team squad players, duplicate
+  canonical redirects, matches lost during identity resolution, missing team
+  or competition profile matches, and provisional FINAL overlays with future
+  kickoff. It does not add name-based merges or change backend contracts.
+  A confirmed canonical FINAL remains eligible even before the recorded
+  kickoff; contradictory real fixtures still need backend investigation.
+- R8, LIVE hardening, offline cache, OAuth and release configuration are
+  inherited unchanged. Version remains `1.0.0+4` and package remains
+  `com.futbeat.futbeat`. Focused Flutter tests passed 207/207, the full suite
+  1,224/1,224, `flutter analyze` passed and `git diff --check` was clean.
+- The ignored signing and production-AdMob input files are **absent from this
+  new worktree**. Their preparation in the previous candidate does not
+  transfer automatically. Provision and verify them securely here only when
+  a separately authorized build is planned; never commit or disclose them.
+- Production LIVE compatibility and physical QA on Galaxy A32 and S25 Ultra
+  remain open. **NO-GO for generating or distributing an AAB.**
+
+## Previous local candidate — 2026-10-14
 
 - `codex/player-identity-integration-16` at `ae9f2db` directly descends from
   `6dda155`. It retains R8 `e13cbac`, LIVE hardening `f36a2d6`, offline cache
@@ -13,7 +37,7 @@ This document authorizes no build, upload, deployment or production change.
   both rows exist, and Match Center groups goal events by the same redirected
   ID. There are no new identity mappings, automatic name-based merges, or
   backend-contract changes. Issue #217 remains open for global reconciliation.
-- In this candidate worktree, 86 affected tests, 254 release-focused tests,
+- In that previous candidate worktree, 86 affected tests, 254 release-focused tests,
   and all 1,215 Flutter tests passed; `flutter analyze` found no issues.
   Package, version `1.0.0+4`, R8,
   OAuth, Push, Premium, and AdMob release guards are unchanged.
@@ -125,8 +149,8 @@ recommendation remains **NO-GO for an AAB**.
 4. Physical QA on both devices remains mandatory. App Links JSON and source
    filters match, but actual Play-installed link handling has not been proven.
 
-**Decision:** GO for local release preparation; signing and AdMob inputs are
-prepared in the current worktree. **NO-GO for a signed AAB** until LIVE
+**Decision:** GO for local release preparation; signing and AdMob inputs were
+prepared in a previous worktree but are absent here. **NO-GO for a signed AAB** until LIVE
 production compatibility is verified and a separate build is authorized.
 The physical-QA plan is prepared in
 `ANDROID-1.0.0-4-PHYSICAL-QA.md`, but no device test has been executed. No
