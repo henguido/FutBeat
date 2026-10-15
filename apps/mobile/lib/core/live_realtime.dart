@@ -14,18 +14,24 @@ import 'models.dart';
 /// (every page read). With [removableSince] (server time, compared with
 /// [LiveMatchUpdate.changedAt]) the request covered only rows changed since
 /// then: an overlay whose last change is older was simply not asked for, so
-/// it is kept. A partial answer never removes anything.
+/// it is kept. [stateBeforeRequest] also protects a pre-existing key updated
+/// by Realtime while the REST pages were being read. A partial answer never
+/// removes anything.
 Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
   Map<String, LiveMatchUpdate> current,
   Iterable<Json> rows, {
   Set<String>? keysBeforeRequest,
+  Map<String, LiveMatchUpdate>? stateBeforeRequest,
   DateTime? serverNow,
   DateTime? deviceNow,
   bool complete = true,
   DateTime? removableSince,
 }) {
   final result = Map<String, LiveMatchUpdate>.of(current);
-  final before = keysBeforeRequest ?? current.keys.toSet();
+  final before =
+      stateBeforeRequest?.keys.toSet() ??
+      keysBeforeRequest ??
+      current.keys.toSet();
   final fetched = <String>{};
   final arrivedAt = (deviceNow ?? DateTime.now()).toUtc();
 
@@ -68,6 +74,10 @@ Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
     (matchId, update) =>
         before.contains(matchId) &&
         !fetched.contains(matchId) &&
+        // A Realtime frame may refresh an existing key after the REST cursor
+        // passed it. Absence from REST must not erase that newer local frame.
+        (stateBeforeRequest == null ||
+            identical(update, stateBeforeRequest[matchId])) &&
         (removableSince == null ||
             !update.changedAt.toUtc().isBefore(removableSince.toUtc())),
   );
@@ -334,7 +344,7 @@ class LiveRealtimeClient {
     }
 
     Future<void> bootstrapOnce() async {
-      final before = state.keys.toSet();
+      final before = Map<String, LiveMatchUpdate>.of(state);
       final policy = bootstrapPolicy;
       final since = DateTime.now()
           .toUtc()
@@ -354,7 +364,7 @@ class LiveRealtimeClient {
         final reconciled = reconcileLiveBootstrapSnapshot(
           state,
           read.rows,
-          keysBeforeRequest: before,
+          stateBeforeRequest: before,
           serverNow: serverNow,
           deviceNow: deviceNow,
           complete: read.complete,

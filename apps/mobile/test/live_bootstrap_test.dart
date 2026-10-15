@@ -324,6 +324,43 @@ void main() {
       expect(result[id(0)]!.homeScore, 1);
     });
 
+    test('complete paged REST does not erase an existing key refreshed by '
+        'Realtime after its cursor passed', () {
+      final matchId = id(7);
+      final before = {
+        matchId: overlay(
+          matchId,
+          receivedAt: now.subtract(const Duration(hours: 2)),
+        ),
+      };
+      final realtime = LiveMatchUpdate.fromJson(
+        liveRow(matchId, revision: 2, home: 1, updatedAt: now),
+        receivedAt: now,
+      );
+      final result = reconcileLiveBootstrapSnapshot(
+        {matchId: realtime},
+        const <Json>[],
+        stateBeforeRequest: before,
+        serverNow: now,
+        deviceNow: now,
+        complete: true,
+        removableSince: now.subtract(const Duration(hours: 71)),
+      );
+      expect(result[matchId]?.revision, 2);
+      expect(result[matchId]?.homeScore, 1);
+
+      final unchanged = reconcileLiveBootstrapSnapshot(
+        before,
+        const <Json>[],
+        stateBeforeRequest: before,
+        serverNow: now,
+        deviceNow: now,
+        complete: true,
+        removableSince: now.subtract(const Duration(hours: 71)),
+      );
+      expect(unchanged.containsKey(matchId), isFalse);
+    });
+
     test('a complete answer removes in-window overlays the server deleted '
         '(prune), and keeps those outside the window', () {
       final current = {
