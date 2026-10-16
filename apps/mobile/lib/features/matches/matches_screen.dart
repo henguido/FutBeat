@@ -88,10 +88,17 @@ bool _sameFixture(FootballMatch a, FootballMatch b) {
 /// best twin stays: finished > live > played evidence > scheduled > called
 /// off, then the lower id. The order of the surviving matches is preserved.
 List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
-  final kept = <FootballMatch>[];
-  final seenIds = <String>{};
+  // A snapshot may contain several revisions of the same canonical id. Keep
+  // its strongest evidence before comparing it with provider twins.
+  final byId = <String, FootballMatch>{};
   for (final match in matches) {
-    if (!seenIds.add(match.id)) continue;
+    final previous = byId[match.id];
+    if (previous == null || _fixtureRank(match) < _fixtureRank(previous)) {
+      byId[match.id] = match;
+    }
+  }
+  final kept = <FootballMatch>[];
+  for (final match in byId.values) {
     final twin = kept.indexWhere((other) => _sameFixture(match, other));
     if (twin < 0) {
       kept.add(match);
@@ -385,7 +392,18 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
           final allGames = dedupeFixtures(data.onDate(selected, 'Todos'));
-          final games = dedupeFixtures(data.onDate(selected, effectiveFilter));
+          // Filter after deduplication so a stale scheduled/LIVE twin cannot
+          // reappear in a tab when its final result won in Todos.
+          final games = allGames
+              .where(
+                (match) => switch (effectiveFilter) {
+                  'En vivo' => match.isLive,
+                  'Próximos' => match.isUpcoming,
+                  'Finalizados' => match.isFinished,
+                  _ => true,
+                },
+              )
+              .toList();
 
           final followedGames =
               games

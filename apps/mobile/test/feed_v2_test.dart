@@ -1091,6 +1091,8 @@ void main() {
     // (The chip sits beyond the right edge of the chip row at 390 px.)
     await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Finalizados'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'Finalizados'));
     await tester.pumpAndSettle();
     expect(selected('Finalizados'), isTrue);
@@ -1240,6 +1242,20 @@ void main() {
     const final21 = {'home': 2, 'away': 1};
     // Same canonical id twice.
     expect(ids([_fixture('a', 'h', 'x'), _fixture('a', 'h', 'x')]), ['a']);
+    for (final pair in [
+      [
+        _fixture('same', 'h', 'x'),
+        _fixture('same', 'h', 'x', status: 'VERIFIED', score: final21),
+      ],
+      [
+        _fixture('same', 'h', 'x', status: 'VERIFIED', score: final21),
+        _fixture('same', 'h', 'x'),
+      ],
+    ]) {
+      final survivor = dedupeFixtures(pair).single;
+      expect(survivor.isFinished, isTrue);
+      expect(survivor.score, '2 - 1');
+    }
     // Same competition, teams and kickoff: one fixture. The finished twin
     // replaces the scheduled copy in place; the others keep their order.
     expect(
@@ -1383,6 +1399,67 @@ void main() {
       1,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('status filters use the same winning fixture as Todos', (
+    tester,
+  ) async {
+    final data = _withMatches([
+      _twinOf(
+        'm_es_1',
+        twinId: 'm_es_1_done',
+        status: 'VERIFIED',
+        score: {'home': 2, 'away': 1},
+      ),
+    ]);
+    await _pump(tester, data: data, size: const Size(900, 3000));
+    expect(_row('m_es_1'), findsNothing);
+    expect(_row('m_es_1_done'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Próximos'));
+    await tester.pumpAndSettle();
+    expect(_row('m_es_1'), findsNothing);
+    expect(_row('m_es_1_done'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Finalizados'))
+          .selected,
+      isTrue,
+    );
+    expect(
+      _row('m_es_1_done'),
+      findsOneWidget,
+      reason:
+          'rendered: ${tester.widgetList<FeedMatchRow>(find.byType(FeedMatchRow)).map((row) => row.match.id).toList()}',
+    );
+  });
+
+  testWidgets('an obsolete LIVE twin cannot survive the En vivo filter', (
+    tester,
+  ) async {
+    final data = _withMatches([
+      _twinOf(
+        'm_cr_live',
+        twinId: 'm_cr_final',
+        status: 'VERIFIED',
+        score: {'home': 2, 'away': 1},
+      ),
+    ]);
+    await _pump(tester, data: data, size: const Size(900, 3000));
+    expect(_row('m_cr_live'), findsNothing);
+    expect(_row('m_cr_final'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+    await tester.pumpAndSettle();
+    expect(_row('m_cr_live'), findsNothing);
+    expect(_row('m_cr_final'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
+    expect(_row('m_cr_final'), findsOneWidget);
   });
 
   testWidgets('the same clubs in ANOTHER competition at the same time are two '
