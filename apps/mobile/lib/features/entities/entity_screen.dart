@@ -285,11 +285,14 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ),
           );
         }
-        final teamId = switch (type) {
+        final rawTeamId = switch (type) {
           'player' => entity.json['teamId']?.toString(),
           'team' => canonicalId,
           _ => null,
         };
+        final teamId = rawTeamId == null
+            ? null
+            : data.resolveEntityId(rawTeamId);
         final team = teamId == null ? null : data.team(teamId);
         final matches =
             data.matches

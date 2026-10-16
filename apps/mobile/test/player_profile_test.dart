@@ -276,6 +276,17 @@ void main() {
     expect(find.text('Resultados'), findsOneWidget);
   });
 
+  testWidgets('Partidos resolves an explicit alias of the current team', (
+    tester,
+  ) async {
+    final payload = _payload(player: {'teamId': 'fb_team_old'});
+    payload['entityRedirects'] = {'fb_team_old': 'fb_team'};
+    await _pumpPlayer(tester, payload);
+    await _openTab(tester, 'Partidos');
+    expect(find.text('Próximos'), findsOneWidget);
+    expect(find.text('Resultados'), findsOneWidget);
+  });
+
   testWidgets('Partidos never labels LIVE or suspended as Próximos', (
     tester,
   ) async {
