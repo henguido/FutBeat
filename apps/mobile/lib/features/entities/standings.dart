@@ -251,21 +251,13 @@ Json? standingsTableFor(Snapshot data, String competitionId, {String? season}) {
       .where((table) => table['competitionId'] == competitionId)
       .toList();
   if (candidates.isEmpty) return null;
+  // The competition's current overview retains its sole table even when its
+  // season label differs. An explicit match season must match exactly.
+  if (season == null && candidates.length == 1) return candidates.single;
   final wanted = normalizeSeasonKey(
     season ?? data.competition(competitionId)?.json['season']?.toString(),
   );
-  if (wanted == null) return candidates.length == 1 ? candidates.single : null;
-  if (season == null &&
-      candidates.length == 1 &&
-      normalizeSeasonKey(
-            candidates.single['seasonKey']?.toString() ??
-                candidates.single['season']?.toString(),
-          ) ==
-          null) {
-    // A current competition can show its sole legacy table; a match asking
-    // for an explicit historical season cannot infer that table's season.
-    return candidates.single;
-  }
+  if (wanted == null) return null;
   final exact = [
     for (final table in candidates)
       if (normalizeSeasonKey(
