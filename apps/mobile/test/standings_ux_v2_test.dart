@@ -179,6 +179,23 @@ void main() {
     expect(standingsTableFor(data, _competition, season: '2026'), isNotNull);
   });
 
+  test(
+    'a seasonless sole table remains usable only without explicit season',
+    () {
+      final data = _snapshot(
+        standings: [
+          {
+            'competitionId': _competition,
+            'groupsResolved': true,
+            'rows': [_row('team_1', 1)],
+          },
+        ],
+      );
+      expect(standingsTableFor(data, _competition), isNotNull);
+      expect(standingsTableFor(data, _competition, season: '2025'), isNull);
+    },
+  );
+
   test('stage, group and subgroup remain distinct real blocks', () {
     final rows = [
       _row(
