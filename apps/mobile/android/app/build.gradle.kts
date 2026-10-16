@@ -105,6 +105,9 @@ android {
         manifestPlaceholders["admobAppId"] =
             System.getenv("FUTBEAT_ADMOB_APP_ID")?.takeIf { it.isNotBlank() }
                 ?: "ca-app-pub-3940256099942544~3347511713"
+        manifestPlaceholders["futbeatAppLabel"] = "FutBeat"
+        manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat"
+        manifestPlaceholders["futbeatAppLinkHost"] = "futbeat.com"
     }
 
     signingConfigs {
@@ -119,6 +122,16 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Opt-in QA install alongside the Play-signed app. Never changes
+            // the normal debug or release package when the flag is absent.
+            if (System.getenv("FUTBEAT_QA_ISOLATED_PACKAGE") == "true") {
+                applicationIdSuffix = ".qa"
+                manifestPlaceholders["futbeatAppLabel"] = "FutBeat QA"
+                manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.qa"
+                manifestPlaceholders["futbeatAppLinkHost"] = "qa.invalid"
+            }
+        }
         release {
             if (missingReleaseSigningProperties.isEmpty()) {
                 signingConfig = signingConfigs.getByName("release")

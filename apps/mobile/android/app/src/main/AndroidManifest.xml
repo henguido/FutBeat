@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
-        android:label="FutBeat"
+        android:label="${futbeatAppLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round">
@@ -38,7 +38,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="futbeat.com"
+                    android:host="${futbeatAppLinkHost}"
                     android:pathPrefix="/auth/reset" />
             </intent-filter>
             <!-- Manual fallback from https://futbeat.com/auth/reset ("Abrir
@@ -48,7 +48,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="com.futbeat.futbeat"
+                    android:scheme="${futbeatAuthScheme}"
                     android:host="password-reset" />
             </intent-filter>
             <meta-data
@@ -67,7 +67,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="com.futbeat.futbeat"
+                    android:scheme="${futbeatAuthScheme}"
                     android:host="login-callback" />
             </intent-filter>
         </activity>
