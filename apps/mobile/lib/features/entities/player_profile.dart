@@ -281,11 +281,19 @@ List<(FootballMatch, Json, bool)> playerRecentEvents(
   String playerId,
 ) {
   final result = <(FootballMatch, Json, bool)>[];
+  final canonicalPlayerId = data.resolveEntityId(playerId);
+  bool belongsToPlayer(Object? rawId) {
+    final id = rawId?.toString();
+    return id != null &&
+        id.isNotEmpty &&
+        data.resolveEntityId(id) == canonicalPlayerId;
+  }
+
   for (final match in data.matches) {
     for (final event in match.events) {
-      if (event['playerId']?.toString() == playerId) {
+      if (belongsToPlayer(event['playerId'])) {
         result.add((match, event, false));
-      } else if (event['assistPlayerId']?.toString() == playerId &&
+      } else if (belongsToPlayer(event['assistPlayerId']) &&
           event['type'] == 'GOAL' &&
           event['ownGoal'] != true) {
         result.add((match, event, true));
@@ -323,12 +331,12 @@ class PlayerProfileView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final stats = playerStatRows(player);
-    final transfers = data.transfers
-        .where(
-          (transfer) =>
-              transfer['playerId'] == null || transfer['playerId'] == player.id,
-        )
-        .toList();
+    final transfers = data.transfers.where((transfer) {
+      final id = transfer['playerId']?.toString();
+      return id != null &&
+          id.isNotEmpty &&
+          data.resolveEntityId(id) == data.resolveEntityId(player.id);
+    }).toList();
     final tabs = [
       'Resumen',
       'Partidos',
@@ -469,8 +477,12 @@ class PlayerProfileView extends StatelessWidget {
         InlineEmpty(Icons.event_busy_outlined, 'Sin partidos disponibles'),
       ];
     }
-    final upcoming = matches.where((m) => !m.isFinished).toList();
+    final live = matches.where((m) => m.isLive).toList();
+    final upcoming = matches.where((m) => m.isUpcoming).toList();
     final results = matches.where((m) => m.isFinished).toList().reversed;
+    final other = matches
+        .where((m) => !m.isLive && !m.isUpcoming && !m.isFinished)
+        .toList();
     Widget dated(FootballMatch match) => Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Column(
@@ -488,9 +500,17 @@ class PlayerProfileView extends StatelessWidget {
       ),
     );
     return [
+      if (live.isNotEmpty) ...[
+        const ProfileSectionTitle('En vivo'),
+        for (final match in live) dated(match),
+      ],
       if (upcoming.isNotEmpty) ...[
         const ProfileSectionTitle('Próximos'),
         for (final match in upcoming) dated(match),
+      ],
+      if (other.isNotEmpty) ...[
+        const ProfileSectionTitle('Otros estados'),
+        for (final match in other) dated(match),
       ],
       if (results.isNotEmpty) ...[
         const ProfileSectionTitle('Resultados'),

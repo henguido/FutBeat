@@ -276,6 +276,33 @@ void main() {
     expect(find.text('Resultados'), findsOneWidget);
   });
 
+  testWidgets('Partidos never labels LIVE or suspended as Próximos', (
+    tester,
+  ) async {
+    final payload = _payload(player: _rich);
+    final matches = payload['matches'] as List;
+    for (final (id, status) in [
+      ('fb_match_live', 'LIVE'),
+      ('fb_match_suspended', 'SUSPENDED'),
+    ]) {
+      matches.add({
+        'id': id,
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-09-20T18:00:00Z',
+        'status': status,
+        'events': <dynamic>[],
+        'statistics': <dynamic>[],
+      });
+    }
+    await _pumpPlayer(tester, payload);
+    await _openTab(tester, 'Partidos');
+    expect(find.text('En vivo'), findsOneWidget);
+    expect(find.text('Próximos'), findsOneWidget);
+    expect(find.text('Otros estados'), findsOneWidget);
+  });
+
   testWidgets('Estadísticas tab lists real numbers aligned to the edge', (
     tester,
   ) async {
@@ -418,6 +445,60 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Partido fb_match_past'), findsOneWidget);
   });
+
+  test('recent activity follows an explicit canonical player redirect', () {
+    final payload = _payload();
+    payload['entityRedirects'] = {'fb_player_old': 'fb_player'};
+    final events = ((payload['matches'] as List).first['events'] as List);
+    (events.first as Map)['playerId'] = 'fb_player_old';
+    (events.last as Map)['assistPlayerId'] = 'fb_player_old';
+
+    final activity = playerRecentEvents(Snapshot(payload), 'fb_player');
+    expect(activity, hasLength(2));
+    expect(activity.where((entry) => entry.$3), hasLength(1));
+  });
+
+  test(
+    'club and national-team events share an ID without merging homonyms',
+    () {
+      final payload = _payload();
+      (payload['teams'] as List).add({
+        'id': 'fb_national_team',
+        'name': 'Selección Local',
+        'country': 'Costa Rica',
+      });
+      (payload['matches'] as List).add({
+        'id': 'fb_national_match',
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_national_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-09-22T18:00:00Z',
+        'status': 'FINISHED',
+        'events': [
+          {
+            'type': 'GOAL',
+            'minute': 12,
+            'playerId': 'fb_player',
+            'teamId': 'fb_national_team',
+          },
+          {
+            'type': 'GOAL',
+            'minute': 20,
+            'playerId': 'fb_homonym',
+            'teamId': 'fb_national_team',
+          },
+        ],
+        'statistics': <dynamic>[],
+      });
+
+      final activity = playerRecentEvents(Snapshot(payload), 'fb_player');
+      expect(activity, hasLength(3));
+      expect(
+        activity.where((entry) => entry.$1.id == 'fb_national_match'),
+        hasLength(1),
+      );
+    },
+  );
 
   testWidgets(
     'Match Center context shows only real summary, provider stats and events',
@@ -568,6 +649,7 @@ void main() {
             'fromTeamName': 'Otro Club',
             'toTeamName': 'Club Local',
           },
+          {'fromTeamName': 'Origen sin jugador', 'toTeamName': 'Club Local'},
         ],
       ),
     );
@@ -577,6 +659,7 @@ void main() {
     expect(find.text('Club Viejo'), findsOneWidget);
     expect(find.byIcon(Icons.arrow_forward_rounded), findsOneWidget);
     expect(find.text('Otro Club'), findsNothing);
+    expect(find.text('Origen sin jugador'), findsNothing);
     await tester.tap(find.text('Club Viejo'));
     await tester.pumpAndSettle();
     expect(find.text('Equipo fb_team'), findsOneWidget);
