@@ -392,21 +392,22 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                   .where((match) => isFollowedTeamMatch(match, follows))
                   .toList()
                 ..sort((a, b) => a.startTime.compareTo(b.startTime));
-          final followedIds = followedGames.map((match) => match.id).toSet();
-          final remainingGames =
-              games.where((match) => !followedIds.contains(match.id)).toList()
-                ..sort((a, b) => a.startTime.compareTo(b.startTime));
+          // A followed-team fixture belongs in both the single Favoritos
+          // section and its competition. `games` was already deduplicated, so
+          // neither section can repeat the same canonical fixture internally.
+          final regularGames = [...games]
+            ..sort((a, b) => a.startTime.compareTo(b.startTime));
 
-          final remainingByCompetition = <String, List<FootballMatch>>{};
-          for (final match in remainingGames) {
-            remainingByCompetition
+          final regularByCompetition = <String, List<FootballMatch>>{};
+          for (final match in regularGames) {
+            regularByCompetition
                 .putIfAbsent(match.competitionId, () => <FootballMatch>[])
                 .add(match);
           }
 
           final orderedCompetitions = orderMatchCompetitions(
             data: data,
-            matches: remainingGames,
+            matches: regularGames,
             follows: follows,
             selectedCountry: preference?.selectedCountry,
             detectedCountry: preference?.detectedCountry,
@@ -426,8 +427,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           final visibleCompetitions = orderedCompetitions
               .where(
                 (competition) =>
-                    (remainingByCompetition[competition.id]?.isNotEmpty ??
-                    false),
+                    (regularByCompetition[competition.id]?.isNotEmpty ?? false),
               )
               .toList(growable: false);
           final plannedAdSlots = feedAdSlots(
@@ -449,8 +449,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
 
           void addCompetition(Entity competition, int ordinal) {
             final competitionMatches =
-                remainingByCompetition[competition.id] ??
-                const <FootballMatch>[];
+                regularByCompetition[competition.id] ?? const <FootballMatch>[];
             if (competitionMatches.isEmpty) return;
 
             // The live filter always shows its rows.
@@ -664,9 +663,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             }
           }
 
-          // Then every competition with its remaining matches. Favourite-team
-          // fixtures were removed above, so every canonical match is rendered
-          // exactly once.
+          // Then every competition with all of its matches, including those
+          // also highlighted in Favoritos. Each group remains deduplicated.
           for (final (index, competition) in visibleCompetitions.indexed) {
             final ordinal = index + 1;
             addCompetition(competition, ordinal);

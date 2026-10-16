@@ -943,12 +943,13 @@ void main() {
       expect(find.text('TUS COMPETICIONES'), findsNothing);
       // Competitions follow "Favoritos" directly (no extra heading).
       expect(find.text('TODOS LOS PARTIDOS'), findsNothing);
-      expect(find.text('Marathón'), findsOneWidget);
+      // The followed fixture appears once in Favoritos and once in its league.
+      expect(find.text('Marathón'), findsNWidgets(2));
       expect(find.text('Equipo X'), findsOneWidget);
       expect(find.text('Equipo Y'), findsOneWidget);
       expect(find.text('Real Betis'), findsOneWidget);
       expect(
-        tester.getTopLeft(find.text('Marathón')).dy,
+        tester.getTopLeft(find.text('Marathón').first).dy,
         lessThan(tester.getTopLeft(find.text('Equipo X')).dy),
       );
       expect(tester.takeException(), isNull);
