@@ -164,6 +164,21 @@ void main() {
     expect(standingsTableFor(unknown, _competition), isNull);
   });
 
+  test('a sole table from another season cannot represent a past match', () {
+    final data = _snapshot(
+      standings: [
+        {
+          'competitionId': _competition,
+          'season': '2026',
+          'groupsResolved': true,
+          'rows': [_row('team_1', 1)],
+        },
+      ],
+    );
+    expect(standingsTableFor(data, _competition, season: '2025'), isNull);
+    expect(standingsTableFor(data, _competition, season: '2026'), isNotNull);
+  });
+
   test('stage, group and subgroup remain distinct real blocks', () {
     final rows = [
       _row(

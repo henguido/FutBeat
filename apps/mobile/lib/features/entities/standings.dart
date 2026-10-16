@@ -250,11 +250,11 @@ Json? standingsTableFor(Snapshot data, String competitionId, {String? season}) {
   final candidates = data.standings
       .where((table) => table['competitionId'] == competitionId)
       .toList();
-  if (candidates.length <= 1) return candidates.firstOrNull;
+  if (candidates.isEmpty) return null;
   final wanted = normalizeSeasonKey(
     season ?? data.competition(competitionId)?.json['season']?.toString(),
   );
-  if (wanted == null) return null;
+  if (wanted == null) return candidates.length == 1 ? candidates.single : null;
   final exact = [
     for (final table in candidates)
       if (normalizeSeasonKey(
