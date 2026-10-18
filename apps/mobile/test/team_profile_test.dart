@@ -476,6 +476,28 @@ void main() {
     expect(find.text('Persona Parcial'), findsNothing);
   });
 
+  testWidgets('two explicit aliases to an absent root show one squad member', (
+    tester,
+  ) async {
+    final payload = _payload(
+      players: [
+        _player('fb_player_alias_a', 'Persona A', 'Forward'),
+        _player('fb_player_alias_b', 'Persona B', 'Forward'),
+      ],
+    );
+    payload['entityRedirects'] = {
+      'fb_player_alias_a': 'fb_player_root_missing',
+      'fb_player_alias_b': 'fb_player_root_missing',
+    };
+
+    await _pumpTeam(tester, payload);
+    expect(find.text('1 jugador'), findsOneWidget);
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('1 jugador'), findsOneWidget);
+    expect(find.text('Persona A'), findsOneWidget);
+    expect(find.text('Persona B'), findsNothing);
+  });
+
   testWidgets('redirected fixture and club-linked squad stay in one profile', (
     tester,
   ) async {

@@ -211,13 +211,22 @@ class TeamProfileView extends ConsumerWidget {
               .toList()
         : data.players;
     final rosterIds = {for (final player in roster) player.id};
+    final representedMissingRoots = <String>{};
+    bool keepRosterPlayer(Entity player) {
+      final canonical = data.resolveEntityId(player.id);
+      if (canonical == player.id) return true;
+      if (rosterIds.contains(canonical)) return false;
+      // Several explicit aliases may resolve to a root absent from this
+      // response. Keep one representative, never merge by display name.
+      return representedMissingRoots.add(canonical);
+    }
+
     final players = [
       for (final player in roster)
         // An authoritative redirect may leave both rows in the response.
-        // Prefer its present canonical row; keep a lone alias if the target
+        // Prefer its present canonical row; keep one alias if the target
         // was not included. No name- or shirt-based merge is inferred here.
-        if (data.resolveEntityId(player.id) == player.id ||
-            !rosterIds.contains(data.resolveEntityId(player.id)))
+        if (keepRosterPlayer(player))
           if (data.resolveEntityId(player.json['teamId']?.toString() ?? '') ==
               team.id)
             player
