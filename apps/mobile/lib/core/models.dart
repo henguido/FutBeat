@@ -1264,17 +1264,22 @@ class Snapshot {
     final canonicalTeamIds = teamIds.map(resolveEntityId).toSet();
 
     final playerIds = <String>{};
+    void retainEventPlayers(Map event) {
+      for (final key in const ['playerId', 'assistPlayerId']) {
+        final id = event[key]?.toString();
+        if (id != null && id.isNotEmpty) playerIds.add(id);
+      }
+    }
+
     for (final event in target.events) {
-      final playerId = event['playerId']?.toString();
-      if (playerId != null && playerId.isNotEmpty) playerIds.add(playerId);
+      retainEventPlayers(event);
     }
     for (final event
         in sourceMatch?['events'] is List
             ? sourceMatch!['events'] as List
             : const []) {
       if (event is! Map) continue;
-      final playerId = event['playerId']?.toString();
-      if (playerId != null && playerId.isNotEmpty) playerIds.add(playerId);
+      retainEventPlayers(event);
     }
     final canonicalPlayerIds = playerIds.map(resolveEntityId).toSet();
 

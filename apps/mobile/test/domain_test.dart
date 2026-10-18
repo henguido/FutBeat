@@ -109,6 +109,48 @@ void main() {
       canonicalCompetition,
     );
   });
+  test('match context keeps an assister whose current team differs', () {
+    final original = Map<String, dynamic>.from(
+      (json['matches'] as List).first as Map,
+    );
+    const otherTeam = 'fb_team_other_synthetic';
+    final snapshot = Snapshot({
+      ...json,
+      'teams': [
+        ...(json['teams'] as List),
+        {'id': otherTeam, 'name': 'Club de prueba'},
+      ],
+      'players': [
+        ...(json['players'] as List),
+        {
+          'id': 'fb_player_assister_synthetic',
+          'name': 'Asistente de prueba',
+          'teamId': otherTeam,
+        },
+      ],
+      'matches': [
+        {
+          ...original,
+          'id': 'fb_match_assist_synthetic',
+          'events': [
+            {
+              'type': 'GOAL',
+              'side': 'home',
+              'assistPlayerId': 'fb_player_assister_synthetic',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(snapshot.player('fb_player_assister_synthetic'), isNotNull);
+    expect(
+      snapshot
+          .forMatch('fb_match_assist_synthetic')
+          .player('fb_player_assister_synthetic'),
+      isNotNull,
+    );
+  });
   test('unknown IDs are safe and unsupported contract fails', () {
     expect(data.match('missing'), isNull);
     expect(
