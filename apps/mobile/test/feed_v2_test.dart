@@ -1371,6 +1371,54 @@ void main() {
     );
   });
 
+  test('same-id final correction agrees with the latest snapshot row', () {
+    final oldFinal = FootballMatch(
+      _twinOf(
+        'm_es_1',
+        twinId: 'm_es_1',
+        status: 'VERIFIED',
+        score: {'home': 2, 'away': 1},
+      ),
+    );
+    final correctedFinal = FootballMatch(
+      _twinOf(
+        'm_es_1',
+        twinId: 'm_es_1',
+        status: 'VERIFIED',
+        score: {'home': 1, 'away': 1},
+      ),
+    );
+    final rows = [oldFinal, correctedFinal];
+    final snapshot = _withMatches(rows.map((match) => match.json).toList());
+
+    expect(snapshot.match('m_es_1')?.score, '1 - 1');
+    expect(dedupeFixtures(rows).single.score, '1 - 1');
+  });
+
+  testWidgets('corrected final score reaches favorite and league rows', (
+    tester,
+  ) async {
+    final oldFinal = _twinOf(
+      'm_es_1',
+      twinId: 'm_es_1',
+      status: 'VERIFIED',
+      score: {'home': 2, 'away': 1},
+    );
+    final correctedFinal = {
+      ...oldFinal,
+      'score': {'home': 1, 'away': 1},
+    };
+    final data = _withMatches([oldFinal, correctedFinal]);
+    await _pump(tester, data: data, follows: {'team:t_bet'});
+
+    for (final scope in ['favorite', 'competition']) {
+      final row = _rowInGroup('m_es_1', scope, 'c_es');
+      expect(row, findsOneWidget);
+      expect(tester.widget<FeedMatchRow>(row).match.score, '1 - 1');
+    }
+    expect(data.match('m_es_1')?.score, '1 - 1');
+  });
+
   testWidgets('a fixture stored as two match entities renders exactly once', (
     tester,
   ) async {

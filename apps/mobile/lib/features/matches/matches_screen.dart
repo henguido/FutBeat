@@ -89,11 +89,12 @@ bool _sameFixture(FootballMatch a, FootballMatch b) {
 /// off, then the lower id. The order of the surviving matches is preserved.
 List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
   // A snapshot may contain several revisions of the same canonical id. Keep
-  // its strongest evidence before comparing it with provider twins.
+  // its strongest evidence; for equal evidence, use the last row just as
+  // Snapshot.match(id) does, so a corrected score cannot differ by screen.
   final byId = <String, FootballMatch>{};
   for (final match in matches) {
     final previous = byId[match.id];
-    if (previous == null || _fixtureRank(match) < _fixtureRank(previous)) {
+    if (previous == null || _fixtureRank(match) <= _fixtureRank(previous)) {
       byId[match.id] = match;
     }
   }
