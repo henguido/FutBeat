@@ -23,3 +23,9 @@ verify_jwt = true
 # stored x-futbeat-cron-token). Not scheduled; secondaries stay disabled.
 [functions.futbeat-provider-hub-sync]
 verify_jwt = false
+
+# News collector v2 (#104): internal, same pattern as futbeat-provider-hub-sync
+# (no user JWT; the function requires the stored x-futbeat-cron-token).
+# Not scheduled; every news provider and feed ships disabled.
+[functions.futbeat-news-collect]
+verify_jwt = false

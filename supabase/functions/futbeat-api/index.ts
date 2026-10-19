@@ -391,6 +391,44 @@ export default {
       return reply(200, snapshot);
     }
 
+    // News v2 (#104): one card per story from the central collector; the
+    // app's own follows only reorder the feed (no per-user upstream call).
+    if (path.endsWith('/futbeat-api/v1/news')) {
+      const tab = requestUrl.searchParams.get('tab') ?? 'for_you';
+      const country = requestUrl.searchParams.get('country');
+      const offset = Number(requestUrl.searchParams.get('offset') ?? '0');
+      const limit = Number(requestUrl.searchParams.get('limit') ?? '20');
+      const rawFollows = (requestUrl.searchParams.get('follows') ?? '').trim();
+      const follows = rawFollows.length === 0 ? [] : rawFollows.split(',');
+      if (
+        !['for_you', 'latest', 'country', 'transfers'].includes(tab) ||
+        (country !== null && !/^[A-Z]{2}$/.test(country)) ||
+        (tab === 'country' && country === null) ||
+        !Number.isInteger(offset) || offset < 0 || offset > 200 ||
+        !Number.isInteger(limit) || limit < 1 || limit > 50 ||
+        follows.length > 50 ||
+        follows.some((key) =>
+          !/^(team|player|competition):fb_[A-Za-z0-9_-]{3,120}$/.test(key)
+        )
+      ) {
+        return reply(400, { error: 'Solicitud inválida' });
+      }
+      const { data: feed, error } = await db.rpc('futbeat_read_news_feed', {
+        p_tab: tab,
+        p_country: country,
+        p_follows: follows.map((key) => {
+          const [type, id] = key.split(':');
+          return { type, id };
+        }),
+        p_offset: offset,
+        p_limit: limit,
+      });
+      if (error || !feed || feed.schemaVersion !== 2) {
+        return reply(503, { error: 'Noticias temporalmente no disponibles' });
+      }
+      return reply(200, feed);
+    }
+
     if (path.endsWith('/futbeat-api/v1/favorites')) {
       const rawKeys = (requestUrl.searchParams.get('keys') ?? '').trim();
       const keys = rawKeys.length === 0 ? [] : rawKeys.split(',');
