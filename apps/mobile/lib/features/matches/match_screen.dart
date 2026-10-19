@@ -329,7 +329,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final away = data.team(match.awayId)!;
     // Key statistics only when one row is worth showing (see Statistics).
     final hasStats = displayableStatistics(
-      detail.statistics.isNotEmpty ? detail.statistics : match.statistics,
+      matchStatisticsForDisplay(match, detail),
     ).isNotEmpty;
     // Recent form + head-to-head: a separate read, never blocking the header
     // or the tabs, failing on its own, read once per open.
@@ -1546,11 +1546,13 @@ class MatchStandingsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasRows = data.standings.any(
-      (table) =>
-          table['competitionId'] == competitionId &&
-          (table['rows'] as List? ?? const []).isNotEmpty,
+    final selectedTable = standingsTableFor(
+      data,
+      competitionId,
+      season: season,
     );
+    final hasRows =
+        (selectedTable?['rows'] as List? ?? const []).isNotEmpty;
     if (hasRows) {
       // A stale table stays on screen while it is revalidated.
       return Column(
@@ -1697,9 +1699,7 @@ class Statistics extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final stats = detail?.statistics.isNotEmpty == true
-        ? detail!.statistics
-        : match.statistics;
+    final stats = matchStatisticsForDisplay(match, detail);
     if (stats.isEmpty) {
       if (detail?.statisticsPending == true) {
         return const _PendingSection('Cargando estadísticas…');
@@ -1731,6 +1731,15 @@ class Statistics extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A late detail response takes precedence only when it contains at least
+/// one statistic FutBeat can actually show. An unknown-only response must
+/// not erase valid statistics already present in the canonical snapshot.
+List<Json> matchStatisticsForDisplay(FootballMatch match, MatchDetail? detail) {
+  final detailed = detail?.statistics ?? const <Json>[];
+  if (displayableStatistics(detailed).isNotEmpty) return detailed;
+  return match.statistics;
 }
 
 /// Presentation model prepared once per statistics build. It normalizes

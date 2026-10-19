@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 
@@ -235,6 +236,52 @@ String _selectedTab(WidgetTester tester) {
 }
 
 void main() {
+  testWidgets('other-season standings do not offer a full-table link', (
+    tester,
+  ) async {
+    final source = _context(standings: true);
+    final table = Map<String, dynamic>.from(
+      (source['standings'] as List).single as Map,
+    )..['season'] = '2025/2026';
+    final data = Snapshot({
+      ...source,
+      'standings': [table],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MatchStandingsTab(
+            data,
+            'fb_comp_mc',
+            season: '2026/2027',
+            refreshing: false,
+            compactContext: true,
+          ),
+        ),
+      ),
+    );
+    expect(find.byKey(const ValueKey('standings-show-full')), findsNothing);
+    expect(find.text('Sin tabla disponible'), findsOneWidget);
+  });
+
+  testWidgets('partial context without a team hides only that match safely', (
+    tester,
+  ) async {
+    final server = _Server(
+      detail: (_) => _detail(),
+      context: (_) => {
+        ..._context(),
+        'teams': [
+          {'id': 'fb_team_mc_h', 'name': 'Local Sintético'},
+        ],
+      },
+    );
+    final container = await _open(tester, server);
+    expect(tester.takeException(), isNull);
+    expect(find.text('Partido no encontrado'), findsOneWidget);
+    await _close(tester, container);
+  });
+
   testWidgets('21. lineup that arrives later appears in place; tab kept', (
     tester,
   ) async {

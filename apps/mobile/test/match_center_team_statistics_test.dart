@@ -61,6 +61,26 @@ Container _pill(WidgetTester tester, String key) => tester.widget<Container>(
 );
 
 void main() {
+  testWidgets('unusable detail rows do not hide valid snapshot statistics', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      match: _match(
+        statistics: const [
+          {'label': 'Shots on Goal', 'home': 4, 'away': 2},
+        ],
+      ),
+      detail: _detail(
+        statistics: const [
+          {'label': 'Provider Unknown', 'home': 8, 'away': 1},
+        ],
+      ),
+    );
+    expect(find.text('Tiros a puerta'), findsOneWidget);
+    expect(find.text('Todavía no hay estadísticas disponibles.'), findsNothing);
+  });
+
   const wideStats = <Map<String, dynamic>>[
     {'label': 'Fouls', 'home': 12, 'away': 9},
     {'label': 'Unknown Alpha', 'home': 1, 'away': 2},
