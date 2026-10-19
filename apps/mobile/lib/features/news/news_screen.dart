@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models.dart';
+import '../../core/news_links.dart';
 import '../../core/providers.dart';
 import '../../shared/widgets.dart';
 
@@ -39,13 +40,12 @@ List<Json> newsForSection(
   final shown = articles.where((article) {
     final title = article['title']?.toString().trim() ?? '';
     final source = article['sourceName']?.toString().trim() ?? '';
-    final url = article['url']?.toString().trim() ?? '';
     final published = DateTime.tryParse(
       article['publishedAt']?.toString() ?? '',
     );
     if (title.isEmpty ||
         source.isEmpty ||
-        !url.startsWith('https://') ||
+        safeNewsUri(article['url']) == null ||
         published == null) {
       return false;
     }

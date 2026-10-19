@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/entity_media.dart';
 import '../core/models.dart';
+import '../core/news_links.dart';
 import '../core/providers.dart';
 import '../core/relevance.dart';
 import '../core/theme.dart';
@@ -347,9 +349,28 @@ String _contentDateLabel(Object? value) {
 }
 
 class NewsArticleCard extends StatelessWidget {
-  const NewsArticleCard(this.article, {super.key});
+  const NewsArticleCard(this.article, {super.key, this.openLink});
 
   final Json article;
+
+  /// Injectable so link behavior is verified without launching a browser.
+  final Future<bool> Function(Uri)? openLink;
+
+  Future<void> _openArticle(BuildContext context, Uri uri) async {
+    var opened = false;
+    try {
+      opened =
+          await (openLink?.call(uri) ??
+              launchUrl(uri, mode: LaunchMode.externalApplication));
+    } catch (_) {
+      // A missing browser is a recoverable UI failure, never a clipboard copy.
+    }
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir el artículo')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -361,75 +382,87 @@ class NewsArticleCard extends StatelessWidget {
         ? (article['author'] as String).trim()
         : '';
     final url = article['url']?.toString().trim() ?? '';
+    final articleUri = safeNewsUri(url);
     final date = _contentDateLabel(article['publishedAt']);
-    final image = article['imageUrl']?.toString().trim() ?? '';
+    final image = safeNewsUri(article['imageUrl']);
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Optional source image; one that fails to load takes no space
-            // (the error widget bypasses the frame builder and its spacing).
-            if (image.startsWith('https://'))
-              Image.network(
-                image,
-                key: const ValueKey('news-image'),
-                fit: BoxFit.cover,
-                frameBuilder: (_, child, _, _) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: AspectRatio(aspectRatio: 16 / 9, child: child),
+      child: InkWell(
+        onTap: articleUri == null
+            ? null
+            : () => _openArticle(context, articleUri),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Optional source image; one that fails to load takes no space
+              // (the error widget bypasses the frame builder and its spacing).
+              if (image != null)
+                Image.network(
+                  image.toString(),
+                  key: const ValueKey('news-image'),
+                  fit: BoxFit.cover,
+                  frameBuilder: (_, child, _, _) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: AspectRatio(aspectRatio: 16 / 9, child: child),
+                    ),
                   ),
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
                 ),
-                errorBuilder: (_, _, _) => const SizedBox.shrink(),
-              ),
-            Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-            ),
-            if (description.isNotEmpty) ...[
-              const SizedBox(height: 8),
               Text(
-                description,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: muted),
+                title,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+              ),
+              if (description.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  description,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: muted),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      [
+                        if (source.isNotEmpty) source,
+                        if (provider.isNotEmpty) 'vía $provider',
+                        if (author.isNotEmpty) author,
+                        if (date.isNotEmpty) date,
+                      ].join(' · '),
+                      style: const TextStyle(color: muted, fontSize: 12),
+                    ),
+                  ),
+                  if (articleUri != null)
+                    TextButton.icon(
+                      key: const ValueKey('news-copy-link'),
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(text: articleUri.toString()),
+                        );
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Enlace de la noticia copiado'),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.link, size: 17),
+                      label: const Text('Copiar enlace'),
+                    ),
+                ],
               ),
             ],
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    [
-                      if (source.isNotEmpty) source,
-                      if (provider.isNotEmpty) 'vía $provider',
-                      if (author.isNotEmpty) author,
-                      if (date.isNotEmpty) date,
-                    ].join(' · '),
-                    style: const TextStyle(color: muted, fontSize: 12),
-                  ),
-                ),
-                if (url.startsWith('https://'))
-                  TextButton.icon(
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: url));
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Enlace de la noticia copiado'),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.link, size: 17),
-                    label: const Text('Copiar enlace'),
-                  ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );
