@@ -332,6 +332,47 @@ void main() {
   });
 
   testWidgets(
+    'v2 stories render through one request without invented metadata',
+    (tester) async {
+      final requests = await _pump(
+        tester,
+        (o) => Response(
+          requestOptions: o,
+          data: {
+            'schemaVersion': 2,
+            'updatedAt': '2026-10-19T12:00:00Z',
+            'stories': [
+              {
+                'clusterId': 'official-1',
+                'title': 'Comunicado oficial',
+                'url': 'https://club.example/official-1',
+                'sourceName': 'Club Uno',
+                'publishedAt': '2026-10-19T09:00:00Z',
+                'category': 'TRANSFER',
+                'entities': [
+                  {'type': 'team', 'id': 'fb_team_one'},
+                ],
+                'attribution': {
+                  'publisher': 'Club Uno',
+                  'provider': 'Currents API',
+                },
+              },
+            ],
+          },
+        ),
+        follows: {'team:fb_team_one'},
+      );
+      expect(requests, hasLength(1));
+      expect(requests.single.queryParameters['tab'], 'for_you');
+      expect(requests.single.queryParameters['limit'], 40);
+      expect(requests.single.queryParameters['follows'], 'team:fb_team_one');
+      expect(find.text('Comunicado oficial'), findsOneWidget);
+      expect(find.textContaining('vía Currents API'), findsOneWidget);
+      expect(find.textContaining('Destacados'), findsNothing);
+    },
+  );
+
+  testWidgets(
     'empty filters explain missing follows and search can be cleared',
     (tester) async {
       final requests = await _pump(

@@ -59,7 +59,7 @@ List<Json> newsForSection(
       NewsSection.teams => _newsSubject(article, follows, 'team'),
       NewsSection.players => _newsSubject(article, follows, 'player'),
       NewsSection.competitions => _newsSubject(article, follows, 'competition'),
-      NewsSection.transfers => false,
+      NewsSection.transfers => article['category'] == 'TRANSFER',
       _ => true,
     };
   }).toList();

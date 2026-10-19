@@ -13,6 +13,7 @@ import 'models.dart';
 import 'player_display_identity.dart';
 import 'profile_context.dart';
 import 'team_matches.dart';
+import '../features/news/news_feed_adapter.dart';
 
 abstract interface class FootballRepository {
   Future<Snapshot> load();
@@ -1061,6 +1062,7 @@ class ApiRepository implements FootballRepository {
     Map<String, dynamic>? queryParameters,
     CancelToken? cancelToken,
     bool persist = false,
+    Json Function(Json)? adapt,
   }) async {
     final cached = _snapshotCache[key];
     final fetched = _catalogFetchedAt[key];
@@ -1071,12 +1073,13 @@ class ApiRepository implements FootballRepository {
         DateTime.now().difference(fetched) < catalogMemoryTtl) {
       return cached;
     }
-    final raw = await _getJson(
+    final response = await _getJson(
       path,
       queryParameters: queryParameters,
       cancelToken: cancelToken,
       maxAttempts: 1,
     );
+    final raw = adapt?.call(response) ?? response;
     final snapshot = _canonical(raw);
     _remember(key, snapshot);
     _catalogFetchedAt.removeWhere(
@@ -1115,16 +1118,27 @@ class ApiRepository implements FootballRepository {
     String? country, {
     CancelToken? cancelToken,
   }) {
-    final keys = (subjects.toSet().toList()..sort()).take(50).toList();
+    final keys = (subjects.toSet().toList()..sort())
+        .where(
+          (key) =>
+              RegExp(r'^(team|player|competition):fb_[A-Za-z0-9_-]{3,120}$')
+                  .hasMatch(key),
+        )
+        .take(50)
+        .toList();
     final code = exploreCountry(country);
     return _loadCatalog(
       'news:${code ?? ''}:${keys.join(',')}',
       '/v1/news',
       queryParameters: {
+        'tab': 'for_you',
+        'limit': 40,
+        if (keys.isNotEmpty) 'follows': keys.join(','),
         if (keys.isNotEmpty) 'subjects': keys.join(','),
         'country': ?code,
       },
       cancelToken: cancelToken,
+      adapt: adaptNewsFeed,
     );
   }
 

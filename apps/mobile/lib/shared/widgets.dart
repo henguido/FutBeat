@@ -356,6 +356,7 @@ class NewsArticleCard extends StatelessWidget {
     final title = article['title']?.toString().trim() ?? '';
     final description = article['description']?.toString().trim() ?? '';
     final source = article['sourceName']?.toString().trim() ?? '';
+    final provider = article['provider']?.toString().trim() ?? '';
     final author = article['author'] is String
         ? (article['author'] as String).trim()
         : '';
@@ -405,6 +406,7 @@ class NewsArticleCard extends StatelessWidget {
                   child: Text(
                     [
                       if (source.isNotEmpty) source,
+                      if (provider.isNotEmpty) 'vía $provider',
                       if (author.isNotEmpty) author,
                       if (date.isNotEmpty) date,
                     ].join(' · '),
