@@ -182,8 +182,8 @@ generador viejo no pisa uno nuevo.
 
 ## Validación local
 
-- Backend: suite completa con todas las migraciones nuevas (ver resultado en
-  el resumen de la sesión). Fallos preexistentes en `main`, ajenos a esto:
+- Backend: suite completa con todas las migraciones nuevas: **1251/1264**;
+  los 4 fallos son preexistentes en `main` y ajenos a esto:
   `v39_canary_preflight` (3, requiere PowerShell) y `news_transfers_v1` #1
   (fecha fija 2026-09-19 fuera de la ventana de 30 días).
 - Flutter 3.47.4: `flutter analyze` sin issues; `flutter test` 932 ok, 4
