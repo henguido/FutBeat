@@ -162,6 +162,60 @@ void main() {
     expect(newsForSection(articles, NewsSection.forYou), hasLength(3));
   });
 
+  test('followed player and competition filters do not infer from names', () {
+    final articles = <Json>[
+      {
+        ..._article('player-followed'),
+        'title': 'Jugador de selección y club',
+        'subjects': [
+          {'type': 'player', 'id': 'fb_player_followed'},
+          {'type': 'team', 'id': 'fb_team_other'},
+        ],
+      },
+      {
+        ..._article('competition-followed'),
+        'subjects': [
+          {'type': 'competition', 'id': 'fb_comp_followed'},
+        ],
+      },
+      {
+        ..._article('name-only'),
+        'title': 'fb_player_followed y fb_comp_followed',
+      },
+      {
+        ..._article('wrong-kind'),
+        'subjects': [
+          {'type': 'team', 'id': 'fb_player_followed'},
+        ],
+      },
+    ];
+    final follows = {
+      'player:fb_player_followed',
+      'competition:fb_comp_followed',
+    };
+
+    expect(
+      newsForSection(
+        articles,
+        NewsSection.players,
+        follows: follows,
+      ).map((article) => article['id']),
+      ['player-followed'],
+    );
+    expect(
+      newsForSection(
+        articles,
+        NewsSection.competitions,
+        follows: follows,
+      ).map((article) => article['id']),
+      ['competition-followed'],
+    );
+    expect(
+      newsForSection(articles, NewsSection.players, follows: const {}),
+      isEmpty,
+    );
+  });
+
   test('invalid article provenance is excluded without inferring metadata', () {
     final valid = _article('valid');
     expect(
@@ -276,6 +330,55 @@ void main() {
     expect(find.text('Titular club'), findsOneWidget);
     expect(requests, hasLength(1));
   });
+
+  testWidgets(
+    'followed player and competition chips use the loaded feed only',
+    (tester) async {
+      final requests = await _pump(
+        tester,
+        (o) => Response(
+          requestOptions: o,
+          data: _feed(
+            news: [
+              {
+                ..._article('player'),
+                'subjects': [
+                  {'type': 'player', 'id': 'fb_player_a'},
+                ],
+              },
+              {
+                ..._article('competition'),
+                'subjects': [
+                  {'type': 'competition', 'id': 'fb_comp_a'},
+                ],
+              },
+              _article('unrelated'),
+            ],
+          ),
+        ),
+        follows: {'player:fb_player_a', 'competition:fb_comp_a'},
+      );
+      expect(requests, hasLength(1));
+      expect(
+        requests.single.queryParameters['subjects'],
+        'competition:fb_comp_a,player:fb_player_a',
+      );
+
+      await tester.ensureVisible(find.text('Jugadores seguidos'));
+      await tester.tap(find.text('Jugadores seguidos'));
+      await tester.pumpAndSettle();
+      expect(find.text('Titular player'), findsOneWidget);
+      expect(find.text('Titular competition'), findsNothing);
+      expect(find.text('Titular unrelated'), findsNothing);
+
+      await tester.ensureVisible(find.text('Competiciones'));
+      await tester.tap(find.text('Competiciones'));
+      await tester.pumpAndSettle();
+      expect(find.text('Titular competition'), findsOneWidget);
+      expect(find.text('Titular player'), findsNothing);
+      expect(requests, hasLength(1));
+    },
+  );
 
   testWidgets('no articles: honest empty state, nothing invented', (
     tester,
