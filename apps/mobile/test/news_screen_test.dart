@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/interests.dart';
+import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/news/news_screen.dart';
 
@@ -81,6 +82,134 @@ Future<List<RequestOptions>> _pump(
 }
 
 void main() {
+  test('only sections supported by the current feed contract are offered', () {
+    expect(NewsSection.values.map((section) => section.label), [
+      'Para ti',
+      'Últimas',
+      'Equipos seguidos',
+      'Jugadores seguidos',
+      'Competiciones',
+      'Fichajes',
+    ]);
+  });
+
+  test(
+    'local search and latest ordering cover only the 40 loaded articles',
+    () {
+      final articles = List<Json>.generate(
+        40,
+        (index) => {
+          ..._article('article-$index'),
+          'publishedAt': DateTime.utc(
+            2026,
+            10,
+            4,
+          ).add(Duration(minutes: index)).toIso8601String(),
+        },
+      );
+      expect(
+        newsForSection(
+          articles,
+          NewsSection.forYou,
+          query: 'article-39',
+        ).map((article) => article['id']),
+        ['article-39'],
+      );
+      expect(
+        newsForSection(articles, NewsSection.forYou, query: 'article-40'),
+        isEmpty,
+      );
+      final latest = newsForSection(articles, NewsSection.latest);
+      expect(latest, hasLength(40));
+      expect(latest.first['id'], 'article-39');
+      expect(latest.last['id'], 'article-0');
+    },
+  );
+
+  test('followed entity filters require explicit typed canonical subjects', () {
+    final articles = <Json>[
+      {
+        ..._article('club'),
+        'subjects': [
+          {'type': 'team', 'id': 'fb_team_a'},
+        ],
+      },
+      {
+        ..._article('player'),
+        'subjects': [
+          {'type': 'player', 'id': 'fb_player_b'},
+        ],
+      },
+      {..._article('untagged'), 'subjects': const []},
+    ];
+    final follows = {'team:fb_team_a', 'player:fb_player_b'};
+    expect(
+      newsForSection(
+        articles,
+        NewsSection.teams,
+        follows: follows,
+      ).map((article) => article['id']),
+      ['club'],
+    );
+    expect(
+      newsForSection(
+        articles,
+        NewsSection.players,
+        follows: follows,
+      ).map((article) => article['id']),
+      ['player'],
+    );
+    expect(newsForSection(articles, NewsSection.forYou), hasLength(3));
+  });
+
+  test('invalid article provenance is excluded without inferring metadata', () {
+    final valid = _article('valid');
+    expect(
+      newsForSection([
+        valid,
+        {...valid, 'id': 'missing-source', 'sourceName': ''},
+        {...valid, 'id': 'unsafe-url', 'url': 'http://news.test/unsafe'},
+        {...valid, 'id': 'undated', 'publishedAt': 'unknown'},
+      ], NewsSection.forYou).map((article) => article['id']),
+      ['valid'],
+    );
+  });
+
+  testWidgets('optional metadata is explicit and featured is shown once', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListView(
+            children: [
+              NewsFeedContent(
+                articles: [
+                  {..._article('featured'), 'featured': true, 'author': 'Ana'},
+                  {..._article('ordinary'), 'featured': 'true', 'author': 42},
+                  _article('without-metadata'),
+                ],
+                transfers: const [],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Destacados'), findsOneWidget);
+    expect(find.text('Titular featured'), findsOneWidget);
+    expect(find.text('Fuente featured · Ana · 4/10/2026'), findsOneWidget);
+    expect(find.textContaining('42'), findsNothing);
+    expect(find.text('Titular ordinary'), findsOneWidget);
+    expect(find.text('Titular without-metadata'), findsOneWidget);
+    expect(find.text('Mi país'), findsNothing);
+    expect(find.text('Globales'), findsNothing);
+    expect(
+      find.text('Búsqueda local; el feed carga hasta 40 artículos.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('articles and roster changes, followed subjects sent', (
     tester,
   ) async {
@@ -114,6 +243,38 @@ void main() {
     expect(find.text('Titular a2'), findsOneWidget);
     expect(find.text('Transferencias'), findsOneWidget);
     expect(find.textContaining('Próximo incremento'), findsNothing);
+  });
+
+  testWidgets('local search and filters do not request or duplicate news', (
+    tester,
+  ) async {
+    final requests = await _pump(
+      tester,
+      (o) => Response(
+        requestOptions: o,
+        data: _feed(
+          news: [
+            {
+              ..._article('club'),
+              'subjects': [
+                {'type': 'team', 'id': 'fb_team_a'},
+              ],
+            },
+            _article('ordinary'),
+          ],
+        ),
+      ),
+      follows: {'team:fb_team_a'},
+    );
+    expect(requests, hasLength(1));
+    await tester.enterText(find.byKey(const ValueKey('news-search')), 'club');
+    await tester.pumpAndSettle();
+    expect(find.text('Titular club'), findsOneWidget);
+    expect(find.text('Titular ordinary'), findsNothing);
+    await tester.tap(find.text('Equipos seguidos'));
+    await tester.pumpAndSettle();
+    expect(find.text('Titular club'), findsOneWidget);
+    expect(requests, hasLength(1));
   });
 
   testWidgets('no articles: honest empty state, nothing invented', (

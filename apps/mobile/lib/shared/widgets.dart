@@ -356,6 +356,9 @@ class NewsArticleCard extends StatelessWidget {
     final title = article['title']?.toString().trim() ?? '';
     final description = article['description']?.toString().trim() ?? '';
     final source = article['sourceName']?.toString().trim() ?? '';
+    final author = article['author'] is String
+        ? (article['author'] as String).trim()
+        : '';
     final url = article['url']?.toString().trim() ?? '';
     final date = _contentDateLabel(article['publishedAt']);
     final image = article['imageUrl']?.toString().trim() ?? '';
@@ -402,6 +405,7 @@ class NewsArticleCard extends StatelessWidget {
                   child: Text(
                     [
                       if (source.isNotEmpty) source,
+                      if (author.isNotEmpty) author,
                       if (date.isNotEmpty) date,
                     ].join(' · '),
                     style: const TextStyle(color: muted, fontSize: 12),
