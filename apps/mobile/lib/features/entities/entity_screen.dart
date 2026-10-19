@@ -294,17 +294,18 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ? null
             : data.resolveEntityId(rawTeamId);
         final team = teamId == null ? null : data.team(teamId);
-        final matches =
-            data.matches
-                .where(
-                  (m) => type == 'competition'
-                      ? data.resolveEntityId(m.competitionId) == canonicalId
-                      : teamId != null &&
-                            (data.resolveEntityId(m.homeId) == teamId ||
-                                data.resolveEntityId(m.awayId) == teamId),
-                )
-                .toList()
-              ..sort((a, b) => a.startTime.compareTo(b.startTime));
+        final matches = type == 'player'
+            ? playerProfileMatches(data, entity)
+            : (data.matches
+                  .where(
+                    (m) => type == 'competition'
+                        ? data.resolveEntityId(m.competitionId) == canonicalId
+                        : teamId != null &&
+                              (data.resolveEntityId(m.homeId) == teamId ||
+                                  data.resolveEntityId(m.awayId) == teamId),
+                  )
+                  .toList()
+                ..sort((a, b) => a.startTime.compareTo(b.startTime)));
         final teamCompetitions = teamId == null
             ? const <Entity>[]
             : orderedTeamCompetitions(data, teamId);

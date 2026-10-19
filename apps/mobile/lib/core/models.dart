@@ -1033,9 +1033,26 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
     ...canonical.where((event) => !replaced.contains(event)),
     for (final row in detailed)
       if (paired[row]?['playerId'] != null)
-        {...row, 'canonicalPlayerId': paired[row]!['playerId']}
+        {
+          ...row,
+          'canonicalPlayerId': paired[row]!['playerId'],
+          // Detail can omit goal qualifiers while canonical events retain
+          // them. An explicit detail false still wins as a correction.
+          if (!row.containsKey('ownGoal') && paired[row]!['ownGoal'] != null)
+            'ownGoal': paired[row]!['ownGoal'],
+          if (!row.containsKey('penalty') && paired[row]!['penalty'] != null)
+            'penalty': paired[row]!['penalty'],
+        }
       else
-        row,
+        {
+          ...row,
+          if (paired[row] case final source?) ...{
+            if (!row.containsKey('ownGoal') && source['ownGoal'] != null)
+              'ownGoal': source['ownGoal'],
+            if (!row.containsKey('penalty') && source['penalty'] != null)
+              'penalty': source['penalty'],
+          },
+        },
   ];
 
   final merged = <Json>[

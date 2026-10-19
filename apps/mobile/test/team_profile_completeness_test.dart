@@ -441,6 +441,36 @@ void main() {
       expect(ids(TeamMatchesBucket.upcoming), ['soon', 'late']);
       expect(ids(TeamMatchesBucket.results), ['stale', 'recent', 'old']);
     });
+
+    test(
+      'same fixture ID is deduped but two IDs are not merged by teams and date',
+      () {
+        final data = Snapshot(
+          _snapshot(
+            matches: [
+              _match(
+                'canonical_final',
+                const Duration(days: -1),
+                status: 'VERIFIED',
+              ),
+              _match(
+                'other_id_pending',
+                const Duration(days: -1),
+                status: 'SCHEDULED',
+              ),
+            ],
+          ),
+        );
+        final rows = [for (final m in data.matches) (match: m, data: data)];
+        final ids = orderedProfileMatches(TeamMatchesBucket.results, [
+          ...rows,
+          rows.first,
+        ]).map((row) => row.match.id).toList();
+        expect(ids, contains('canonical_final'));
+        expect(ids, contains('other_id_pending'));
+        expect(ids, hasLength(2));
+      },
+    );
   });
 
   group('Plantilla', () {

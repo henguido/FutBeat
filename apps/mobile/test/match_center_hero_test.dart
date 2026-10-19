@@ -450,6 +450,72 @@ void main() {
     await _close(tester);
   });
 
+  testWidgets(
+    'canonical own goal survives a paired detail row without ownGoal',
+    (tester) async {
+      final snapshot = _snapshot(score: const {'home': 1, 'away': 0});
+      final match =
+          (snapshot['matches'] as List).single as Map<String, dynamic>;
+      match['events'] = [
+        {
+          'id': 'canonical_own',
+          'type': 'GOAL',
+          'minute': 44,
+          'teamId': _home,
+          'playerId': 'fb_player',
+          'ownGoal': true,
+        },
+      ];
+      await _open(
+        tester,
+        snapshot: snapshot,
+        detail: _detail(
+          incidents: [
+            {
+              ..._goal('home', 44, name: 'S. Autogol'),
+              'playerId': 'provider_player',
+            },
+          ],
+        ),
+      );
+      expect(_inHero(find.text('S. Autogol 44′ (a.g.)')), findsOneWidget);
+      await _close(tester);
+    },
+  );
+
+  testWidgets('explicit detail false clears an obsolete canonical own goal', (
+    tester,
+  ) async {
+    final snapshot = _snapshot(score: const {'home': 1, 'away': 0});
+    final match = (snapshot['matches'] as List).single as Map<String, dynamic>;
+    match['events'] = [
+      {
+        'id': 'canonical_own',
+        'type': 'GOAL',
+        'minute': 44,
+        'teamId': _home,
+        'playerId': 'fb_player',
+        'ownGoal': true,
+      },
+    ];
+    await _open(
+      tester,
+      snapshot: snapshot,
+      detail: _detail(
+        incidents: [
+          {
+            ..._goal('home', 44, name: 'S. Autogol'),
+            'playerId': 'provider_player',
+            'ownGoal': false,
+          },
+        ],
+      ),
+    );
+    expect(_inHero(find.text('S. Autogol 44′')), findsOneWidget);
+    expect(_inHero(find.text('S. Autogol 44′ (a.g.)')), findsNothing);
+    await _close(tester);
+  });
+
   testWidgets('17c. competition line includes useful stage and round once', (
     tester,
   ) async {

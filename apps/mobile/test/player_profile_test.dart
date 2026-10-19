@@ -287,6 +287,80 @@ void main() {
     expect(find.text('Resultados'), findsOneWidget);
   });
 
+  testWidgets(
+    'Partidos includes confirmed club activity when current team is national',
+    (tester) async {
+      final payload = _payload(player: {'teamId': 'fb_national_team'});
+      (payload['teams'] as List).add({
+        'id': 'fb_national_team',
+        'name': 'Selección Local',
+      });
+      (payload['matches'] as List).add({
+        'id': 'fb_national_match',
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_national_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-10-04T18:00:00Z',
+        'status': 'VERIFIED',
+        'score': {'home': 1, 'away': 0},
+        'events': <dynamic>[],
+      });
+      (payload['matches'] as List).add({
+        'id': 'fb_club_match',
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-10-18T18:00:00Z',
+        'status': 'VERIFIED',
+        'score': {'home': 1, 'away': 0},
+        'events': [
+          {
+            'id': 'club_goal',
+            'type': 'GOAL',
+            'minute': 44,
+            'playerId': 'fb_player',
+            'teamId': 'fb_team',
+          },
+        ],
+      });
+      await _pumpPlayer(tester, payload);
+      await _openTab(tester, 'Partidos');
+      expect(
+        find.textContaining('Dom 18 oct', findRichText: true),
+        findsWidgets,
+      );
+    },
+  );
+
+  test('club activity requires player ID, not a matching name', () {
+    final payload = _payload(player: {'teamId': 'fb_national_team'});
+    (payload['teams'] as List).add({
+      'id': 'fb_national_team',
+      'name': 'Selección Local',
+    });
+    (payload['matches'] as List).add({
+      'id': 'fb_same_name_match',
+      'competitionId': 'fb_comp',
+      'homeTeamId': 'fb_team',
+      'awayTeamId': 'fb_rival',
+      'startTime': '2026-10-18T18:00:00Z',
+      'status': 'VERIFIED',
+      'events': [
+        {
+          'type': 'GOAL',
+          'minute': 44,
+          'playerId': 'fb_other_player',
+          'playerName': 'Delantero Estrella',
+        },
+      ],
+    });
+    final data = Snapshot(payload);
+    expect(
+      playerProfileMatches(data, data.player('fb_player')!).map((m) => m.id),
+      isNot(contains('fb_same_name_match')),
+    );
+  });
+
   testWidgets('Partidos never labels LIVE or suspended as Próximos', (
     tester,
   ) async {
@@ -416,7 +490,11 @@ void main() {
   testWidgets('player without photo, team, number or data stays compact', (
     tester,
   ) async {
-    await _pumpPlayer(tester, _payload(team: false));
+    final payload = _payload(team: false);
+    for (final match in payload['matches'] as List) {
+      match['events'] = <dynamic>[];
+    }
+    await _pumpPlayer(tester, payload);
     expect(find.byType(Image), findsNothing);
     expect(find.text('DE'), findsOneWidget);
     expect(find.text('Sin equipo'), findsOneWidget);

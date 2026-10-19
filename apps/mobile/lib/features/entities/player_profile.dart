@@ -308,6 +308,42 @@ List<(FootballMatch, Json, bool)> playerRecentEvents(
   return result;
 }
 
+/// Include the current team's schedule and matches with explicit canonical
+/// player evidence. A national-team membership must not hide a club match,
+/// but names and nationality alone are never evidence of participation.
+List<FootballMatch> playerProfileMatches(Snapshot data, Entity player) {
+  final playerId = data.resolveEntityId(player.id);
+  final currentTeamId = player.json['teamId']?.toString();
+  final teamId = currentTeamId == null
+      ? null
+      : data.resolveEntityId(currentTeamId);
+  final byId = <String, FootballMatch>{};
+  for (final match in data.matches) {
+    final currentTeamMatch =
+        teamId != null &&
+        (data.resolveEntityId(match.homeId) == teamId ||
+            data.resolveEntityId(match.awayId) == teamId);
+    final explicitActivity = match.events.any((event) {
+      bool belongsToPlayer(Object? value) {
+        final raw = value?.toString();
+        return raw != null &&
+            raw.isNotEmpty &&
+            data.resolveEntityId(raw) == playerId;
+      }
+
+      return belongsToPlayer(event['playerId']) ||
+          (event['type'] == 'GOAL' &&
+              event['ownGoal'] != true &&
+              belongsToPlayer(event['assistPlayerId']));
+    });
+    if (currentTeamMatch || explicitActivity) {
+      byId.putIfAbsent(match.id, () => match);
+    }
+  }
+  return byId.values.toList()
+    ..sort((a, b) => a.startTime.compareTo(b.startTime));
+}
+
 class PlayerProfileView extends StatelessWidget {
   const PlayerProfileView({
     required this.data,
