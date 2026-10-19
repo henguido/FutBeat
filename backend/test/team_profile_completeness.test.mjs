@@ -114,20 +114,23 @@ test('pagination returns every match exactly once, then stops', () => withDb(asy
 }));
 
 test('lifecycle: effective status decides the bucket, never the raw SCHEDULED', () => withDb(async (db) => {
-  const t = await team(db), r = await team(db), c = await competition(db);
-  const future = await match(db, c.id, t, r, 3);
-  const stale = await match(db, c.id, t, r, -2); // kickoff passed, still SCHEDULED, no evidence
-  const justStarted = await match(db, c.id, t, r, -0.1); // inside the 15-minute grace
-  const done = await match(db, c.id, t, r, -30, finished(3, 1));
-  const postponedPast = await match(db, c.id, t, r, -5, { status: 'POSTPONED' });
-  const postponedFuture = await match(db, c.id, t, r, 10, { status: 'POSTPONED' });
-  const cancelled = await match(db, c.id, t, r, 20, { status: 'CANCELLED' });
-  const live = await match(db, c.id, t, r, -0.5, {
+  // One opponent per match: the same pairing within hours would be one
+  // fixture stored twice, which the profile lists once (20261019110000).
+  const t = await team(db), c = await competition(db);
+  const r = () => team(db);
+  const future = await match(db, c.id, t, await r(), 3);
+  const stale = await match(db, c.id, t, await r(), -2); // kickoff passed, still SCHEDULED, no evidence
+  const justStarted = await match(db, c.id, t, await r(), -0.1); // inside the 15-minute grace
+  const done = await match(db, c.id, t, await r(), -30, finished(3, 1));
+  const postponedPast = await match(db, c.id, t, await r(), -5, { status: 'POSTPONED' });
+  const postponedFuture = await match(db, c.id, t, await r(), 10, { status: 'POSTPONED' });
+  const cancelled = await match(db, c.id, t, await r(), 20, { status: 'CANCELLED' });
+  const live = await match(db, c.id, t, await r(), -0.5, {
     status: 'LIVE', score: { home: 1, away: 0 }, provenance: { receivedAt: hours(-0.02) } });
-  const staleLive = await match(db, c.id, t, r, -3, {
+  const staleLive = await match(db, c.id, t, await r(), -3, {
     status: 'LIVE', provenance: { receivedAt: hours(-2) } }); // LIVE never refreshed
   // Terminal evidence recorded after kickoff ends a raw SCHEDULED match.
-  const evidenced = await match(db, c.id, t, r, -4);
+  const evidenced = await match(db, c.id, t, await r(), -4);
   await db.query(`insert into futbeat_private.canonical_events(id,match_id,provider,event_type,payload,first_seen_at)
     values('fb_event_tp_ft',$1,'goal_api','FULL_TIME','{}',now()-interval '1 hour')`, [evidenced]);
 
