@@ -139,8 +139,14 @@ async function runCurrents(input: CollectorInput, deps: CollectorDeps) {
     if (!response.ok) throw new Error(`HTTP_${response.status}`);
     const payload = await response.json();
     const { policies, candidates } = await context(deps.rpc, "currents");
-    if (!policies.provider) throw new Error("NO_POLICY");
-    const prepared = prepareAll(normalizeCurrents(payload), policies, candidates, deps.now?.() ?? new Date());
+    const provider = policies.provider;
+    if (!provider) throw new Error("NO_POLICY");
+    const prepared = prepareAll(
+      normalizeCurrents(payload),
+      { provider, sources: policies.sources },
+      candidates,
+      deps.now?.() ?? new Date(),
+    );
     const stored = await storePrepared(deps.rpc, "currents", prepared, { type: subject.subjectType, id: subject.subjectId });
     await complete(deps.rpc, id, "SUCCEEDED", http, stored, null);
     return { status: "ok", subject, ...stored };
@@ -209,7 +215,8 @@ async function runRss(input: CollectorInput, deps: CollectorDeps) {
     if (type && !/xml|rss|atom/i.test(type)) throw new Error("NOT_A_FEED");
     const xml = await readLimited(response);
     const { policies, candidates } = await context(deps.rpc, feed.provider);
-    if (!policies.provider) throw new Error("NO_POLICY");
+    const provider = policies.provider;
+    if (!provider) throw new Error("NO_POLICY");
     const raws = normalizeFeed(xml, {
       provider: feed.provider,
       sourceName: feed.sourceName,
@@ -224,7 +231,7 @@ async function runRss(input: CollectorInput, deps: CollectorDeps) {
           return false;
         }
       });
-    const prepared = prepareAll(raws, policies, candidates, deps.now?.() ?? new Date());
+    const prepared = prepareAll(raws, { provider, sources: policies.sources }, candidates, deps.now?.() ?? new Date());
     const stored = await storePrepared(deps.rpc, feed.provider, prepared, null);
     await complete(deps.rpc, id, "SUCCEEDED", http, stored, null);
     await deps.rpc("futbeat_news_feed_result", {
