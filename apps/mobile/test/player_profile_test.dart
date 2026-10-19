@@ -361,6 +361,40 @@ void main() {
     );
   });
 
+  test(
+    'server memberships include club and national team without duplicates',
+    () {
+      final payload = _payload(
+        player: {
+          'teamId': 'fb_team',
+          'nationalTeamId': 'fb_national_team',
+          'teamIds': ['fb_team', 'fb_national_team', 'fb_team'],
+        },
+      );
+      (payload['teams'] as List).add({
+        'id': 'fb_national_team',
+        'name': 'Selección Local',
+      });
+      (payload['matches'] as List).add({
+        'id': 'fb_national_match',
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_national_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-10-04T18:00:00Z',
+        'status': 'VERIFIED',
+        'score': {'home': 1, 'away': 0},
+        'events': <dynamic>[],
+      });
+      final data = Snapshot(payload);
+      final ids = playerProfileMatches(
+        data,
+        data.player('fb_player')!,
+      ).map((match) => match.id).toList();
+      expect(ids, contains('fb_national_match'));
+      expect(ids.where((id) => id == 'fb_match_past'), hasLength(1));
+    },
+  );
+
   testWidgets('Partidos never labels LIVE or suspended as Próximos', (
     tester,
   ) async {

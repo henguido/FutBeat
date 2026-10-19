@@ -308,21 +308,29 @@ List<(FootballMatch, Json, bool)> playerRecentEvents(
   return result;
 }
 
-/// Include the current team's schedule and matches with explicit canonical
-/// player evidence. A national-team membership must not hide a club match,
-/// but names and nationality alone are never evidence of participation.
+/// Include all explicit team memberships and matches with canonical player
+/// evidence. Never infer a membership from names or nationality.
 List<FootballMatch> playerProfileMatches(Snapshot data, Entity player) {
   final playerId = data.resolveEntityId(player.id);
-  final currentTeamId = player.json['teamId']?.toString();
-  final teamId = currentTeamId == null
-      ? null
-      : data.resolveEntityId(currentTeamId);
+  final teamIds = <String>{};
+  void addTeam(Object? value) {
+    final id = value?.toString().trim() ?? '';
+    if (id.isNotEmpty) teamIds.add(data.resolveEntityId(id));
+  }
+
+  final served = player.json['teamIds'];
+  if (served is List) {
+    for (final id in served) {
+      addTeam(id);
+    }
+  }
+  addTeam(player.json['teamId']);
+  addTeam(player.json['nationalTeamId']);
   final byId = <String, FootballMatch>{};
   for (final match in data.matches) {
     final currentTeamMatch =
-        teamId != null &&
-        (data.resolveEntityId(match.homeId) == teamId ||
-            data.resolveEntityId(match.awayId) == teamId);
+        teamIds.contains(data.resolveEntityId(match.homeId)) ||
+        teamIds.contains(data.resolveEntityId(match.awayId));
     final explicitActivity = match.events.any((event) {
       bool belongsToPlayer(Object? value) {
         final raw = value?.toString();
