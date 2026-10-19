@@ -6,9 +6,11 @@ import {
   lineupPlayerIds,
   lineupPlayerIdsBySection,
   normalizeMatchDetail,
+  normalizePeriodScores,
   safeImage,
   type PlayerMedia,
 } from '../_shared/match_detail.ts';
+import { buildMatchSummary, type SummaryInput } from '../_shared/match_summary.ts';
 
 const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -427,6 +429,38 @@ export default {
         return reply(503, { error: 'Noticias temporalmente no disponibles' });
       }
       return reply(200, feed);
+    }
+
+    // Match summary (contract futbeat.match-summary v1): deterministic,
+    // facts only. One shared cached row per match, rewritten only when the
+    // significant fingerprint or the generator version changes.
+    if (path.endsWith('/futbeat-api/v1/match-summary')) {
+      const id = requestUrl.searchParams.get('id');
+      if (!validEntityId(id)) return reply(400, { error: 'Solicitud inválida' });
+      const { data: input, error } = await db.rpc('futbeat_read_match_summary_input', { p_match_id: id });
+      if (error) return reply(503, { error: 'Resumen temporalmente no disponible' });
+      if (!input) return reply(404, { error: 'Partido no encontrado' });
+      const record = asRecord(input);
+      const match = asRecord(record.match) as SummaryInput['match'];
+      const summary = buildMatchSummary({
+        match: { ...match, periods: normalizePeriodScores(asRecord(record.scoreFields)) },
+        teams: asRecord(record.teams) as SummaryInput['teams'],
+        players: asRecord(record.players) as SummaryInput['players'],
+        competition: record.competition ? asRecord(record.competition) : null,
+      });
+      const cached = asRecord(record.cached);
+      if (
+        cached.generatorVersion !== summary.generatorVersion ||
+        cached.significant !== summary.fingerprint.significant
+      ) {
+        // A failed cache write never blocks the answer.
+        const { error: storeError } = await db.rpc('futbeat_store_match_summary', {
+          p_match_id: id,
+          p_summary: summary,
+        });
+        if (storeError) console.warn('match summary cache write failed');
+      }
+      return reply(200, summary);
     }
 
     if (path.endsWith('/futbeat-api/v1/favorites')) {
