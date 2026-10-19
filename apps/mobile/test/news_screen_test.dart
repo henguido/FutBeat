@@ -332,6 +332,36 @@ void main() {
   });
 
   testWidgets(
+    'empty filters explain missing follows and search can be cleared',
+    (tester) async {
+      final requests = await _pump(
+        tester,
+        (o) => Response(
+          requestOptions: o,
+          data: _feed(news: [_article('available')]),
+        ),
+      );
+      await tester.tap(find.text('Equipos seguidos'));
+      await tester.pumpAndSettle();
+      expect(find.text('Aún no sigues equipos'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('news-search')),
+        'sin-coincidencias',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Sin resultados para «sin-coincidencias»'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('news-search-clear')));
+      await tester.pumpAndSettle();
+      expect(find.text('Aún no sigues equipos'), findsOneWidget);
+      expect(requests, hasLength(1));
+    },
+  );
+
+  testWidgets(
     'followed player and competition chips use the loaded feed only',
     (tester) async {
       final requests = await _pump(

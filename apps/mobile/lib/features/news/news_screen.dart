@@ -163,6 +163,13 @@ class NewsFeedContent extends StatefulWidget {
 class _NewsFeedContentState extends State<NewsFeedContent> {
   NewsSection selected = NewsSection.forYou;
   String query = '';
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -189,16 +196,54 @@ class _NewsFeedContentState extends State<NewsFeedContent> {
     final regular = selected == NewsSection.forYou
         ? articles.where((article) => article['featured'] != true).toList()
         : articles;
+    final followKind = switch (selected) {
+      NewsSection.teams => 'team:',
+      NewsSection.players => 'player:',
+      NewsSection.competitions => 'competition:',
+      _ => null,
+    };
+    final noFollows =
+        followKind != null &&
+        !widget.follows.any((key) => key.startsWith(followKind));
+    final emptyTitle = term.isNotEmpty
+        ? 'Sin resultados para «${query.trim()}»'
+        : noFollows
+        ? switch (selected) {
+            NewsSection.teams => 'Aún no sigues equipos',
+            NewsSection.players => 'Aún no sigues jugadores',
+            NewsSection.competitions => 'Aún no sigues competiciones',
+            _ => 'Sin resultados para este filtro',
+          }
+        : selected == NewsSection.transfers
+        ? 'Sin fichajes disponibles'
+        : 'Sin resultados para este filtro';
+    final emptyDescription = term.isNotEmpty
+        ? 'Prueba otra búsqueda entre los artículos cargados.'
+        : noFollows
+        ? 'Sigue una entidad para ver aquí sus noticias, si están disponibles.'
+        : 'No hay artículos cargados que cumplan este filtro.';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TextField(
           key: const ValueKey('news-search'),
+          controller: _searchController,
           onChanged: (value) => setState(() => query = value),
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.search),
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.search),
             hintText: 'Buscar en noticias cargadas',
             helperText: 'Búsqueda local; el feed carga hasta 40 artículos.',
+            suffixIcon: query.isEmpty
+                ? null
+                : IconButton(
+                    key: const ValueKey('news-search-clear'),
+                    tooltip: 'Limpiar búsqueda',
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() => query = '');
+                    },
+                    icon: const Icon(Icons.close),
+                  ),
           ),
         ),
         const SizedBox(height: 8),
@@ -238,9 +283,9 @@ class _NewsFeedContentState extends State<NewsFeedContent> {
             (selected != NewsSection.transfers &&
                     selected != NewsSection.forYou ||
                 transfers.isEmpty))
-          const EmptyState(
-            'Sin resultados para este filtro',
-            'Solo mostramos noticias con metadatos suficientes; prueba otro filtro.',
+          EmptyState(
+            emptyTitle,
+            emptyDescription,
             icon: Icons.article_outlined,
           ),
       ],
