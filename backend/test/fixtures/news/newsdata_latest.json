@@ -1,0 +1,29 @@
+{
+  "status": "success",
+  "totalResults": 2,
+  "results": [
+    {
+      "article_id": "nd-001",
+      "title": "Club Uno ficha a Mario Ejemplo Rojas como refuerzo para el Apertura - Medio Deportivo",
+      "link": "https://medio-deportivo.example/futbol/club-uno-ficha-a-mario-ejemplo/",
+      "source_id": "mediodeportivo",
+      "source_name": "Medio Deportivo",
+      "source_url": "https://medio-deportivo.example",
+      "description": "El delantero llega a Club Uno.",
+      "pubDate": "2026-10-18 14:06:00",
+      "pubDateTZ": "UTC",
+      "language": "spanish",
+      "image_url": null,
+      "duplicate": false
+    },
+    {
+      "article_id": "nd-dup",
+      "title": "Copia marcada como duplicada por el proveedor",
+      "link": "https://medio-deportivo.example/otra",
+      "source_name": "Medio Deportivo",
+      "pubDate": "2026-10-18 14:06:00",
+      "pubDateTZ": "UTC",
+      "duplicate": true
+    }
+  ]
+}
