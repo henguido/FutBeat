@@ -67,6 +67,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('news card does not expose a malformed HTTPS link', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: NewsArticleCard({
+            'title': 'Titular permitido',
+            'url': 'https://',
+            'sourceName': 'Fuente',
+            'publishedAt': '2026-10-20T12:00:00Z',
+          }),
+        ),
+      ),
+    );
+    expect(find.text('Titular permitido'), findsOneWidget);
+    expect(find.text('Copiar enlace'), findsNothing);
+  });
+
   testWidgets('transfer card clearly labels a roster-detected move', (
     tester,
   ) async {

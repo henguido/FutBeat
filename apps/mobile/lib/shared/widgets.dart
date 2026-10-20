@@ -357,6 +357,12 @@ class NewsArticleCard extends StatelessWidget {
     final description = article['description']?.toString().trim() ?? '';
     final source = article['sourceName']?.toString().trim() ?? '';
     final url = article['url']?.toString().trim() ?? '';
+    final parsedUrl = Uri.tryParse(url);
+    final safeUrl =
+        parsedUrl != null &&
+        parsedUrl.scheme == 'https' &&
+        parsedUrl.host.isNotEmpty &&
+        parsedUrl.userInfo.isEmpty;
     final date = _contentDateLabel(article['publishedAt']);
 
     return Card(
@@ -390,7 +396,7 @@ class NewsArticleCard extends StatelessWidget {
                     style: const TextStyle(color: muted, fontSize: 12),
                   ),
                 ),
-                if (url.startsWith('https://'))
+                if (safeUrl)
                   TextButton.icon(
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: url));
