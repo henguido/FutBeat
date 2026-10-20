@@ -64,6 +64,16 @@ test('adapters: Currents, NewsData, RSS and Atom normalize to one contract', asy
   const atom = normalizeFeed(await fixture('publisher_atom.xml'), { sourceName: 'Federación Ejemplo' });
   assert.equal(atom[0].url, 'https://federacion.example/noticias/convocatoria-octubre');
   assert.equal(atom[0].publishedAt, '2026-10-16T18:00:00.000Z');
+  assert.equal(rss[0].language, '', 'publisher country does not imply article language');
+  const declared = normalizeFeed((await fixture('publisher_rss.xml'))
+    .replace('<channel>', '<channel><language>es-CR</language>'),
+    { sourceName: 'Club Uno' });
+  assert.equal(declared[0].language, 'es-cr');
+  const itemOverride = normalizeFeed((await fixture('publisher_atom.xml'))
+    .replace('<feed ', '<feed xml:lang="es" ')
+    .replace('<entry>', '<entry xml:lang="pt-BR">'),
+    { sourceName: 'Federación Ejemplo' });
+  assert.equal(itemOverride[0].language, 'pt-br');
 });
 
 test('plain text strips markup and never keeps script content as markup', () => {

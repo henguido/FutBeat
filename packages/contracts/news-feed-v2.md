@@ -65,8 +65,14 @@ Claves nulas se omiten (`snippet`, `imageUrl`, `transferStatus`, `attribution.pr
   fuente oficial lo redacta como hecho; la repetición entre agregadores
   **nunca** sube el estado.
 - `category`: `TRANSFER`, `INJURY`, `DISCIPLINE`, `COACHING`, `SQUAD`, `MATCH`, `GENERAL`.
-- `country`: cuenta una entidad etiquetada (equipo/competición) del país; el país
-  del medio solo decide si la historia no etiqueta equipos ni competiciones.
+- `country` de la solicitud influye en `for_you` y filtra `tab=country` solo
+  mediante entidades canónicas etiquetadas (equipo/competición). El país del
+  medio o la cobertura del feed **nunca** se infieren como país de la historia.
+- `storyCountryNames` contiene los países explícitos de esas entidades;
+  `sourceCountryCode` identifica al editor y `language` al artículo. Son
+  metadatos independientes. `inSelectedCountry` indica la coincidencia con
+  el país solicitado; una historia global sin etiquetas sigue en `for_you`
+  y `latest`, pero no se finge nacional.
 - La UI debe mostrar siempre la fuente (`sourceName`) y, si existe,
   `attribution.provider` ("vía Currents API"). Toque → abrir `url` (link-out).
 
