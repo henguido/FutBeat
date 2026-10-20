@@ -392,7 +392,8 @@ export default {
       return reply(200, snapshot);
     }
 
-    if (path.endsWith('/futbeat-api/v1/news')) {
+    // Clients without `tab` keep the legacy v1 response; v2 is opt-in.
+    if (path.endsWith('/futbeat-api/v1/news') && !requestUrl.searchParams.has('tab')) {
       const country = (requestUrl.searchParams.get('country') ?? '').trim().toUpperCase();
       const subjects = (requestUrl.searchParams.get('subjects') ?? '')
         .split(',')
@@ -407,6 +408,42 @@ export default {
         return replyNoStore(503, { error: 'Noticias temporalmente no disponibles' });
       }
       return replyNoStore(200, snapshot);
+    }
+
+    if (path.endsWith('/futbeat-api/v1/news')) {
+      const tab = requestUrl.searchParams.get('tab');
+      const country = requestUrl.searchParams.get('country');
+      const offset = Number(requestUrl.searchParams.get('offset') ?? '0');
+      const limit = Number(requestUrl.searchParams.get('limit') ?? '20');
+      const rawFollows = (requestUrl.searchParams.get('follows') ?? '').trim();
+      const follows = rawFollows.length === 0 ? [] : rawFollows.split(',');
+      if (
+        !['for_you', 'latest', 'country', 'transfers'].includes(tab ?? '') ||
+        (country !== null && !/^[A-Z]{2}$/.test(country)) ||
+        (tab === 'country' && country === null) ||
+        !Number.isInteger(offset) || offset < 0 || offset > 200 ||
+        !Number.isInteger(limit) || limit < 1 || limit > 50 ||
+        follows.length > 50 ||
+        follows.some((key) =>
+          !/^(team|player|competition):fb_[A-Za-z0-9_-]{3,120}$/.test(key)
+        )
+      ) {
+        return reply(400, { error: 'Solicitud inválida' });
+      }
+      const { data: feed, error } = await db.rpc('futbeat_read_news_feed', {
+        p_tab: tab,
+        p_country: country,
+        p_follows: follows.map((key) => {
+          const [type, id] = key.split(':');
+          return { type, id };
+        }),
+        p_offset: offset,
+        p_limit: limit,
+      });
+      if (error || !feed || feed.schemaVersion !== 2) {
+        return replyNoStore(503, { error: 'Noticias temporalmente no disponibles' });
+      }
+      return replyNoStore(200, feed);
     }
 
     if (path.endsWith('/futbeat-api/v1/favorites')) {

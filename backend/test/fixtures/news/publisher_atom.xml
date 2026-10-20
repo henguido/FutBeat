@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Federación Ejemplo</title>
+  <entry>
+    <title>Convocatoria de la Selección Ejemplo para la fecha FIFA</title>
+    <link href="https://federacion.example/noticias/convocatoria-octubre"/>
+    <id>tag:federacion.example,2026:convocatoria-octubre</id>
+    <updated>2026-10-16T18:00:00Z</updated>
+    <summary>Lista de convocados.</summary>
+  </entry>
+</feed>

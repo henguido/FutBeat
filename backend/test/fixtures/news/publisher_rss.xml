@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Club Uno — Noticias</title>
+    <link>https://club-uno.example/noticias</link>
+    <item>
+      <title><![CDATA[Comunicado: Club Uno ficha a Mario Ejemplo Rojas]]></title>
+      <link>https://club-uno.example/noticias/mario-ejemplo-rojas-refuerzo</link>
+      <guid isPermaLink="false">club-uno-1001</guid>
+      <pubDate>Sun, 18 Oct 2026 16:00:00 GMT</pubDate>
+      <description><![CDATA[<p>El club oficializa la incorporaci&oacute;n del delantero Mario Ejemplo Rojas &amp; su presentación.</p>]]></description>
+      <media:content url="https://club-uno.example/img/mario.jpg" medium="image"/>
+    </item>
+    <item>
+      <title>Parte médico: lesión de Pedro Ejemplo Solís</title>
+      <link>https://club-uno.example/noticias/parte-medico-pedro</link>
+      <guid>club-uno-1002</guid>
+      <pubDate>Sat, 17 Oct 2026 20:30:00 -0600</pubDate>
+      <description>El defensor sufre un esguince.</description>
+    </item>
+  </channel>
+</rss>
