@@ -201,7 +201,10 @@ async function runRss(input: CollectorInput, deps: CollectorDeps) {
     };
     if (feed.etag) headers["If-None-Match"] = feed.etag;
     if (feed.lastModified) headers["If-Modified-Since"] = feed.lastModified;
-    const response = await deps.fetch(feed.url, { headers, redirect: "follow", signal: AbortSignal.timeout(20000) });
+    // A configured publisher endpoint must not redirect the collector to an
+    // unreviewed host (or a private network address). Review a changed feed
+    // URL separately instead of following it implicitly.
+    const response = await deps.fetch(feed.url, { headers, redirect: "error", signal: AbortSignal.timeout(20000) });
     http = response.status;
     if (response.status === 304) {
       await complete(deps.rpc, id, "NOT_MODIFIED", http, { items: 0, inserted: 0, updated: 0, unchanged: 0 }, null);

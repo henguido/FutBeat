@@ -604,16 +604,12 @@ begin
       coalesce((select max(case when f.t='team' then 100 when f.t='player' then 90 else 70 end)
         from entities e join follows f on f.t=e.subject_type and f.id=e.id
         where e.cluster_id=c.cluster_id),0) follow_score,
-      -- A tagged team/competition of the country decides; the publisher's
-      -- country only when the story tags no team or competition.
+      -- Only a tagged canonical team/competition establishes story country.
+      -- Publisher country and feed coverage are not evidence about the story.
       (v_country is not null and (
         exists(select 1 from entities e join futbeat_private.entities x on x.id=e.id
           where e.cluster_id=c.cluster_id and e.subject_type in ('team','competition')
-            and lower(coalesce(x.payload->>'country','')) = any(v_country_names))
-        or (not exists(select 1 from entities e where e.cluster_id=c.cluster_id
-              and e.subject_type in ('team','competition'))
-          and exists(select 1 from members m join futbeat_private.news_sources s on s.domain=m.source_domain
-            where m.cluster_id=c.cluster_id and s.country_code=v_country)))) in_country
+            and lower(coalesce(x.payload->>'country','')) = any(v_country_names)))) in_country
     from clusters c
   ), filtered as (
     select s.*,
@@ -631,10 +627,16 @@ begin
   select coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
       'clusterId',p.cluster_id,
       'title',card.title,'url',card.url,'sourceName',card.source_name,'sourceDomain',card.source_domain,
-      'sourceRole',card.source_role,'publishedAt',card.published_at,'updatedAt',p.last_published_at,
+      'sourceRole',card.source_role,'sourceCountryCode',src.country_code,
+      'language',card.language,'inSelectedCountry',p.in_country,
+      'publishedAt',card.published_at,'updatedAt',p.last_published_at,
       'snippet',card.description,'imageUrl',card.image_url,'attribution',card.attribution,
       'category',p.category,'storyState',p.story_state,'transferStatus',p.transfer_status,
       'memberCount',p.member_count,
+      'storyCountryNames',coalesce((select jsonb_agg(distinct x.payload->>'country')
+        from entities e join futbeat_private.entities x on x.id=e.id
+        where e.cluster_id=p.cluster_id and e.subject_type in ('team','competition')
+          and nullif(x.payload->>'country','') is not null),'[]'::jsonb),
       'entities',coalesce((select jsonb_agg(jsonb_build_object('type',e.subject_type,'id',e.id,
           'name',x.payload->>'name') order by e.subject_type,e.id)
         from entities e join futbeat_private.entities x on x.id=e.id where e.cluster_id=p.cluster_id),'[]'::jsonb),
@@ -650,7 +652,8 @@ begin
     -- The card shows the most trusted member (official > media > ...),
     -- earliest first among equals.
     select m.* from members m where m.cluster_id=p.cluster_id order by m.rk,m.published_at,m.id limit 1
-  ) card;
+  ) card
+  left join futbeat_private.news_sources src on src.domain=card.source_domain;
 
   return jsonb_build_object('schemaVersion',2,'tab',p_tab,'country',v_country,
     'updatedAt',now(),'offset',p_offset,'hasMore',p_offset+p_limit<coalesce(total,0),

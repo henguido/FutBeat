@@ -33,7 +33,7 @@ function rpcFor(db) {
 function fakeFetch(routes) {
   const calls = [];
   const fetch = async (url, init) => {
-    calls.push({ url, headers: init.headers });
+    calls.push({ url, headers: init.headers, redirect: init.redirect });
     const route = routes.find((r) => url.startsWith(r.prefix));
     if (!route) throw new Error(`unexpected ${url}`);
     return route.respond(init);
@@ -64,6 +64,24 @@ test('disabled providers: nothing planned, nothing fetched, nothing reserved', (
   }
   assert.equal(calls.length, 0);
   assert.equal((await db.query('select count(*)::int n from futbeat_private.news_collector_calls')).rows[0].n, 0);
+}));
+
+test('rss: enabling provider and feed without source collection approval never fetches', () => withDb(async (db) => {
+  await db.query("update futbeat_private.news_provider_config set enabled=true where provider='rss'");
+  await db.query("update futbeat_private.news_feeds set enabled=true where id='teletica-futbol'");
+  const { fetch, calls } = fakeFetch([]);
+  const result = await runNewsCollector({ mode: 'rss', dryRun: false }, { rpc: rpcFor(db), fetch });
+  assert.equal(result.status, 'skipped');
+  assert.equal(calls.length, 0);
+  assert.equal((await db.query('select count(*)::int n from futbeat_private.news_collector_calls')).rows[0].n, 0);
+  await db.query("update futbeat_private.news_sources set collection_authorized_at=now(),collection_permission_ref='synthetic-test-only' where domain='teletica.com'");
+  assert.equal((await db.query('select public.futbeat_news_feed_due() v')).rows[0].v, null,
+    'source approval alone cannot bypass provider terms approval');
+  await db.query("update futbeat_private.news_provider_config set production_allowed=true,terms_reviewed_at=now() where provider='rss'");
+  assert.equal((await db.query('select public.futbeat_news_feed_due() v')).rows[0].v.id, 'teletica-futbol');
+  await db.query("update futbeat_private.news_sources set collection_authorized_at=null,collection_permission_ref=null where domain='teletica.com'");
+  assert.equal((await db.query('select public.futbeat_news_feed_due() v')).rows[0].v, null,
+    'revocation removes an already-enabled feed from the due plan');
 }));
 
 test('currents: dry run plans the top central interest without calling it', () => withDb(async (db) => {
@@ -106,8 +124,9 @@ test('currents: missing key never reserves; HTTP failure is recorded', () => wit
 }));
 
 test('rss: conditional GET; a 304 writes no article; foreign-domain items are dropped', () => withDb(async (db) => {
-  await db.query("update futbeat_private.news_provider_config set enabled=true,min_interval_seconds=0 where provider='rss'");
+  await db.query("update futbeat_private.news_provider_config set enabled=true,production_allowed=true,terms_reviewed_at=now(),min_interval_seconds=0 where provider='rss'");
   await db.query("insert into futbeat_private.news_sources(domain,display_name,role) values('club-uno.example','Club Uno','FIRST_PARTY_OFFICIAL')");
+  await db.query("update futbeat_private.news_sources set collection_authorized_at=now(),collection_permission_ref='synthetic-test-only' where domain='club-uno.example'");
   await db.query("insert into futbeat_private.news_feeds(id,url,source_domain,enabled) values('club-uno','https://club-uno.example/rss','club-uno.example',true)");
   await db.query("update futbeat_private.news_feeds set enabled=false where id<>'club-uno'");
   const xml = shiftDates(await fixture('publisher_rss.xml'))
@@ -125,6 +144,7 @@ test('rss: conditional GET; a 304 writes no article; foreign-domain items are dr
   await db.query("update futbeat_private.news_feeds set next_fetch_at=now()-interval '1 minute' where id='club-uno'");
   const second = await runNewsCollector({ mode: 'rss', dryRun: false }, { rpc: rpcFor(db), fetch });
   assert.equal(second.status, 'not_modified');
+  assert.equal(calls[0].redirect, 'error', 'a reviewed endpoint cannot redirect to another host');
   assert.equal(calls[1].headers['If-None-Match'], '"v1"');
   assert.equal(served, 2);
   assert.equal((await db.query('select count(*)::int n from futbeat_private.news_articles')).rows[0].n, 2);
@@ -133,7 +153,8 @@ test('rss: conditional GET; a 304 writes no article; foreign-domain items are dr
 }));
 
 test('rss: a non-feed answer fails and backs the feed off', () => withDb(async (db) => {
-  await db.query("update futbeat_private.news_provider_config set enabled=true where provider='rss'");
+  await db.query("update futbeat_private.news_provider_config set enabled=true,production_allowed=true,terms_reviewed_at=now() where provider='rss'");
+  await db.query("update futbeat_private.news_sources set collection_authorized_at=now(),collection_permission_ref='synthetic-test-only' where domain='teletica.com'");
   await db.query("update futbeat_private.news_feeds set enabled=true where id='teletica-futbol'");
   const { fetch } = fakeFetch([{ prefix: 'https://www.teletica.com/', respond: () => new Response('<html></html>', { status: 200, headers: { 'content-type': 'text/html' } }) }]);
   const result = await runNewsCollector({ mode: 'rss', dryRun: false }, { rpc: rpcFor(db), fetch });

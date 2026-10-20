@@ -211,6 +211,8 @@ test('feed: one card per story, most trusted member shown, also-reported list, t
   assert.equal(latest.stories.length, 2);
   const story = latest.stories.find((s) => s.clusterId === 'currents:r1');
   assert.equal(story.sourceRole, 'FIRST_PARTY_OFFICIAL');
+  assert.equal(story.sourceCountryCode, 'CR');
+  assert.deepEqual(story.storyCountryNames, ['Costa Rica']);
   assert.equal(story.url, 'https://saprissa.com/noticias/mario-ejemplo-rojas');
   assert.equal(story.storyState, 'OFFICIAL');
   assert.equal(story.transferStatus, 'CONFIRMED');
@@ -221,9 +223,59 @@ test('feed: one card per story, most trusted member shown, also-reported list, t
   const mine = await feed('for_you', [{ type: 'team', id: TEAM }]);
   assert.equal(mine.stories[0].clusterId, 'currents:r1');
   assert.equal(mine.stories.length, 2, 'follows reorder, never trap');
+  const switchedCountry = await feed('for_you', [{ type: 'team', id: TEAM }], 'ES');
+  assert.equal(switchedCountry.stories[0].clusterId, 'currents:r1',
+    'changing country does not discard a followed club');
+  assert.equal(switchedCountry.stories.length, 2,
+    'global and other-country stories stay accessible after country change');
+  assert.deepEqual((await feed('country', [], 'ES')).stories.map((s) => s.clusterId),
+    ['currents:far1']);
   assert.deepEqual((await feed('transfers')).stories.map((s) => s.clusterId), ['currents:r1']);
   assert.deepEqual((await feed('country', [], 'CR')).stories.map((s) => s.clusterId), ['currents:r1']);
   await assert.rejects(feed('everything'));
+}));
+
+test('NEWS110: publisher country is not story country; global articles stay accessible', () => withDb(async (db) => {
+  await store(db, 'currents', await prepare(db, 'currents', [
+    { externalId: 'global-1', title: 'Comunicado sobre el fútbol internacional',
+      url: 'https://teletica.com/deportes/global-1', sourceName: 'Teletica',
+      language: 'es', publishedAt: ago(1) },
+  ]));
+  const read = (tab, country) => v(db,
+    'select public.futbeat_read_news_feed($1,$2,$3,0,20) v', [tab, country, '[]']);
+  const global = await read('for_you', 'CR');
+  assert.equal(global.stories.length, 1);
+  assert.equal(global.stories[0].sourceCountryCode, 'CR');
+  assert.equal(global.stories[0].language, 'es');
+  assert.deepEqual(global.stories[0].storyCountryNames, []);
+  assert.deepEqual((await read('country', 'CR')).stories, []);
+  assert.equal((await read('latest', 'ES')).stories.length, 1);
+}));
+
+test('NEWS110: international catalog is configured but every candidate feed stays disabled', () => withDb(async (db) => {
+  const feeds = await rows(db, `select f.id,f.coverage_country_code,f.language_code,f.enabled,
+      s.snippet_allowed,s.image_allowed from futbeat_private.news_feeds f
+      join futbeat_private.news_sources s on s.domain=f.source_domain
+      where f.id in ('as-futbol','clarin-futbol','ge-futebol','eltiempo-futbol-co','marca-liga-mx')
+      order by f.id`);
+  assert.equal(feeds.length, 5);
+  assert.deepEqual(new Set(feeds.map((f) => f.coverage_country_code)),
+    new Set(['ES', 'AR', 'BR', 'CO', 'MX']));
+  assert.ok(feeds.every((f) => !f.enabled && !f.snippet_allowed && !f.image_allowed));
+  assert.equal(await v(db, 'select public.futbeat_news_feed_due() v'), null);
+}));
+
+test('NEWS111: only the individually approved source and enabled feed can become due', () => withDb(async (db) => {
+  await db.query(`update futbeat_private.news_provider_config set enabled=true,
+    production_allowed=true,terms_reviewed_at=now() where provider='rss'`);
+  await db.query("update futbeat_private.news_feeds set enabled=true");
+  assert.equal(await v(db, 'select public.futbeat_news_feed_due() v'), null);
+  await db.query(`update futbeat_private.news_sources set collection_authorized_at=now(),
+    collection_permission_ref='synthetic-test-only' where domain='as.com'`);
+  assert.equal((await v(db, 'select public.futbeat_news_feed_due() v')).id, 'as-futbol');
+  await db.query("update futbeat_private.news_feeds set enabled=false where id='as-futbol'");
+  assert.equal(await v(db, 'select public.futbeat_news_feed_due() v'), null,
+    'other enabled candidates cannot leak into the active plan');
 }));
 
 test('budget: disabled by default, own ledger, daily limit and min interval', () => withDb(async (db) => {
@@ -242,8 +294,11 @@ test('budget: disabled by default, own ledger, daily limit and min interval', ()
 
 test('feeds: disabled until reviewed; failures back off', () => withDb(async (db) => {
   assert.equal(await v(db, 'select public.futbeat_news_feed_due() v'), null);
-  await db.query("update futbeat_private.news_provider_config set enabled=true where provider='rss'");
+  await db.query("update futbeat_private.news_provider_config set enabled=true,production_allowed=true,terms_reviewed_at=now() where provider='rss'");
   await db.query("update futbeat_private.news_feeds set enabled=true where id='teletica-futbol'");
+  assert.equal(await v(db, 'select public.futbeat_news_feed_due() v'), null,
+    'provider and feed enablement are insufficient without source collection approval');
+  await db.query("update futbeat_private.news_sources set collection_authorized_at=now(),collection_permission_ref='synthetic-test-only' where domain='teletica.com'");
   const due = await v(db, 'select public.futbeat_news_feed_due() v');
   assert.equal(due.id, 'teletica-futbol');
   assert.equal(due.sourceName, 'Teletica');

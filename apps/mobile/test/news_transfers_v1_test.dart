@@ -43,7 +43,7 @@ void main() {
     expect(snapshot.transfers.first['status'], 'ROSTER_CHANGE');
   });
 
-  testWidgets('news card shows source and copies only an external link', (
+  testWidgets('news card shows source and offers safe external reading', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -63,7 +63,7 @@ void main() {
 
     expect(find.text('Saprissa prepara su próximo partido'), findsOneWidget);
     expect(find.textContaining('Medio Ejemplo'), findsOneWidget);
-    expect(find.text('Copiar enlace'), findsOneWidget);
+    expect(find.text('Leer noticia'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -83,7 +83,7 @@ void main() {
       ),
     );
     expect(find.text('Titular permitido'), findsOneWidget);
-    expect(find.text('Copiar enlace'), findsNothing);
+    expect(find.text('Leer noticia'), findsNothing);
   });
 
   testWidgets('transfer card clearly labels a roster-detected move', (
