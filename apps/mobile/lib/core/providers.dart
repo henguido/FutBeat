@@ -13,6 +13,7 @@ import 'models.dart';
 import 'player_display_identity.dart';
 import 'profile_context.dart';
 import 'team_matches.dart';
+import '../features/news/news_feed_adapter.dart';
 
 abstract interface class FootballRepository {
   Future<Snapshot> load();
@@ -952,18 +953,30 @@ class ApiRepository implements FootballRepository {
     Iterable<String> subjects,
     String? country, {
     CancelToken? cancelToken,
-  }) {
-    final keys = (subjects.toSet().toList()..sort()).take(50).toList();
+  }) async {
+    final keys = (subjects.toSet().toList()..sort())
+        .where(
+          (key) =>
+              RegExp(r'^(team|player|competition):fb_[A-Za-z0-9_-]{3,120}$')
+                  .hasMatch(key),
+        )
+        .take(50)
+        .toList();
     final code = exploreCountry(country);
-    return _loadCatalog(
-      'news:${code ?? ''}:${keys.join(',')}',
+    // News rights can change between reads: bypass the generic catalog cache.
+    final response = await _getJson(
       '/v1/news',
       queryParameters: {
+        'tab': 'for_you',
+        'limit': 40,
+        if (keys.isNotEmpty) 'follows': keys.join(','),
         if (keys.isNotEmpty) 'subjects': keys.join(','),
         'country': ?code,
       },
       cancelToken: cancelToken,
+      maxAttempts: 1,
     );
+    return _canonical(adaptNewsFeed(response));
   }
 
   Future<Snapshot> loadFavorites(List<String> keys) {

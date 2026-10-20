@@ -118,6 +118,20 @@ const replyNoStore = async (status: number, data: unknown) =>
     },
   });
 
+// Legacy news has no per-source rights attestation. Preserve link-out
+// metadata but never serve stored third-party excerpts or images.
+const withoutLegacyNewsExcerpts = (snapshot: Record<string, unknown>) => ({
+  ...snapshot,
+  news: Array.isArray(snapshot.news)
+    ? snapshot.news.map((item: unknown) => {
+      const safe = { ...asRecord(item) };
+      delete safe.description;
+      delete safe.imageUrl;
+      return safe;
+    })
+    : snapshot.news,
+});
+
 const validDate = (value: string | null) =>
   value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value);
 
@@ -239,9 +253,9 @@ export default {
       if (enrichmentPending) {
         // Partial profile now; the app refreshes once enrichment lands.
         snapshot.coverage = { ...asRecord(snapshot.coverage), enrichmentPending: true };
-        return replyNoStore(200, snapshot);
+        return replyNoStore(200, withoutLegacyNewsExcerpts(snapshot));
       }
-      return reply(200, snapshot);
+      return reply(200, withoutLegacyNewsExcerpts(snapshot));
     }
 
     // Profile context (#161): the team's real (competition, season)
@@ -407,7 +421,7 @@ export default {
       if (error || !snapshot || snapshot.schemaVersion !== 1 || snapshot.demo !== false) {
         return replyNoStore(503, { error: 'Noticias temporalmente no disponibles' });
       }
-      return replyNoStore(200, snapshot);
+      return replyNoStore(200, withoutLegacyNewsExcerpts(snapshot));
     }
 
     if (path.endsWith('/futbeat-api/v1/news')) {

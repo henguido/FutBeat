@@ -78,6 +78,29 @@ proveedor). Snippet/imagen exigen permiso de **ambos** y una fecha de revisión
 re-deriva derechos y rol en el servidor: un cliente no puede concederlos.
 Todos los proveedores y feeds se entregan **deshabilitados**.
 
-Este paquete valida permisos al almacenar, pero todavía no revalida una
-revocación posterior en cada lectura. No debe activarse una fuente real hasta
-integrar y probar la capa de revocación de derechos del paquete siguiente.
+### Derechos de lectura v1 (NEWS107)
+
+Cada historia incluye `rights` calculado en la misma lectura acotada que
+aplica la política vigente. `snippet` e `image` son independientes y toman
+`ALLOWED`, `REVOKED` o `UNVERIFIED`. `ALLOWED` exige permiso explícito de la
+fuente y el proveedor, y ambas revisiones presentes. `REVOKED` significa que
+hay revisiones pero al menos un permiso está desactivado. Si falta una fuente,
+configuración o revisión, el estado es `UNVERIFIED`.
+
+`checkedAt` es la hora de esa lectura; `expiresAt` es 30 segundos después.
+El cliente solo puede mostrar el contenido opcional de un campo `ALLOWED`
+si `version=1`, ambas fechas son válidas y aún no llegó `expiresAt`.
+Al vencer el plazo debe retirarlo de la pantalla y la caché de imágenes,
+sin generar una petición automática. Una recarga consulta los permisos de
+nuevo. Una respuesta antigua, mal formada o sin `rights` no concede permisos.
+
+El titular permitido, la fuente, fecha y URL original continúan disponibles
+como enlace, incluso cuando no hay permiso de extracto o imagen. v1 no emite
+este contrato; se trata como enlace sin extracto ni imagen. La API conserva
+`Cache-Control: no-store` para Noticias. La señal no se debe emitir desde la
+Edge Function como una afirmación genérica: la calcula el RPC filtrante de
+NEWS115, sobre el mismo miembro de historia cuya tarjeta se entrega.
+
+NEWS115 añade una migración nueva después de la retención segura de NEWS114;
+no reescribe migraciones previas. Su rollback retira la lectura v2 antes de
+permitir una respuesta que pueda exponer contenido revocado.

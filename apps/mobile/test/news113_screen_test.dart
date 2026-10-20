@@ -78,4 +78,38 @@ void main() {
     expect(find.textContaining('Fuente sintética'), findsOneWidget);
     expect(find.text('Sin noticias disponibles'), findsNothing);
   });
+
+  testWidgets(
+    'protected excerpt disappears when its rights expire without refresh',
+    (tester) async {
+      final expiry = DateTime.now().toUtc().add(const Duration(seconds: 30));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            newsFeedProvider.overrideWith(
+              (ref) async => feed(
+                news: [
+                  {
+                    'id': 'protected-news',
+                    'title': 'Titular permitido',
+                    'description': 'Extracto temporal',
+                    '_rightsExpiresAt': expiry.toIso8601String(),
+                    'sourceName': 'Fuente sintética',
+                    'url': 'https://example.invalid/article',
+                    'publishedAt': DateTime.now().toUtc().toIso8601String(),
+                  },
+                ],
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: NewsScreen()),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Extracto temporal'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 31));
+      expect(find.text('Extracto temporal'), findsNothing);
+      expect(find.text('Titular permitido'), findsOneWidget);
+    },
+  );
 }
