@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2,
+  "updatedAt": "2026-10-19T12:00:00Z",
+  "stories": [
+    {"clusterId":"allowed","title":"Comunicado autorizado","url":"https://club.example/allowed","sourceName":"Club Uno","publishedAt":"2026-10-19T09:00:00Z","snippet":"Extracto autorizado","imageUrl":"https://club.example/image.png","rights":{"version":1,"checkedAt":"2026-10-19T12:00:00Z","expiresAt":"2026-10-19T12:00:30Z","snippet":"ALLOWED","image":"ALLOWED"}},
+    {"clusterId":"revoked","title":"Comunicado con permisos revocados","url":"https://club.example/revoked","sourceName":"Club Uno","publishedAt":"2026-10-19T09:00:00Z","snippet":"No mostrar","imageUrl":"https://club.example/revoked.png","rights":{"version":1,"checkedAt":"2026-10-19T12:00:00Z","expiresAt":"2026-10-19T12:00:30Z","snippet":"REVOKED","image":"REVOKED"}}
+  ]
+}

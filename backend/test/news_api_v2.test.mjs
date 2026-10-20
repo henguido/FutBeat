@@ -24,9 +24,9 @@ async function api(answer) {
   });
   vm.runInContext(stripTypeScriptTypes(source.replace(/^import\s[\s\S]*?;\r?\n/gm, ''))
     .replace('export default {', 'globalThis.__api = {'), context);
-  const call = async (query) => {
-    const response = await context.__api.fetch(new Request(`https://api.test/functions/v1/futbeat-api/v1/news${query}`));
-    return { status: response.status, body: await response.json() };
+  const call = async (query, path = 'news') => {
+    const response = await context.__api.fetch(new Request(`https://api.test/functions/v1/futbeat-api/v1/${path}${query}`));
+    return { status: response.status, body: await response.json(), cacheControl: response.headers.get('Cache-Control') };
   };
   return { call, calls };
 }
@@ -39,16 +39,35 @@ test('news: omitting tab preserves the v1 RPC and response', async () => {
   const result = await call('?country=CR&subjects=team:fb_team_abc');
   assert.equal(result.status, 200);
   assert.equal(result.body.schemaVersion, 1);
+  assert.equal(result.cacheControl, 'no-store');
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), {
     name: 'futbeat_read_news_feed',
     args: { p_subjects: ['team:fb_team_abc'], p_country: 'CR' },
   });
 });
 
+test('legacy news and entity responses remove ungoverned excerpts', async () => {
+  const legacy = { schemaVersion: 1, demo: false, news: [{
+    id: 'newsdata:one', title: 'Titular', description: 'Texto ajeno',
+    imageUrl: 'https://example.com/image.png', url: 'https://example.com/article',
+    sourceName: 'Medio', publishedAt: '2026-10-19T09:00:00Z',
+  }], transfers: [] };
+  const { call } = await api(() => ({ data: legacy, error: null }));
+  for (const [query, path] of [['', 'news'], ['?type=team&id=fb_team_test', 'entity']]) {
+    const result = await call(query, path);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.news[0].title, 'Titular');
+    assert.equal(result.body.news[0].url, 'https://example.com/article');
+    assert.equal(Object.hasOwn(result.body.news[0], 'description'), false);
+    assert.equal(Object.hasOwn(result.body.news[0], 'imageUrl'), false);
+  }
+});
+
 test('news: follows are parsed into the RPC; defaults are for_you/0/20', async () => {
   const { call, calls } = await api(() => ({ data: feed, error: null }));
   const r = await call('?tab=for_you&follows=team:fb_team_abc,player:fb_player_xyz');
   assert.equal(r.status, 200);
+  assert.equal(r.cacheControl, 'no-store');
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0])), { name: 'futbeat_read_news_feed', args: {
     p_tab: 'for_you', p_country: null, p_follows: [{ type: 'team', id: 'fb_team_abc' }, { type: 'player', id: 'fb_player_xyz' }],
     p_offset: 0, p_limit: 20 } });

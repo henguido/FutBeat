@@ -164,6 +164,10 @@ test('v2: rights are derived server-side; nothing is granted without review', ()
   assert.equal(row.transfer_status, 'REPORT', 'media cannot confirm a transfer');
   assert.equal(row.source_role, 'ESTABLISHED_MEDIA');
   assert.deepEqual(row.attribution, { publisher: 'Teletica', provider: 'Currents API' });
+  const unverified = await v(db, "select public.futbeat_read_news_feed('latest',null,'[]',0,20) v");
+  assert.equal(unverified.stories[0].rights.snippet, 'UNVERIFIED');
+  assert.equal(unverified.stories[0].rights.image, 'UNVERIFIED');
+  assert.equal(Object.hasOwn(unverified.stories[0], 'snippet'), false);
   // Rights cannot be granted without a review date.
   await assert.rejects(db.query("update futbeat_private.news_sources set snippet_allowed=true where domain='teletica.com'"));
   await db.query("update futbeat_private.news_sources set snippet_allowed=true,max_snippet_chars=40,rights_reviewed_at=now() where domain='teletica.com'");
@@ -270,4 +274,53 @@ test('tagging dictionary: bounded, from interests and selected countries', () =>
   assert.ok(ids.includes(TEAM) && ids.includes(COMP));
   assert.ok(!ids.includes('fb_team_news_far'));
   assert.deepEqual(dict.find((d) => d.id === TEAM).names, ['club uno']);
+}));
+test('v2 feed suppresses stored snippet and image immediately after either rights policy is revoked', () => withDb(async (db) => {
+  await db.query(`update futbeat_private.news_sources set
+    snippet_allowed=true,max_snippet_chars=120,image_allowed=true,rights_reviewed_at=now()
+    where domain='teletica.com'`);
+  await db.query(`update futbeat_private.news_provider_config set
+    snippet_allowed=true,image_allowed=true,terms_reviewed_at=now()
+    where provider='currents'`);
+  await store(db, 'currents', await prepare(db, 'currents', [report]));
+  const feed = () => v(db, "select public.futbeat_read_news_feed('latest',null,'[]',0,20) v");
+  let story = (await feed()).stories[0];
+  assert.equal(story.snippet, report.description);
+  assert.equal(story.imageUrl, 'https://teletica.com/img/m.jpg');
+  assert.equal(story.rights.version, 1);
+  assert.equal(story.rights.snippet, 'ALLOWED');
+  assert.equal(story.rights.image, 'ALLOWED');
+  assert.ok(Date.parse(story.rights.expiresAt) > Date.parse(story.rights.checkedAt));
+  await db.query("update futbeat_private.news_sources set snippet_allowed=false where domain='teletica.com'");
+  story = (await feed()).stories[0];
+  assert.equal(Object.hasOwn(story, 'snippet'), false);
+  assert.equal(story.imageUrl, 'https://teletica.com/img/m.jpg');
+  assert.equal(story.rights.snippet, 'REVOKED');
+  assert.equal(story.rights.image, 'ALLOWED');
+  await db.query("update futbeat_private.news_sources set snippet_allowed=true,image_allowed=false where domain='teletica.com'");
+  story = (await feed()).stories[0];
+  assert.equal(story.snippet, report.description);
+  assert.equal(Object.hasOwn(story, 'imageUrl'), false);
+  assert.equal(story.rights.snippet, 'ALLOWED');
+  assert.equal(story.rights.image, 'REVOKED');
+  await db.query("update futbeat_private.news_sources set snippet_allowed=false,image_allowed=false where domain='teletica.com'");
+  story = (await feed()).stories[0];
+  assert.equal(Object.hasOwn(story, 'snippet'), false);
+  assert.equal(Object.hasOwn(story, 'imageUrl'), false);
+  assert.equal(story.url, 'https://teletica.com/deportes/club-uno-ficha-mario');
+  await db.query("update futbeat_private.news_sources set snippet_allowed=true,image_allowed=true where domain='teletica.com'");
+  await db.query("update futbeat_private.news_provider_config set snippet_allowed=false,image_allowed=false where provider='currents'");
+  story = (await feed()).stories[0];
+  assert.equal(Object.hasOwn(story, 'snippet'), false);
+  assert.equal(Object.hasOwn(story, 'imageUrl'), false);
+  assert.equal(await v(db, "select count(*)::int v from futbeat_private.news_articles where description is not null and image_url is not null"), 1,
+    'revocation masks old stored data without rewriting the article');
+}));
+
+test('rights filtering helper stays private and the public feed remains service-only', () => withDb(async (db) => {
+  for (const role of ['anon', 'authenticated']) {
+    assert.equal(await v(db, "select has_function_privilege($1,'futbeat_private.news_feed_current_rights(jsonb)','execute') v", [role]), false);
+    assert.equal(await v(db, "select has_function_privilege($1,'public.futbeat_read_news_feed(text,text,jsonb,integer,integer)','execute') v", [role]), false);
+  }
+  assert.equal(await v(db, "select has_function_privilege('service_role','public.futbeat_read_news_feed(text,text,jsonb,integer,integer)','execute') v"), true);
 }));
