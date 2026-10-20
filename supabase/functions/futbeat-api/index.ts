@@ -362,6 +362,7 @@ export default {
     }
 
     if (path.endsWith('/futbeat-api/v1/search')) {
+      // Search and news remain independent: news never invokes a provider.
       const query = (requestUrl.searchParams.get('q') ?? '').trim();
       const country = (requestUrl.searchParams.get('country') ?? '').trim();
       if (query.length > 80 || country.length > 8) {
@@ -389,6 +390,23 @@ export default {
         return replyNoStore(200, snapshot);
       }
       return reply(200, snapshot);
+    }
+
+    if (path.endsWith('/futbeat-api/v1/news')) {
+      const country = (requestUrl.searchParams.get('country') ?? '').trim().toUpperCase();
+      const subjects = (requestUrl.searchParams.get('subjects') ?? '')
+        .split(',')
+        .map((key) => key.trim())
+        .filter((key) => /^(team|player|competition):fb_[A-Za-z0-9_]{1,64}$/.test(key))
+        .slice(0, 50);
+      const { data: snapshot, error } = await db.rpc('futbeat_read_news_feed', {
+        p_subjects: subjects,
+        p_country: /^[A-Z]{2}$/.test(country) ? country : null,
+      });
+      if (error || !snapshot || snapshot.schemaVersion !== 1 || snapshot.demo !== false) {
+        return replyNoStore(503, { error: 'Noticias temporalmente no disponibles' });
+      }
+      return replyNoStore(200, snapshot);
     }
 
     if (path.endsWith('/futbeat-api/v1/favorites')) {
