@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/entity_media.dart';
 import '../core/models.dart';
+import '../core/news_links.dart';
 import '../core/providers.dart';
 import '../core/relevance.dart';
 import '../core/theme.dart';
@@ -347,9 +348,10 @@ String _contentDateLabel(Object? value) {
 }
 
 class NewsArticleCard extends StatelessWidget {
-  const NewsArticleCard(this.article, {super.key});
+  const NewsArticleCard(this.article, {super.key, this.onOpenDetails});
 
   final Json article;
+  final VoidCallback? onOpenDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -357,62 +359,77 @@ class NewsArticleCard extends StatelessWidget {
     final description = article['description']?.toString().trim() ?? '';
     final source = article['sourceName']?.toString().trim() ?? '';
     final url = article['url']?.toString().trim() ?? '';
-    final parsedUrl = Uri.tryParse(url);
-    final safeUrl =
-        parsedUrl != null &&
-        parsedUrl.scheme == 'https' &&
-        parsedUrl.host.isNotEmpty &&
-        parsedUrl.userInfo.isEmpty;
+    final safeUrl = safeNewsUri(url);
     final date = _contentDateLabel(article['publishedAt']);
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-            ),
-            if (description.isNotEmpty) ...[
-              const SizedBox(height: 8),
+      child: InkWell(
+        onTap: safeUrl == null ? null : onOpenDetails,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                description,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: muted),
+                title,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
+              ),
+              if (description.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  description,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: muted),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      [
+                        if (source.isNotEmpty) source,
+                        if (date.isNotEmpty) date,
+                      ].join(' · '),
+                      style: const TextStyle(color: muted, fontSize: 12),
+                    ),
+                  ),
+                  if (safeUrl != null)
+                    TextButton.icon(
+                      onPressed: () async {
+                        if (onOpenDetails != null) {
+                          onOpenDetails!();
+                          return;
+                        }
+                        var opened = false;
+                        try {
+                          opened = await launchUrl(
+                            safeUrl,
+                            mode: LaunchMode.externalApplication,
+                          );
+                        } catch (_) {
+                          // Missing browser is a recoverable navigation failure.
+                        }
+                        if (!context.mounted) return;
+                        if (!opened) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('No se pudo abrir el artículo'),
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.open_in_new, size: 17),
+                      label: const Text('Leer noticia'),
+                    ),
+                ],
               ),
             ],
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    [
-                      if (source.isNotEmpty) source,
-                      if (date.isNotEmpty) date,
-                    ].join(' · '),
-                    style: const TextStyle(color: muted, fontSize: 12),
-                  ),
-                ),
-                if (safeUrl)
-                  TextButton.icon(
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: url));
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Enlace de la noticia copiado'),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.link, size: 17),
-                    label: const Text('Copiar enlace'),
-                  ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );

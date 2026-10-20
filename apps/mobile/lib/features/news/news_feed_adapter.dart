@@ -68,6 +68,7 @@ Json adaptNewsFeed(Json response, {DateTime? now}) {
     if (id.isEmpty || !seen.add(id)) continue;
     final entities = story['entities'];
     final subjects = <Json>[];
+    final associatedEntities = <String>[];
     if (entities is List) {
       for (final value in entities) {
         if (value is! Map) continue;
@@ -77,6 +78,12 @@ Json adaptNewsFeed(Json response, {DateTime? now}) {
             entityId != null &&
             entityId.startsWith('fb_')) {
           subjects.add({'type': type, 'id': entityId});
+          final name = value['name']?.toString().trim();
+          if (name != null &&
+              name.isNotEmpty &&
+              !associatedEntities.contains(name)) {
+            associatedEntities.add(name);
+          }
         }
       }
     }
@@ -89,6 +96,13 @@ Json adaptNewsFeed(Json response, {DateTime? now}) {
       'title': story['title'],
       'url': story['url'],
       'sourceName': story['sourceName'],
+      if (story['sourceCountryCode'] is String)
+        'sourceCountryCode': story['sourceCountryCode'],
+      if (story['language'] is String) 'language': story['language'],
+      if (story['inSelectedCountry'] is bool)
+        'inSelectedCountry': story['inSelectedCountry'],
+      if (story['storyCountryNames'] is List)
+        'storyCountryNames': story['storyCountryNames'],
       'publishedAt': story['publishedAt'],
       'snippetRights': rights.snippet,
       'imageRights': rights.image,
@@ -101,6 +115,7 @@ Json adaptNewsFeed(Json response, {DateTime? now}) {
         'imageUrl': story['imageUrl'],
       if (provider != null && provider.isNotEmpty) 'provider': provider,
       'subjects': subjects,
+      'associatedEntities': associatedEntities,
       'category': story['category'],
       'storyState': story['storyState'],
       if (story['transferStatus'] is String)

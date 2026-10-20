@@ -2,10 +2,130 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/models.dart';
+import '../../core/news_links.dart';
 import '../../core/providers.dart';
 import '../../shared/widgets.dart';
+
+enum NewsSection { forYou, latest, teams, players, competitions, transfers }
+
+List<Json> newsForSection(
+  Iterable<Json> articles,
+  NewsSection section, {
+  Set<String> follows = const {},
+  String query = '',
+}) {
+  final term = query.trim().toLowerCase();
+  final shown = articles.where((article) {
+    final title = article['title']?.toString().trim() ?? '';
+    final source = article['sourceName']?.toString().trim() ?? '';
+    if (title.isEmpty ||
+        source.isEmpty ||
+        safeNewsUri(article['url']) == null ||
+        DateTime.tryParse(article['publishedAt']?.toString() ?? '') == null) {
+      return false;
+    }
+    if (term.isNotEmpty &&
+        ![title, source, article['description']].whereType<Object>().any(
+          (value) => value.toString().toLowerCase().contains(term),
+        )) {
+      return false;
+    }
+    if (section == NewsSection.transfers) {
+      return article['category'] == 'TRANSFER';
+    }
+    final kind = switch (section) {
+      NewsSection.teams => 'team',
+      NewsSection.players => 'player',
+      NewsSection.competitions => 'competition',
+      _ => null,
+    };
+    if (kind == null) return true;
+    final subjects = article['subjects'];
+    return subjects is List &&
+        subjects.whereType<Map>().any((subject) {
+          final id = subject['id']?.toString();
+          return subject['type'] == kind &&
+              id != null &&
+              follows.contains('$kind:$id');
+        });
+  }).toList();
+  if (section == NewsSection.latest) {
+    shown.sort(
+      (a, b) =>
+          DateTime.parse(b['publishedAt'].toString())
+              .compareTo(DateTime.parse(a['publishedAt'].toString())),
+    );
+  }
+  return shown;
+}
+
+void showNewsDetails(BuildContext context, Json article) {
+  final uri = safeNewsUri(article['url']);
+  if (uri == null) return;
+  final title = article['title']?.toString().trim() ?? '';
+  final source = article['sourceName']?.toString().trim() ?? '';
+  final published = DateTime.tryParse(article['publishedAt']?.toString() ?? '');
+  final names = (article['associatedEntities'] as List? ?? const [])
+      .whereType<String>()
+      .where((name) => name.trim().isNotEmpty)
+      .toList();
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(sheetContext).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            Text(
+              [
+                source,
+                if (published != null)
+                  '${published.toLocal().day}/${published.toLocal().month}/${published.toLocal().year}',
+              ].where((part) => part.isNotEmpty).join(' · '),
+            ),
+            if (names.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(names.join(' · ')),
+            ],
+            const SizedBox(height: 16),
+            const Text('Lee el contenido completo en la fuente original.'),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () async {
+                var opened = false;
+                try {
+                  opened = await launchUrl(
+                    uri,
+                    mode: LaunchMode.externalApplication,
+                  );
+                } catch (_) {
+                  /* Browser unavailable. */
+                }
+                if (!opened && sheetContext.mounted) {
+                  ScaffoldMessenger.of(sheetContext).showSnackBar(
+                    const SnackBar(
+                      content: Text('No se pudo abrir el artículo'),
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Leer noticia original'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
 
 /// Stored articles and verified roster changes. No synthetic content.
 class NewsScreen extends ConsumerStatefulWidget {
@@ -20,6 +140,8 @@ class NewsScreen extends ConsumerStatefulWidget {
 class _NewsScreenState extends ConsumerState<NewsScreen> {
   Snapshot? _lastFeed;
   Timer? _rightsExpiry;
+  NewsSection _section = NewsSection.forYou;
+  String _query = '';
 
   void _scrubProtected(Snapshot? snapshot) {
     if (snapshot == null) return;
@@ -66,6 +188,9 @@ class _NewsScreenState extends ConsumerState<NewsScreen> {
   @override
   Widget build(BuildContext context) {
     final feed = ref.watch(newsFeedProvider);
+    final follows = ref.exists(followsProvider)
+        ? (ref.watch(followsProvider).asData?.value ?? <String>{})
+        : <String>{};
     // Riverpod may keep AsyncData while refreshing. Hide old protected text.
     final data = feed.isLoading || feed.hasError ? null : feed.asData?.value;
     if (!identical(data, _lastFeed)) {
@@ -107,8 +232,54 @@ class _NewsScreenState extends ConsumerState<NewsScreen> {
             icon: Icons.article_outlined,
           ),
         if (data.news.isNotEmpty) ...[
-          heading(context, 'Noticias'),
-          for (final article in data.news) NewsArticleCard(article),
+          TextField(
+            decoration: const InputDecoration(
+              labelText: 'Buscar entre las noticias cargadas',
+              prefixIcon: Icon(Icons.search),
+            ),
+            onChanged: (value) => setState(() => _query = value),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 6,
+            children: [
+              for (final section in NewsSection.values)
+                ChoiceChip(
+                  label: Text(switch (section) {
+                    NewsSection.forYou => 'Para ti',
+                    NewsSection.latest => 'Últimas',
+                    NewsSection.teams => 'Equipos seguidos',
+                    NewsSection.players => 'Jugadores seguidos',
+                    NewsSection.competitions => 'Competiciones',
+                    NewsSection.transfers => 'Fichajes',
+                  }),
+                  selected: section == _section,
+                  onSelected: (_) => setState(() => _section = section),
+                ),
+            ],
+          ),
+          if (newsForSection(
+            data.news,
+            _section,
+            follows: follows,
+            query: _query,
+          ).isEmpty)
+            const EmptyState(
+              'Sin resultados',
+              'Prueba con otro filtro o búsqueda.',
+              icon: Icons.search_off,
+            )
+          else
+            for (final article in newsForSection(
+              data.news,
+              _section,
+              follows: follows,
+              query: _query,
+            ))
+              NewsArticleCard(
+                article,
+                onOpenDetails: () => showNewsDetails(context, article),
+              ),
         ],
         if (data.transfers.isNotEmpty) _Transfers(data.transfers),
       ],
