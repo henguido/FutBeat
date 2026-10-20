@@ -2,7 +2,11 @@ name: FutBeat checks
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - codex/news117-v1-ci
+      - codex/news117-v2-ci
+      - codex/news117-rights-ci
 
 concurrency:
   group: futbeat-ci-${{ github.event.pull_request.number || github.ref }}
