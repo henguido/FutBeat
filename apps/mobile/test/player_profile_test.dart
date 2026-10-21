@@ -382,13 +382,27 @@ void main() {
     expect(find.text('Temporada actual'), findsNothing);
     expect(find.textContaining('#'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
+    // No team, but the stored past match has this player's own goal: that
+    // match is theirs (#222); the future one of a team they lack is not.
     await _openTab(tester, 'Partidos');
-    expect(find.text('Sin partidos disponibles'), findsOneWidget);
+    expect(find.text('Sin partidos disponibles'), findsNothing);
     await _openTab(tester, 'Noticias');
     expect(find.text('Sin noticias disponibles'), findsOneWidget);
     await _openTab(tester, 'Transferencias');
     expect(find.text('Sin transferencias registradas'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('player without team or own events has no matches', (
+    tester,
+  ) async {
+    final payload = _payload(team: false);
+    for (final match in payload['matches'] as List) {
+      (match as Map)['events'] = <dynamic>[];
+    }
+    await _pumpPlayer(tester, payload);
+    await _openTab(tester, 'Partidos');
+    expect(find.text('Sin partidos disponibles'), findsOneWidget);
   });
 
   testWidgets('team chip opens the team profile', (tester) async {

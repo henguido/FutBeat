@@ -18,6 +18,40 @@ const _singularPosition = {
 
 int? playerShirtNumber(Entity player) => player.shirtNumber;
 
+/// Every team of [player]: the server's resolved `teamIds` (club, national
+/// team, squad memberships), else `teamId` and `nationalTeamId`. A player
+/// in a club and a national team plays for both (#222).
+List<String> playerTeamIds(Entity player) {
+  final ids = <String>[];
+  void add(Object? value) {
+    final id = value?.toString().trim() ?? '';
+    if (id.isNotEmpty && !ids.contains(id)) ids.add(id);
+  }
+
+  final served = player.json['teamIds'];
+  if (served is List) served.forEach(add);
+  add(player.json['teamId']);
+  add(player.json['nationalTeamId']);
+  return ids;
+}
+
+/// Matches of any of [player]'s teams, plus matches where the player has an
+/// event of their own, oldest first. Never matched by name.
+List<FootballMatch> playerMatches(Snapshot data, Entity player) {
+  final teams = playerTeamIds(player).map(data.resolveEntityId).toSet();
+  bool own(FootballMatch match) => match.events.any(
+    (event) =>
+        event['playerId']?.toString() == player.id ||
+        event['assistPlayerId']?.toString() == player.id,
+  );
+  return data.matches
+      .where(
+        (m) => teams.contains(m.homeId) || teams.contains(m.awayId) || own(m),
+      )
+      .toList()
+    ..sort((a, b) => a.startTime.compareTo(b.startTime));
+}
+
 /// First present, non-empty value among [keys] of [json].
 Object? _pick(Json json, List<String> keys) {
   for (final key in keys) {
