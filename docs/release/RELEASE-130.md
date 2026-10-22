@@ -3,6 +3,99 @@
 Fecha: 22-10-2026, Costa Rica. **NO-GO para publicación y AAB firmado; GO para cerrar la candidata local.**
 No hay P0 móvil reproducido en esta sesión. Esto no equivale a demostrar ausencia de P0: la ejecución Flutter y los contratos productivos siguen bloqueados.
 
+## Cierre técnico local — continuación del 22-10-2026
+
+Este apartado actualiza el estado anterior de `4edbc5f`. **NO-GO técnico para dar la candidata por validada; NO-GO de publicación.** Los controles estáticos y el smoke Dart están verdes. La ejecución de tests Flutter permanece BLOCKED, no FAIL funcional ni PASS. No se esperó a QA126 ni se accedió a sus archivos, procesos o dispositivo en esta continuación.
+
+### Bloqueo: causa comprobada y límites de la solución
+
+Se reprodujo una conexión TCP mínima a `127.0.0.1` usando `System.Net.Sockets.TcpListener` y `TcpClient`, sin Flutter, pub, SQLite ni código de FutBeat. El listener pudo arrancar; la conexión falló con **SocketException 10013 / WSAEACCES**, «Intento de acceso a un socket no permitido por sus permisos de acceso». El ejecutor Flutter falla al conectar su WebSocket de control al host con **errno 10057**, `Connection closed before test suite loaded`.
+
+Conclusión comprobada: este proceso no puede completar una conexión TCP loopback. El fallo es independiente de Flutter y dependencias. Es consistente con restricciones de aislamiento/red del entorno administrado; no se atribuye a una regla concreta de firewall sin evidencia. Cambiar PATH, regenerar código, actualizar paquetes o esperar más no resuelve una denegación de socket reproducida fuera de Flutter. No se modificaron permisos del sistema, firewall ni reglas de aislamiento.
+
+Mitigaciones locales usadas: SDK aislado ya disponible, ejecutable Dart y snapshot Flutter por ruta absoluta; APPDATA/TEMP/TMP en directorios controlados; PUB_CACHE explícito de lectura; `--no-pub` con package_config existente y lockfile sin cambios. Esto permite analizar y compilar el bootstrap de tests, pero **no desbloquea su canal TCP**. No se hizo otra instalación de SDK, descarga ni actualización de dependencias. No se alteró código funcional para ocultar el fallo.
+
+Se añadió `scripts/release/verify-release130-local.ps1` en **`4e2e887`**: prueba loopback, ejecuta analyze, focales, suite, smoke Dart y controles Android, guarda comandos/logs/hash del runner y restaura las variables de entorno del proceso. Solo termina los procesos que él mismo inicia. Con loopback denegado acota cada intento Flutter a 30 segundos; en host operativo permite hasta 1.800 segundos por batería, configurable. Devuelve código no cero si hay BLOCKED/FAIL.
+
+Comando exacto de esta continuación, desde la raíz aislada:
+
+```powershell
+& ./scripts/release/verify-release130-local.ps1 -TestDeadlineSeconds 30
+```
+
+Para completar la ejecución en una terminal normal del host que permita loopback, sin abrir la app ni contactar producción:
+
+```powershell
+Set-Location F:/FutBeat/FutBeat/artifacts/release130-work
+pwsh -NoProfile -File ./scripts/release/verify-release130-local.ps1 -FlutterSdkPath C:/dev/flutter
+```
+
+No se ejecutó este segundo comando fuera del entorno restringido. No se disparó CI porque push/PR siguen sin autorización. El workflow beta existente compila APK conectada: **no usarlo como sustituto de un job de tests local**.
+
+### Resultados de la continuación
+
+| Control ejecutado | Resultado real | Alcance |
+|---|---|---|
+| Probe TCP .NET independiente | BLOCKED, código 10013 | Demuestra denegación loopback fuera de Flutter |
+| `flutter analyze --no-pub` mediante snapshot 3.47.4 | PASS, sin incidencias | Código móvil actual, no certifica runtime |
+| Focales Flutter: 21 archivos críticos | BLOCKED antes de ejecutar tests | Noticias, Auth, cuenta/reset/onboarding, favoritos, navegación, perfiles, Match Center, correcciones, LIVE, offline, anuncios |
+| Suite Flutter completa, `--no-pub --concurrency=2 --fail-fast --reporter=expanded` | BLOCKED antes del primer test | Intento acotado; no completada y cero tests acreditados |
+| `dart scripts/release/news_linkout_smoke.dart` | PASS | v1/v2 link-only, dedup, no mutación y feeds malformados |
+| `node --test backend/test/android_release_hardening.test.mjs` | PASS, 2/2 | Firma fail-closed e iconos, controles de fuente |
+| Diferencia Android/pubspec/lockfile frente a RC98 | PASS de comparación, sin diferencias | No prueba resolución Gradle ni manifest fusionado |
+
+Evidencia local completa: `.local-data/release130-checks/{summary.json,loopback.json,analyze.log,focused.log,full.log,news-smoke.log,android-source.log}`. `summary.json` contiene comando por comando, SHA fuente, hash del runner, hash del lockfile, códigos de salida y timeout. Los intentos bloqueados conservan el error original; un timeout aquí no se reporta como regresión. La lista exacta de los 21 archivos está versionada en el runner. No hay evidencia para comparar fallos funcionales nuevos con preexistentes porque el runner no llegó a ejecutar tests.
+
+### Preparación Android verificada en fuente
+
+La comparación con RC98 conserva únicamente el adaptador/test de Noticias ya aprobado localmente, smoke Dart, runner de verificación y documentación. `apps/mobile/android`, `pubspec.yaml` y `pubspec.lock` no cambiaron. Ninguna migración ni contrato backend fue incorporado. En esta continuación no se modificó ningún archivo funcional de la app.
+
+| Área | Evidencia local | Pendiente externo / artefacto |
+|---|---|---|
+| Toolchain | Flutter 3.47.4, Dart 3.13.3; AGP 9.1.0; Gradle 9.3.1; Kotlin plugin 2.4.0; JVM target 17; Flutter compile/target 36, min 24 | Resolución transitiva Gradle, manifest fusionado y bibliotecas nativas/16 KB no ejecutados |
+| Paquete/versión | `com.futbeat.futbeat`, `1.0.0+5`; sufijo `.qa` solo en build debug opt-in | Confirmar códigos ocupados en todos los tracks; no presumir que 5 esté libre |
+| Firma | Config release exige cuatro propiedades y no recurre a debug; regla R8 Room conservada | `android/key.properties` ausente aquí; comparar certificado de carga con Console, no reemplazar clave. App Signing y upload son certificados distintos |
+| Permisos | Fuente declara INTERNET y POST_NOTIFICATIONS; callbacks exportados con filtros explícitos | Manifest fusionado/SDKs puede agregar permisos; revisar en build autorizado |
+| App Links/Auth | autoVerify a futbeat.com/auth/reset; fallback password-reset; OAuth callback oficial; cola de cold start y PKCE existentes | assetlinks con certificado Play, redirects/backend OAuth, email real y pruebas bajo firma Play |
+| Ads | Gradle bloquea IDs ausentes/de prueba y publisher distinto; Dart tiene guard de release y UMP fail-closed | `.env.android-release.local` ausente; no se validaron entradas reales ni configuración AdMob. No afirmar que un AAB futuro carece de IDs de prueba antes de inspeccionarlo |
+| Legal/eliminación | Rutas públicas declaradas, UI de borrado y llamada autenticada `futbeat-delete-account`; la UI de soporte copia enlaces | Verificar contenido y accesibilidad web, soporte operativo, eliminación backend y solicitud desde web. No se accedió a Bluehost ni sitios externos |
+
+Dependencias bloqueadas por lockfile, sin actualización: app_links 7.2.1; dio 5.11.1; drift 2.35.0 / drift_flutter 0.3.1 / sqlite3 3.5.2; flutter_secure_storage 11.2.0; flutter_web_auth_2 5.1.0; go_router 18.0.1; firebase_core 4.15.0 / firebase_messaging 16.7.0; google_mobile_ads 9.1.0; in_app_purchase 3.3.1; url_launcher 6.3.3. Este inventario acredita versiones Dart, no dependencias Maven resueltas ni compatibilidad de un bundle inexistente.
+
+Borrador de evidencia para Data Safety, **no formulario completado**:
+
+| Dato/capacidad | Lo que hace el código | Cierre requerido antes de declarar |
+|---|---|---|
+| Email/cuenta e identificador de usuario | Auth por email/OAuth; sesión en almacenamiento seguro | Confirmar campos efectivos devueltos y retenidos por servicios habilitados |
+| Favoritos y preferencias/país | Drift local; sincronización asociada a cuenta | Claude confirma retención, borrado y aislamiento de usuario; país de SIM/red no implica GPS |
+| Publicidad y consentimiento | SDK Google Mobile Ads y UMP; anuncios detrás de elegibilidad/consentimiento | Revisar datos de la versión/config SDK y clasificación de compartición; no inferir ausencia de recopilación por no mostrar un banner |
+| Push y compras | SDKs incluidos, funciones desactivadas según flags propuestos | Verificar flags efectivos y comportamiento SDK; no afirmar que un SDK ausente de UI esté fuera del binario |
+| Diagnósticos | No se encontró integración Crashlytics/Sentry en código móvil | No equivale a cero diagnósticos: revisar SDKs publicitarios y servicios externos |
+
+### Inventario reutilizable para NEWS 131 — sin implementación nueva
+
+| Capacidad | Existe en R130 | Límite de reutilización |
+|---|---|---|
+| Feed personalizado | `newsFeedProvider` + `ApiRepository.loadNewsFeed`; follows/subjects y país, una consulta `/v1/news` | Personalización semántica/orden del servidor no verificados en producción |
+| Últimas | `NewsSection.latest` ordena por publishedAt | Ordena solo artículos ya recibidos; no es paginación global de noticias |
+| Fichajes | Filtro TRANSFER y lista `transfers` de cambios de plantilla | No confundir cambios de roster con noticia editorial o fichaje confirmado |
+| Ligas | Filtro `NewsSection.competitions` y pestaña de noticias en perfil de competición | Requiere etiquetas canónicas del feed; no catálogo editorial por liga nuevo |
+| Relacionadas con partidos | Se puede reutilizar `NewsArticleCard` y subjects canónicos | Match Center no tiene consulta/sección de noticias por matchId. Una coincidencia de equipo no demuestra relación con un partido |
+| Originales futbeat.com | Enlace HTTPS público puede abrirse con la tarjeta actual | No existe CMS, publicación ni ingestión de originales en esta candidata; sitio no consultado |
+| Fuentes externas | `safeNewsUri`, tarjeta con navegador externo, atribución y error recuperable | El adaptador R130 conserva titulares/enlaces, elimina medios/fragmentos. Los perfiles también usan la tarjeta común y reciben `data.news` directamente: no asumir que el adaptador del feed sanitiza esas otras respuestas; validar procedencia antes de habilitar contenido enriquecido |
+| YouTube oficial | `MatchDetail.videos`, `PostMatchVideos`, título/canal/fuente y copiar URL; esquema local de canales verificados | No hay reproductor embebido ni apertura desde esa tarjeta. La verificación de canal depende del servidor; `videos` en Dart no filtra verificationStatus. No se activó servicio ni se descargó video |
+
+### Pendientes mínimos y decisión
+
+No se añadió ningún P0/P1 funcional nuevo ni se corrigieron tests para cambiar expectativas. El commit `4e2e887` agrega exclusivamente herramienta local. La corrección de derechos `3e6880f` permanece intacta y NEWS 131 no se incorporó.
+
+1. **P1 local de verificación:** ejecutar las dos baterías en host con loopback permitido y conservar resultados del mismo código; resolver solo regresiones reproducibles. No hace falta otra auditoría.
+2. **P1 de configuración:** verificar código de versión libre, firma/certificados, entradas AdMob/UMP y OAuth; después autorizar build e inspección del AAB.
+3. **P1 físico/productivo, separado:** evidencia de Claude sobre disponibilidad y contratos; QA existente revisada por su controlador; smoke del bundle Play de cuenta/favoritos/reset/borrado y funciones críticas en ventana autorizada.
+4. **P1 de publicación:** propietario cierra Console, elegibilidad/testing requerido, ficha, acceso de revisión, Data Safety y URLs legales/borrado. No se modificó ninguna cuenta.
+
+**GO local parcial** para revisión de fuente y preparación; **NO-GO técnico** para certificar runtime/tests; **NO-GO publicación/AAB productivo**. El siguiente paso concreto es ejecutar el runner desde terminal normal autorizada con loopback, no ampliar Noticias ni esperar pasivamente a QA126.
+
 ## Candidata y trazabilidad
 
 - GitHub `main` verificado mediante conector: `99da8729660892dac76720a5732885fa039d5709`.
