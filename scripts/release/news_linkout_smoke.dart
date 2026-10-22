@@ -15,7 +15,10 @@ void main() {
     'snippet': 'Protected',
     'imageUrl': 'https://club.example/image.jpg',
   };
-  final v1 = adaptNewsFeed({'schemaVersion': 1, 'news': [article]});
+  final v1 = adaptNewsFeed({
+    'schemaVersion': 1,
+    'news': [article],
+  });
   final safe = (v1['news'] as List).single as Map;
   check(safe['url'] == article['url'], 'v1 link lost');
   for (final field in ['description', 'snippet', 'imageUrl']) {
@@ -54,5 +57,7 @@ void main() {
     }
     check(rejected, 'invalid feed accepted');
   }
-  print('PASS: v1/v2 link-out, input isolation, deduplication, malformed feeds');
+  print(
+    'PASS: v1/v2 link-out, input isolation, deduplication, malformed feeds',
+  );
 }

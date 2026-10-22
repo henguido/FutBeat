@@ -90,7 +90,10 @@ void main() {
       'snippet': 'Protected excerpt',
       'imageUrl': 'https://club.example/protected.jpg',
     };
-    final result = adaptNewsFeed({'schemaVersion': 1, 'news': [article]});
+    final result = adaptNewsFeed({
+      'schemaVersion': 1,
+      'news': [article],
+    });
     final safe = (result['news'] as List).single as Map;
     expect(safe['title'], article['title']);
     expect(safe['url'], article['url']);
