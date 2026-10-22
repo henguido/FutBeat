@@ -4,6 +4,71 @@ Fecha: 2026-10-22. Rama de preparación: `codex/release-130-ci-play`, basada en
 `6a6a34e2dc152ac254999572b3100587d794417f`. Este documento no autoriza build,
 firma, carga, publicación, cambios en Console ni consultas de producción.
 
+## Lista mínima para el propietario — cierre de esta iteración
+
+No se requieren claves privadas para reunir la siguiente evidencia de Console:
+
+1. Package oficial y lista de versionCodes ocupados en todos los tracks,
+   incluidos borradores; confirmar si 5 puede usarse o cuál debe ser el siguiente.
+2. En Integridad de la app/App signing, obtener los certificados públicos y
+   huellas SHA-256 de **upload** y de **App Signing** por separado; confirmar
+   que Play App Signing está habilitado y si existe rotación/upgrade vigente.
+3. Estado de acceso a producción, verificación de la cuenta, testing exigido,
+   tracks y tareas bloqueantes que muestra Console. No asumir elegibilidad
+   porque Internal Testing ya funciona.
+4. Formularios pendientes: Data Safety, anuncios, audiencia/clasificación,
+   acceso del revisor y enlaces de privacidad/eliminación; ficha y países.
+
+### Verificar la upload key, sin modificarla
+
+En una terminal interactiva controlada, usar la upload key existente:
+
+```text
+keytool -list -v -keystore <ruta-segura-del-keystore> -alias <alias-existente>
+```
+
+Introducir la contraseña en el prompt, nunca como argumento `-storepass`,
+en el historial, en CI o en este informe. Comparar SHA-256 del certificado
+del alias con el certificado **upload** de Console. Confirmar que ese alias
+es una entrada de clave privada utilizable para firmar, sin exportar la clave.
+Una huella distinta bloquea la firma: no crear/reemplazar una clave para ocultarlo.
+El certificado App Signing es el que firma la app instalada desde Play y el
+que debe estar en assetlinks; no sustituye a la huella upload para esta comparación.
+Esta sesión no abrió keystores ni ejecutó el comando anterior.
+
+### Valores AdMob faltantes en esta candidata
+
+| Entrada | Canal / condición |
+|---|---|
+| `FUTBEAT_ADMOB_APP_ID` | Variable de entorno del build, formato App ID con `~`; no dart-define |
+| `FUTBEAT_ADMOB_MATCHES_FEED_ID` | Dart define de la unidad banner, formato con `/` |
+| Configuración UMP | Verificar mensajes publicados y comportamiento requerido en las regiones objetivo |
+
+Los dos IDs deben ser reales, corresponder a la app/unidad elegidas y compartir
+publisher. Los guards solo validan formato, publisher y que no sean los IDs
+de Google para pruebas; no prueban que la unidad esté aprobada/operativa.
+`FUTBEAT_ADMOB_TEST_ADS=false`; no se inventan ni imprimen valores reales.
+
+### Enlaces y declaraciones a comprobar
+
+Privacidad `/privacy`, términos `/terms`, solicitud web `/data-deletion`,
+recuperación `/auth/reset` y `/.well-known/assetlinks.json` en `https://futbeat.com`.
+Confirmar contenido real, HTTPS, soporte y proceso de eliminación; comprobar
+huella App Signing/paquete y reset con la app distribuida por Play. Confirmar
+Google/redirects en la ventana autorizada; Facebook, Push y Premium apagados.
+Data Safety debe reflejar cuenta, preferencias sincronizadas y SDKs efectivos;
+no completar respuestas solo a partir de los flags. No se consultó ningún enlace.
+
+### Qué cierra cada acción
+
+| Acción | Requisitos técnicos y gates de esta release |
+|---|---|
+| Generar AAB local firmado | Autorización específica, CI válido del SHA, configuración aprobada, upload key/alias correctos, IDs reales, package/version y toolchain/lockfile controlados. No necesita credenciales de Play ni completar formularios para compilar, pero no se autoriza mientras sigan los gates críticos |
+| Subir a Internal | Autorización distinta, acceso autorizado a Console, AAB inspeccionado con firma/versión aceptables y versionCode disponible, SDK/compatibilidad requeridos por Play y estado de cuenta que permita la carga |
+| Publicar/promover | Otra autorización, QA física/productiva, acceso a producción/testing exigido, formularios/ficha/enlaces cerrados y revisión de Play. Subir no equivale a publicar |
+
+No se generó AAB ni se suministraron credenciales en esta iteración.
+
 ## Estado comprobado en fuente
 
 | Área | Estado local verificable | Bloqueo real |

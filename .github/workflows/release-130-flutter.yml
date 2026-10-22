@@ -1,7 +1,10 @@
 name: Release 130 Flutter verification
+run-name: Release 130 Flutter @ ${{ github.sha }}
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - codex/release-130-ci-play
 
 permissions:
   contents: read
@@ -12,6 +15,7 @@ concurrency:
 
 jobs:
   flutter:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/release-130-ci-play'
     name: Flutter 3.47.4 / Ubuntu
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -26,6 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -36,6 +41,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/release-130-flutter
           git rev-parse HEAD | tee artifacts/release-130-flutter/source-sha.txt
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           sha256sum apps/mobile/pubspec.lock | tee artifacts/release-130-flutter/pubspec-lock-before.sha256
           {
             echo "workflow=${GITHUB_WORKFLOW}"
