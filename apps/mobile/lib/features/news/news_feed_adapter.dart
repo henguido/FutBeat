@@ -1,9 +1,27 @@
 import '../../core/models.dart';
 
 /// Adapts the optional v2 story feed to the existing v1 Noticias snapshot.
-/// No extra request, persistence or inferred metadata is introduced.
+/// Launch scope is link-out only: protected excerpts and images are omitted
+/// even when the server sends them. This also avoids retaining expired media
+/// in the catalog cache. Rich news requires its separate rights-aware client.
 Json adaptNewsFeed(Json response) {
-  if (response['schemaVersion'] == 1) return response;
+  if (response['schemaVersion'] == 1) {
+    final news = response['news'];
+    if (news != null && news is! List) {
+      throw const FormatException('Lista de noticias inválida');
+    }
+    return {
+      ...response,
+      'news': [
+        for (final value in news as List? ?? const [])
+          if (value is Map)
+            (Map<String, dynamic>.from(value)
+              ..remove('description')
+              ..remove('imageUrl')
+              ..remove('snippet')),
+      ],
+    };
+  }
   if (response['schemaVersion'] != 2 || response['stories'] is! List) {
     throw const FormatException('Versión de noticias incompatible');
   }
@@ -42,8 +60,6 @@ Json adaptNewsFeed(Json response) {
       'url': story['url'],
       'sourceName': story['sourceName'],
       'publishedAt': story['publishedAt'],
-      if (story['snippet'] is String) 'description': story['snippet'],
-      if (story['imageUrl'] is String) 'imageUrl': story['imageUrl'],
       if (provider != null && provider.isNotEmpty) 'provider': provider,
       'subjects': subjects,
       'category': story['category'],
