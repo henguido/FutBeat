@@ -1,5 +1,18 @@
 # NEWS 131 — riesgos concretos antes de integrar
 
+## Seguimiento de las dos correcciones solicitadas
+
+Los hallazgos 1 (fecha malformada) y 2 (subject match descartado) se corrigieron
+en el worktree separado `F:/FutBeat/FutBeat/artifacts/news131`, rama
+`codex/news-131` @ `5997ee126cd9e5b8ddfbabb4304f9b5e889459b1`.
+Evidencia: 19/19 casos Dart directos y análisis ligero del runner sin incidencias.
+Los casos están registrados también para Flutter; su ejecución en Ubuntu sigue
+pendiente. No se incorporó ese código a esta rama CI ni a Release 130.
+
+La revisión inferior conserva el diagnóstico histórico del commit `9bb22cb`.
+Siguen pendientes, antes de activar medios, timer/revocación/cache y coherencia
+del subflag YouTube. Todos los flags siguen apagados.
+
 Revisión local del commit `9bb22cbd24b98f49e59607e862be256756f37b9c`,
 sin modificar su rama ni incorporarla a Release 130. Se conserva R130 `6a6a34e`.
 
