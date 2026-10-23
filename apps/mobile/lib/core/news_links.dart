@@ -21,3 +21,25 @@ Uri? safeNewsUri(Object? value) {
   }
   return uri;
 }
+
+/// Defense for cards reached outside the link-only feed adapter (profiles).
+/// Missing, ambiguous or expired server authorization never permits media.
+bool newsMediaAuthorized(Object? rights, {DateTime? now}) {
+  if (rights is! Map ||
+      rights['status'] != 'ALLOWED' ||
+      rights['verified'] != true) {
+    return false;
+  }
+  final expiry = rights['expiresAt'];
+  if (expiry is! String ||
+      !RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$').hasMatch(expiry)) {
+    return false;
+  }
+  final parsed = DateTime.tryParse(expiry);
+  // DateTime.parse normalizes impossible dates; require a canonical roundtrip.
+  if (parsed == null ||
+      parsed.toIso8601String() != expiry.replaceFirst('Z', '.000Z')) {
+    return false;
+  }
+  return parsed.isAfter((now ?? DateTime.now()).toUtc());
+}

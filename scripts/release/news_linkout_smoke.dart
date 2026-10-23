@@ -1,11 +1,41 @@
 // Runs without Flutter's socket-based test runner. No network or database.
 import '../../apps/mobile/lib/features/news/news_feed_adapter.dart';
+import '../../apps/mobile/lib/core/news_links.dart';
 
 void check(bool condition, String message) {
   if (!condition) throw StateError(message);
 }
 
 void main() {
+  final now = DateTime.utc(2026, 10, 23);
+  final allowed = <String, dynamic>{
+    'status': 'ALLOWED',
+    'verified': true,
+    'expiresAt': '2099-01-01T00:00:00Z',
+  };
+  check(newsMediaAuthorized(allowed, now: now), 'valid grant rejected');
+  for (final expiry in [
+    null,
+    '',
+    'invalid',
+    '2099-02-30T00:00:00Z',
+    '2099-01-01',
+    '2020-01-01T00:00:00Z',
+    '2026-10-23T00:00:00Z',
+  ]) {
+    check(
+      !newsMediaAuthorized({...allowed, 'expiresAt': expiry}, now: now),
+      'unverifiable expiry accepted: $expiry',
+    );
+  }
+  for (final rights in [
+    null,
+    'ALLOWED',
+    {...allowed, 'verified': false},
+    {...allowed, 'status': 'DENIED'},
+  ]) {
+    check(!newsMediaAuthorized(rights, now: now), 'invalid grant accepted');
+  }
   final article = <String, dynamic>{
     'id': 'one',
     'title': 'Official statement',
@@ -58,6 +88,6 @@ void main() {
     check(rejected, 'invalid feed accepted');
   }
   print(
-    'PASS: v1/v2 link-out, input isolation, deduplication, malformed feeds',
+    'PASS: 12 media authorization cases; v1/v2 link-out, input isolation, deduplication, malformed feeds',
   );
 }

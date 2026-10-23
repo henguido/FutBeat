@@ -375,7 +375,11 @@ class NewsArticleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = article['title']?.toString().trim() ?? '';
-    final description = article['description']?.toString().trim() ?? '';
+    final rights = article['rights'];
+    final mediaRights = rights is Map ? rights : const {};
+    final description = newsMediaAuthorized(mediaRights['snippet'])
+        ? article['description']?.toString().trim() ?? ''
+        : '';
     final source = article['sourceName']?.toString().trim() ?? '';
     final provider = article['provider']?.toString().trim() ?? '';
     final author = article['author'] is String
@@ -384,7 +388,9 @@ class NewsArticleCard extends StatelessWidget {
     final url = article['url']?.toString().trim() ?? '';
     final articleUri = safeNewsUri(url);
     final date = _contentDateLabel(article['publishedAt']);
-    final image = safeNewsUri(article['imageUrl']);
+    final image = newsMediaAuthorized(mediaRights['image'])
+        ? safeNewsUri(article['imageUrl'])
+        : null;
 
     return Card(
       child: InkWell(

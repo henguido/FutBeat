@@ -477,7 +477,7 @@ void main() {
     expect(find.text('Titular r1'), findsOneWidget);
   });
 
-  testWidgets('an https image is shown; a failing one takes no space', (
+  testWidgets('release feed stays link-only even when images are supplied', (
     tester,
   ) async {
     await _pump(
@@ -492,9 +492,10 @@ void main() {
         ),
       ),
     );
-    // Test HTTP returns 400 for every image: the error builder hides it
-    // and leaves no empty 16:9 box behind.
-    expect(find.byKey(const ValueKey('news-image')), findsOneWidget);
+    // The repository adapter deliberately strips media before rendering.
+    expect(find.text('Titular i1'), findsOneWidget);
+    expect(find.text('Titular i2'), findsOneWidget);
+    expect(find.byKey(const ValueKey('news-image')), findsNothing);
     expect(find.byType(AspectRatio), findsNothing);
     expect(tester.takeException(), isNull);
   });

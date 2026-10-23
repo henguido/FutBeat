@@ -12,6 +12,104 @@ const _article = <String, dynamic>{
 };
 
 void main() {
+  final validRights = <String, dynamic>{
+    'status': 'ALLOWED',
+    'verified': true,
+    'expiresAt': '2099-01-01T00:00:00Z',
+  };
+
+  test('media requires explicit verified and strictly valid future expiry', () {
+    final now = DateTime.utc(2026, 10, 23);
+    expect(newsMediaAuthorized(validRights, now: now), isTrue);
+    for (final expiry in [
+      null,
+      '',
+      'invalid',
+      '2099-02-30T00:00:00Z',
+      '2099-01-01',
+      '2020-01-01T00:00:00Z',
+      '2026-10-23T00:00:00Z',
+    ]) {
+      expect(
+        newsMediaAuthorized({...validRights, 'expiresAt': expiry}, now: now),
+        isFalse,
+        reason: '$expiry',
+      );
+    }
+    for (final rights in [
+      null,
+      'ALLOWED',
+      {...validRights, 'verified': false},
+      {...validRights, 'status': 'DENIED'},
+    ]) {
+      expect(newsMediaAuthorized(rights, now: now), isFalse);
+    }
+  });
+
+  testWidgets(
+    'authorized image renders and load failure leaves no empty frame',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: NewsArticleCard({
+              ..._article,
+              'imageUrl': 'https://club.example/authorized.jpg',
+              'rights': {'image': validRights},
+            }),
+          ),
+        ),
+      );
+      expect(find.byKey(const ValueKey('news-image')), findsOneWidget);
+      final image = tester.widget<Image>(
+        find.byKey(const ValueKey('news-image')),
+      );
+      expect(
+        (image.image as NetworkImage).url,
+        'https://club.example/authorized.jpg',
+      );
+      // Exercise the successful frame path separately from test HTTP (always 400).
+      final frame = image.frameBuilder!(
+        tester.element(find.byKey(const ValueKey('news-image'))),
+        const SizedBox(),
+        0,
+        true,
+      );
+      expect(frame, isA<Padding>());
+      await tester.pumpAndSettle();
+      expect(find.byType(AspectRatio), findsNothing);
+      expect(find.text('Comunicado oficial'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final expiry in [
+    null,
+    'invalid',
+    '2099-02-30T00:00:00Z',
+    '2020-01-01T00:00:00Z',
+  ]) {
+    testWidgets('unverifiable media is hidden: $expiry', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: NewsArticleCard({
+              ..._article,
+              'imageUrl': 'https://club.example/protected.jpg',
+              'description': 'Protected excerpt',
+              'rights': {
+                'image': {...validRights, 'expiresAt': expiry},
+                'snippet': {...validRights, 'expiresAt': expiry},
+              },
+            }),
+          ),
+        ),
+      );
+      expect(find.byKey(const ValueKey('news-image')), findsNothing);
+      expect(find.text('Protected excerpt'), findsNothing);
+    });
+  }
+
   test('only public HTTPS links are accepted', () {
     expect(safeNewsUri(_article['url'])?.host, 'club.example');
     for (final value in [
@@ -114,9 +212,18 @@ void main() {
 
   testWidgets('rights-omitted image and snippet remain absent', (tester) async {
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: NewsArticleCard(_article))),
+      MaterialApp(
+        home: Scaffold(
+          body: NewsArticleCard({
+            ..._article,
+            'imageUrl': 'https://club.example/unlicensed.jpg',
+            'description': 'Protected excerpt',
+          }),
+        ),
+      ),
     );
     expect(find.byKey(const ValueKey('news-image')), findsNothing);
+    expect(find.text('Protected excerpt'), findsNothing);
     expect(find.text('Club Uno · 19/10/2026'), findsOneWidget);
   });
 }

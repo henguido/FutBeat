@@ -227,3 +227,93 @@ Para actualizaciones posteriores: propuesta 5% → 20% → 50% → 100%, con rev
 Rollback: detener distribución ante P0/P1. Detener un rollout no desinstala la versión ya entregada. Si Console permite halt de versión completa, usarlo tras autorización; la primera publicación no tiene versión productiva previa que restaurar. Conservar el bundle anterior y su código, pero no intentar subir un versionCode inferior: para usuarios afectados preparar hotfix de la última fuente estable con código mayor, misma firma y prueba de actualización que conserve datos locales. No revertir migraciones desde Android; Claude decide backend por separado. Nunca pedir desinstalar como rollback ordinario porque perdería datos locales.
 
 Próximo paso mínimo: ejecutar tests en entorno con loopback y recibir evidencia QA126/Claude. Solo después cerrar flags/Console y solicitar build. No se necesita abrir nuevas líneas de producto para llegar a producción.
+# Cierre del fallo CI — 23 octubre 2026
+
+Evidencia real: [run 39968494840](https://github.com/henguido/FutBeat/actions/runs/39968494840),
+job 120464579898, fuente `a115e47cdd3ea3d6c52fa971f0adbfeaa47caca3`.
+Logs completos recuperados mediante GitHub y conservados localmente en
+`.local-data/39968494840-job.log` (no se incorporan logs de runner a Git).
+
+| Etapa original | Resultado observado |
+|---|---|
+| Checkout/SHA, loopback Ubuntu, Flutter 3.47.4 | PASS |
+| Dependencias, lockfile, analyze | PASS |
+| Focales | FAIL: 24 aprobadas, 1 fallida; fail-fast, no completa los 21 archivos |
+| Suite | FAIL: 101 aprobadas, 1 fallida; fail-fast, no acredita ejecución completa de visual_test.dart |
+| Goldens sin modificaciones y subida de evidencia | PASS |
+
+Causa demostrada: `news_screen_test.dart:497` esperaba `news-image` para
+`_article('i1', image: 'https://img.test/x.jpg')`, sin autorización explícita.
+La carga atraviesa ApiRepository/adaptNewsFeed, que desde `3e6880f` elimina
+intencionadamente imagen y fragmento. Es una expectativa anterior a la política
+link-only, no un error Linux, de red de imágenes ni de Match Center.
+
+Corrección: el test de pantalla exige ambos titulares y ausencia de medios.
+La cobertura de imagen se prueba separadamente en NewsArticleCard: una
+autorización explícita y vigente permite crear Image.network; se verifica su
+URL, construcción de frame y fallback sin espacio ante el HTTP 400 del runner.
+Esto no acredita una descarga real ni decodificación exitosa de imagen remota.
+Además se cierra la ruta directa de perfiles: imagen y fragmento requieren
+`rights.image`/`rights.snippet` con `status: ALLOWED`, `verified: true` y
+`expiresAt` UTC canónico `YYYY-MM-DDTHH:mm:ssZ`, estrictamente futuro.
+Fechas ausentes, ambiguas, malformadas, normalizadas o caducadas se rechazan.
+No se presume que el backend entregue este permiso: sin evidencia, no hay medios.
+El feed sigue sin medios incluso con permiso; NEWS 131 permanece separada.
+
+Validación local: Dart analyze de helper, widget, dos archivos de tests y smoke;
+smoke directo con 12 casos de permisos más v1/v2 link-only, deduplicación,
+inmutabilidad y feeds malformados; formato, diff y parser del workflow.
+No se repitieron Flutter tests Windows. Los nuevos tests Flutter están
+NOT VERIFIED hasta ejecutar Ubuntu. No se regeneraron goldens ni se cambiaron
+workflows/lockfile. El acceso Git de lectura sigue BLOCKED por DNS; no se hizo
+push ni existe un nuevo run atribuible a esta corrección.
+
+**NO-GO técnico** hasta focales y suite completa verdes en el SHA corregido.
+La autorización existente permite push normal exclusivamente de la rama CI.
+El procedimiento local `.local-data/Submit-Release130CI.ps1` verificará el SHA
+corregido, remoto esperado a115e47 (o el mismo SHA ya enviado), rama, limpieza,
+workflow, main revisada y ausencia de PR antes de enviar. Cualquier divergencia
+remota detiene el proceso. No genera AAB ni usa secretos productivos.
+
+## Gates mínimos hasta Internal Testing
+
+| Gate | Responsable / estado |
+|---|---|
+| CI Ubuntu completo del commit corregido | Ingeniería; BLOCKED por envío desde este sandbox |
+| Console: versionCode libre, upload/App Signing | Propietario; BLOCKED, no acceso externo realizado |
+| Upload key existente y AdMob productivo/UMP | Propietario + ingeniería; BLOCKED, no se solicitan contraseñas en chat |
+| OAuth, reset, App Links, privacidad, términos, eliminación y Data Safety | Propietario/servicios; NOT VERIFIED, ver PLAY-130-PREPARATION.md |
+| AAB firmado e inspección manifest, firma, R8 y nativas/16 KB | Ingeniería; requiere CI verde, configuración y autorización específica |
+| Carga Internal y lista/enlace de testers | Propietario; autorización separada |
+
+Paquete declarado `com.futbeat.futbeat`, pubspec `1.0.0+5`; Console debe
+confirmar disponibilidad del código. Se mantiene firma fail-closed sin fallback
+debug y validación AdMob; no se creó APK/AAB ni se utilizaron certificados.
+
+## Aceptación corta de la candidata instalada desde Play
+
+Todos los casos siguientes están **NOT VERIFIED** físicamente. QA126 se
+canceló y no es evidencia. Usar cuentas y datos QA en ventana autorizada.
+
+| Flujo | Aceptación |
+|---|---|
+| Apertura y onboarding | Sin crash; país/favoritos persisten tras reinicio y actualización |
+| Registro/login/logout y recuperación | Guest a cuenta conserva preferencias; errores recuperables y reset funcional |
+| Jornada, LIVE y finalizados | Cobertura contrastada, fecha/zona correctas, marcador/estado y cambios coherentes |
+| Match Center | Eventos, alineaciones y estadísticas disponibles; ausencia de datos explícita |
+| Tablas, perfiles e historial | Navegación accesible, datos coherentes o estado vacío; sin crash |
+| Noticias y navegación | Enlaces seguros; sin medios no autorizados; volver conserva estado |
+| Red y rendimiento | Error/reintento, red lenta/offline sin bloqueo; registrar tiempos reales de arranque y cargas |
+| Distribución | Instalación/actualización Play, firma, enlaces, UMP/anuncios y borrado QA comprobados |
+
+Antes de distribuir: CI verde, firma/identidad/versionado correctos, configuración
+real y ausencia de crash de arranque o pérdida de preferencias conocida. Durante
+Internal se recogen los resultados funcionales anteriores: cualquier pérdida de
+datos, cuenta inaccesible, crash bloqueante o marcador erróneo reproducible
+bloquea expansión/promoción. Detalles visuales menores pueden corregirse durante
+Internal. No activar extras para compensar estos gates.
+
+Pasos restantes: enviar commit con el script autorizado; recoger logs/counts del
+nuevo run; cerrar las entradas externas; autorizar y generar AAB siguiendo
+PLAY-130-PREPARATION.md; inspeccionarlo; autorizar carga Internal; instalar desde
+Play con testers y completar la matriz antes de promover.
