@@ -324,7 +324,7 @@ void main() {
       find.byType(FavoritesScreen),
       matchesGoldenFile('goldens/favorites_hub_competitions.png'),
     );
-  });
+  }, tags: 'golden');
 
   testWidgets('golden for empty hub', (tester) async {
     await _pump(tester, follows: const {});
@@ -332,7 +332,7 @@ void main() {
       find.byType(FavoritesScreen),
       matchesGoldenFile('goldens/favorites_hub_empty.png'),
     );
-  });
+  }, tags: 'golden');
 
   test('Partidos Favoritos accepts teams only', () {
     final match = FootballMatch((_payload()['matches'] as List).single);

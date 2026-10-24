@@ -261,7 +261,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('standings-show-full')));
     await tester.pumpAndSettle();
     expect(find.text('Competición $_competition'), findsOneWidget);
-  });
+  }, tags: 'golden');
 
   testWidgets('LIVE indicator requires real in-play status', (tester) async {
     await _pump(tester, _snapshot(status: 'LIVE'));

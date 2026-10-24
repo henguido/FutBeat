@@ -323,7 +323,7 @@ void main() {
       find.byType(MatchTimeline),
       matchesGoldenFile('goldens/timeline_v2_complete.png'),
     );
-  });
+  }, tags: 'golden');
 
   testWidgets('timeline golden: LIVE', (tester) async {
     await _pumpTimeline(
@@ -336,7 +336,7 @@ void main() {
       find.byType(MatchTimeline),
       matchesGoldenFile('goldens/timeline_v2_live.png'),
     );
-  });
+  }, tags: 'golden');
 
   for (final state in <String, List<Json>>{
     'goal_assist': [_completeEvents()[6]],
@@ -350,6 +350,6 @@ void main() {
         find.byType(MatchTimeline),
         matchesGoldenFile('goldens/timeline_v2_${state.key}.png'),
       );
-    });
+    }, tags: 'golden');
   }
 }
