@@ -317,3 +317,83 @@ Pasos restantes: enviar commit con el script autorizado; recoger logs/counts del
 nuevo run; cerrar las entradas externas; autorizar y generar AAB siguiendo
 PLAY-130-PREPARATION.md; inspeccionarlo; autorizar carga Internal; instalar desde
 Play con testers y completar la matriz antes de promover.
+
+## Fallos visuales del run 40036840496 — cierre acotado
+
+SHA probado: `46666f761c77945a96b2ede2d4012fac68bcb0e1`.
+Analyze PASS; focales 222 PASS / 1 FAIL; suite 413 PASS / 1 FAIL. Son
+conteos de tests, no de imágenes. Fail-fast impidió completar ambas etapas.
+El fallo focal agrupa cuatro comparaciones de Favoritos.
+
+Artefacto GitHub `12536939797`, nombre
+`release-130-flutter-46666f761c77945a96b2ede2d4012fac68bcb0e1`,
+ZIP SHA-256 declarado por GitHub:
+`fc77dbe275bb24230800be2f54273ae921a2cc3416bb7771ad264dec9cdf6a0c`.
+Se recuperó la referencia del ZIP mediante el conector; no se afirma una nueva
+descarga local del ZIP. La extracción local existente estaba completa: se
+preservó y copió a un directorio nuevo `.local-data/visual-40036840496-<GUID>`
+para inspeccionar imágenes sin sobrescribir evidencia anterior.
+
+| Referencia | Dimensiones reales | Píxeles distintos, medidos localmente |
+|---|---|---|
+| favorites_hub_mixed | 390 × 844 | 1861 |
+| favorites_hub_teams | 390 × 844 | 1861 |
+| favorites_hub_players | 390 × 844 | 1480 |
+| favorites_hub_competitions | 390 × 844 | 1410 |
+| timeline_v2_complete | 390 × 1081 | 7705 |
+
+Los cinco `masterImage` coinciden byte a byte con sus PNG de Git. Se
+inspeccionaron imágenes master/test y diferencias: predominan bordes y
+posiciones de glifos Ahem, sin cambio visible de contenedores. Esto no es una
+demostración matemática de que todos los píxeles sean inocuos.
+
+Evidencia de código: Favoritos y su fixture no cambiaron desde `24c5920`,
+que incorporó sus referencias. El fixture de timeline y el tema tampoco
+cambiaron desde `16356b5`; la región completa desde `class MatchTimeline`
+hasta antes de `class Lineups` coincide exactamente con aquella versión.
+Los derechos de Noticias no intervienen en estas capturas y permanecen intactos.
+
+Configuración: estos dos archivos no cargan fuentes; `flutter test` utiliza
+Ahem, `--use-test-fonts` y `--disable-asset-fonts`. El SDK ya solicita Skia
+software determinista cuando Impeller no está habilitado. No hay un flag de
+renderizado omitido identificado que justifique cambiar estos tests a ciegas.
+`visual_test.dart` carga Roboto e iconos expresamente, por separado.
+El run usó Ubuntu 24.04.5, imagen `ubuntu24/20261012.334.1`, Flutter 3.47.4,
+framework `9584c6713b`, engine revision `06a2e2a110`.
+
+**Diagnóstico:** incompatibilidad tipográfica de las referencias es la hipótesis
+principal, apoyada en código/fixtures estables y diferencias en glifos. No se
+recuperó un manifiesto del entorno generador de los dos commits: NO está
+demostrado que se generaran en Windows. El registro Windows de VERIFICATION.md
+corresponde a septiembre, no prueba la procedencia de estos PNG de octubre.
+No se declara descartada toda regresión ni se declara corregido el golden.
+
+Cambios seguros realizados:
+- Runner fijado a `ubuntu-24.04` (misma familia del run fallido, no imagen
+  inmutable); Flutter sigue fijado a 3.47.4. Esto reduce deriva futura, no
+  convierte los fallos existentes en PASS.
+- Se retira fail-fast de las dos etapas para recoger los 21 archivos focales
+  y toda la suite, incluido visual_test.dart. No se omite ninguna prueba ni se
+  cambia el comparador pixel-perfect.
+- `scripts/release/Submit-Release130CI.ps1` queda versionado. Descarga solo el
+  artefacto del SHA exacto en `downloads/<GUID>` nuevo en cada intento; conserva
+  extracciones completas y parciales anteriores. Un fallo CI sigue devolviendo
+  error después de conservar evidencia, sin confundirlo con un error de ZIP.
+
+**Bloqueo pendiente real:** para resolver la incompatibilidad sin tolerancias
+se necesita reproducir las referencias con su entorno original conocido o
+aprobar referencias por plataforma revisadas bajo un entorno fijado. Cargar
+Roboto ahora cambiaría las referencias Ahem y no constituye una corrección
+compatible sin nuevas referencias. No se hizo ninguna de esas sustituciones,
+regeneraciones, normalizaciones de píxeles ni aceptaciones automáticas del
+artefacto fallido. La restricción actual de conservar las referencias se respeta.
+
+Validación local: sintaxis PowerShell, repetición del directorio de descarga
+con evidencia previa completa/parcial intacta, YAML/trigger/permisos/21 rutas,
+diff sin errores y goldens intactos. No se ejecutaron Flutter tests Windows.
+Git de lectura sigue fallando por DNS; no se hizo push ni se inició nuevo CI.
+La siguiente ejecución completa puede seguir fallando en estos goldens; el
+cambio de infraestructura no se presenta como su solución.
+
+**NO-GO de preparación final Android:** siguen fallos visuales sin resolver y
+falta suite completa verde. No se genera APK/AAB ni se modifica producción.

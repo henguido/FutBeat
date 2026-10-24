@@ -17,7 +17,7 @@ jobs:
   flutter:
     if: github.event_name == 'push' && github.ref == 'refs/heads/codex/release-130-ci-play'
     name: Flutter 3.47.4 / Ubuntu
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       CI: 'true'
@@ -120,7 +120,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          flutter test --no-pub --concurrency=2 --fail-fast --reporter=expanded \
+          flutter test --no-pub --concurrency=2 --reporter=expanded \
             test/news_feed_v2_adapter_test.dart \
             test/news_screen_test.dart \
             test/news_link_test.dart \
@@ -150,7 +150,7 @@ jobs:
         run: |
           set -o pipefail
           test -f test/visual_test.dart
-          flutter test --no-pub --concurrency=2 --fail-fast --reporter=expanded \
+          flutter test --no-pub --concurrency=2 --reporter=expanded \
             2>&1 | tee ../../artifacts/release-130-flutter/full.log
 
       - name: Prove tracked goldens were not updated
