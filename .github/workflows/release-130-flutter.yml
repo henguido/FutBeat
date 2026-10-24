@@ -154,6 +154,22 @@ jobs:
             --exclude-tags=golden \
             2>&1 | tee ../../artifacts/release-130-flutter/full.log
 
+      - name: Build isolated QA APK 1.0.0+6
+        if: success()
+        env:
+          FUTBEAT_QA_ISOLATED_PACKAGE: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build apk --debug --no-pub \
+            --build-name=1.0.0 \
+            --build-number=6 \
+            --dart-define=FUTBEAT_ADMOB_TEST_ADS=true
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          test -s "$apk"
+          sha256sum "$apk" | tee ../../artifacts/release-130-flutter/qa-apk.sha256
+          cp "$apk" ../../artifacts/release-130-flutter/FutBeat-QA-1.0.0+6.apk
+
       - name: Visual regression evidence (non-blocking platform diagnostic)
         if: always()
         continue-on-error: true
