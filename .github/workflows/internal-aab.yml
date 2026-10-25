@@ -1,0 +1,56 @@
+name: FutBeat Internal AAB
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - name: Restore upload key
+        shell: bash
+        env:
+          UPLOAD_KEYSTORE_B64: ${{ secrets.FUTBEAT_UPLOAD_KEYSTORE_B64 }}
+          UPLOAD_STORE_PASSWORD: ${{ secrets.FUTBEAT_UPLOAD_STORE_PASSWORD }}
+          UPLOAD_KEY_PASSWORD: ${{ secrets.FUTBEAT_UPLOAD_KEY_PASSWORD }}
+        run: |
+          umask 077
+          printf '%s' "$UPLOAD_KEYSTORE_B64" | base64 --decode > android/futbeat-upload-key.jks
+          {
+            echo 'storeFile=futbeat-upload-key.jks'
+            printf 'storePassword=%s\n' "$UPLOAD_STORE_PASSWORD"
+            echo 'keyAlias=futbeat-upload'
+            printf 'keyPassword=%s\n' "$UPLOAD_KEY_PASSWORD"
+          } > android/key.properties
+      - run: flutter pub get --enforce-lockfile
+      - name: Build signed internal AAB
+        env:
+          FUTBEAT_ADMOB_APP_ID: ${{ secrets.FUTBEAT_ADMOB_APP_ID }}
+        run: >-
+          flutter build appbundle --release
+          --build-name=1.0.0
+          --build-number=6
+          --dart-define=FUTBEAT_ADMOB_MATCHES_FEED_ID=${{ secrets.FUTBEAT_ADMOB_MATCHES_FEED_ID }}
+      - name: Publish AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FutBeat-Internal-1.0.0-6
+          path: apps/mobile/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 7
