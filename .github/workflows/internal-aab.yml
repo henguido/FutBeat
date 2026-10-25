@@ -2,6 +2,9 @@ name: FutBeat Internal AAB
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/internal-aab-20261024
 
 permissions:
   contents: read
