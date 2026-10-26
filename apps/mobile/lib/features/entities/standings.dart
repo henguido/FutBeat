@@ -144,6 +144,15 @@ List<StandingsGroup>? standingsGroups(
           rows: group.rows,
         )
       : group;
+  // A lone table is not proof that it belongs to this match's phase. When
+  // both sides name a stage, refuse a table from a different stage.
+  final matchStageTokens = standingsLabelTokens(stage);
+  bool matchesMatchStage(StandingsGroup group) {
+    final groupStageTokens = standingsLabelTokens(group.stage);
+    return matchStageTokens.isEmpty ||
+        groupStageTokens.isEmpty ||
+        matchStageTokens.containsAll(groupStageTokens);
+  }
   if (focusTeamIds.isEmpty) {
     return [for (final group in all) labelled(group)];
   }
@@ -153,7 +162,8 @@ List<StandingsGroup>? standingsGroups(
         data.resolveEntityId(id),
   );
   if (all.length == 1) {
-    return focusTeamIds.every((id) => holds(all.single, id))
+    return matchesMatchStage(all.single) &&
+            focusTeamIds.every((id) => holds(all.single, id))
         ? [labelled(all.single)]
         : null;
   }
@@ -198,7 +208,9 @@ List<StandingsGroup>? standingsGroups(
     ];
     return overall.length == 1 ? [labelled(overall.single)] : null;
   }
-  if (whole.isNotEmpty) return [labelled(whole.single)];
+  if (whole.isNotEmpty) {
+    return matchesMatchStage(whole.single) ? [labelled(whole.single)] : null;
+  }
   final picked = <int>{};
   for (final id in focusTeamIds) {
     final candidates = [
@@ -209,7 +221,9 @@ List<StandingsGroup>? standingsGroups(
     picked.add(candidates.single);
   }
   final own = [for (final i in picked.toList()..sort()) all[i]];
-  return own.any((group) => group.label == null) ? null : own;
+  return own.any((group) => group.label == null || !matchesMatchStage(group))
+      ? null
+      : own;
 }
 
 String? _standingsGroupLabel({
