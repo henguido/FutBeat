@@ -63,6 +63,32 @@ void main() {
     );
     expect(find.byType(Image), findsNWidgets(2));
     expect(find.text('https://media.example.test/shared.png'), findsOneWidget);
+    for (final image in tester.widgetList<Image>(find.byType(Image))) {
+      final provider = image.image is ResizeImage
+          ? (image.image as ResizeImage).imageProvider
+          : image.image;
+      expect(
+        (provider as NetworkImage).url,
+        'https://media.example.test/shared.png',
+      );
+    }
+    // A later partial snapshot omits media; omission is not revocation.
+    memory.absorb(
+      Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': '2026-10-25T00:01:00Z',
+        'teams': [],
+        'competitions': [],
+        'matches': [],
+        'standings': [],
+        'players': [
+          {'id': 'fb_player_shared', 'name': 'Jugador Compartido'},
+        ],
+      }),
+    );
+    await tester.pump();
+    expect(find.byType(Image), findsNWidgets(2));
   });
   test('canonical verified player media wins over lineup fallback', () {
     expect(
