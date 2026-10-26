@@ -803,7 +803,7 @@ class PlayerPhoto extends StatelessWidget {
         ),
       ),
     );
-    final image = player.imageUrl;
+    final image = entityImageOf(context, player);
     if (image == null) return fallback;
     return SizedBox(
       width: size,

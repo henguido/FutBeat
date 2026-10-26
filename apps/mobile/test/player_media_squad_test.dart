@@ -1,9 +1,69 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
+import 'package:futbeat/core/entity_media.dart';
+import 'package:futbeat/features/entities/team_profile.dart';
+import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:futbeat/shared/widgets.dart';
 
 void main() {
+  testWidgets('squad profile and lineup reuse verified canonical photo', (
+    tester,
+  ) async {
+    final memory = EntityMediaMemory();
+    addTearDown(memory.dispose);
+    memory.absorb(
+      Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': '2026-10-25T00:00:00Z',
+        'teams': [],
+        'competitions': [],
+        'matches': [],
+        'standings': [],
+        'players': [
+          {
+            'id': 'fb_player_shared',
+            'name': 'Jugador Compartido',
+            'media': {
+              'verificationStatus': 'VERIFIED',
+              'url': 'https://media.example.test/shared.png',
+            },
+          },
+        ],
+      }),
+    );
+    final sparsePlayer = Entity({
+      'id': 'fb_player_shared',
+      'name': 'Jugador Compartido',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EntityMediaScope(
+          memory: memory,
+          child: Scaffold(
+            body: Column(
+              children: [
+                PlayerPhoto(sparsePlayer, size: 40),
+                PlayerPhoto(sparsePlayer, size: 84),
+                Builder(
+                  builder: (context) {
+                    final image = lineupPlayerImageOf(context, {
+                      'canonicalId': 'fb_player_shared',
+                      'name': 'Jugador Compartido',
+                    });
+                    return Text(image ?? 'sin foto');
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(Image), findsNWidgets(2));
+    expect(find.text('https://media.example.test/shared.png'), findsOneWidget);
+  });
   test('canonical verified player media wins over lineup fallback', () {
     expect(
       playerImage({
