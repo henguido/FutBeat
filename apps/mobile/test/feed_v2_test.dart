@@ -719,6 +719,20 @@ void main() {
     },
   );
 
+  testWidgets('one Favoritos group spans leagues without hiding day matches', (
+    tester,
+  ) async {
+    await _pump(tester, follows: {'team:t_sap', 'team:t_bet'});
+    expect(find.text('FAVORITOS'), findsOneWidget);
+    expect(_rowInGroup('m_cr_live', 'favorite', 'c_cr'), findsOneWidget);
+    expect(_rowInGroup('m_es_1', 'favorite', 'c_es'), findsOneWidget);
+    expect(_rowInGroup('m_cr_live', 'competition', 'c_cr'), findsOneWidget);
+    expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsOneWidget);
+    expect(_rowInGroup('m_cr_next', 'competition', 'c_cr'), findsOneWidget);
+    expect(_rowInGroup('m_es_long', 'competition', 'c_es'), findsOneWidget);
+    expect(find.byType(FeedMatchRow), findsNWidgets(10));
+  });
+
   testWidgets('collapse keeps header and count, expand restores rows', (
     tester,
   ) async {
