@@ -551,10 +551,18 @@ void main() {
       );
       expect(homeGoalkeeper.top, greaterThanOrEqualTo(homeHalf.top));
       expect(homeGoalkeeper.top, lessThan(homeForward.top));
+      expect(
+        homeGoalkeeper.bottom,
+        lessThanOrEqualTo(homeHalf.top + 12 + lineupPenaltyAreaDepth),
+      );
       expect(homeForward.bottom, lessThanOrEqualTo(homeHalf.bottom));
       expect(awayHalf.top, closeTo(homeHalf.bottom, .01));
       expect(awayForward.top, greaterThanOrEqualTo(awayHalf.top));
       expect(awayForward.top, lessThan(awayGoalkeeper.top));
+      expect(
+        awayGoalkeeper.top,
+        greaterThanOrEqualTo(awayHalf.bottom - 12 - lineupPenaltyAreaDepth),
+      );
       expect(awayGoalkeeper.bottom, lessThanOrEqualTo(awayHalf.bottom));
       expect(find.byKey(const ValueKey('lineup-photo-home-1')), findsOne);
       expect(

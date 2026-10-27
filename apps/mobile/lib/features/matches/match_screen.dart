@@ -3596,9 +3596,9 @@ class _FormationHalf extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const height = 590.0;
     const rowHeight = 108.0;
-    const edgeInset = 18.0;
+    const edgeInset = 24.0;
+    const height = lineupPitchHalfHeight;
     final travel = height - rowHeight - edgeInset * 2;
     return SizedBox(
       height: height,
@@ -3831,6 +3831,9 @@ class _PitchHalfPainter extends CustomPainter {
 
   final bool goalAtTop;
 
+  static const _goalLineInset = 12.0;
+  static const _goalAreaDepth = 64.0;
+
   @override
   void paint(Canvas canvas, Size size) {
     canvas.drawRect(
@@ -3841,7 +3844,7 @@ class _PitchHalfPainter extends CustomPainter {
       ..color = const Color(0xFF414448).withValues(alpha: .62)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
-    final goalY = goalAtTop ? 0.0 : size.height;
+    final goalY = goalAtTop ? _goalLineInset : size.height - _goalLineInset;
     final halfwayY = goalAtTop ? size.height : 0.0;
     canvas.drawLine(Offset(0, halfwayY), Offset(size.width, halfwayY), line);
     canvas.drawArc(
@@ -3851,21 +3854,24 @@ class _PitchHalfPainter extends CustomPainter {
       false,
       line,
     );
-    canvas.drawRect(
-      Rect.fromCenter(
-        center: Offset(size.width / 2, goalY),
-        width: size.width * .58,
-        height: 124,
-      ),
+    final direction = goalAtTop ? 1.0 : -1.0;
+    Rect area(double width, double depth) => Rect.fromLTRB(
+      (size.width - width) / 2,
+      goalAtTop ? goalY : goalY - depth,
+      (size.width + width) / 2,
+      goalAtTop ? goalY + depth : goalY,
+    );
+    canvas.drawLine(
+      Offset(size.width * .38, goalY),
+      Offset(size.width * .62, goalY),
       line,
     );
-    canvas.drawRect(
-      Rect.fromCenter(
-        center: Offset(size.width / 2, goalY),
-        width: size.width * .28,
-        height: 54,
-      ),
-      line,
+    canvas.drawRect(area(size.width * .58, lineupPenaltyAreaDepth), line);
+    canvas.drawRect(area(size.width * .28, _goalAreaDepth), line);
+    canvas.drawCircle(
+      Offset(size.width / 2, goalY + direction * lineupPenaltyAreaDepth * .68),
+      2,
+      line..style = PaintingStyle.fill,
     );
   }
 
@@ -3873,6 +3879,10 @@ class _PitchHalfPainter extends CustomPainter {
   bool shouldRepaint(covariant _PitchHalfPainter oldDelegate) =>
       oldDelegate.goalAtTop != goalAtTop;
 }
+
+/// Shared geometry contract for renderer and widget tests.
+const double lineupPitchHalfHeight = 590;
+const double lineupPenaltyAreaDepth = 150;
 
 String _pitchName(String name) {
   final words = name.trim().split(RegExp(r'\s+'));

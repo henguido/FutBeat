@@ -56,7 +56,7 @@ void main() {
       ],
       'players': <dynamic>[],
       'competitions': [
-        {'id': 'fb_comp', 'name': 'Competici�n de prueba'},
+        {'id': 'fb_comp', 'name': 'Competici\u00f3n de prueba'},
       ],
       'matches': [
         {
@@ -132,7 +132,40 @@ void main() {
               fontFamily: 'FutBeatRoboto',
             ),
           ),
-          home: MatchScreen(id: 'fb_match', initialData: Snapshot(payload)),
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(390, 844),
+              padding: EdgeInsets.only(bottom: 24),
+              viewPadding: EdgeInsets.only(bottom: 24),
+            ),
+            child: Scaffold(
+              body: MatchScreen(id: 'fb_match', initialData: Snapshot(payload)),
+              bottomNavigationBar: SafeArea(
+                top: false,
+                child: NavigationBar(
+                  selectedIndex: 1,
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.sports_soccer_outlined),
+                      label: 'Partidos',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.star_outline_rounded),
+                      label: 'Favoritos',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.search_rounded),
+                      label: 'Explorar',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.person_outline_rounded),
+                      label: 'Perfil',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -142,6 +175,9 @@ void main() {
 
     final scroll = find.byKey(const PageStorageKey<String>('alineacion'));
     expect(scroll, findsOneWidget);
+    final localCoach = find.byKey(const ValueKey('lineup-Local-coach'));
+    expect(localCoach, findsOneWidget);
+    expect(tester.getRect(localCoach).bottom, lessThan(740));
     await expectLater(
       find.byType(Scaffold).first,
       matchesGoldenFile('goldens/lineups_match_center_top.png'),
@@ -164,6 +200,10 @@ void main() {
       const Offset(0, -400),
     );
     await tester.pumpAndSettle();
+    final awayCoach = find.byKey(const ValueKey('lineup-Visitante-coach'));
+    expect(awayCoach, findsOneWidget);
+    expect(tester.getRect(awayCoach).top, greaterThanOrEqualTo(0));
+    expect(tester.getRect(awayCoach).bottom, lessThan(740));
     expect(find.text('DT · Entrenador Visitante'), findsOneWidget);
     expect(tester.takeException(), isNull);
   }, tags: 'golden');
