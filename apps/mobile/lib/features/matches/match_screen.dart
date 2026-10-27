@@ -3596,8 +3596,8 @@ class _FormationHalf extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const rowHeight = 108.0;
-    const edgeInset = 24.0;
+    const rowHeight = lineupPitchRowHeight;
+    const edgeInset = 20.0;
     const height = lineupPitchHalfHeight;
     final travel = height - rowHeight - edgeInset * 2;
     return SizedBox(
@@ -3881,8 +3881,9 @@ class _PitchHalfPainter extends CustomPainter {
 }
 
 /// Shared geometry contract for renderer and widget tests.
-const double lineupPitchHalfHeight = 590;
-const double lineupPenaltyAreaDepth = 150;
+const double lineupPitchHalfHeight = 520;
+const double lineupPitchRowHeight = 96;
+const double lineupPenaltyAreaDepth = 140;
 
 String _pitchName(String name) {
   final words = name.trim().split(RegExp(r'\s+'));

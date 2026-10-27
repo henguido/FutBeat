@@ -549,6 +549,8 @@ void main() {
       final awayGoalkeeper = tester.getRect(
         find.byKey(const ValueKey('lineup-pitch-away-away-1')),
       );
+      expect(homeHalf.height, lineupPitchHalfHeight);
+      expect(awayHalf.height, lineupPitchHalfHeight);
       expect(homeGoalkeeper.top, greaterThanOrEqualTo(homeHalf.top));
       expect(homeGoalkeeper.top, lessThan(homeForward.top));
       expect(
