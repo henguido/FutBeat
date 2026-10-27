@@ -492,6 +492,7 @@ void main() {
           'starters': xi('home'),
           'substitutes': [
             {'id': 'home-12', 'name': 'Suplente local', 'number': 12},
+            {'id': 'home-13', 'name': 'Segunda local', 'number': 13},
           ],
           'coach': {'name': 'Entrenadora Local'},
         },
@@ -500,6 +501,7 @@ void main() {
           'starters': xi('away'),
           'substitutes': [
             {'id': 'away-12', 'name': 'Suplente visitante', 'number': 12},
+            {'id': 'away-13', 'name': 'Segundo visitante', 'number': 13},
           ],
           'coach': {'name': 'Entrenador Visitante'},
         },
@@ -517,6 +519,8 @@ void main() {
         ),
       );
       expect(find.byKey(const ValueKey('lineups-combined-pitch')), findsOne);
+      expect(find.byKey(const ValueKey('lineup-home-suplente-grid')), findsOne);
+      expect(find.byKey(const ValueKey('lineup-away-suplente-grid')), findsOne);
       expect(find.text('Local'), findsWidgets);
       expect(find.text('Visitante'), findsWidgets);
       expect(find.text('5-4-1'), findsWidgets);
@@ -525,6 +529,13 @@ void main() {
       expect(
         find.byKey(const ValueKey('lineup-photo-fallback-home-2')),
         findsOne,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('lineup-photo-fallback-home-2')),
+          matching: find.text('2'),
+        ),
+        findsNothing,
       );
       expect(find.byType(Image), findsNWidgets(2));
       for (final image in tester.widgetList<Image>(find.byType(Image))) {
@@ -556,6 +567,7 @@ void main() {
         ),
       );
       expect(find.byKey(const ValueKey('lineups-accessible-list')), findsOne);
+      expect(find.byKey(const ValueKey('lineup-home-suplente-list')), findsOne);
       expect(
         find.byKey(const ValueKey('lineups-combined-pitch')),
         findsNothing,

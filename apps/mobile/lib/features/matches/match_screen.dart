@@ -3309,6 +3309,7 @@ class _TeamLineup extends StatelessWidget {
                 side: side,
                 incidents: incidents,
                 role: 'suplente',
+                compactGrid: true,
               ),
             ],
             if (showStarters && starters.isEmpty && substitutes.isEmpty)
@@ -3564,7 +3565,7 @@ class _CombinedFormationPitch extends StatelessWidget {
                       border: Border.all(color: Colors.white24),
                     ),
                     child: Text(
-                      '${homeTeam.displayName}  ·  ${awayTeam.displayName}',
+                      'Local arriba  •  Visitante abajo',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
@@ -3653,10 +3654,12 @@ class _PitchTeamIdentity extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: onPitch
-            ? const Color(0xD907110E)
+            ? accent.withValues(alpha: .13)
             : Colors.white.withValues(alpha: .04),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: onPitch ? Colors.white24 : _cardBorder),
+        border: Border.all(
+          color: onPitch ? accent.withValues(alpha: .72) : _cardBorder,
+        ),
       ),
       child: Row(
         children: [
@@ -3745,20 +3748,13 @@ class _PitchPainter extends CustomPainter {
         ..shader = const LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFF1B5E43), Color(0xFF134832)],
+          colors: [Color(0xFF12372C), Color(0xFF0B2A22)],
         ).createShader(rect),
     );
-    final stripe = Paint()..color = const Color(0x10FFFFFF);
-    for (var i = 0; i < 10; i += 2) {
-      canvas.drawRect(
-        Rect.fromLTWH(0, size.height * i / 10, size.width, size.height / 10),
-        stripe,
-      );
-    }
     final line = Paint()
-      ..color = Colors.white.withValues(alpha: .32)
+      ..color = Colors.white.withValues(alpha: .17)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4;
+      ..strokeWidth = 1.1;
     final field = Rect.fromLTWH(8, 8, size.width - 16, size.height - 16);
     canvas.drawRect(field, line);
     final center = Offset(size.width / 2, size.height / 2);
@@ -3771,11 +3767,6 @@ class _PitchPainter extends CustomPainter {
       center,
       (size.width * .13).clamp(24, 44).toDouble(),
       line,
-    );
-    canvas.drawCircle(
-      center,
-      2.5,
-      Paint()..color = Colors.white.withValues(alpha: .4),
     );
     for (final y in [8.0, size.height - 8]) {
       canvas.drawRect(
@@ -3823,6 +3814,7 @@ class _PitchPlayer extends StatelessWidget {
     final name = player['name']?.toString() ?? 'Jugador';
     final number = _lineupShirtNumber(player)?.toString() ?? '';
     final rating = _lineupRating(player);
+    final accent = side == 'home' ? lime : awaySideColor;
 
     final content = Column(
       children: [
@@ -3832,12 +3824,17 @@ class _PitchPlayer extends StatelessWidget {
             Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
+                border: Border.all(color: accent, width: 2),
                 boxShadow: const [
                   BoxShadow(color: Color(0x66000000), blurRadius: 6),
                 ],
               ),
-              child: _PlayerAvatar(player, size: 48),
+              child: _PlayerAvatar(
+                player,
+                size: 52,
+                accent: accent,
+                showBorder: false,
+              ),
             ),
             if (number.isNotEmpty)
               Positioned(left: -7, bottom: -3, child: _NumberBadge(number)),
@@ -3972,26 +3969,53 @@ class _LineupPlayerList extends StatelessWidget {
     required this.side,
     required this.incidents,
     required this.role,
+    this.compactGrid = false,
   });
 
   final List<Json> players;
   final String side;
   final List<Json> incidents;
   final String role;
+  final bool compactGrid;
 
   @override
-  Widget build(BuildContext context) => ListView.separated(
-    shrinkWrap: true,
-    physics: const NeverScrollableScrollPhysics(),
-    itemCount: players.length,
-    separatorBuilder: (_, _) => const SizedBox(height: 6),
-    itemBuilder: (_, index) {
-      final player = players[index];
-      return _BenchPlayer(
-        player,
-        side: side,
-        role: role,
-        events: lineupEventsForPlayer(player, incidents, side),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final textScale = MediaQuery.textScalerOf(context).scale(1);
+      final useGrid =
+          compactGrid && constraints.maxWidth >= 300 && textScale <= 1.3;
+      Widget playerAt(int index) {
+        final player = players[index];
+        return _BenchPlayer(
+          player,
+          side: side,
+          role: role,
+          events: lineupEventsForPlayer(player, incidents, side),
+        );
+      }
+
+      if (useGrid) {
+        return GridView.builder(
+          key: ValueKey('lineup-$side-$role-grid'),
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: players.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            mainAxisExtent: 76,
+          ),
+          itemBuilder: (_, index) => playerAt(index),
+        );
+      }
+      return ListView.separated(
+        key: ValueKey('lineup-$side-$role-list'),
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: players.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 6),
+        itemBuilder: (_, index) => playerAt(index),
       );
     },
   );
@@ -4014,6 +4038,7 @@ class _BenchPlayer extends StatelessWidget {
     final number = _lineupShirtNumber(player)?.toString() ?? '';
     final position = _positionLabel(player['position']);
     final rating = _lineupRating(player);
+    final accent = side == 'home' ? lime : awaySideColor;
 
     final content = Container(
       constraints: const BoxConstraints(minHeight: 56),
@@ -4025,7 +4050,7 @@ class _BenchPlayer extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _PlayerAvatar(player, size: 44),
+          _PlayerAvatar(player, size: 44, accent: accent),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -4122,14 +4147,20 @@ class _CoachTile extends StatelessWidget {
 /// image. No additional photo requests are made here. The silhouette and
 /// dorsal are honest about missing media and remain stable during loading.
 class _PlayerAvatar extends StatelessWidget {
-  const _PlayerAvatar(this.player, {required this.size});
+  const _PlayerAvatar(
+    this.player, {
+    required this.size,
+    this.accent = muted,
+    this.showBorder = true,
+  });
   final Json player;
   final double size;
+  final Color accent;
+  final bool showBorder;
 
   @override
   Widget build(BuildContext context) {
     final image = lineupPlayerImageOf(context, player);
-    final number = _lineupShirtNumber(player)?.toString() ?? '';
     final fallback = Container(
       key: ValueKey(
         'lineup-photo-fallback-${player['canonicalId'] ?? player['id'] ?? player['name']}',
@@ -4144,35 +4175,11 @@ class _PlayerAvatar extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: [Color(0xFF2A3B36), Color(0xFF1A2622)],
         ),
-        border: Border.all(color: lime.withValues(alpha: .45)),
+        border: showBorder
+            ? Border.all(color: accent.withValues(alpha: .72))
+            : null,
       ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Icon(Icons.person, color: Colors.white70, size: size * .58),
-          if (number.isNotEmpty)
-            Positioned(
-              bottom: 3,
-              child: Container(
-                constraints: const BoxConstraints(minWidth: 18),
-                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                decoration: BoxDecoration(
-                  color: const Color(0xDD07110E),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  number,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: size * .19,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
+      child: Icon(Icons.person, color: Colors.white70, size: size * .58),
     );
     if (image == null || image.isEmpty) return fallback;
     final pixels = (size * MediaQuery.devicePixelRatioOf(context)).round();
@@ -4207,10 +4214,18 @@ class _PlayerAvatar extends StatelessWidget {
 /// (the same one the profile shows), else the photo the lineup carries.
 String? lineupPlayerImageOf(BuildContext context, Json player) {
   final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  final rowId = player['id']?.toString().trim() ?? '';
+  // Some locally cached/legacy detail rows carry the canonical FutBeat ID in
+  // `id` but omit `canonicalId`. Reuse only that typed ID; never join by name.
+  final lookupId = canonicalId.isNotEmpty
+      ? canonicalId
+      : rowId.startsWith('fb_player_')
+      ? rowId
+      : '';
   final name = player['name']?.toString() ?? '';
-  final shared = canonicalId.isEmpty
+  final shared = lookupId.isEmpty
       ? null
-      : entityImageOf(context, Entity({'id': canonicalId, 'name': name}));
+      : entityImageOf(context, Entity({'id': lookupId, 'name': name}));
   return shared ?? playerImage(player);
 }
 

@@ -55,6 +55,18 @@ void main() {
                     return Text(image ?? 'sin foto');
                   },
                 ),
+                Builder(
+                  builder: (context) {
+                    final image = lineupPlayerImageOf(context, {
+                      'id': 'fb_player_shared',
+                      'name': 'Jugador Compartido',
+                    });
+                    return Text(
+                      image ?? 'sin foto',
+                      key: const Key('id-photo'),
+                    );
+                  },
+                ),
               ],
             ),
           ),
@@ -62,7 +74,11 @@ void main() {
       ),
     );
     expect(find.byType(Image), findsNWidgets(2));
-    expect(find.text('https://media.example.test/shared.png'), findsOneWidget);
+    expect(
+      find.text('https://media.example.test/shared.png'),
+      findsNWidgets(2),
+    );
+    expect(find.byKey(const Key('id-photo')), findsOneWidget);
     for (final image in tester.widgetList<Image>(find.byType(Image))) {
       final provider = image.image is ResizeImage
           ? (image.image as ResizeImage).imageProvider
