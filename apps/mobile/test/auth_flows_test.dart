@@ -1065,6 +1065,27 @@ void main() {
   );
 
   group('follow merge', () {
+    test(
+      'sign in and sign out preserve the local country preference',
+      () async {
+        final value = await _service(local: {'team:guest'});
+        await value.db.savePreference(
+          detectedCountry: 'CR',
+          selectedCountry: 'MX',
+        );
+
+        await value.service.signIn('user@example.com', 'password-test');
+        await _settle(value.service);
+        await value.service.signOut();
+
+        final preference = await value.db.watchPreference().first;
+        expect(preference.detectedCountry, 'CR');
+        expect(preference.selectedCountry, 'MX');
+        expect(preference.effectiveCountry, 'MX');
+        expect(await value.db.watchFollows().first, contains('team:guest'));
+      },
+    );
+
     test('first login unions server and local follows', () async {
       final value = await _service(
         server: {'team:a', 'team:b'},

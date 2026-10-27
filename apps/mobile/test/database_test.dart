@@ -280,6 +280,11 @@ void main() {
         expect(preference.selectedCountry, 'MX');
         expect(preference.effectiveCountry, 'MX');
 
+        await db.savePreference(selectedCountry: null);
+        preference = await db.watchPreference().first;
+        expect(preference.selectedCountry, isNull);
+        expect(preference.effectiveCountry, 'CR');
+
         await db.touchInterest('match', 'fb_match_open');
         expect(await db.watchTemporaryInterests().first, {
           'match:fb_match_open',
