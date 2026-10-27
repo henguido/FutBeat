@@ -51,8 +51,24 @@ test('homonyms, club/selection contexts and conflicting bridges stay unresolved'
   const map = verifiedGoalPlayerCrosswalk([
     {lineupExternalId:'88',catalogExternalId:'cmr7a',bridgeType:'OFFICIAL_PROFILE',sourceReference:'official:1'},
     {lineupExternalId:'88',catalogExternalId:'cmr7b',bridgeType:'OFFICIAL_PROFILE',sourceReference:'official:2'},
+    {lineupExternalId:'88',catalogExternalId:'cmr7a',bridgeType:'OFFICIAL_PROFILE',sourceReference:'official:3'},
   ]);
   assert.equal(resolveGoalPlayerExternalId('88', map), '88');
+});
+
+test('one official bridge is stable across matches, club and national-team contexts', () => {
+  const map = verifiedGoalPlayerCrosswalk(crosswalksFromGoalPlayerRows([
+    {externalId: 'catalog-person', lineupExternalId: '501'},
+  ]));
+  const contexts = [
+    {matchId: 'match-a', teamId: 'club-a'},
+    {matchId: 'match-b', teamId: 'club-b'},
+    {matchId: 'match-c', teamId: 'national-team'},
+  ];
+  for (const context of contexts) {
+    assert.equal(resolveGoalPlayerExternalId('501', map), 'catalog-person', JSON.stringify(context));
+  }
+  assert.equal(resolveGoalPlayerExternalId('502', map), '502', 'another person stays separate');
 });
 
 test('malformed namespaces and missing official reference are rejected', () => {

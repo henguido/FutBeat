@@ -8,6 +8,7 @@ const text = (value) => String(value ?? '').trim();
  */
 export function verifiedGoalPlayerCrosswalk(rows) {
   const result = new Map();
+  const conflicted = new Set();
   for (const row of rows ?? []) {
     const lineupId = text(row?.lineupExternalId);
     const catalogId = text(row?.catalogExternalId);
@@ -17,8 +18,10 @@ export function verifiedGoalPlayerCrosswalk(rows) {
         !['PROVIDER_CROSSWALK', 'OFFICIAL_PROFILE'].includes(bridgeType)) {
       continue;
     }
+    if (conflicted.has(lineupId)) continue;
     if (result.has(lineupId) && result.get(lineupId) !== catalogId) {
       result.delete(lineupId); // conflicting evidence stays unresolved
+      conflicted.add(lineupId);
       continue;
     }
     result.set(lineupId, catalogId);
