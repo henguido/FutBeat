@@ -525,6 +525,37 @@ void main() {
       expect(find.text('Visitante'), findsWidgets);
       expect(find.text('5-4-1'), findsWidgets);
       expect(find.text('4-2-3-1'), findsWidgets);
+      expect(find.byKey(const ValueKey('lineup-Local-coach')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('lineup-Visitante-coach')),
+        findsOneWidget,
+      );
+
+      final homeHalf = tester.getRect(
+        find.byKey(const ValueKey('lineups-home-half')),
+      );
+      final awayHalf = tester.getRect(
+        find.byKey(const ValueKey('lineups-away-half')),
+      );
+      final homeGoalkeeper = tester.getRect(
+        find.byKey(const ValueKey('lineup-pitch-home-home-1')),
+      );
+      final homeForward = tester.getRect(
+        find.byKey(const ValueKey('lineup-pitch-home-home-11')),
+      );
+      final awayForward = tester.getRect(
+        find.byKey(const ValueKey('lineup-pitch-away-away-11')),
+      );
+      final awayGoalkeeper = tester.getRect(
+        find.byKey(const ValueKey('lineup-pitch-away-away-1')),
+      );
+      expect(homeGoalkeeper.top, greaterThanOrEqualTo(homeHalf.top));
+      expect(homeGoalkeeper.top, lessThan(homeForward.top));
+      expect(homeForward.bottom, lessThanOrEqualTo(homeHalf.bottom));
+      expect(awayHalf.top, closeTo(homeHalf.bottom, .01));
+      expect(awayForward.top, greaterThanOrEqualTo(awayHalf.top));
+      expect(awayForward.top, lessThan(awayGoalkeeper.top));
+      expect(awayGoalkeeper.bottom, lessThanOrEqualTo(awayHalf.bottom));
       expect(find.byKey(const ValueKey('lineup-photo-home-1')), findsOne);
       expect(
         find.byKey(const ValueKey('lineup-photo-fallback-home-2')),

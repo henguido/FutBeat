@@ -3131,6 +3131,8 @@ class Lineups extends StatelessWidget {
             _CombinedFormationPitch(
               homeTeam: homeTeam,
               awayTeam: awayTeam,
+              homeCoach: detail.homeCoach,
+              awayCoach: detail.awayCoach,
               homeFormation: detail.homeFormation!,
               awayFormation: detail.awayFormation!,
               homeRows: homeRows,
@@ -3472,6 +3474,8 @@ class _CombinedFormationPitch extends StatelessWidget {
   const _CombinedFormationPitch({
     required this.homeTeam,
     required this.awayTeam,
+    required this.homeCoach,
+    required this.awayCoach,
     required this.homeFormation,
     required this.awayFormation,
     required this.homeRows,
@@ -3481,6 +3485,8 @@ class _CombinedFormationPitch extends StatelessWidget {
 
   final Entity homeTeam;
   final Entity awayTeam;
+  final Json? homeCoach;
+  final Json? awayCoach;
   final String homeFormation;
   final String awayFormation;
   final List<List<Json>> homeRows;
@@ -3500,6 +3506,7 @@ class _CombinedFormationPitch extends StatelessWidget {
               sideLabel: 'Local',
               formation: homeFormation,
               accent: lime,
+              coach: homeCoach,
             ),
             const SizedBox(height: 8),
             _LineupPlayerList(
@@ -3514,6 +3521,7 @@ class _CombinedFormationPitch extends StatelessWidget {
               sideLabel: 'Visitante',
               formation: awayFormation,
               accent: awaySideColor,
+              coach: awayCoach,
             ),
             const SizedBox(height: 8),
             _LineupPlayerList(
@@ -3532,49 +3540,94 @@ class _CombinedFormationPitch extends StatelessWidget {
         child: ClipRRect(
           key: const ValueKey('lineups-combined-pitch'),
           borderRadius: BorderRadius.circular(10),
-          child: CustomPaint(
-            painter: const _PitchPainter(),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Column(
-                children: [
-                  _PitchTeamIdentity(
-                    team: homeTeam,
-                    sideLabel: 'Local',
-                    formation: homeFormation,
-                    accent: lime,
-                    onPitch: true,
-                  ),
-                  const SizedBox(height: 18),
-                  for (final row in homeRows.reversed)
-                    _PitchPlayerRow(
-                      row: row,
-                      side: 'home',
-                      incidents: incidents,
-                    ),
-                  const SizedBox(key: ValueKey('lineups-halfway'), height: 28),
-                  for (final row in awayRows)
-                    _PitchPlayerRow(
-                      row: row,
-                      side: 'away',
-                      incidents: incidents,
-                    ),
-                  const SizedBox(height: 18),
-                  _PitchTeamIdentity(
-                    team: awayTeam,
-                    sideLabel: 'Visitante',
-                    formation: awayFormation,
-                    accent: awaySideColor,
-                    onPitch: true,
-                  ),
-                ],
+          child: Column(
+            children: [
+              _PitchTeamIdentity(
+                team: homeTeam,
+                sideLabel: 'Local',
+                formation: homeFormation,
+                accent: lime,
+                coach: homeCoach,
+                onPitch: true,
               ),
-            ),
+              _FormationHalf(
+                key: const ValueKey('lineups-home-half'),
+                rows: homeRows.reversed.toList(),
+                side: 'home',
+                incidents: incidents,
+                goalAtTop: true,
+              ),
+              _FormationHalf(
+                key: const ValueKey('lineups-away-half'),
+                rows: awayRows,
+                side: 'away',
+                incidents: incidents,
+                goalAtTop: false,
+              ),
+              _PitchTeamIdentity(
+                team: awayTeam,
+                sideLabel: 'Visitante',
+                formation: awayFormation,
+                accent: awaySideColor,
+                coach: awayCoach,
+                onPitch: true,
+              ),
+            ],
           ),
         ),
       );
     },
   );
+}
+
+class _FormationHalf extends StatelessWidget {
+  const _FormationHalf({
+    super.key,
+    required this.rows,
+    required this.side,
+    required this.incidents,
+    required this.goalAtTop,
+  });
+
+  final List<List<Json>> rows;
+  final String side;
+  final List<Json> incidents;
+  final bool goalAtTop;
+
+  @override
+  Widget build(BuildContext context) {
+    const height = 590.0;
+    const rowHeight = 108.0;
+    const edgeInset = 18.0;
+    final travel = height - rowHeight - edgeInset * 2;
+    return SizedBox(
+      height: height,
+      child: CustomPaint(
+        painter: _PitchHalfPainter(goalAtTop: goalAtTop),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            for (var index = 0; index < rows.length; index++)
+              Positioned(
+                top:
+                    edgeInset +
+                    (rows.length == 1
+                        ? travel / 2
+                        : travel * index / (rows.length - 1)),
+                left: 4,
+                right: 4,
+                height: rowHeight,
+                child: _PitchPlayerRow(
+                  row: rows[index],
+                  side: side,
+                  incidents: incidents,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _PitchPlayerRow extends StatelessWidget {
@@ -3616,6 +3669,7 @@ class _PitchTeamIdentity extends StatelessWidget {
     required this.sideLabel,
     required this.formation,
     required this.accent,
+    this.coach,
     this.onPitch = false,
   });
 
@@ -3623,6 +3677,7 @@ class _PitchTeamIdentity extends StatelessWidget {
   final String sideLabel;
   final String formation;
   final Color accent;
+  final Json? coach;
   final bool onPitch;
 
   @override
@@ -3668,6 +3723,19 @@ class _PitchTeamIdentity extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
+                if (coach != null &&
+                    (coach!['name']?.toString().trim().isNotEmpty ?? false))
+                  Text(
+                    'DT · ${coach!['name']}',
+                    key: ValueKey('lineup-$sideLabel-coach'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFB9BDC2),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -3758,6 +3826,54 @@ class _PitchPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
+class _PitchHalfPainter extends CustomPainter {
+  const _PitchHalfPainter({required this.goalAtTop});
+
+  final bool goalAtTop;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFF181A1C),
+    );
+    final line = Paint()
+      ..color = const Color(0xFF414448).withValues(alpha: .62)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    final goalY = goalAtTop ? 0.0 : size.height;
+    final halfwayY = goalAtTop ? size.height : 0.0;
+    canvas.drawLine(Offset(0, halfwayY), Offset(size.width, halfwayY), line);
+    canvas.drawArc(
+      Rect.fromCircle(center: Offset(size.width / 2, halfwayY), radius: 43),
+      goalAtTop ? 3.141592653589793 : 0,
+      3.141592653589793,
+      false,
+      line,
+    );
+    canvas.drawRect(
+      Rect.fromCenter(
+        center: Offset(size.width / 2, goalY),
+        width: size.width * .58,
+        height: 124,
+      ),
+      line,
+    );
+    canvas.drawRect(
+      Rect.fromCenter(
+        center: Offset(size.width / 2, goalY),
+        width: size.width * .28,
+        height: 54,
+      ),
+      line,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PitchHalfPainter oldDelegate) =>
+      oldDelegate.goalAtTop != goalAtTop;
+}
+
 String _pitchName(String name) {
   final words = name.trim().split(RegExp(r'\s+'));
   // Surname like football apps; keep the full name when the last token is
@@ -3846,6 +3962,9 @@ class _PitchPlayer extends StatelessWidget {
       excludeSemantics: true,
       label: lineupPlayerSemanticLabel(player, 'titular', events),
       child: InkWell(
+        key: ValueKey(
+          'lineup-pitch-$side-${player['canonicalId'] ?? player['id'] ?? player['name']}',
+        ),
         borderRadius: BorderRadius.circular(28),
         onTap: () => showMatchPlayerSheet(context, player, side),
         child: ConstrainedBox(
