@@ -397,8 +397,13 @@ void main() {
     expect(find.text('C'), findsOneWidget);
     expect(find.text('8.1'), findsOneWidget);
     expect(find.byType(Image), findsOneWidget);
-    // Players without photo show initials, never a broken image or spinner.
-    expect(find.text('JL'), findsWidgets);
+    // Players without photo show an honest silhouette/dorsal fallback, never a
+    // broken image or spinner.
+    expect(find.byIcon(Icons.person), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-h1')),
+      findsOneWidget,
+    );
     expect(find.byType(CircularProgressIndicator), findsNothing);
     await tester.dragUntilVisible(
       find.text('Entrenador Local'),

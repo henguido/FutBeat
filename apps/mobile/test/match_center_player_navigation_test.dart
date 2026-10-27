@@ -196,7 +196,7 @@ void main() {
   });
 
   testWidgets(
-    'player without any photo shows initials, not a broken image (case D4)',
+    'player without any photo shows a silhouette, not a broken image (case D4)',
     (tester) async {
       await _pumpMatch(
         tester,
@@ -209,7 +209,10 @@ void main() {
           ),
         ),
       );
-      expect(find.text('SF'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('lineup-photo-fallback-fb_player_1')),
+        findsOneWidget,
+      );
       expect(find.byType(Image), findsNothing);
     },
   );

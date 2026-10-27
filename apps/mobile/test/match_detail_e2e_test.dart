@@ -139,16 +139,22 @@ void main() {
         find.text('Todavía no hay alineaciones disponibles.'),
         findsNothing,
       );
-      // Starters sit on the pitch (initials + surname); bench shows full name.
-      for (final label in ['PC', 'DS', 'DV', 'Suplente Canonico', 'DT Local']) {
+      // Starters sit on the pitch (silhouette/photo + surname); bench shows
+      // the full name.
+      for (final label in ['Suplente Canonico', 'DT Local']) {
         expect(find.text(label), findsWidgets, reason: label);
       }
       expect(find.text('4-4-2'), findsOneWidget);
       final images = _networkImages(tester);
       expect(images, contains('https://media.goal-api.com/players/h1.png'));
       expect(images, contains('https://media.goal-api.com/players/a1.png'));
-      // The player without any photo shows initials, never a broken image.
-      expect(find.text('DS'), findsWidgets);
+      // The player without any photo shows a silhouette, never a broken image.
+      expect(
+        find.byKey(
+          const ValueKey('lineup-photo-fallback-fb_player_fixture_e2e_h2'),
+        ),
+        findsWidgets,
+      );
       expect(images.where((url) => url.isEmpty), isEmpty);
       expect(tester.takeException(), isNull);
       await _close(tester, container);

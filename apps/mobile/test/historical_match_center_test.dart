@@ -312,7 +312,10 @@ void main() {
     await _elapse(tester, const Duration(minutes: 1));
     expect(server.detailCalls, [true]);
     await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+      findsWidgets,
+    );
     await _close(tester, container);
   });
 
@@ -335,7 +338,10 @@ void main() {
     expect(find.text('Cargando alineaciones…'), findsOneWidget);
     await _elapse(tester, const Duration(milliseconds: 2500));
     expect(server.detailCalls, [true, false]);
-    expect(find.text('AS'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+      findsWidgets,
+    );
     expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
     await _elapse(tester, const Duration(minutes: 1));
     expect(server.detailCalls, [
@@ -389,7 +395,11 @@ void main() {
       expect(find.text('Cargando alineaciones…'), findsOneWidget);
       await _elapse(tester, const Duration(seconds: 10));
       expect(server.detailCalls.length, 6);
-      expect(find.text('AS'), findsWidgets, reason: 'appears without reopen');
+      expect(
+        find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+        findsWidgets,
+        reason: 'appears without reopen',
+      );
       expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
       await _elapse(tester, const Duration(minutes: 3));
       expect(server.detailCalls.length, 6, reason: 'no reads after complete');
@@ -412,7 +422,10 @@ void main() {
       await _elapse(tester, const Duration(seconds: 7));
       expect(server.detailCalls, [true, false, false]);
       await _tab(tester, 'Alineación');
-      expect(find.text('AS'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+        findsWidgets,
+      );
       await _elapse(tester, const Duration(minutes: 2));
       expect(server.detailCalls.length, 3);
       await _close(tester, container);
@@ -521,7 +534,11 @@ void main() {
     );
     final container = await _open(tester, server);
     await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets, reason: 'initials without a photo');
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+      findsWidgets,
+      reason: 'fallback without a photo',
+    );
     expect(find.text('Cargando alineaciones…'), findsNothing);
     await _elapse(tester, const Duration(minutes: 1));
     await _close(tester, container);
@@ -1138,7 +1155,10 @@ void main() {
     await _mount(tester, container);
     await _elapse(tester, const Duration(seconds: 1));
     await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+      findsWidgets,
+    );
     await _tab(tester, 'Estadísticas');
     expect(find.text('Tiros a puerta'), findsWidgets);
     await _close(tester, container);

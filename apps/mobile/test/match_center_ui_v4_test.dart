@@ -428,4 +428,139 @@ void main() {
       expect(find.text('Alineación confirmada'), findsNothing);
     },
   );
+
+  testWidgets(
+    'combined pitch identifies both teams and adapts at large text scale',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final snapshot = Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': '2026-10-27T12:00:00Z',
+        'teams': [
+          {
+            'id': 'fb_home',
+            'name': 'Asociación Deportiva Local de Nombre Extenso',
+          },
+          {
+            'id': 'fb_away',
+            'name': 'Club Deportivo Visitante de Nombre Extenso',
+          },
+        ],
+        'players': <dynamic>[],
+        'competitions': [
+          {'id': 'fb_comp', 'name': 'Competición'},
+        ],
+        'matches': [
+          {
+            'id': 'fb_match',
+            'competitionId': 'fb_comp',
+            'homeTeamId': 'fb_home',
+            'awayTeamId': 'fb_away',
+            'startTime': '2026-10-27T18:00:00Z',
+            'status': 'VERIFIED',
+            'score': {'home': 0, 'away': 0},
+            'events': <dynamic>[],
+          },
+        ],
+        'standings': <dynamic>[],
+      });
+      List<Map<String, dynamic>> xi(String prefix) => [
+        for (var i = 1; i <= 11; i++)
+          {
+            'id': '$prefix-$i',
+            'canonicalId': '$prefix-$i',
+            'name': 'Nombre muy largo del futbolista $i',
+            'number': i,
+            'lineupPosition': i,
+            if (i == 1)
+              'media': {
+                'verificationStatus': 'VERIFIED',
+                'url': 'https://media.example.test/$prefix-$i.png',
+              },
+          },
+      ];
+      final detail = MatchDetail({
+        'matchId': 'fb_match',
+        'available': true,
+        'home': {
+          'formation': '5-4-1',
+          'starters': xi('home'),
+          'substitutes': [
+            {'id': 'home-12', 'name': 'Suplente local', 'number': 12},
+          ],
+          'coach': {'name': 'Entrenadora Local'},
+        },
+        'away': {
+          'formation': '4-2-3-1',
+          'starters': xi('away'),
+          'substitutes': [
+            {'id': 'away-12', 'name': 'Suplente visitante', 'number': 12},
+          ],
+          'coach': {'name': 'Entrenador Visitante'},
+        },
+        'incidents': <dynamic>[],
+        'statistics': <dynamic>[],
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Lineups(snapshot, snapshot.matches.single, detail),
+            ),
+          ),
+        ),
+      );
+      expect(find.byKey(const ValueKey('lineups-combined-pitch')), findsOne);
+      expect(find.text('Local'), findsWidgets);
+      expect(find.text('Visitante'), findsWidgets);
+      expect(find.text('5-4-1'), findsWidgets);
+      expect(find.text('4-2-3-1'), findsWidgets);
+      expect(find.byKey(const ValueKey('lineup-photo-home-1')), findsOne);
+      expect(
+        find.byKey(const ValueKey('lineup-photo-fallback-home-2')),
+        findsOne,
+      );
+      expect(find.byType(Image), findsNWidgets(2));
+      for (final image in tester.widgetList<Image>(find.byType(Image))) {
+        expect(image.errorBuilder, isNotNull);
+        expect(
+          image.errorBuilder!(
+            tester.element(find.byType(Image).first),
+            StateError('photo failed'),
+            StackTrace.empty,
+          ),
+          isA<SizedBox>(),
+        );
+      }
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(320, 1400),
+              textScaler: TextScaler.linear(2),
+            ),
+            child: Scaffold(
+              body: SingleChildScrollView(
+                child: Lineups(snapshot, snapshot.matches.single, detail),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byKey(const ValueKey('lineups-accessible-list')), findsOne);
+      expect(
+        find.byKey(const ValueKey('lineups-combined-pitch')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

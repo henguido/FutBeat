@@ -314,7 +314,10 @@ void main() {
     expect(find.byKey(const ValueKey('match-refreshing')), findsOneWidget);
     await _elapse(tester, const Duration(seconds: 20));
     expect(find.text('Cargando alineaciones…'), findsNothing);
-    expect(find.text('AS'), findsWidgets); // starter on the pitch (initials)
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_mc1')),
+      findsWidgets,
+    ); // starter fallback on the pitch
     expect(_selectedTab(tester), 'Alineación');
     expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
     semantics.dispose();
@@ -682,11 +685,14 @@ void main() {
     );
     final container = await _open(tester, server);
     await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_mc1')),
+      findsWidgets,
+    );
     for (var step = 0; step < 150; step++) {
       await tester.pump(const Duration(milliseconds: 500));
       expect(
-        find.text('AS'),
+        find.byKey(const ValueKey('lineup-photo-fallback-fb_player_mc1')),
         findsWidgets,
         reason: 'no flash/loss at step $step',
       );
