@@ -2,9 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   auditGoalPlayerCandidates,
+  crosswalksFromGoalPlayerRows,
   resolveGoalPlayerExternalId,
   verifiedGoalPlayerCrosswalk,
 } from '../identity/goal_player_crosswalk.mjs';
+
+test('same provider row id/apiId is a deterministic bridge', () => {
+  const rows = crosswalksFromGoalPlayerRows([{
+    externalId: 'cmr7lunin', lineupExternalId: '779997858', name: 'ignored',
+  }]);
+  const map = verifiedGoalPlayerCrosswalk(rows);
+  assert.equal(resolveGoalPlayerExternalId('779997858', map), 'cmr7lunin');
+});
 
 test('explicit provider bridge resolves numeric lineup id to catalog id', () => {
   const map = verifiedGoalPlayerCrosswalk([{

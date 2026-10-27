@@ -26,6 +26,18 @@ export function verifiedGoalPlayerCrosswalk(rows) {
   return result;
 }
 
+/** Extracts the official id/apiId relation carried by one GOAL player row. */
+export function crosswalksFromGoalPlayerRows(rows) {
+  return (rows ?? []).map((row) => ({
+    lineupExternalId: text(row?.lineupExternalId),
+    catalogExternalId: text(row?.externalId),
+    bridgeType: 'PROVIDER_CROSSWALK',
+    sourceReference: text(row?.externalId)
+      ? `goal-player-row:${text(row.externalId)}`
+      : '',
+  }));
+}
+
 export function resolveGoalPlayerExternalId(externalId, crosswalk) {
   const id = text(externalId);
   return crosswalk.get(id) ?? id;

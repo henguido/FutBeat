@@ -110,12 +110,20 @@ export function normalizeGoalPlayer(value: unknown): Json | null {
   const player = Object.keys(record(row.player)).length > 0 ? record(row.player) : row;
   const team = record(player.team ?? row.team ?? player.currentTeam ?? row.currentTeam);
   const externalId = first(player.id, player.apiId, player.playerId, row.playerId, row.id);
+  // GOAL's documented player contract exposes both identifiers in the SAME
+  // search row: `id` is used by /players/:id while `apiId` is the playerKey
+  // emitted by lineups and match events. Preserve that deterministic bridge;
+  // downstream code must never reconstruct it from a name.
+  const lineupExternalId = first(player.apiId, row.apiId);
   const composed = [first(player.firstName), first(player.lastName)].filter(Boolean).join(' ');
   const name = first(player.name, player.playerName, player.fullName, row.playerName, composed);
   if (!externalId || !name) return null;
   const position = record(player.position);
   return compact({
     externalId,
+    lineupExternalId: lineupExternalId && lineupExternalId !== externalId
+      ? lineupExternalId
+      : null,
     name,
     shortName: first(player.shortName, player.displayName) || null,
     country: first(player.nationality, player.countryName, record(player.country).name, player.country) || null,

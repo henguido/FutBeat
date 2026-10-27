@@ -23,6 +23,18 @@ test('player rows: only present, valid fields; identity requires provider id and
   assert.equal(normalizeGoalPlayer({ id: 'p' }), null);
 });
 
+test('player row preserves official id/apiId bridge used by lineups', () => {
+  assert.deepEqual(normalizeGoalPlayer({
+    id: 'cmr7lunin', apiId: 779997858, name: 'Andriy Lunin',
+  }), {
+    externalId: 'cmr7lunin', lineupExternalId: '779997858', name: 'Andriy Lunin',
+  });
+  // One identifier is not falsely presented as a crosswalk.
+  assert.deepEqual(normalizeGoalPlayer({id: 'only-one', name: 'One'}), {
+    externalId: 'only-one', name: 'One',
+  });
+});
+
 test('search results: every envelope shape, unique by provider id, capped at 50', () => {
   const rows = [{ id: 'a', name: 'A' }, { id: 'a', name: 'A dup' }, { id: 'b', name: 'B' }, { name: 'no id' }];
   for (const payload of [{ data: rows }, { data: { players: rows } }, { data: { results: rows } }, { players: rows }]) {
