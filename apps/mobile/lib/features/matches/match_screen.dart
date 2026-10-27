@@ -3531,11 +3531,11 @@ class _CombinedFormationPitch extends StatelessWidget {
             'Cancha de titulares. Local ${homeTeam.displayName}, formación $homeFormation. Visitante ${awayTeam.displayName}, formación $awayFormation.',
         child: ClipRRect(
           key: const ValueKey('lineups-combined-pitch'),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(10),
           child: CustomPaint(
             painter: const _PitchPainter(),
             child: Container(
-              padding: const EdgeInsets.fromLTRB(6, 14, 6, 14),
+              padding: const EdgeInsets.symmetric(vertical: 12),
               child: Column(
                 children: [
                   _PitchTeamIdentity(
@@ -3545,44 +3545,21 @@ class _CombinedFormationPitch extends StatelessWidget {
                     accent: lime,
                     onPitch: true,
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 18),
                   for (final row in homeRows.reversed)
                     _PitchPlayerRow(
                       row: row,
                       side: 'home',
                       incidents: incidents,
                     ),
-                  Container(
-                    key: const ValueKey('lineups-halfway-teams'),
-                    margin: const EdgeInsets.symmetric(vertical: 6),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xCC07110E),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: Colors.white24),
-                    ),
-                    child: Text(
-                      'Local arriba  •  Visitante abajo',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
+                  const SizedBox(key: ValueKey('lineups-halfway'), height: 28),
                   for (final row in awayRows)
                     _PitchPlayerRow(
                       row: row,
                       side: 'away',
                       incidents: incidents,
                     ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 18),
                   _PitchTeamIdentity(
                     team: awayTeam,
                     sideLabel: 'Visitante',
@@ -3612,20 +3589,23 @@ class _PitchPlayerRow extends StatelessWidget {
   final List<Json> incidents;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 3),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final player in row)
-          Expanded(
-            child: _PitchPlayer(
-              player,
-              side: side,
-              events: lineupEventsForPlayer(player, incidents, side),
+  Widget build(BuildContext context) => SizedBox(
+    height: 116,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final player in row)
+            Expanded(
+              child: _PitchPlayer(
+                player,
+                side: side,
+                events: lineupEventsForPlayer(player, incidents, side),
+              ),
             ),
-          ),
-      ],
+        ],
+      ),
     ),
   );
 }
@@ -3654,11 +3634,11 @@ class _PitchTeamIdentity extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: onPitch
-            ? accent.withValues(alpha: .13)
+            ? const Color(0xFF292B2E)
             : Colors.white.withValues(alpha: .04),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(onPitch ? 0 : 14),
         border: Border.all(
-          color: onPitch ? accent.withValues(alpha: .72) : _cardBorder,
+          color: onPitch ? const Color(0xFF35383B) : _cardBorder,
         ),
       ),
       child: Row(
@@ -3742,33 +3722,19 @@ class _PitchPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF12372C), Color(0xFF0B2A22)],
-        ).createShader(rect),
-    );
+    canvas.drawRect(rect, Paint()..color = const Color(0xFF181A1C));
     final line = Paint()
-      ..color = Colors.white.withValues(alpha: .17)
+      ..color = const Color(0xFF414448).withValues(alpha: .62)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.1;
-    final field = Rect.fromLTWH(8, 8, size.width - 16, size.height - 16);
-    canvas.drawRect(field, line);
+      ..strokeWidth = 1;
     final center = Offset(size.width / 2, size.height / 2);
-    canvas.drawLine(
-      Offset(8, center.dy),
-      Offset(size.width - 8, center.dy),
-      line,
-    );
+    canvas.drawLine(Offset(0, center.dy), Offset(size.width, center.dy), line);
     canvas.drawCircle(
       center,
       (size.width * .13).clamp(24, 44).toDouble(),
       line,
     );
-    for (final y in [8.0, size.height - 8]) {
+    for (final y in [0.0, size.height]) {
       canvas.drawRect(
         Rect.fromCenter(
           center: Offset(size.width / 2, y),
@@ -3814,7 +3780,6 @@ class _PitchPlayer extends StatelessWidget {
     final name = player['name']?.toString() ?? 'Jugador';
     final number = _lineupShirtNumber(player)?.toString() ?? '';
     final rating = _lineupRating(player);
-    final accent = side == 'home' ? lime : awaySideColor;
 
     final content = Column(
       children: [
@@ -3824,44 +3789,50 @@ class _PitchPlayer extends StatelessWidget {
             Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: accent, width: 2),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x66000000), blurRadius: 6),
-                ],
+                border: Border.all(color: const Color(0xFF55595D), width: 1),
               ),
               child: _PlayerAvatar(
                 player,
                 size: 52,
-                accent: accent,
+                accent: const Color(0xFF55595D),
                 showBorder: false,
               ),
             ),
-            if (number.isNotEmpty)
-              Positioned(left: -7, bottom: -3, child: _NumberBadge(number)),
             if (rating != null)
               Positioned(right: -9, top: -5, child: _RatingBadge(rating)),
             if (player['captain'] == true)
               const Positioned(left: -7, top: -5, child: _CaptainBadge()),
           ],
         ),
-        const SizedBox(height: 5),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: .38),
-            borderRadius: BorderRadius.circular(5),
-          ),
-          child: Text(
-            _pitchName(name),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
+        const SizedBox(height: 6),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (number.isNotEmpty) ...[
+              Text(
+                number,
+                style: const TextStyle(
+                  color: Color(0xFF8E9297),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 3),
+            ],
+            Flexible(
+              child: Text(
+                _pitchName(name),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
-          ),
+          ],
         ),
         if (events.isNotEmpty) ...[
           const SizedBox(height: 3),
@@ -3884,32 +3855,6 @@ class _PitchPlayer extends StatelessWidget {
       ),
     );
   }
-}
-
-class _NumberBadge extends StatelessWidget {
-  const _NumberBadge(this.number);
-  final String number;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    constraints: const BoxConstraints(minWidth: 18),
-    height: 18,
-    padding: const EdgeInsets.symmetric(horizontal: 3),
-    alignment: Alignment.center,
-    decoration: BoxDecoration(
-      color: const Color(0xFF0B1114),
-      borderRadius: BorderRadius.circular(9),
-      border: Border.all(color: Colors.white.withValues(alpha: .7)),
-    ),
-    child: Text(
-      number,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 9,
-        fontWeight: FontWeight.w900,
-      ),
-    ),
-  );
 }
 
 String? _positionLabel(dynamic raw) {

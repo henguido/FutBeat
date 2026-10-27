@@ -18,7 +18,7 @@ void main() {
   });
 
   testWidgets('Visual review: polished synthetic lineups', (tester) async {
-    tester.view.physicalSize = const Size(390, 1800);
+    tester.view.physicalSize = const Size(390, 2320);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -140,6 +140,23 @@ void main() {
     await expectLater(
       find.byType(Scaffold),
       matchesGoldenFile('goldens/lineups_polish_synthetic.png'),
+    );
+
+    tester.view.physicalSize = const Size(390, 844);
+    await tester.pump();
+    await expectLater(
+      find.byType(Scaffold),
+      matchesGoldenFile('goldens/lineups_polish_home_viewport.png'),
+    );
+
+    await tester.drag(
+      find.byType(SingleChildScrollView).first,
+      const Offset(0, -680),
+    );
+    await tester.pumpAndSettle();
+    await expectLater(
+      find.byType(Scaffold),
+      matchesGoldenFile('goldens/lineups_polish_away_viewport.png'),
     );
     expect(tester.takeException(), isNull);
   }, tags: 'golden');
