@@ -231,6 +231,34 @@ void main() {
     }
   });
   test(
+    'changing competition order preserves the manually selected country',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'futbeat-country-',
+      );
+      final file = File('${directory.path}/preferences.sqlite');
+      var db = AppDatabase(NativeDatabase(file));
+      try {
+        await db.savePreference(detectedCountry: 'CR', selectedCountry: 'MX');
+        await db.savePreference(
+          competitionOrderMode: CompetitionOrderMode.personalized,
+          competitionOrderPreference: CompetitionOrderPreference.globalFirst,
+          pinnedCompetitionIds: const ['champions'],
+        );
+
+        await db.close();
+        db = AppDatabase(NativeDatabase(file));
+        final preference = await db.watchPreference().first;
+        expect(preference.detectedCountry, 'CR');
+        expect(preference.selectedCountry, 'MX');
+        expect(preference.effectiveCountry, 'MX');
+      } finally {
+        await db.close();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+  test(
     'country inference, manual selection and temporary interest stay separate',
     () async {
       final db = AppDatabase(NativeDatabase.memory());

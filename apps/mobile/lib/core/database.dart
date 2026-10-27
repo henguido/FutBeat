@@ -4,6 +4,8 @@ import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 part 'database.g.dart';
 
+const _selectedCountryUnchanged = Object();
+
 class Follows extends Table {
   TextColumn get entityId => text()();
   TextColumn get entityType => text()();
@@ -183,7 +185,7 @@ class AppDatabase extends _$AppDatabase {
       );
   Future<void> savePreference({
     String? detectedCountry,
-    String? selectedCountry,
+    Object? selectedCountry = _selectedCountryUnchanged,
     bool? bootstrapDismissed,
     String? competitionOrderMode,
     String? competitionOrderPreference,
@@ -196,7 +198,11 @@ class AppDatabase extends _$AppDatabase {
       PreferencesCompanion.insert(
         id: const Value(1),
         detectedCountry: Value(detectedCountry ?? old?.detectedCountry),
-        selectedCountry: Value(selectedCountry),
+        selectedCountry: Value(
+          identical(selectedCountry, _selectedCountryUnchanged)
+              ? old?.selectedCountry
+              : selectedCountry as String?,
+        ),
         bootstrapDismissed: Value(
           bootstrapDismissed ?? old?.bootstrapDismissed ?? false,
         ),
