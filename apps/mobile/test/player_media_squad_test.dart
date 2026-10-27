@@ -46,6 +46,33 @@ void main() {
               children: [
                 PlayerPhoto(sparsePlayer, size: 40),
                 PlayerPhoto(sparsePlayer, size: 84),
+                PlayerPhoto(
+                  Entity({
+                    'id': 'provider-squad-17',
+                    'canonicalId': 'fb_player_shared',
+                    'teamId': 'fb_club',
+                    'name': 'Jugador Compartido',
+                  }),
+                  size: 40,
+                ),
+                PlayerPhoto(
+                  Entity({
+                    'id': 'provider-national-88',
+                    'canonicalId': 'fb_player_shared',
+                    'nationalTeamId': 'fb_national',
+                    'name': 'Jugador Compartido',
+                  }),
+                  size: 40,
+                ),
+                PlayerPhoto(
+                  Entity({
+                    'id': 'provider-homonym-99',
+                    'canonicalId': 'fb_player_homonym',
+                    'name': 'Jugador Compartido',
+                  }),
+                  size: 40,
+                  key: const Key('homonym-without-photo'),
+                ),
                 Builder(
                   builder: (context) {
                     final image = lineupPlayerImageOf(context, {
@@ -73,7 +100,8 @@ void main() {
         ),
       ),
     );
-    expect(find.byType(Image), findsNWidgets(2));
+    expect(find.byType(Image), findsNWidgets(4));
+    expect(find.byKey(const Key('homonym-without-photo')), findsOneWidget);
     expect(
       find.text('https://media.example.test/shared.png'),
       findsNWidgets(2),
@@ -104,7 +132,7 @@ void main() {
       }),
     );
     await tester.pump();
-    expect(find.byType(Image), findsNWidgets(2));
+    expect(find.byType(Image), findsNWidgets(4));
   });
   test('canonical verified player media wins over lineup fallback', () {
     expect(
@@ -130,6 +158,44 @@ void main() {
       }),
       isNull,
     );
+  });
+  test('verified lineup media is retained by canonical person id', () {
+    final memory = EntityMediaMemory();
+    addTearDown(memory.dispose);
+
+    memory.absorbMatchDetail(
+      MatchDetail({
+        'matchId': 'fb_match_identity_media',
+        'available': true,
+        'home': {
+          'starters': [
+            {
+              'id': 'provider-lineup-17',
+              'canonicalId': 'fb_player_shared',
+              'name': 'Jugador Compartido',
+              'media': {
+                'verificationStatus': 'VERIFIED',
+                'url': 'https://media.example.test/shared-from-lineup.png',
+              },
+            },
+          ],
+          'substitutes': <dynamic>[],
+        },
+        'away': {'starters': <dynamic>[], 'substitutes': <dynamic>[]},
+        'statistics': <dynamic>[],
+        'incidents': <dynamic>[],
+        'videos': <dynamic>[],
+      }),
+    );
+
+    expect(
+      memory.imageFor('fb_player_shared'),
+      'https://media.example.test/shared-from-lineup.png',
+    );
+    // Provider ids remain aliases only; media never joins people by name or
+    // copies a canonical photo onto an unverified provider id.
+    expect(memory.imageFor('provider-lineup-17'), isNull);
+    expect(memory.imageFor('fb_player_homonym'), isNull);
   });
   test('unsafe or absent photo falls back without a provider request', () {
     for (final value in [

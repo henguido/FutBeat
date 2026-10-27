@@ -862,6 +862,7 @@ class ApiRepository implements FootballRepository {
         ...raw,
         'offlineStale': true,
       }, blockedAliasIds: media?.revokedDisplayAliases ?? const {});
+      media?.absorbMatchDetail(detail);
       return detail.available && detail.matchId == id ? detail : null;
     } catch (_) {
       return null;
@@ -1198,6 +1199,7 @@ class ApiRepository implements FootballRepository {
           ),
           blockedAliasIds: media?.revokedDisplayAliases ?? const {},
         );
+        media?.absorbMatchDetail(detail);
         // Remember accepted requests only. Errors/timeouts remain retryable.
         _detailRequested.add(id);
         persistMatchDetail(id, detail);
@@ -1221,6 +1223,7 @@ class ApiRepository implements FootballRepository {
       ),
       blockedAliasIds: media?.revokedDisplayAliases ?? const {},
     );
+    media?.absorbMatchDetail(detail);
     persistMatchDetail(id, detail);
     return detail;
   }
