@@ -3098,7 +3098,12 @@ class Lineups extends StatelessWidget {
         detail.awayCoach != null ||
         detail.awayFormation != null;
     if (!homeHasInfo && !awayHasInfo) {
-      if (detail.lineupPending) {
+      // A stale SCHEDULED/PRE_MATCH row can remain globally pending long
+      // after kickoff when the provider never published an XI. Retrying may
+      // continue in the background, but the section must not look like an
+      // endless foreground load once the match itself is awaiting an update.
+      if (detail.lineupPending &&
+          (!detail.available || !match.isAwaitingUpdate)) {
         return const _PendingSection('Cargando alineaciones…');
       }
       return const _EmptySection(

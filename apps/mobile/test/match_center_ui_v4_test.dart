@@ -430,6 +430,69 @@ void main() {
   );
 
   testWidgets(
+    'overdue scheduled match stops pretending an empty lineup is loading',
+    (tester) async {
+      Snapshot snapshot(String startTime) => Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': '2026-10-28T22:00:00Z',
+        'teams': [
+          {'id': 'fb_home', 'name': 'Equipo Local'},
+          {'id': 'fb_away', 'name': 'Equipo Visitante'},
+        ],
+        'players': <dynamic>[],
+        'competitions': [
+          {'id': 'fb_comp', 'name': 'Competición'},
+        ],
+        'matches': [
+          {
+            'id': 'fb_match',
+            'competitionId': 'fb_comp',
+            'homeTeamId': 'fb_home',
+            'awayTeamId': 'fb_away',
+            'startTime': startTime,
+            'status': 'SCHEDULED',
+            'events': <dynamic>[],
+            'statistics': <dynamic>[],
+            'provenance': {
+              'source': 'test',
+              'receivedAt': '2026-10-28T22:00:00Z',
+            },
+          },
+        ],
+        'standings': <dynamic>[],
+      });
+      final detail = MatchDetail({
+        'matchId': 'fb_match',
+        'available': true,
+        'pending': true,
+        'detailLevel': 'full',
+        'home': <String, dynamic>{},
+        'away': <String, dynamic>{},
+        'statistics': <dynamic>[],
+        'incidents': <dynamic>[],
+      });
+      expect(detail.lineupPending, isTrue);
+
+      final overdue = snapshot('2020-01-01T18:00:00Z');
+      expect(overdue.matches.single.isAwaitingUpdate, isTrue);
+      await tester.pumpWidget(
+        MaterialApp(
+          key: const ValueKey('overdue-lineup'),
+          home: Scaffold(
+            body: Lineups(overdue, overdue.matches.single, detail),
+          ),
+        ),
+      );
+      expect(find.text('Cargando alineaciones.'), findsNothing);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
     'combined pitch identifies both teams and adapts at large text scale',
     (tester) async {
       tester.view.physicalSize = const Size(390, 1400);
