@@ -329,6 +329,10 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
         ref.exists(premiumBillingProvider)) {
       unawaited(ref.read(premiumBillingProvider.notifier).onResume());
     }
+    if (state == AppLifecycleState.resumed &&
+        ref.exists(liveRealtimeClientProvider)) {
+      unawaited(ref.read(liveRealtimeClientProvider).refreshOnResume());
+    }
   }
 
   @override

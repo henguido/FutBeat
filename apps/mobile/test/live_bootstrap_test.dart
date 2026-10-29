@@ -536,8 +536,46 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 350));
         expect(client.realtimeMatchIds, isEmpty);
         expect(server.joins.length, 2, reason: 'empty scope opens no channel');
+        final requestsWithoutScope = server.restRequests.length;
+        await client.refreshOnResume();
+        expect(server.restRequests.length, requestsWithoutScope);
       } finally {
         await subscription.cancel();
+        dio.close(force: true);
+        await server.stop();
+      }
+    });
+
+    test('returning to foreground refreshes a terminal result missed while '
+        'the socket was suspended', () async {
+      final server = FakeSupabase([liveRow(id(1), updatedAt: now)]);
+      await server.start();
+      final dio = Dio();
+      final client = LiveRealtimeClient(
+        LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+        dio,
+        scopedRealtime: true,
+        refreshInterval: const Duration(hours: 1),
+      );
+      client.setScope('match:open', [id(1)]);
+      var latest = <String, LiveMatchUpdate>{};
+      final subscription = client.watch().listen((value) => latest = value);
+      try {
+        await until(() => latest[id(1)]?.status == 'LIVE');
+        await until(() => server.joins.isNotEmpty);
+        server.rows[id(1)] = liveRow(
+          id(1),
+          status: 'FT',
+          revision: 2,
+          home: 2,
+          updatedAt: DateTime.now().toUtc(),
+        );
+        await client.refreshOnResume();
+        await until(() => latest[id(1)]?.status == 'FT');
+        expect(latest[id(1)]?.homeScore, 2);
+      } finally {
+        await subscription.cancel();
+        client.dispose();
         dio.close(force: true);
         await server.stop();
       }

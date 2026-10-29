@@ -318,6 +318,12 @@ class LiveRealtimeClient {
   final StreamController<void> _scopeChanges = StreamController<void>.broadcast(
     sync: true,
   );
+  Future<void> Function()? _refreshActiveScope;
+
+  /// Closes the gap left by Android suspending the socket in the background.
+  /// The existing bootstrap reads only the currently visible match IDs.
+  Future<void> refreshOnResume() =>
+      _refreshActiveScope?.call() ?? Future<void>.value();
 
   /// A single socket carries at most 100 canonical match IDs. Open match
   /// scopes outrank the feed; REST remains the safety net for all other rows.
@@ -359,6 +365,7 @@ class LiveRealtimeClient {
   }
 
   void dispose() {
+    _refreshActiveScope = null;
     _scopes.clear();
     _scopeChanges.close();
   }
@@ -599,6 +606,10 @@ class LiveRealtimeClient {
           unawaited(controller.close());
           return;
         }
+        _refreshActiveScope = () async {
+          if (disposed || (scopedRealtime && realtimeMatchIds.isEmpty)) return;
+          await bootstrap();
+        };
         if (!scopedRealtime || realtimeMatchIds.isNotEmpty) {
           unawaited(bootstrap());
         }
@@ -636,6 +647,7 @@ class LiveRealtimeClient {
       },
       onCancel: () async {
         disposed = true;
+        _refreshActiveScope = null;
         retry?.cancel();
         scopeDebounce?.cancel();
         await scopeSubscription?.cancel();
