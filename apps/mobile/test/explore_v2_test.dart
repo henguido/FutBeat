@@ -7,6 +7,7 @@ import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/explore/explore_screen.dart';
+import 'package:go_router/go_router.dart';
 
 Map<String, dynamic> _payload({
   List<Map<String, dynamic>> competitions = const [],
@@ -102,6 +103,64 @@ Future<AppDatabase> _pump(
 }
 
 void main() {
+  testWidgets('homonymous player cards open profiles by canonical ID', (
+    tester,
+  ) async {
+    final database = AppDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final snapshot = Snapshot(
+      _payload(
+        players: [
+          {'id': 'fb_player_1', 'name': 'Alex García', 'countryCode': 'CR'},
+          {'id': 'fb_player_2', 'name': 'Alex García', 'countryCode': 'CR'},
+        ],
+      ),
+    );
+    final router = GoRouter(
+      initialLocation: '/explore?type=player',
+      routes: [
+        GoRoute(
+          path: '/explore',
+          builder: (_, _) => const ExploreScreen(focusType: 'player'),
+        ),
+        GoRoute(
+          path: '/player/:id',
+          builder: (_, state) =>
+              Scaffold(body: Text('profile:${state.pathParameters['id']}')),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          databaseProvider.overrideWithValue(database),
+          preferenceProvider.overrideWith(
+            (ref) => Stream.value(
+              const CountryPreference(
+                detectedCountry: 'CR',
+                selectedCountry: 'CR',
+                bootstrapDismissed: true,
+              ),
+            ),
+          ),
+          followsProvider.overrideWith((ref) => Stream.value(const <String>{})),
+          exploreSnapshotProvider.overrideWith((ref) => Stream.value(snapshot)),
+          playerSuggestionsProvider.overrideWith(
+            (ref, teamsKey) async => const <Entity>[],
+          ),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Alex García'), findsNWidgets(2));
+    await tester.tap(find.text('Alex García').first);
+    await tester.pumpAndSettle();
+    expect(find.text('profile:fb_player_1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test(
     'player suggestions reuse catalogue IDs and rank follows and country',
     () {
