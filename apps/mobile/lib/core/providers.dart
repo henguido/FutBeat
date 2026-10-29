@@ -2027,7 +2027,13 @@ final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
     ),
   );
   ref.onDispose(() => dio.close(force: true));
-  return LiveRealtimeClient(ref.watch(liveRealtimeConfigProvider), dio);
+  final client = LiveRealtimeClient(
+    ref.watch(liveRealtimeConfigProvider),
+    dio,
+    scopedRealtime: true,
+  );
+  ref.onDispose(client.dispose);
+  return client;
 });
 
 final liveMatchUpdatesProvider = StreamProvider<Map<String, LiveMatchUpdate>>(

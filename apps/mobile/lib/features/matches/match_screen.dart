@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/entity_media.dart';
 import '../../core/interests.dart';
+import '../../core/live_realtime.dart';
 import '../../core/models.dart';
 import '../../core/profile_context.dart';
 import '../../core/providers.dart';
@@ -90,6 +91,8 @@ class MatchScreen extends ConsumerStatefulWidget {
 
 class _MatchScreenState extends ConsumerState<MatchScreen>
     with TickerProviderStateMixin {
+  LiveRealtimeClient? _liveClient;
+  late final String _liveScope = 'match:${identityHashCode(this)}';
   final Set<String> _recordedTeamInterests = {};
   late TabController _tabs;
   Timer? _lineupEnrichmentRetry;
@@ -192,6 +195,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 
   @override
   void dispose() {
+    _liveClient?.clearScope(_liveScope);
     _tabs.dispose();
     _lineupEnrichmentRetry?.cancel();
     _standingsRetry?.cancel();
@@ -202,9 +206,24 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 
   @override
   Widget build(BuildContext context) {
-    final updates =
-        ref.watch(liveMatchUpdatesProvider).asData?.value ??
-        const <String, LiveMatchUpdate>{};
+    final client = ref.read(liveRealtimeClientProvider);
+    if (!identical(_liveClient, client)) {
+      _liveClient?.clearScope(_liveScope);
+      _liveClient = client;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) client.setScope(_liveScope, [widget.id]);
+    });
+    // Unrelated goals elsewhere in the feed must not rebuild this Match
+    // Center. The map retains each unchanged update object across emissions.
+    final ownUpdate = ref.watch(
+      liveMatchUpdatesProvider.select(
+        (value) => value.asData?.value[widget.id],
+      ),
+    );
+    final updates = ownUpdate == null
+        ? const <String, LiveMatchUpdate>{}
+        : <String, LiveMatchUpdate>{widget.id: ownUpdate};
     ref.listen(matchDetailProvider(widget.id), (_, next) {
       // Ignore the refresh-in-progress state (it still carries old data).
       if (!next.isLoading &&

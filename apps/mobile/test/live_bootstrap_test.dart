@@ -51,6 +51,7 @@ class FakeSupabase {
   final List<Uri> restRequests = [];
   final Set<int> failingRequests = {};
   final List<WebSocket> sockets = [];
+  final List<Map<String, dynamic>> joins = [];
   void Function(int request)? beforeAnswer;
   late HttpServer server;
 
@@ -70,6 +71,7 @@ class FakeSupabase {
         ws.listen((raw) {
           final message = jsonDecode(raw as String) as Map;
           if (message['event'] == 'phx_join') {
+            joins.add(Map<String, dynamic>.from(message));
             ws.add(
               jsonEncode({
                 'event': 'phx_reply',
@@ -466,6 +468,43 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
     }
+
+    test('scoped channel filters visible canonical matches and rejoins on '
+        'scope changes; no scope leaves REST as safety net', () async {
+      final server = FakeSupabase([liveRow(id(1), updatedAt: now)]);
+      await server.start();
+      final dio = Dio();
+      final client = LiveRealtimeClient(
+        LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+        dio,
+        scopedRealtime: true,
+        refreshInterval: const Duration(milliseconds: 50),
+      );
+      final subscription = client.watch().listen((_) {});
+      try {
+        await until(() => server.restRequests.isNotEmpty);
+        expect(server.joins, isEmpty);
+        client.setScope('calendar', [id(1), id(1), 'not-canonical']);
+        await until(() => server.joins.isNotEmpty);
+        final first =
+            server.joins.last['payload']['config']['postgres_changes'][0];
+        expect(first['filter'], 'match_id=in.(${id(1)})');
+        client.setScope('match:open', [id(2)]);
+        await until(() => server.joins.length >= 2);
+        final second =
+            server.joins.last['payload']['config']['postgres_changes'][0];
+        expect(second['filter'], 'match_id=in.(${id(2)},${id(1)})');
+        client.clearScope('match:open');
+        client.clearScope('calendar');
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        expect(client.realtimeMatchIds, isEmpty);
+        expect(server.joins.length, 2, reason: 'empty scope opens no channel');
+      } finally {
+        await subscription.cancel();
+        dio.close(force: true);
+        await server.stop();
+      }
+    });
 
     test('reads the whole window, survives a 503, recovers, and does not '
         'poll REST every tick while realtime is joined', () async {

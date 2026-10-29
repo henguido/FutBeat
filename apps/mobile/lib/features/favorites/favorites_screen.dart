@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/live_realtime.dart';
 import '../../core/providers.dart';
 import '../../core/relevance.dart';
 import '../../core/theme.dart';
@@ -16,8 +17,16 @@ class FavoritesScreen extends ConsumerStatefulWidget {
 }
 
 class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
+  LiveRealtimeClient? _liveClient;
+  late final String _liveScope = 'favorites:${identityHashCode(this)}';
   Set<String>? _lastFollows;
   Snapshot? _lastSnapshot;
+
+  @override
+  void dispose() {
+    _liveClient?.clearScope(_liveScope);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,6 +57,16 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
       });
     }
     final snapshot = request?.asData?.value ?? _lastSnapshot;
+    final client = ref.read(liveRealtimeClientProvider);
+    if (!identical(_liveClient, client)) {
+      _liveClient?.clearScope(_liveScope);
+      _liveClient = client;
+    }
+    final favoriteMatchIds =
+        snapshot?.matches.map((match) => match.id).toList() ?? const <String>[];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) client.setScope(_liveScope, favoriteMatchIds);
+    });
     final updates =
         ref.watch(liveMatchUpdatesProvider).asData?.value ??
         const <String, LiveMatchUpdate>{};

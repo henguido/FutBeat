@@ -295,17 +295,68 @@ class LiveRealtimeClient {
     this.retryDelay = const Duration(seconds: 2),
     this.refreshInterval = const Duration(seconds: 60),
     this.bootstrapPolicy = const LiveBootstrapPolicy(),
+    this.scopedRealtime = false,
   });
   final LiveRealtimeConfig config;
   final Dio dio;
   final Duration retryDelay, refreshInterval;
   final LiveBootstrapPolicy bootstrapPolicy;
 
+  /// The app uses scoped mode. Legacy callers may still use the unfiltered
+  /// channel while migrating; tests exercise both paths.
+  final bool scopedRealtime;
+  static const maxRealtimeMatchIds = 100;
+  final Map<String, Set<String>> _scopes = {};
+  final StreamController<void> _scopeChanges = StreamController<void>.broadcast(
+    sync: true,
+  );
+
+  /// A single socket carries at most 100 canonical match IDs. Open match
+  /// scopes outrank the feed; REST remains the safety net for all other rows.
+  List<String> get realtimeMatchIds {
+    final ids = <String>{};
+    final owners = _scopes.keys.toList()
+      ..sort(
+        (a, b) => (a.startsWith('match:') ? 0 : 1).compareTo(
+          b.startsWith('match:') ? 0 : 1,
+        ),
+      );
+    for (final owner in owners) {
+      for (final id in _scopes[owner]!) {
+        if (RegExp(r'^fb_[A-Za-z0-9_-]+$').hasMatch(id)) ids.add(id);
+        if (ids.length == maxRealtimeMatchIds) return ids.toList();
+      }
+    }
+    return ids.toList();
+  }
+
+  void setScope(String owner, Iterable<String> matchIds) {
+    if (_scopeChanges.isClosed) return;
+    final next = matchIds.toSet();
+    if (_scopes[owner]?.length == next.length &&
+        _scopes[owner]!.containsAll(next)) {
+      return;
+    }
+    _scopes[owner] = next;
+    _scopeChanges.add(null);
+  }
+
+  void clearScope(String owner) {
+    if (_scopeChanges.isClosed) return;
+    if (_scopes.remove(owner) != null) _scopeChanges.add(null);
+  }
+
+  void dispose() {
+    _scopes.clear();
+    _scopeChanges.close();
+  }
+
   Stream<Map<String, LiveMatchUpdate>> watch() {
     final state = <String, LiveMatchUpdate>{};
     late StreamController<Map<String, LiveMatchUpdate>> controller;
     WebSocket? socket;
-    Timer? retry, heartbeat, refresh, joinTimeout;
+    Timer? retry, heartbeat, refresh, joinTimeout, scopeDebounce;
+    StreamSubscription<void>? scopeSubscription;
     var disposed = false;
     var connecting = false;
     var sequence = 0;
@@ -314,6 +365,7 @@ class LiveRealtimeClient {
     var bootstrapping = false;
     var bootstrapAgain = false;
     var joined = false;
+    var scopeVersion = 0;
     DateTime? lastBootstrap;
     // Server minus device clock, from the last answer's `Date`.
     var serverOffset = Duration.zero;
@@ -406,6 +458,7 @@ class LiveRealtimeClient {
       joined = false;
       heartbeat?.cancel();
       joinTimeout?.cancel();
+      if (scopedRealtime && realtimeMatchIds.isEmpty) return;
       if (!disposed && !(retry?.isActive ?? false)) {
         retry = Timer(retryDelay, () {
           unawaited(connect());
@@ -415,12 +468,16 @@ class LiveRealtimeClient {
 
     connect = () async {
       if (disposed || connecting) return;
+      final scopedIds = scopedRealtime ? realtimeMatchIds : const <String>[];
+      if (scopedRealtime && scopedIds.isEmpty) return;
+      final joiningScopeVersion = scopeVersion;
       connecting = true;
       try {
         final current = await WebSocket.connect(config.websocketUri.toString())
             .timeout(const Duration(seconds: 10));
-        if (disposed) {
+        if (disposed || joiningScopeVersion != scopeVersion) {
           await current.close();
+          if (!disposed) reconnect();
           return;
         }
         socket = current;
@@ -438,6 +495,8 @@ class LiveRealtimeClient {
                     'event': '*',
                     'schema': 'public',
                     'table': 'live_match_updates',
+                    if (scopedRealtime)
+                      'filter': 'match_id=in.(${scopedIds.join(',')})',
                   },
                 ],
                 'private': false,
@@ -499,10 +558,12 @@ class LiveRealtimeClient {
               /* Malformed frames do not erase valid data. */
             }
           },
-          onDone: reconnect,
+          onDone: () {
+            if (identical(socket, current)) reconnect();
+          },
           onError: (_) {
             unawaited(current.close());
-            reconnect();
+            if (identical(socket, current)) reconnect();
           },
         );
       } catch (_) {
@@ -520,6 +581,23 @@ class LiveRealtimeClient {
         }
         unawaited(bootstrap());
         unawaited(connect());
+        if (scopedRealtime) {
+          scopeSubscription = _scopeChanges.stream.listen((_) {
+            scopeDebounce?.cancel();
+            scopeDebounce = Timer(const Duration(milliseconds: 250), () {
+              scopeVersion++;
+              joined = false;
+              retry?.cancel();
+              retry = null;
+              heartbeat?.cancel();
+              joinTimeout?.cancel();
+              final old = socket;
+              socket = null;
+              if (old != null) unawaited(old.close());
+              unawaited(connect());
+            });
+          });
+        }
         refresh = Timer.periodic(refreshInterval, (_) {
           // Joined: realtime carries the changes, REST is only a safety net.
           final last = lastBootstrap;
@@ -535,6 +613,8 @@ class LiveRealtimeClient {
       onCancel: () async {
         disposed = true;
         retry?.cancel();
+        scopeDebounce?.cancel();
+        await scopeSubscription?.cancel();
         heartbeat?.cancel();
         refresh?.cancel();
         joinTimeout?.cancel();

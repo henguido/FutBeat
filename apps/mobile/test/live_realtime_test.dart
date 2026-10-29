@@ -2,10 +2,23 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dio/dio.dart';
 import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/models.dart';
 
 void main() {
+  test('scoped realtime caps IDs at 100 and prioritizes an open match', () {
+    final client = LiveRealtimeClient(
+      const LiveRealtimeConfig(supabaseUrl: '', publicKey: ''),
+      Dio(),
+      scopedRealtime: true,
+    );
+    client.setScope('calendar', [for (var i = 0; i < 150; i++) 'fb_match_$i']);
+    client.setScope('match:open', ['fb_match_open']);
+    expect(client.realtimeMatchIds.length, 100);
+    expect(client.realtimeMatchIds.first, 'fb_match_open');
+    expect(client.realtimeMatchIds.toSet().length, 100);
+  });
   test('Realtime derives Supabase origin from the existing BFF URL', () {
     final config = LiveRealtimeConfig.fromValues(
       apiUrl: 'https://project.supabase.co/functions/v1/futbeat-api',

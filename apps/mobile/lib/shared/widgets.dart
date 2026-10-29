@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/entity_media.dart';
+import '../core/live_realtime.dart';
 import '../core/models.dart';
 import '../core/news_links.dart';
 import '../core/providers.dart';
@@ -203,7 +204,7 @@ class DataView extends ConsumerWidget {
       );
 }
 
-class CalendarDataView extends ConsumerWidget {
+class CalendarDataView extends ConsumerStatefulWidget {
   const CalendarDataView({
     super.key,
     required this.date,
@@ -214,8 +215,22 @@ class CalendarDataView extends ConsumerWidget {
   final Widget Function(Snapshot, bool loading, bool failed) builder;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(effectiveCalendarSnapshotProvider(date));
+  ConsumerState<CalendarDataView> createState() => _CalendarDataViewState();
+}
+
+class _CalendarDataViewState extends ConsumerState<CalendarDataView> {
+  LiveRealtimeClient? _liveClient;
+  late final String _scope = 'calendar:${identityHashCode(this)}';
+
+  @override
+  void dispose() {
+    _liveClient?.clearScope(_scope);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(effectiveCalendarSnapshotProvider(widget.date));
     // Before the stream's first event, paint the day already held in memory
     // (no loading flash on a date switch). Only when the repository is live.
     final repository = ref.exists(repositoryProvider)
@@ -224,7 +239,7 @@ class CalendarDataView extends ConsumerWidget {
     final memory = state.hasValue || repository is! ApiRepository
         ? null
         : repository
-              .peekDate(date)
+              .peekDate(widget.date)
               ?.withLiveUpdates(
                 ref.watch(liveMatchUpdatesProvider).asData?.value ??
                     const <String, LiveMatchUpdate>{},
@@ -242,12 +257,21 @@ class CalendarDataView extends ConsumerWidget {
           'matches': [],
           'standings': [],
         });
+    final client = ref.read(liveRealtimeClientProvider);
+    if (!identical(_liveClient, client)) {
+      _liveClient?.clearScope(_scope);
+      _liveClient = client;
+    }
+    final visibleIds = data.matches.map((match) => match.id).toList();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) client.setScope(_scope, visibleIds);
+    });
     // Render the same date controls even on a cold cache miss or error.
     return Column(
       children: [
         if (data.revalidating) const LinearProgressIndicator(minHeight: 2),
         Expanded(
-          child: builder(
+          child: widget.builder(
             data,
             // Loading only without any snapshot to show, or while an empty
             // cached day is being revalidated (never a false "no matches").
