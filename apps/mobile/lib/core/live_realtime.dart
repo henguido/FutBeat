@@ -323,12 +323,16 @@ class LiveRealtimeClient {
   /// scopes outrank the feed; REST remains the safety net for all other rows.
   List<String> get realtimeMatchIds {
     final ids = <String>{};
+    int priority(String owner) => owner.startsWith('match:')
+        ? 0
+        : owner.startsWith('favorites:')
+        ? 1
+        : 2;
     final owners = _scopes.keys.toList()
-      ..sort(
-        (a, b) => (a.startsWith('match:') ? 0 : 1).compareTo(
-          b.startsWith('match:') ? 0 : 1,
-        ),
-      );
+      ..sort((a, b) {
+        final byPriority = priority(a).compareTo(priority(b));
+        return byPriority != 0 ? byPriority : a.compareTo(b);
+      });
     for (final owner in owners) {
       for (final id in _scopes[owner]!) {
         if (RegExp(r'^fb_[A-Za-z0-9_-]+$').hasMatch(id)) ids.add(id);

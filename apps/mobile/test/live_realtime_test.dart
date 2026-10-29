@@ -14,9 +14,11 @@ void main() {
       scopedRealtime: true,
     );
     client.setScope('calendar', [for (var i = 0; i < 150; i++) 'fb_match_$i']);
+    client.setScope('favorites:hub', ['fb_match_favorite']);
     client.setScope('match:open', ['fb_match_open']);
     expect(client.realtimeMatchIds.length, 100);
     expect(client.realtimeMatchIds.first, 'fb_match_open');
+    expect(client.realtimeMatchIds[1], 'fb_match_favorite');
     expect(client.realtimeMatchIds.toSet().length, 100);
   });
   test('Realtime derives Supabase origin from the existing BFF URL', () {
