@@ -565,14 +565,76 @@ void main() {
         await until(() => server.joins.isNotEmpty);
         server.rows[id(1)] = liveRow(
           id(1),
-          status: 'FT',
+          status: 'FINISHED_PENDING_VERIFICATION',
           revision: 2,
           home: 2,
           updatedAt: DateTime.now().toUtc(),
         );
         await client.refreshOnResume();
-        await until(() => latest[id(1)]?.status == 'FT');
+        await until(
+          () => latest[id(1)]?.status == 'FINISHED_PENDING_VERIFICATION',
+        );
         expect(latest[id(1)]?.homeScore, 2);
+      } finally {
+        await subscription.cancel();
+        client.dispose();
+        dio.close(force: true);
+        await server.stop();
+      }
+    });
+
+    test('a scoped channel ignores an unrelated realtime row', () async {
+      final server = FakeSupabase([liveRow(id(1), updatedAt: now)]);
+      await server.start();
+      final dio = Dio();
+      final client = LiveRealtimeClient(
+        LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+        dio,
+        scopedRealtime: true,
+        refreshInterval: const Duration(hours: 1),
+      );
+      client.setScope('match:open', [id(1)]);
+      var latest = <String, LiveMatchUpdate>{};
+      final subscription = client.watch().listen((value) => latest = value);
+      try {
+        await until(() => latest.containsKey(id(1)) && server.joins.isNotEmpty);
+        server.sockets.last.add(
+          jsonEncode({
+            'event': 'postgres_changes',
+            'payload': {
+              'data': {
+                'type': 'UPDATE',
+                'record': liveRow(id(2), updatedAt: now),
+              },
+            },
+          }),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(latest.keys, [id(1)]);
+        server.sockets.last.add(
+          jsonEncode({
+            'event': 'postgres_changes',
+            'payload': {
+              'data': {
+                'type': 'DELETE',
+                'old_record': {'match_id': id(2)},
+              },
+            },
+          }),
+        );
+        server.sockets.last.add(
+          jsonEncode({
+            'event': 'postgres_changes',
+            'payload': {
+              'data': {
+                'type': 'UPDATE',
+                'record': liveRow(id(1), home: 3, revision: 2, updatedAt: now),
+              },
+            },
+          }),
+        );
+        await until(() => latest[id(1)]?.homeScore == 3);
+        expect(latest.keys, [id(1)]);
       } finally {
         await subscription.cancel();
         client.dispose();

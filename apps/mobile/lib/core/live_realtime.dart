@@ -553,7 +553,12 @@ class LiveRealtimeClient {
         current.listen(
           (raw) {
             try {
-              if (raw is! String || disposed) return;
+              if (raw is! String ||
+                  disposed ||
+                  !identical(socket, current) ||
+                  joiningScopeVersion != scopeVersion) {
+                return;
+              }
               final message = jsonDecode(raw) as Map;
               if (message['event'] == 'phx_reply' &&
                   message['ref'] == joinRef) {
@@ -575,8 +580,18 @@ class LiveRealtimeClient {
               if (message['event'] != 'postgres_changes') return;
               final data = message['payload']?['data'];
               if (data is! Map) return;
+              final row = data['type'] == 'DELETE'
+                  ? data['old_record']
+                  : data['record'];
+              final matchId = row is Map ? row['match_id'] : null;
+              if (scopedRealtime &&
+                  (matchId is! String ||
+                      !scopedIds.contains(matchId) ||
+                      !realtimeMatchIds.contains(matchId))) {
+                return;
+              }
               if (data['type'] == 'DELETE') {
-                state.remove(data['old_record']?['match_id']);
+                state.remove(matchId);
               } else if (data['record'] is Map) {
                 accept(Map<String, dynamic>.from(data['record'] as Map));
               }
