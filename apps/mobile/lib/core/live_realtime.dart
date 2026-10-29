@@ -138,7 +138,11 @@ Future<LiveBootstrapRead> fetchLiveBootstrap(
   LiveRealtimeConfig config,
   LiveBootstrapPolicy policy, {
   required DateTime since,
+  List<String>? matchIds,
 }) async {
+  if (matchIds != null && matchIds.isEmpty) {
+    return (rows: <Json>[], complete: true, exhausted: false, serverNow: null);
+  }
   final rows = <Json>[];
   DateTime? serverNow;
   String? after;
@@ -151,7 +155,8 @@ Future<LiveBootstrapRead> fetchLiveBootstrap(
         config.bootstrapPageUri(
           since: since,
           after: after,
-          limit: policy.pageSize,
+          limit: matchIds == null ? policy.pageSize : matchIds.length + 1,
+          matchIds: matchIds,
         ),
         options: Options(headers: {'apikey': config.publicKey}),
       );
@@ -177,7 +182,8 @@ Future<LiveBootstrapRead> fetchLiveBootstrap(
         .map((row) => Map<String, dynamic>.from(row))
         .toList();
     rows.addAll(pageRows);
-    if (data.length < policy.pageSize) {
+    if (data.length <
+        (matchIds == null ? policy.pageSize : matchIds.length + 1)) {
       return (
         rows: rows,
         complete: true,
@@ -261,11 +267,13 @@ class LiveRealtimeConfig {
     required DateTime since,
     required int limit,
     String? after,
+    List<String>? matchIds,
   }) => Uri.parse('$supabaseUrl/rest/v1/live_match_updates').replace(
     queryParameters: {
       'select': liveBootstrapColumns,
       'changed_at': 'gte.${since.toUtc().toIso8601String()}',
-      if (after != null) 'match_id': 'gt.$after',
+      if (matchIds != null) 'match_id': 'in.(${matchIds.join(',')})',
+      if (matchIds == null && after != null) 'match_id': 'gt.$after',
       'order': 'match_id.asc',
       'limit': '$limit',
     },
@@ -396,7 +404,14 @@ class LiveRealtimeClient {
     }
 
     Future<void> bootstrapOnce() async {
-      final before = Map<String, LiveMatchUpdate>.of(state);
+      final ids = scopedRealtime ? realtimeMatchIds : null;
+      if (ids != null && ids.isEmpty) return;
+      final before = scopedRealtime
+          ? <String, LiveMatchUpdate>{
+              for (final id in ids!)
+                if (state.containsKey(id)) id: state[id]!,
+            }
+          : Map<String, LiveMatchUpdate>.of(state);
       final policy = bootstrapPolicy;
       final since = DateTime.now()
           .toUtc()
@@ -408,6 +423,7 @@ class LiveRealtimeClient {
           config,
           policy,
           since: since,
+          matchIds: ids,
         );
         if (disposed) return;
         final deviceNow = DateTime.now().toUtc();
@@ -579,7 +595,9 @@ class LiveRealtimeClient {
           unawaited(controller.close());
           return;
         }
-        unawaited(bootstrap());
+        if (!scopedRealtime || realtimeMatchIds.isNotEmpty) {
+          unawaited(bootstrap());
+        }
         unawaited(connect());
         if (scopedRealtime) {
           scopeSubscription = _scopeChanges.stream.listen((_) {
@@ -594,11 +612,13 @@ class LiveRealtimeClient {
               final old = socket;
               socket = null;
               if (old != null) unawaited(old.close());
+              if (realtimeMatchIds.isNotEmpty) unawaited(bootstrap());
               unawaited(connect());
             });
           });
         }
         refresh = Timer.periodic(refreshInterval, (_) {
+          if (scopedRealtime && realtimeMatchIds.isEmpty) return;
           // Joined: realtime carries the changes, REST is only a safety net.
           final last = lastBootstrap;
           if (joined &&

@@ -108,10 +108,15 @@ class FakeSupabase {
       }
       final after = q['match_id'];
       if (after != null) {
-        final cursor = after.substring('gt.'.length);
-        result = result
-            .where((r) => (r['match_id'] as String).compareTo(cursor) > 0)
-            .toList();
+        if (after.startsWith('in.(') && after.endsWith(')')) {
+          final ids = after.substring(4, after.length - 1).split(',').toSet();
+          result = result.where((r) => ids.contains(r['match_id'])).toList();
+        } else {
+          final cursor = after.substring('gt.'.length);
+          result = result
+              .where((r) => (r['match_id'] as String).compareTo(cursor) > 0)
+              .toList();
+        }
       }
       if (q['order'] == 'match_id.asc') {
         result.sort(
@@ -150,6 +155,32 @@ void main() {
   String id(int i) => 'fb_match_${i.toString().padLeft(5, '0')}';
 
   group('fetchLiveBootstrap', () {
+    test('scoped REST reads only relevant IDs in one bounded page', () async {
+      final server = FakeSupabase([
+        for (var i = 0; i < 120; i++) liveRow(id(i), updatedAt: now),
+      ]);
+      await server.start();
+      final dio = Dio();
+      try {
+        final result = await fetchLiveBootstrap(
+          dio,
+          LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+          policy,
+          since: now.subtract(const Duration(hours: 1)),
+          matchIds: [id(1), id(2)],
+        );
+        expect(result.complete, isTrue);
+        expect(result.rows.map((r) => r['match_id']), [id(1), id(2)]);
+        expect(server.restRequests, hasLength(1));
+        expect(
+          server.restRequests.single.queryParameters['match_id'],
+          'in.(${id(1)},${id(2)})',
+        );
+      } finally {
+        dio.close(force: true);
+        await server.stop();
+      }
+    });
     test(
       'more than 1000 rows: every row of the window, paged, no duplicates',
       () async {
@@ -482,10 +513,16 @@ void main() {
       );
       final subscription = client.watch().listen((_) {});
       try {
-        await until(() => server.restRequests.isNotEmpty);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        expect(server.restRequests, isEmpty);
         expect(server.joins, isEmpty);
         client.setScope('calendar', [id(1), id(1), 'not-canonical']);
         await until(() => server.joins.isNotEmpty);
+        await until(() => server.restRequests.isNotEmpty);
+        expect(
+          server.restRequests.first.queryParameters['match_id'],
+          'in.(${id(1)})',
+        );
         final first =
             server.joins.last['payload']['config']['postgres_changes'][0];
         expect(first['filter'], 'match_id=in.(${id(1)})');
