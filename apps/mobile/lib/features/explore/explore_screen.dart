@@ -12,7 +12,9 @@ import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
 class ExploreScreen extends ConsumerStatefulWidget {
-  const ExploreScreen({super.key});
+  const ExploreScreen({super.key, this.focusType});
+
+  final String? focusType;
 
   @override
   ConsumerState<ExploreScreen> createState() => _ExploreScreenState();
@@ -181,21 +183,33 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         hasQuery &&
         data?.pendingRemote == true &&
         remoteAttempts < remoteSearchRetryDelays.length;
-    final competitions = _matching(data?.competitions, data, requestQuery);
-    final teams = _matching(data?.teams, data, requestQuery);
+    final focus =
+        const {'team', 'competition', 'player'}.contains(widget.focusType)
+        ? widget.focusType
+        : null;
+    final competitions = focus == null || focus == 'competition'
+        ? _matching(data?.competitions, data, requestQuery)
+        : const <Entity>[];
+    final teams = focus == null || focus == 'team'
+        ? _matching(data?.teams, data, requestQuery)
+        : const <Entity>[];
     final follows =
         ref.watch(followsProvider).asData?.value ?? const <String>{};
-    final players = hasQuery
+    final players = focus != null && focus != 'player'
+        ? const <Entity>[]
+        : hasQuery
         ? _matching(data?.players, data, requestQuery)
-        : (ref
-                      .watch(
-                        playerSuggestionsProvider(followedTeamsKey(follows)),
-                      )
-                      .asData
-                      ?.value ??
-                  const <Entity>[])
-              .take(12)
-              .toList(growable: false);
+        : suggestAvailablePlayers(
+            remote:
+                ref
+                    .watch(playerSuggestionsProvider(followedTeamsKey(follows)))
+                    .asData
+                    ?.value ??
+                const <Entity>[],
+            loaded: data?.players ?? const <Entity>[],
+            follows: follows,
+            country: country,
+          );
     final favoriteTeams = hasQuery
         ? const <Entity>[]
         : teams.where((team) => follows.contains('team:${team.id}')).toList();
@@ -223,7 +237,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                 autofocus: false,
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
-                  hintText: 'Buscar equipos, jugadores, ligas...',
+                  hintText: switch (focus) {
+                    'team' => 'Buscar equipos...',
+                    'competition' => 'Buscar competiciones...',
+                    'player' => 'Buscar jugadores...',
+                    _ => 'Buscar equipos, jugadores, ligas...',
+                  },
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: searchController.text.isEmpty
                       ? null
@@ -245,6 +264,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               data: data,
               hasQuery: hasQuery,
               query: requestQuery,
+              focusType: focus,
               refreshing: refreshing,
               failed: failed,
               searchingRemote: searchingRemote,
@@ -269,11 +289,42 @@ List<Entity> _matching(List<Entity>? entities, Snapshot? data, String query) =>
         .toList(growable: false) ??
     const <Entity>[];
 
+/// Reuses canonical catalogue rows already on screen. Remote suggestions may
+/// be sparse or unavailable offline; neither case creates another request.
+/// IDs, never names, decide whether two rows represent the same player.
+List<Entity> suggestAvailablePlayers({
+  required List<Entity> remote,
+  required List<Entity> loaded,
+  required Set<String> follows,
+  String? country,
+}) {
+  final byId = <String, Entity>{};
+  for (final player in [...remote, ...loaded]) {
+    byId.putIfAbsent(player.id, () => player);
+  }
+  int rank(Entity player) {
+    if (follows.contains('player:${player.id}')) return 0;
+    final teamId =
+        player.json['teamId']?.toString() ?? player.json['clubId']?.toString();
+    if (teamId != null && follows.contains('team:$teamId')) return 1;
+    if (entityMatchesCountry(player, country)) return 2;
+    return 3;
+  }
+
+  final values = byId.values.toList(growable: false);
+  values.sort((a, b) {
+    final priority = rank(a).compareTo(rank(b));
+    return priority != 0 ? priority : a.id.compareTo(b.id);
+  });
+  return values.take(12).toList(growable: false);
+}
+
 class _ExploreContent extends StatelessWidget {
   const _ExploreContent({
     required this.data,
     required this.hasQuery,
     required this.query,
+    required this.focusType,
     required this.refreshing,
     required this.failed,
     required this.searchingRemote,
@@ -288,6 +339,7 @@ class _ExploreContent extends StatelessWidget {
   final Snapshot? data;
   final bool hasQuery;
   final String query;
+  final String? focusType;
   final bool refreshing;
   final bool failed;
   final bool searchingRemote;
@@ -322,7 +374,11 @@ class _ExploreContent extends StatelessWidget {
           ),
         _BoxSliver(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 6),
-          child: _ModeHeader(hasQuery: hasQuery, query: query),
+          child: _ModeHeader(
+            hasQuery: hasQuery,
+            query: query,
+            focusType: focusType,
+          ),
         ),
         if (failed)
           _BoxSliver(
@@ -384,17 +440,29 @@ class _ExploreContent extends StatelessWidget {
 }
 
 class _ModeHeader extends StatelessWidget {
-  const _ModeHeader({required this.hasQuery, required this.query});
+  const _ModeHeader({
+    required this.hasQuery,
+    required this.query,
+    required this.focusType,
+  });
 
   final bool hasQuery;
   final String query;
+  final String? focusType;
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Text(
-        hasQuery ? 'Resultados para “$query”' : 'Descubre FutBeat',
+        hasQuery
+            ? 'Resultados para “$query”'
+            : switch (focusType) {
+                'team' => 'Encuentra equipos',
+                'competition' => 'Encuentra competiciones',
+                'player' => 'Encuentra jugadores',
+                _ => 'Descubre FutBeat',
+              },
         key: ValueKey(
           hasQuery ? 'explore-results-title' : 'explore-discover-title',
         ),
@@ -404,7 +472,12 @@ class _ModeHeader extends StatelessWidget {
       const SizedBox(height: 4),
       Text(
         hasQuery
-            ? 'Equipos, jugadores y competiciones que coinciden.'
+            ? switch (focusType) {
+                'team' => 'Equipos que coinciden.',
+                'competition' => 'Competiciones que coinciden.',
+                'player' => 'Jugadores que coinciden.',
+                _ => 'Equipos, jugadores y competiciones que coinciden.',
+              }
             : 'Sugerencias reales según tu país y tus intereses.',
         style: const TextStyle(color: muted, height: 1.35),
       ),

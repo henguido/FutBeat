@@ -108,8 +108,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             children: [
               ProfileDestinationTile(
                 icon: Icons.tune,
-                title: 'Personalización',
-                subtitle: 'País, favoritos, competiciones y hora',
+                title: 'Personalizar FutBeat',
+                subtitle: 'País, equipos, jugadores, ligas y alertas',
                 onTap: () => context.push('/profile/personalization'),
               ),
               ProfileDestinationTile(

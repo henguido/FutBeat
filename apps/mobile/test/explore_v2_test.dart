@@ -57,6 +57,9 @@ Future<AppDatabase> _pump(
   Snapshot? search,
   Snapshot Function(String query)? searchFor,
   Set<String> follows = const {},
+  String? focusType,
+  List<Entity>? remotePlayers,
+  bool liveFollows = false,
   double width = 360,
 }) async {
   tester.view.physicalSize = Size(width, 800);
@@ -78,17 +81,20 @@ Future<AppDatabase> _pump(
             ),
           ),
         ),
-        followsProvider.overrideWith((ref) => Stream.value(follows)),
+        followsProvider.overrideWith(
+          (ref) =>
+              liveFollows ? database.watchFollows() : Stream.value(follows),
+        ),
         exploreSnapshotProvider.overrideWith((ref) => Stream.value(discovery)),
         playerSuggestionsProvider.overrideWith(
-          (ref, teamsKey) async => discovery.players,
+          (ref, teamsKey) async => remotePlayers ?? discovery.players,
         ),
         searchSnapshotProvider.overrideWith(
           (ref, request) async =>
               searchFor?.call(request.query) ?? search ?? Snapshot(_payload()),
         ),
       ],
-      child: const MaterialApp(home: ExploreScreen()),
+      child: MaterialApp(home: ExploreScreen(focusType: focusType)),
     ),
   );
   await tester.pumpAndSettle();
@@ -96,6 +102,93 @@ Future<AppDatabase> _pump(
 }
 
 void main() {
+  test(
+    'player suggestions reuse catalogue IDs and rank follows and country',
+    () {
+      final players = Snapshot(
+        _payload(
+          players: [
+            {'id': 'player_other', 'name': 'Mismo Nombre', 'countryCode': 'US'},
+            {'id': 'player_country', 'name': 'Jugador CR', 'countryCode': 'CR'},
+            {
+              'id': 'player_team',
+              'name': 'Jugador Equipo',
+              'teamId': 'team_sap',
+            },
+            {
+              'id': 'player_same_name',
+              'name': 'Mismo Nombre',
+              'countryCode': 'US',
+            },
+          ],
+        ),
+      ).players;
+      final result = suggestAvailablePlayers(
+        remote: [players[2]],
+        loaded: players,
+        follows: const {'team:team_sap'},
+        country: 'CR',
+      );
+      expect(result.map((player) => player.id), [
+        'player_team',
+        'player_country',
+        'player_other',
+        'player_same_name',
+      ]);
+    },
+  );
+
+  testWidgets(
+    'player personalization uses loaded catalogue when remote suggestions fail',
+    (tester) async {
+      await _pump(
+        tester,
+        discovery: _catalog(),
+        remotePlayers: const [],
+        focusType: 'player',
+      );
+      expect(find.text('Encuentra jugadores'), findsOneWidget);
+      expect(find.text('Jugadores sugeridos'), findsOneWidget);
+      expect(find.text('Competiciones'), findsNothing);
+      expect(find.text('Equipos sugeridos'), findsNothing);
+      expect(
+        find.byTooltip(
+          'Seguir Jugador con un nombre especialmente largo para probar diseño',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('a canonical player can be followed and unfollowed locally', (
+    tester,
+  ) async {
+    final database = await _pump(
+      tester,
+      discovery: _catalog(),
+      focusType: 'player',
+      remotePlayers: const [],
+      liveFollows: true,
+    );
+    final follow = find.byTooltip(
+      'Seguir Jugador con un nombre especialmente largo para probar diseño',
+    );
+    await tester.tap(follow);
+    await tester.pumpAndSettle();
+    expect(await tester.runAsync(() => database.watchFollows().first), {
+      'player:player_one',
+    });
+    final unfollow = find.byTooltip(
+      'Dejar de seguir Jugador con un nombre especialmente largo para probar diseño',
+    );
+    await tester.tap(unfollow);
+    await tester.pumpAndSettle();
+    expect(await tester.runAsync(() => database.watchFollows().first), isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  });
+
   testWidgets('discovery is separate and only uses real populated sections', (
     tester,
   ) async {

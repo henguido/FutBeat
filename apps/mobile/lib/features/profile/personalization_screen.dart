@@ -77,13 +77,13 @@ class PersonalizationScreen extends ConsumerWidget {
         follows.where((v) => v.startsWith('$type:')).length;
     if (preference == null || settings == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Personalización')),
+        appBar: AppBar(title: const Text('Personalizar FutBeat')),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
     final country = preference.effectiveCountry;
     return Scaffold(
-      appBar: AppBar(title: const Text('Personalización')),
+      appBar: AppBar(title: const Text('Personalizar FutBeat')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
@@ -105,6 +105,34 @@ class PersonalizationScreen extends ConsumerWidget {
                   players: count('player'),
                 ),
                 onTap: () => context.push('/favorites'),
+              ),
+              ProfileDestinationTile(
+                key: const ValueKey('personalize-teams'),
+                icon: Icons.shield_outlined,
+                title: 'Seguir equipos',
+                subtitle: 'Busca equipos y cambia tus favoritos',
+                onTap: () => context.push('/explore?type=team'),
+              ),
+              ProfileDestinationTile(
+                key: const ValueKey('personalize-competitions'),
+                icon: Icons.emoji_events_outlined,
+                title: 'Seguir competiciones',
+                subtitle: 'Busca ligas y cambia tus favoritos',
+                onTap: () => context.push('/explore?type=competition'),
+              ),
+              ProfileDestinationTile(
+                key: const ValueKey('personalize-players'),
+                icon: Icons.person_search_outlined,
+                title: 'Seguir jugadores',
+                subtitle: 'Busca futbolistas del catálogo',
+                onTap: () => context.push('/explore?type=player'),
+              ),
+              ProfileDestinationTile(
+                key: const ValueKey('personalize-alerts'),
+                icon: Icons.notifications_none,
+                title: 'Alertas',
+                subtitle: 'Revisa tus preferencias de notificaciones',
+                onTap: () => context.push('/profile/notifications'),
               ),
             ],
           ),

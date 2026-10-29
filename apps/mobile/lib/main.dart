@@ -116,7 +116,11 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
       routes: [
         GoRoute(path: '/matches', builder: (_, state) => const MatchesScreen()),
         GoRoute(path: '/news', builder: (_, state) => const NewsScreen()),
-        GoRoute(path: '/explore', builder: (_, state) => const ExploreScreen()),
+        GoRoute(
+          path: '/explore',
+          builder: (_, state) =>
+              ExploreScreen(focusType: state.uri.queryParameters['type']),
+        ),
         GoRoute(
           path: '/favorites',
           builder: (_, state) => const FavoritesScreen(),
