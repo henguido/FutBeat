@@ -174,10 +174,14 @@ jobs:
 
           Write-Output "GLOBAL_INGEST_OK provider=GOAL_API accepted=$($hotResult.accepted)"
 
-          # Do not create another scheduled Action. Once per day, the existing
-          # 09:17 UTC run also expands the cold calendar. Manual runs expand too.
+          # Do not create another scheduled Action. The cold calendar expands on
+          # manual runs, on the 09:17 UTC run, and on any scheduled run that finds
+          # the daily GOAL quota fresh (ARCH-155): by 09:17 the quota is usually
+          # below the 350 reserve (10-28/29: 333 and 282 left), so in practice the
+          # first run after the 00:00 UTC reset expands. Bounded as before by the
+          # request budget and the reserve; the plan returns only missing dates.
           $utcHour = [DateTime]::UtcNow.Hour
-          $shouldExpand = @("workflow_dispatch", "push") -contains $env:GITHUB_EVENT_NAME -or $utcHour -eq 9
+          $expandFreshQuota = 650
 
           $postHotQuota = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "global-quota-plan"
@@ -187,6 +191,10 @@ jobs:
             Write-Output "CALENDAR_EXPAND_SKIPPED reason=$($postHotQuota.plan.reason) remaining=$($postHotQuota.plan.providerRemaining) reserve=$globalReserve"
             exit 0
           }
+          $postHotRemaining = $postHotQuota.plan.providerRemaining
+          $shouldExpand = @("workflow_dispatch", "push") -contains $env:GITHUB_EVENT_NAME -or $utcHour -eq 9 -or
+            ($null -ne $postHotRemaining -and [int]$postHotRemaining -ge $expandFreshQuota)
+          Write-Output "CALENDAR_EXPAND_GATE expand=$shouldExpand remaining=$postHotRemaining fresh=$expandFreshQuota"
 
           $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "calendar-plan"
