@@ -2,10 +2,10 @@
 // concurrency, record every receipt, and claim again while the time budget
 // allows. Claimed rows are always finished (a batch is never abandoned); a new
 // batch is only claimed while the budget is not spent.
-import { collapseKeyOf } from './transports.mjs';
+import { collapseKeyOf, isExpired } from './transports.mjs';
 export const DISPATCH_DEFAULTS = Object.freeze({ batchSize:50, concurrency:10, budgetMs:45000 });
 
-async function sendOne({ row, rpc, transport }) {
+async function sendOne({ row, rpc, transport, clock = () => Date.now() }) {
  async function retryBeforeSend(receipt, retryAfterSeconds = 60) {
   let recorded = false;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -22,6 +22,17 @@ async function sendOne({ row, rpc, transport }) {
   }
   return { id:row.id, state:recorded ? 'pending' : 'unrecorded', receipt, recorded };
  }
+ // PUSH TTL 69: a row whose lifetime ended (waiting in the batch, a slow
+ // validation or OAuth) is cancelled before the provider-send boundary; it is
+ // never handed to the transport.
+ async function cancelExpired() {
+  let recorded = false;
+  try { recorded = await rpc('futbeat_cancel_notification_attempt',{
+   p_id:row.id,p_attempt:row.attemptId,p_reason:'expired',
+  }); } catch { /* the stale-attempt guard requeues it; the next claim cancels it */ }
+  return { id:row.id, state:'cancelled', receipt:'expired', recorded };
+ }
+ if (isExpired(row, clock())) return cancelExpired();
  let valid;
  try {
   valid = await rpc('futbeat_notification_attempt_valid',{
@@ -46,6 +57,7 @@ async function sendOne({ row, rpc, transport }) {
   if (preparation?.state === 'retryable')
    return retryBeforeSend(preparation.receipt ?? 'PRE_SEND_RETRY');
  }
+ if (isExpired(row, clock())) return cancelExpired();
  let started;
  try { started = await rpc('futbeat_mark_notification_send_started',{
   p_id:row.id,p_attempt:row.attemptId,p_token:row.token,
@@ -95,7 +107,8 @@ async function pool(items, size, work) {
 
 export async function dispatchNotifications({ rpc, transport, mode = 'dry_run',
  limit, batchSize = limit ?? DISPATCH_DEFAULTS.batchSize, concurrency = DISPATCH_DEFAULTS.concurrency,
- budgetMs = DISPATCH_DEFAULTS.budgetMs, maxBatches = Infinity, clock = () => Date.now() }) {
+ budgetMs = DISPATCH_DEFAULTS.budgetMs, maxBatches = Infinity, clock = () => Date.now(),
+ expiryClock = () => Date.now() }) {
  const started = clock();
  const results = [];
  for (let batch = 0; batch < maxBatches && clock() - started < budgetMs; batch++) {
@@ -104,7 +117,7 @@ export async function dispatchNotifications({ rpc, transport, mode = 'dry_run',
    throw new Error('Invalid notification claim response');
   if (claim.scanned === 0) break;
   const rows = claim.rows;
-  for (const result of await pool(rows, concurrency, row => sendOne({ row, rpc, transport }))) results.push(result);
+  for (const result of await pool(rows, concurrency, row => sendOne({ row, rpc, transport, clock: expiryClock }))) results.push(result);
   // A short batch drained the queue (rows cancelled at claim are not returned,
   // so only an empty claim is conclusive; one more claim is cheap).
  }

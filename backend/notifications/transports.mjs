@@ -21,6 +21,35 @@ export function collapseKeyOf(row) {
  return String(key).slice(0, 64);
 }
 
+// PUSH TTL 69: a push lives until the expiry the claim computed from the
+// event's own time (expiresAt: match events created_at + matchPushMaxDelayMinutes,
+// lineups kickoff + lineupAlertLateMinutes, news/transfers the older of
+// created_at/enqueued_at + contentPushMaxAgeHours). FCM (android.ttl) and APNs
+// (apns-expiration) drop it after that instead of delivering it to a phone that
+// comes back online hours or weeks later. Rows claimed by an older claim without
+// expiresAt get a conservative lifetime per type, counted from now.
+export const FALLBACK_LIFETIME_SECONDS = Object.freeze({
+ GOAL:600, GOAL_ANNULLED:600, RED_CARD:600, SUBSTITUTION:600, KICKOFF:600, FULL_TIME:600,
+ LINEUP:3600, NEWS:86400, TRANSFER:86400,
+});
+const DEFAULT_FALLBACK_SECONDS = 3600;
+const MAX_TTL_SECONDS = 28 * 86400; // FCM maximum
+export function expiryOf(row, now = Date.now()) {
+ const parsed = Date.parse(row?.expiresAt ?? '');
+ if (Number.isFinite(parsed)) return parsed;
+ const type = row?.message?.type;
+ return now + (FALLBACK_LIFETIME_SECONDS[type] ?? DEFAULT_FALLBACK_SECONDS) * 1000;
+}
+export function isExpired(row, now = Date.now()) {
+ const parsed = Date.parse(row?.expiresAt ?? '');
+ return Number.isFinite(parsed) && parsed <= now;
+}
+// Remaining lifetime in whole seconds, at least 1 (an expired row never reaches
+// the transport: the dispatcher cancels it first) and at most the FCM maximum.
+export function ttlSecondsOf(row, now = Date.now()) {
+ return Math.min(MAX_TTL_SECONDS, Math.max(1, Math.floor((expiryOf(row, now) - now) / 1000)));
+}
+
 // Data values must be strings for FCM.
 function dataOf(row) {
  const m = row.message ?? {};
@@ -149,6 +178,9 @@ export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, c
   const title = row.message?.title;
   const text = row.message?.body ?? undefined;
   const collapse = collapseKeyOf(row);
+  const now = clock();
+  const ttl = ttlSecondsOf(row, now);
+  const apnsExpiration = String(Math.floor(now / 1000) + ttl);
   if (row.transport === 'fcm') {
    const access = await fcmAccess();
    if (access.error) return {state:access.retryable ? 'retryable' : 'failed',receipt:access.error};
@@ -156,9 +188,9 @@ export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, c
    headers={Authorization:'Bearer '+access.token,'Content-Type':'application/json'};
    body={message:{token:row.token,notification:{title,...(text ? {body:text} : {})},
     data:dataOf(row),
-    android:{priority:'high',collapse_key:collapse,notification:{tag:collapse,
+    android:{priority:'high',collapse_key:collapse,ttl:ttl + 's',notification:{tag:collapse,
      channel_id:row.message?.channelId ?? env.FCM_ANDROID_CHANNEL_ID ?? DEFAULT_ANDROID_CHANNEL}},
-    apns:{headers:{'apns-collapse-id':collapse}}}};
+    apns:{headers:{'apns-collapse-id':collapse,'apns-expiration':apnsExpiration}}}};
   } else if(row.transport==='apns') {
    if(!env.APNS_PRIVATE_KEY || !env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_TOPIC)
     return {state:'failed',receipt:'APNS_NOT_CONFIGURED'};
@@ -166,7 +198,7 @@ export function createTransport({ mode = 'dry_run', env = {}, fetcher = fetch, c
    const host=env.APNS_SANDBOX==='true'?'api.sandbox.push.apple.com':'api.push.apple.com';
    url='https://'+host+'/3/device/'+encodeURIComponent(row.token);
    headers={authorization:'bearer '+token,'apns-topic':env.APNS_TOPIC,'apns-push-type':'alert',
-    'apns-id':row.id,'apns-collapse-id':collapse,'Content-Type':'application/json'};
+    'apns-id':row.id,'apns-collapse-id':collapse,'apns-expiration':apnsExpiration,'Content-Type':'application/json'};
    body={aps:{alert:{title,...(text ? {body:text} : {})},sound:'default','thread-id':row.message?.matchId ?? undefined},
     ...dataOf(row)};
   } else return {state:'failed',receipt:'UNSUPPORTED_TRANSPORT'};
