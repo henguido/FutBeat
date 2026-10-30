@@ -904,7 +904,13 @@ class ApiRepository implements FootballRepository {
       return null;
     }
     try {
+      final stopwatch = Stopwatch()..start();
       final row = await database?.readPublicSnapshot('public:match-detail:$id');
+      diagnostics?.record(
+        '/v1/match-detail',
+        row == null ? 'sqliteMiss' : 'sqliteHit',
+        elapsed: stopwatch.elapsed,
+      );
       if (row == null ||
           DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
               publicSnapshotRetention) {
@@ -1240,6 +1246,9 @@ class ApiRepository implements FootballRepository {
     if (_detailRequested.contains(id)) {
       final cached = await readMatchDetail(id, cancelToken: cancelToken);
       if (!cached.hydrationNeeded) return cached;
+    }
+    if (_detailRequestInFlight.containsKey(id)) {
+      diagnostics?.record('/v1/match-detail', 'sharedFlight');
     }
     return _detailRequestInFlight.putIfAbsent(id, () async {
       try {
@@ -2026,6 +2035,12 @@ final matchDetailProvider = StreamProvider.autoDispose
       var current =
           memory[id]?.withBlockedAliases(blockedAliases) ??
           MatchDetail.waiting(id);
+      if (repository is ApiRepository) {
+        repository.diagnostics?.record(
+          '/v1/match-detail',
+          current.available ? 'memoryHit' : 'memoryMiss',
+        );
+      }
       if (!current.available && repository is ApiRepository) {
         current = await repository.readStoredMatchDetail(id) ?? current;
         if (current.available) remember(current);

@@ -335,11 +335,27 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           fetch: (id) async {
             if (!_prefetchAttempted.add(id)) return;
             _prefetchRemaining--;
-            if (memory[id]?.available == true) return;
+            repository.diagnostics?.record(
+              '/v1/match-detail',
+              'prefetchAttempt',
+            );
+            if (memory[id]?.available == true) {
+              repository.diagnostics?.record(
+                '/v1/match-detail',
+                'prefetchMemoryHit',
+              );
+              return;
+            }
             // A match-detail HTTP read can register provider work even with
             // request=0. Warm only previously persisted data here; the user
             // opening Match Center owns the explicit remote demand.
             final detail = await repository.readStoredMatchDetail(id);
+            repository.diagnostics?.record(
+              '/v1/match-detail',
+              detail?.available == true
+                  ? 'prefetchDiskHit'
+                  : 'prefetchDiskMiss',
+            );
             if (detail?.available == true &&
                 mounted &&
                 _sportsActive &&
