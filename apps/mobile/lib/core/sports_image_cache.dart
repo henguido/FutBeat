@@ -264,20 +264,27 @@ class _SportsImageState extends State<SportsImage> {
   }
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<File?>(
-    future: _image,
-    builder: (context, snapshot) {
-      final file = snapshot.data;
-      if (file == null) return widget.fallback;
-      return Image.file(
-        file,
-        width: widget.width,
-        height: widget.height,
-        fit: widget.fit,
-        alignment: widget.alignment,
-        cacheWidth: widget.cacheWidth,
-        errorBuilder: (_, _, _) => widget.fallback,
-      );
-    },
-  );
+  Widget build(BuildContext context) {
+    if (!widget.canonicalId.startsWith('fb_') ||
+        SportsImageDiskCache.validUri(widget.url) == null) {
+      return widget.fallback;
+    }
+    return FutureBuilder<File?>(
+      key: ValueKey('${widget.canonicalId}\u0000${widget.url}'),
+      future: _image,
+      builder: (context, snapshot) {
+        final file = snapshot.data;
+        if (file == null) return widget.fallback;
+        return Image.file(
+          file,
+          width: widget.width,
+          height: widget.height,
+          fit: widget.fit,
+          alignment: widget.alignment,
+          cacheWidth: widget.cacheWidth,
+          errorBuilder: (_, _, _) => widget.fallback,
+        );
+      },
+    );
+  }
 }
