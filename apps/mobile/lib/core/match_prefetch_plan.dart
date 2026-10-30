@@ -25,8 +25,9 @@ class MatchPrefetchPlan {
     int rank(FootballMatch match) {
       if (match.id == openMatchId) return 0;
       if (follows.contains('team:${match.homeId}') ||
-          follows.contains('team:${match.awayId}'))
+          follows.contains('team:${match.awayId}')) {
         return 1;
+      }
       if (follows.contains('competition:${match.competitionId}')) return 2;
       final competition = competitions[match.competitionId];
       if (competition != null &&

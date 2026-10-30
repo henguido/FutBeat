@@ -641,8 +641,9 @@ class LiveRealtimeClient {
         _refreshActiveScope = () async {
           if (disposed ||
               !_appActive ||
-              (scopedRealtime && realtimeMatchIds.isEmpty))
+              (scopedRealtime && realtimeMatchIds.isEmpty)) {
             return;
+          }
           await bootstrap();
         };
         _setActiveScope = (active) {
