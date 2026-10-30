@@ -20,6 +20,7 @@ try {
 } finally { Pop-Location }
 
 if (-not (Test-Path -LiteralPath $apkPath -PathType Leaf)) { throw "Flutter no generó el APK esperado: '$apkPath'." }
+& (Join-Path $PSScriptRoot 'check-android-native-libs.ps1') -ApkPath $apkPath
 $sha256 = Get-FileSha256 -Path $apkPath
 $manifestPath = Get-QaArtifactManifestPath -ApkPath $apkPath
 @{
