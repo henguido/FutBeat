@@ -17,6 +17,28 @@ FootballMatch fixture(
 });
 
 void main() {
+  test('favorite teams come first with eight unique canonical IDs', () {
+    final matches = [
+      fixture('fb_match_open', 'other', 'x', 'y'),
+      for (var i = 0; i < 10; i++)
+        fixture('fb_match_fav_$i', 'league', 'fb_team_fav', 'away_$i'),
+      fixture('fb_match_fav_0', 'league', 'fb_team_fav', 'away_0'),
+      fixture('fb_match_other', 'other', 'a', 'b'),
+    ];
+    final plan = MatchPrefetchPlan.build(
+      matches: matches,
+      follows: const {'team:fb_team_fav'},
+      selectedCountry: null,
+      competitions: const {},
+      openMatchId: 'fb_match_open',
+    );
+    expect(plan.matchIds, hasLength(8));
+    expect(plan.matchIds.first, 'fb_match_open');
+    expect(plan.matchIds.skip(1), everyElement(startsWith('fb_match_fav_')));
+    expect(plan.matchIds.toSet(), hasLength(8));
+    expect(plan.matchIds, isNot(contains('fb_match_other')));
+  });
+
   test('does not fetch detail for unrelated calendar fixtures', () {
     final plan = MatchPrefetchPlan.build(
       matches: [fixture('unrelated', 'x', 'a', 'b')],

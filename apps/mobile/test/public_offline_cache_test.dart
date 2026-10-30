@@ -41,6 +41,98 @@ Dio _dio(Map<String, dynamic> Function(RequestOptions) answer) {
 }
 
 void main() {
+  test(
+    'canonical lineup and statistics survive restart without network',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'futbeat-detail-',
+      );
+      final file = File('${directory.path}/cache.sqlite');
+      final raw = jsonDecode(
+        File('test/fixtures/match_detail_object_lineup.json')
+            .readAsStringSync(),
+      ) as Map<String, dynamic>;
+      var db = AppDatabase(NativeDatabase(file));
+      var dio = _dio((_) => raw);
+      try {
+        final online = ApiRepository(dio, db);
+        final first = await online.loadMatchDetail('fb_match_e2e');
+        expect(first.available, isTrue);
+        expect(first.homeStarters, isNotEmpty);
+        expect(first.statistics, isNotEmpty);
+        await online.settleBackground();
+        await db.close();
+        dio.close();
+
+        db = AppDatabase(NativeDatabase(file));
+        dio = _dio((_) => throw StateError('offline'));
+        final offline = ApiRepository(dio, db);
+        final stored = await offline.readStoredMatchDetail('fb_match_e2e');
+        expect(stored?.offlineStale, isTrue);
+        expect(stored?.homeStarters, first.homeStarters);
+        expect(stored?.awaySubstitutes, first.awaySubstitutes);
+        expect(stored?.statistics, first.statistics);
+        expect(await offline.readStoredMatchDetail('provider_123'), isNull);
+      } finally {
+        dio.close();
+        await db.close();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
+  test('late match-context response cannot replace a newer answer', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final firstStarted = Completer<void>();
+    final releaseFirst = Completer<void>();
+    var calls = 0;
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.invalid'))
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) async {
+            calls++;
+            final sequence = calls;
+            if (sequence == 1) {
+              firstStarted.complete();
+              await releaseFirst.future;
+            }
+            handler.resolve(
+              Response(
+                requestOptions: request,
+                data: {
+                  ..._snapshot(),
+                  'updatedAt': sequence == 1
+                      ? '2026-10-29T00:00:00Z'
+                      : '2026-10-30T00:00:00Z',
+                },
+              ),
+            );
+          },
+        ),
+      );
+    try {
+      final repository = ApiRepository(dio, db);
+      final slow = repository.loadMatchContext('fb_match_clasico');
+      await firstStarted.future;
+      final fresh = await repository.loadMatchContext('fb_match_clasico');
+      releaseFirst.complete();
+      final late = await slow;
+      expect(late.updatedAt, fresh.updatedAt);
+      await repository.settleBackground();
+      final stored = await db.readPublicSnapshot(
+        'public:match-context:fb_match_clasico',
+      );
+      expect(
+        (jsonDecode(stored!.payload) as Map<String, dynamic>)['updatedAt'],
+        '2026-10-30T00:00:00Z',
+      );
+    } finally {
+      if (!releaseFirst.isCompleted) releaseFirst.complete();
+      dio.close();
+      await db.close();
+    }
+  });
+
   test('cached entity is visible before a slow network reply', () async {
     final db = AppDatabase(NativeDatabase.memory());
     final gate = Completer<void>();
