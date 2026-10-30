@@ -17,6 +17,16 @@ FootballMatch fixture(
 });
 
 void main() {
+  test('does not fetch detail for unrelated calendar fixtures', () {
+    final plan = MatchPrefetchPlan.build(
+      matches: [fixture('unrelated', 'x', 'a', 'b')],
+      follows: const {},
+      selectedCountry: null,
+      competitions: const {},
+    );
+    expect(plan.matchIds, isEmpty);
+  });
+
   test(
     'prioritizes open match, follows, country, highlights and bounds work',
     () {
@@ -72,7 +82,7 @@ void main() {
   test('enforces local budget even when plan is larger', () async {
     final plan = MatchPrefetchPlan.build(
       matches: [for (var i = 0; i < 20; i++) fixture('$i', 'x', 'a', 'b')],
-      follows: const {},
+      follows: {'team:a'},
       selectedCountry: null,
       competitions: const {},
     );

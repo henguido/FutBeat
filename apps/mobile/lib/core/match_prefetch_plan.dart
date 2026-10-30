@@ -37,7 +37,9 @@ class MatchPrefetchPlan {
       return 5;
     }
 
-    final sorted = byId.values.toList()
+    // The remaining calendar is already loaded as a light snapshot. Do not
+    // fetch detail for unrelated matches merely because budget remains.
+    final sorted = byId.values.where((match) => rank(match) < 5).toList()
       ..sort((a, b) {
         final byRank = rank(a).compareTo(rank(b));
         if (byRank != 0) return byRank;
