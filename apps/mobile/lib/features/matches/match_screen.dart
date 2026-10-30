@@ -3971,8 +3971,10 @@ class _PitchHalfPainter extends CustomPainter {
 }
 
 /// Shared geometry contract for renderer and widget tests.
-const double lineupPitchHalfHeight = 480;
-const double lineupPitchRowHeight = 92;
+// Keep five pitch rows separated while reserving room for scaled names and
+// event badges on 420 dpi phones such as the Galaxy A32.
+const double lineupPitchRowHeight = 100;
+const double lineupPitchHalfHeight = lineupPitchRowHeight * 5 + 24;
 const double lineupPenaltyAreaDepth = 132;
 
 String _pitchName(String name) {
@@ -4010,7 +4012,7 @@ class _PitchPlayer extends StatelessWidget {
               ),
               child: _PlayerAvatar(
                 player,
-                size: 52,
+                size: 46,
                 accent: const Color(0xFF55595D),
                 showBorder: false,
               ),
@@ -4021,7 +4023,7 @@ class _PitchPlayer extends StatelessWidget {
               const Positioned(left: -7, top: -5, child: _CaptainBadge()),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 3),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -4052,7 +4054,7 @@ class _PitchPlayer extends StatelessWidget {
           ],
         ),
         if (events.isNotEmpty) ...[
-          const SizedBox(height: 3),
+          const SizedBox(height: 2),
           _PlayerEvents(events),
         ],
       ],

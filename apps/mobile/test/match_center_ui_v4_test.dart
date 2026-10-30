@@ -568,7 +568,20 @@ void main() {
           ],
           'coach': {'name': 'Entrenador Visitante'},
         },
-        'incidents': <dynamic>[],
+        'incidents': [
+          {
+            'type': 'YELLOW_CARD',
+            'playerId': 'home-2',
+            'side': 'home',
+            'minute': 30,
+          },
+          {
+            'type': 'SUB_OUT',
+            'outPlayerId': 'home-2',
+            'side': 'home',
+            'minute': 75,
+          },
+        ],
         'statistics': <dynamic>[],
       });
 
@@ -654,6 +667,31 @@ void main() {
         );
       }
       expect(tester.takeException(), isNull);
+
+      // Galaxy A32: 1080x2400 physical pixels, 420 dpi, font scale 1.1.
+      // Event badges used to exceed the fixed pitch row by one physical pixel.
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 2.625;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(1080 / 2.625, 2400 / 2.625),
+              devicePixelRatio: 2.625,
+              textScaler: TextScaler.linear(1.1),
+            ),
+            child: Scaffold(
+              body: SingleChildScrollView(
+                child: Lineups(snapshot, snapshot.matches.single, detail),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byKey(const ValueKey('lineups-combined-pitch')), findsOne);
+      expect(tester.takeException(), isNull);
+      tester.view.physicalSize = const Size(390, 1400);
+      tester.view.devicePixelRatio = 1;
 
       await tester.pumpWidget(
         MaterialApp(
