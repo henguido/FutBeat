@@ -319,6 +319,13 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // A backgrounded app keeps its last visible data but does not retain a
+    // sporting socket or run its REST safety-net timer.
+    if (ref.exists(liveRealtimeClientProvider)) {
+      ref
+          .read(liveRealtimeClientProvider)
+          .setAppActive(state == AppLifecycleState.resumed);
+    }
     // Retry a session refresh/merge that failed offline, without creating
     // the account service just for this.
     if (state == AppLifecycleState.resumed && ref.exists(pushServiceProvider)) {
@@ -328,10 +335,6 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     if (state == AppLifecycleState.resumed &&
         ref.exists(premiumBillingProvider)) {
       unawaited(ref.read(premiumBillingProvider.notifier).onResume());
-    }
-    if (state == AppLifecycleState.resumed &&
-        ref.exists(liveRealtimeClientProvider)) {
-      unawaited(ref.read(liveRealtimeClientProvider).refreshOnResume());
     }
   }
 
