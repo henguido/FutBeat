@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -53,6 +54,7 @@ class FakeSupabase {
   final List<WebSocket> sockets = [];
   final List<Map<String, dynamic>> joins = [];
   void Function(int request)? beforeAnswer;
+  Future<void> Function(int request)? beforeAnswerAsync;
   late HttpServer server;
 
   String get url => 'http://127.0.0.1:${server.port}';
@@ -86,6 +88,7 @@ class FakeSupabase {
       final index = restRequests.length;
       restRequests.add(request.uri);
       beforeAnswer?.call(index);
+      await beforeAnswerAsync?.call(index);
       if (sendDate) {
         request.response.headers.date = DateTime.now().toUtc();
       } else {
@@ -626,6 +629,48 @@ void main() {
           'in.(${id(2)})',
         );
       } finally {
+        await subscription.cancel();
+        client.dispose();
+        dio.close(force: true);
+        await server.stop();
+      }
+    });
+
+    test('background cancels an in-flight LIVE bootstrap request', () async {
+      final server = FakeSupabase([liveRow(id(1), updatedAt: now)]);
+      final release = Completer<void>();
+      server.beforeAnswerAsync = (index) async {
+        if (index == 0) await release.future;
+      };
+      await server.start();
+      final dio = Dio();
+      var cancelled = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onError: (error, handler) {
+            if (error.type == DioExceptionType.cancel) cancelled++;
+            handler.next(error);
+          },
+        ),
+      );
+      final client = LiveRealtimeClient(
+        LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+        dio,
+        scopedRealtime: true,
+        refreshInterval: const Duration(hours: 1),
+      );
+      client.setScope('match:open', [id(1)]);
+      final subscription = client.watch().listen((_) {});
+      try {
+        await until(() => server.restRequests.isNotEmpty);
+        client.setAppActive(false);
+        await until(() => cancelled > 0);
+        release.complete();
+        final count = server.restRequests.length;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(server.restRequests.length, count);
+      } finally {
+        if (!release.isCompleted) release.complete();
         await subscription.cancel();
         client.dispose();
         dio.close(force: true);

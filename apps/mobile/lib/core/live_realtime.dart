@@ -139,6 +139,7 @@ Future<LiveBootstrapRead> fetchLiveBootstrap(
   LiveBootstrapPolicy policy, {
   required DateTime since,
   List<String>? matchIds,
+  CancelToken? cancelToken,
 }) async {
   if (matchIds != null && matchIds.isEmpty) {
     return (rows: <Json>[], complete: true, exhausted: false, serverNow: null);
@@ -159,6 +160,7 @@ Future<LiveBootstrapRead> fetchLiveBootstrap(
           matchIds: matchIds,
         ),
         options: Options(headers: {'apikey': config.publicKey}),
+        cancelToken: cancelToken,
       );
     } catch (_) {
       if (page == 0) rethrow;
@@ -396,6 +398,7 @@ class LiveRealtimeClient {
     var bootstrapAgain = false;
     var joined = false;
     var scopeVersion = 0;
+    CancelToken? bootstrapToken;
     DateTime? lastBootstrap;
     // Server minus device clock, from the last answer's `Date`.
     var serverOffset = Duration.zero;
@@ -430,6 +433,8 @@ class LiveRealtimeClient {
       final requestedScopeVersion = scopeVersion;
       final ids = scopedRealtime ? realtimeMatchIds : null;
       if (ids != null && ids.isEmpty) return;
+      final token = CancelToken();
+      bootstrapToken = token;
       final before = scopedRealtime
           ? <String, LiveMatchUpdate>{
               for (final id in ids!)
@@ -448,6 +453,7 @@ class LiveRealtimeClient {
           policy,
           since: since,
           matchIds: ids,
+          cancelToken: token,
         );
         if (disposed || !_appActive || requestedScopeVersion != scopeVersion) {
           return;
@@ -476,6 +482,8 @@ class LiveRealtimeClient {
       } catch (_) {
         /* Keep HTTP snapshot and the last valid overlay. */
         lastBootstrap = null;
+      } finally {
+        if (identical(bootstrapToken, token)) bootstrapToken = null;
       }
     }
 
@@ -648,6 +656,7 @@ class LiveRealtimeClient {
         };
         _setActiveScope = (active) {
           scopeVersion++;
+          bootstrapToken?.cancel('App backgrounded or resumed');
           retry?.cancel();
           retry = null;
           heartbeat?.cancel();
@@ -671,6 +680,7 @@ class LiveRealtimeClient {
             scopeDebounce?.cancel();
             scopeDebounce = Timer(const Duration(milliseconds: 250), () {
               scopeVersion++;
+              bootstrapToken?.cancel('LIVE scope changed');
               joined = false;
               retry?.cancel();
               retry = null;
@@ -704,6 +714,7 @@ class LiveRealtimeClient {
         disposed = true;
         _refreshActiveScope = null;
         _setActiveScope = null;
+        bootstrapToken?.cancel('LIVE listener closed');
         retry?.cancel();
         scopeDebounce?.cancel();
         await scopeSubscription?.cancel();
