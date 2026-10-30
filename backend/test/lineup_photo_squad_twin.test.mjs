@@ -272,3 +272,15 @@ test('full lineup: one statement, bounded time, no per-player scan of all player
     console.log(`DATA219 full lineup (40 ids, 2x20 squad, 2000 background players): ${ms.toFixed(1)} ms, 22/40 twin photos`);
   });
 });
+
+test('the twin helper is private; the public wrappers keep their service-only grants', async () => {
+  await scene(async (db) => {
+    const can = async (role, fn) => (await db.query("select has_function_privilege($1,$2,'EXECUTE') v", [role, fn])).rows[0].v;
+    for (const role of ['anon', 'authenticated', 'service_role']) {
+      assert.equal(await can(role, 'futbeat_private.lineup_squad_photo_twins(text[])'), false, role);
+    }
+    assert.equal(await can('service_role', 'public.futbeat_read_lineup_player_media(text,text[])'), true);
+    assert.equal(await can('service_role', 'public.futbeat_request_lineup_hydration(text[],text[])'), true);
+    assert.equal(await can('anon', 'public.futbeat_read_lineup_player_media(text,text[])'), false);
+  });
+});

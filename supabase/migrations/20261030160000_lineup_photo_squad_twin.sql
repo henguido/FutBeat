@@ -225,4 +225,4 @@ begin
 end
 $$;
 
-revoke all on function futbeat_private.lineup_squad_photo_twins(text[]) from public,anon,authenticated;
+revoke all on function futbeat_private.lineup_squad_photo_twins(text[]) from public,anon,authenticated,service_role;
