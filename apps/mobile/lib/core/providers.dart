@@ -13,6 +13,7 @@ import 'live_realtime.dart';
 import 'models.dart';
 import 'player_display_identity.dart';
 import 'profile_context.dart';
+import 'qa_diagnostics.dart';
 import 'team_matches.dart';
 import '../features/news/news_feed_adapter.dart';
 
@@ -132,7 +133,9 @@ class ApiRepository implements FootballRepository {
     this.database,
     this.calendarPolicy = const CalendarCachePolicy(),
     this.media,
+    this.diagnostics,
   ]);
+  final QaDiagnostics? diagnostics;
   final Dio dio;
   final AppDatabase? database;
   final CalendarCachePolicy calendarPolicy;
@@ -160,6 +163,7 @@ class ApiRepository implements FootballRepository {
   void setAppActive(bool active) {
     if (_appActive == active) return;
     _appActive = active;
+    diagnostics?.record('/v1/calendar', active ? 'resumed' : 'paused');
     if (!active) {
       _prefetchGeneration++;
       for (final flight in _calendarInFlight.values) {
@@ -216,6 +220,7 @@ class ApiRepository implements FootballRepository {
     StackTrace? lastStack;
 
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      final stopwatch = Stopwatch()..start();
       try {
         final response = await dio.get<Json>(
           path,
@@ -234,8 +239,17 @@ class ApiRepository implements FootballRepository {
         if (data == null) {
           throw const FormatException('Cloud endpoint returned no data');
         }
+        diagnostics?.record(
+          path,
+          'httpSuccess',
+          elapsed: stopwatch.elapsed,
+          bytes: response.headers.value('content-length') == null
+              ? null
+              : int.tryParse(response.headers.value('content-length')!),
+        );
         return data;
       } catch (error, stack) {
+        diagnostics?.record(path, 'httpError', elapsed: stopwatch.elapsed);
         lastError = error;
         lastStack = stack;
         if (attempt + 1 < maxAttempts && _retryable(error)) {
@@ -452,9 +466,18 @@ class ApiRepository implements FootballRepository {
   Future<Snapshot?> _readStored(String value) async {
     final key = 'calendar:$value';
     final memory = _snapshotCache[key];
-    if (memory != null) return memory;
+    if (memory != null) {
+      diagnostics?.record('/v1/calendar', 'memoryHit');
+      return memory;
+    }
     try {
+      final stopwatch = Stopwatch()..start();
       final stored = await database?.readCalendarEntry(value);
+      diagnostics?.record(
+        '/v1/calendar',
+        stored == null ? 'sqliteMiss' : 'sqliteHit',
+        elapsed: stopwatch.elapsed,
+      );
       if (stored == null) return null;
       final snapshot = _canonical(jsonDecode(stored.payload) as Json);
       _remember(key, snapshot);
@@ -519,6 +542,9 @@ class ApiRepository implements FootballRepository {
       return Future.error(cancelToken.cancelError!);
     }
     var flight = _calendarInFlight[value];
+    if (flight != null && !flight.token.isCancelled) {
+      diagnostics?.record('/v1/calendar', 'sharedFlight');
+    }
     if (flight == null || flight.token.isCancelled) {
       flight = _calendarInFlight[value] = _startFlight(value);
     }
@@ -573,6 +599,7 @@ class ApiRepository implements FootballRepository {
     Snapshot? cached = await _readStored(value);
     final freshCache = cached != null && _freshDate(value);
     if (cached != null) yield cached.withFreshness(revalidating: !freshCache);
+    if (cached == null) diagnostics?.record('/v1/calendar', 'cacheMiss');
     if (!_appActive) return;
     if (freshCache) {
       _prefetchAround(date);
@@ -1307,6 +1334,22 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
     ref.watch(databaseProvider),
     const CalendarCachePolicy(),
     ref.watch(entityMediaProvider),
+    ref.watch(qaDiagnosticsProvider),
+  );
+});
+
+/// Disabled in production and ordinary QA builds. Diagnostic builds emit only
+/// route names and counters, never arguments, response data or credentials.
+final qaDiagnosticsProvider = Provider<QaDiagnostics?>((ref) {
+  const enabled = bool.fromEnvironment('FUTBEAT_QA_DIAGNOSTICS');
+  if (!enabled || kReleaseMode || ref.watch(demoModeProvider)) return null;
+  return QaDiagnostics(
+    onRecord: (endpoint, event, milliseconds, bytes) {
+      debugPrint(
+        'FB_QA_DIAG route=$endpoint event=$event '
+        'ms=${milliseconds ?? -1} length=${bytes ?? -1}',
+      );
+    },
   );
 });
 
