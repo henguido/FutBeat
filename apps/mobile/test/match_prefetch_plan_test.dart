@@ -8,7 +8,7 @@ FootballMatch fixture(
   String home,
   String away,
 ) => FootballMatch({
-  'id': id,
+  'id': id.startsWith('fb_') ? id : 'fb_$id',
   'competitionId': competition,
   'homeTeamId': home,
   'awayTeamId': away,
@@ -17,6 +17,25 @@ FootballMatch fixture(
 });
 
 void main() {
+  test('provider fixture IDs cannot spend canonical disk warm budget', () {
+    final providerAlias = FootballMatch({
+      'id': '12345',
+      'competitionId': 'league',
+      'homeTeamId': 'favorite',
+      'awayTeamId': 'other',
+      'startTime': '2026-10-30T17:00:00Z',
+      'status': 'SCHEDULED',
+    });
+    final plan = MatchPrefetchPlan.build(
+      matches: [providerAlias, fixture('canonical', 'league', 'favorite', 'x')],
+      follows: const {'team:favorite'},
+      selectedCountry: null,
+      competitions: const {},
+      maxMatches: 1,
+    );
+    expect(plan.matchIds, ['fb_canonical']);
+  });
+
   test('favorite teams come first with eight unique canonical IDs', () {
     final matches = [
       fixture('fb_match_open', 'other', 'x', 'y'),
@@ -68,15 +87,21 @@ void main() {
         competitions: {
           'cr': Entity({'id': 'cr', 'name': 'Costa Rica', 'countryCode': 'CR'}),
         },
-        openMatchId: 'open',
-        highlightedMatchIds: {'highlight'},
+        openMatchId: 'fb_open',
+        highlightedMatchIds: {'fb_highlight'},
         maxMatches: 5,
       );
-      expect(plan.matchIds, ['open', 'team', 'league', 'country', 'highlight']);
-      expect(plan.excluding({'open', 'team'}).matchIds, [
-        'league',
-        'country',
-        'highlight',
+      expect(plan.matchIds, [
+        'fb_open',
+        'fb_team',
+        'fb_league',
+        'fb_country',
+        'fb_highlight',
+      ]);
+      expect(plan.excluding({'fb_open', 'fb_team'}).matchIds, [
+        'fb_league',
+        'fb_country',
+        'fb_highlight',
       ]);
     },
   );
@@ -102,7 +127,7 @@ void main() {
         },
       );
       expect(count, 1);
-      expect(requests, ['a']);
+      expect(requests, ['fb_a']);
     },
   );
 

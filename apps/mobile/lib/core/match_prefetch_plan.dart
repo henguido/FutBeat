@@ -25,7 +25,9 @@ class MatchPrefetchPlan {
     if (maxMatches <= 0) return const MatchPrefetchPlan._([]);
     final byId = <String, FootballMatch>{};
     for (final match in matches) {
-      if (match.id.isNotEmpty) byId[match.id] = match;
+      // The public-detail store accepts only FutBeat canonical IDs. Provider
+      // aliases cannot hit disk and must not consume the bounded warm budget.
+      if (match.id.startsWith('fb_')) byId[match.id] = match;
     }
     int rank(FootballMatch match) {
       if (match.id == openMatchId) return 0;
