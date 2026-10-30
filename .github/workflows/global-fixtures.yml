@@ -164,20 +164,44 @@ jobs:
 
           Write-Output "GLOBAL_FETCH provider=GOAL_API from=$($dates[0]) to=$($dates[2]) utcDates=$($fetchDates.Count) fixtures=$($events.Count)"
 
-          $hotResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-            source = "GOAL API"
-            mode = "hot"
-            dates = @($dates)
-            providerRemaining = $hotRemaining
-            events = @($events)
-          })
+          # A failed hot store must not block the cold calendar (BE-173: 10-30 00:57
+          # the window store hit 57014 and the run stopped before the expansion, so
+          # the missing dates never ran). The calendar ingests per date with its own
+          # stores; the run still fails at the end so the hot failure stays visible.
+          $hotFailed = $false
+          try {
+            $hotResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+              source = "GOAL API"
+              mode = "hot"
+              dates = @($dates)
+              providerRemaining = $hotRemaining
+              events = @($events)
+            })
+            Write-Output "GLOBAL_INGEST_OK provider=GOAL_API accepted=$($hotResult.accepted)"
+          } catch {
+            $hotFailed = $true
+            Write-Output "GLOBAL_INGEST_FAILED provider=GOAL_API error=$($_.Exception.Message)"
+            if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+              Write-Output "GLOBAL_INGEST_FAILED_DETAIL $($_.ErrorDetails.Message)"
+            }
+          }
 
-          Write-Output "GLOBAL_INGEST_OK provider=GOAL_API accepted=$($hotResult.accepted)"
+          function Complete-GlobalRun {
+            if ($hotFailed) {
+              Write-Output "GLOBAL_RUN_FAILED stage=hot"
+              exit 1
+            }
+            exit 0
+          }
 
-          # Do not create another scheduled Action. Once per day, the existing
-          # 09:17 UTC run also expands the cold calendar. Manual runs expand too.
+          # Do not create another scheduled Action. The cold calendar expands on
+          # manual runs, on the 09:17 UTC run, and on any scheduled run that finds
+          # the daily GOAL quota fresh (ARCH-155): by 09:17 the quota is usually
+          # below the 350 reserve (10-28/29: 333 and 282 left), so in practice the
+          # first run after the 00:00 UTC reset expands. Bounded as before by the
+          # request budget and the reserve; the plan returns only missing dates.
           $utcHour = [DateTime]::UtcNow.Hour
-          $shouldExpand = @("workflow_dispatch", "push") -contains $env:GITHUB_EVENT_NAME -or $utcHour -eq 9
+          $expandFreshQuota = 650
 
           $postHotQuota = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "global-quota-plan"
@@ -185,8 +209,12 @@ jobs:
           })
           if ($postHotQuota.status -eq "skipped") {
             Write-Output "CALENDAR_EXPAND_SKIPPED reason=$($postHotQuota.plan.reason) remaining=$($postHotQuota.plan.providerRemaining) reserve=$globalReserve"
-            exit 0
+            Complete-GlobalRun
           }
+          $postHotRemaining = $postHotQuota.plan.providerRemaining
+          $shouldExpand = @("workflow_dispatch", "push") -contains $env:GITHUB_EVENT_NAME -or $utcHour -eq 9 -or
+            ($null -ne $postHotRemaining -and [int]$postHotRemaining -ge $expandFreshQuota)
+          Write-Output "CALENDAR_EXPAND_GATE expand=$shouldExpand remaining=$postHotRemaining fresh=$expandFreshQuota"
 
           $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "calendar-plan"
@@ -224,7 +252,7 @@ jobs:
           if ($planDates.Count -eq 0) {
             $reason = if ($shouldExpand) { "coverage_fresh" } else { "no_requested_dates" }
             Write-Output "CALENDAR_EXPAND_OK dates=0 reason=$reason"
-            exit 0
+            Complete-GlobalRun
           }
 
           $quotaReserve = 350
@@ -325,3 +353,4 @@ jobs:
           if ($stopForQuota) {
             Write-Output "CALENDAR_EXPAND_COMPLETE reason=quota_guard"
           }
+          Complete-GlobalRun
