@@ -498,6 +498,26 @@ void main() {
     await _close(tester);
   });
 
+  testWidgets('sparse player sheet does not cover most of Match Center', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      detail: _detail(
+        starters: [
+          _player('p77', 'Jugador de prueba', canonicalId: 'fb_player_77'),
+        ],
+        substitutes: const [],
+      ),
+    );
+    await _tab(tester, 'Alineación');
+    await _tapPlayer(tester, find.text('Jugador de prueba').first);
+    final screenHeight = tester.getSize(find.byType(MaterialApp)).height;
+    expect(tester.getSize(_sheet).height, lessThan(screenHeight * .45));
+    expect(_profile, findsOneWidget);
+    await _close(tester);
+  });
+
   testWidgets('14. the summary groups the real rating and events', (
     tester,
   ) async {

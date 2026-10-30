@@ -4824,6 +4824,8 @@ class MatchPlayerSheet extends StatelessWidget {
     final age = player['age'];
     final summary = playerMatchSummary(player, events, minutes: minutes);
     final statSections = playerMatchStatSections(player);
+    final compact =
+        summary.entries.isEmpty && statSections.isEmpty && events.isEmpty;
     final sideColor = side == 'home' ? lime : awaySideColor;
     final details = <Widget>[
       if (number.isNotEmpty)
@@ -4853,7 +4855,7 @@ class MatchPlayerSheet extends StatelessWidget {
     return DraggableScrollableSheet(
       key: const ValueKey('player-sheet'),
       expand: false,
-      initialChildSize: .62,
+      initialChildSize: compact ? .35 : .62,
       minChildSize: .35,
       maxChildSize: .92,
       builder: (context, controller) => Column(
