@@ -7,15 +7,8 @@ import 'package:go_router/go_router.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
-
-// Image.network with a cacheWidth/cacheHeight wraps the NetworkImage in a
-// ResizeImage, so the URL must be unwrapped rather than read directly.
-String? _networkUrl(ImageProvider? provider) {
-  var resolved = provider;
-  if (resolved is ResizeImage) resolved = resolved.imageProvider;
-  return resolved is NetworkImage ? resolved.url : null;
-}
 
 Map<String, dynamic> _payload() => {
   'schemaVersion': 1,
@@ -161,7 +154,7 @@ void main() {
       );
       expect(
         find.byWidgetPredicate(
-          (w) => w is Image && (_networkUrl(w.image) ?? '').endsWith('1.png'),
+          (w) => w is SportsImage && (w.url ?? '').endsWith('1.png'),
         ),
         findsOneWidget,
       );
@@ -189,7 +182,7 @@ void main() {
     );
     expect(
       find.byWidgetPredicate(
-        (w) => w is Image && (_networkUrl(w.image) ?? '').endsWith('2.png'),
+        (w) => w is SportsImage && (w.url ?? '').endsWith('2.png'),
       ),
       findsOneWidget,
     );

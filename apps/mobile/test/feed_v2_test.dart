@@ -10,6 +10,7 @@ import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/matches/matches_screen.dart';
 import 'package:go_router/go_router.dart';
 
@@ -555,12 +556,19 @@ void main() {
     tester,
   ) async {
     await _pump(tester, data: _costaRicaMediaSnapshot());
-    List<String?> urlsWithin(Key key) => tester
-        .widgetList<Image>(
-          find.descendant(of: find.byKey(key), matching: find.byType(Image)),
-        )
-        .map(_networkUrl)
-        .toList();
+    List<String?> urlsWithin(Key key) => [
+      for (final image in tester.widgetList<Image>(
+        find.descendant(of: find.byKey(key), matching: find.byType(Image)),
+      ))
+        _networkUrl(image),
+      for (final image in tester.widgetList<SportsImage>(
+        find.descendant(
+          of: find.byKey(key),
+          matching: find.byType(SportsImage),
+        ),
+      ))
+        image.url,
+    ];
 
     expect(
       urlsWithin(const ValueKey('competition-logo-fb_comp_cr')),

@@ -7,6 +7,7 @@ import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:go_router/go_router.dart';
 
@@ -852,15 +853,11 @@ void main() {
     await _open(tester, media: media);
     await _tab(tester, 'Alineación');
     await _tapPlayer(tester, find.text('Nasibov').first);
-    final images = tester.widgetList<Image>(_inSheet(find.byType(Image)));
+    final images = tester.widgetList<SportsImage>(
+      _inSheet(find.byType(SportsImage)),
+    );
     expect(
-      images.map((image) {
-        final provider = image.image;
-        final network = provider is ResizeImage
-            ? provider.imageProvider
-            : provider;
-        return (network as NetworkImage).url;
-      }),
+      images.map((image) => image.url),
       contains('https://media.example.com/p9.png'),
     );
     await _close(tester);

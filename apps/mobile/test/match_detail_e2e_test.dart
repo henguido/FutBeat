@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 
 // Mobile half of backend/test/match_detail_e2e.test.mjs: the fixture is the
@@ -119,6 +120,8 @@ Future<void> _tab(WidgetTester tester, String label) async {
 }
 
 List<String> _networkImages(WidgetTester tester) => [
+  for (final image in tester.widgetList<SportsImage>(find.byType(SportsImage)))
+    if (image.url case final String url) url,
   for (final image in tester.widgetList<Image>(find.byType(Image)))
     if (image.image case ResizeImage(imageProvider: NetworkImage(:final url)))
       url

@@ -9,6 +9,7 @@ import '../core/live_realtime.dart';
 import '../core/models.dart';
 import '../core/news_links.dart';
 import '../core/providers.dart';
+import '../core/sports_image_cache.dart';
 import '../core/relevance.dart';
 import '../core/theme.dart';
 
@@ -46,12 +47,21 @@ class EntityAvatar extends StatelessWidget {
       image: true,
       child: image == null
           ? fallback
+          : entity.id.startsWith('fb_')
+          ? SportsImage(
+              canonicalId: entity.id,
+              url: image,
+              width: size,
+              height: size,
+              fit: BoxFit.contain,
+              fallback: fallback,
+            )
           : Image.network(
               image,
               width: size,
               height: size,
               fit: BoxFit.contain,
-              errorBuilder: (_, error, stack) => fallback,
+              errorBuilder: (_, _, _) => fallback,
             ),
     );
   }

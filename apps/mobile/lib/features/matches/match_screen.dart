@@ -11,6 +11,7 @@ import '../../core/live_realtime.dart';
 import '../../core/models.dart';
 import '../../core/profile_context.dart';
 import '../../core/providers.dart';
+import '../../core/sports_image_cache.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../entities/standings.dart';
@@ -4215,11 +4216,13 @@ class _LineupPlayerList extends StatelessWidget {
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: players.length,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             crossAxisSpacing: 8,
             mainAxisSpacing: 8,
-            mainAxisExtent: 76,
+            // A two-line name, dorsal and match events overflowed the old
+            // 76-pixel cells by 5 pixels on the Galaxy A32.
+            mainAxisExtent: 84 + (textScale - 1).clamp(0, .3) * 120,
           ),
           itemBuilder: (_, index) => playerAt(index),
         );
@@ -4398,6 +4401,13 @@ class _PlayerAvatar extends StatelessWidget {
     );
     if (image == null || image.isEmpty) return fallback;
     final pixels = (size * MediaQuery.devicePixelRatioOf(context)).round();
+    final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+    final rowId = player['id']?.toString().trim() ?? '';
+    final imageId = canonicalId.startsWith('fb_player_')
+        ? canonicalId
+        : rowId.startsWith('fb_player_')
+        ? rowId
+        : '';
     return SizedBox(
       key: ValueKey(
         'lineup-photo-${player['canonicalId'] ?? player['id'] ?? player['name']}',
@@ -4408,15 +4418,26 @@ class _PlayerAvatar extends StatelessWidget {
         children: [
           fallback,
           ClipOval(
-            child: Image.network(
-              image,
-              width: size,
-              height: size,
-              cacheWidth: pixels,
-              fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
-              errorBuilder: (_, error, stack) => const SizedBox.shrink(),
-            ),
+            child: imageId.isEmpty
+                ? Image.network(
+                    image,
+                    width: size,
+                    height: size,
+                    cacheWidth: pixels,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  )
+                : SportsImage(
+                    canonicalId: imageId,
+                    url: image,
+                    width: size,
+                    height: size,
+                    cacheWidth: pixels,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    fallback: const SizedBox.shrink(),
+                  ),
           ),
         ],
       ),
