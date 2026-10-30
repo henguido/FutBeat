@@ -478,6 +478,11 @@ class ApiRepository implements FootballRepository {
         stored == null ? 'sqliteMiss' : 'sqliteHit',
         elapsed: stopwatch.elapsed,
       );
+      // A network response may have landed while Drift was reading. The
+      // already painted answer wins, even if this disk read captured an older
+      // row before the response was persisted.
+      final landed = _snapshotCache[key];
+      if (landed != null) return landed;
       if (stored == null) return null;
       final snapshot = _canonical(jsonDecode(stored.payload) as Json);
       _remember(key, snapshot);

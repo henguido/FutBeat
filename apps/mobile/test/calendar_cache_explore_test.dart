@@ -36,7 +36,57 @@ Map<String, dynamic> calendarPayload({
   return raw;
 }
 
+class _DelayedCalendarReadDatabase extends AppDatabase {
+  _DelayedCalendarReadDatabase() : super(NativeDatabase.memory());
+
+  final releaseRead = Completer<void>();
+  final readStarted = Completer<void>();
+
+  @override
+  Future<CalendarSnapshot?> readCalendarEntry(String date) async {
+    final row = await super.readCalendarEntry(date);
+    readStarted.complete();
+    await releaseRead.future;
+    return row;
+  }
+}
+
 void main() {
+  test(
+    'slow SQLite read cannot replace a newer HTTP calendar answer',
+    () async {
+      final db = _DelayedCalendarReadDatabase();
+      final old = calendarPayload();
+      old['updatedAt'] = '2026-08-20T18:00:00Z';
+      await db.saveCalendarSnapshot('2026-08-20', jsonEncode(old));
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (o, h) {
+            final fresh = calendarPayload(score: true);
+            fresh['updatedAt'] = '2026-08-20T20:00:00Z';
+            h.resolve(Response(requestOptions: o, data: fresh));
+          },
+        ),
+      );
+      final repo = ApiRepository(
+        dio,
+        db,
+        const CalendarCachePolicy(prefetchRadius: 0),
+      );
+      final date = DateTime(2026, 8, 20);
+      final staleRead = repo.watchDate(date).toList();
+      await db.readStarted.future;
+      expect((await repo.loadDate(date)).matches.single.score, '1 - 1');
+      db.releaseRead.complete();
+      expect((await staleRead).first.matches.single.score, '1 - 1');
+      expect(repo.peekDate(date)?.matches.single.score, '1 - 1');
+      await repo.settleBackground();
+      dio.close();
+      await db.close();
+    },
+  );
+
   test(
     'visible calendar timer stops on pause and rechecks on resume',
     () async {
