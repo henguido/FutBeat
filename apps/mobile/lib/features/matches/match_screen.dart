@@ -17,6 +17,7 @@ import '../entities/standings.dart';
 import 'match_info_card.dart';
 import 'match_preview_sections.dart';
 import 'lineup_history_section.dart';
+import 'live_field_card.dart';
 import 'match_period_scores.dart';
 
 const _headerTop = Color(0xFF1B2B31);
@@ -495,6 +496,12 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         if (detail.videos.isNotEmpty) ...[
           const _SectionTitle('Resumen oficial'),
           PostMatchVideos(detail),
+        ] else if (!match.showKickoff && !match.isLive && !detail.pending) ...[
+          const _SectionTitle('Videos oficiales'),
+          const _EmptySection(
+            Icons.play_circle_outline_rounded,
+            'Sin videos oficiales verificados',
+          ),
         ],
         if (periodScores != null) ...[
           const _SectionTitle('Marcador por período'),
@@ -569,6 +576,14 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ]),
       _MatchTabId.live: _MatchTabList('live', [
         if (data.demo) const DemoNotice(),
+        if (match.isLive)
+          LiveFieldCard(
+            homeName: home.displayName,
+            awayName: away.displayName,
+            score: _liveFieldScore(match),
+            status: match.statusLabel,
+            latestEvent: _liveFieldLatestEvent(match, detail, data),
+          ),
         if (showEvents) ...[
           const _SectionTitle('Eventos del partido'),
           MatchTimeline(data, match, detail),
@@ -660,6 +675,30 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
           : page,
     );
   }
+}
+
+String _liveFieldScore(FootballMatch match) {
+  final score = match.json['score'];
+  if (score is! Map || score['home'] is! int || score['away'] is! int) {
+    return '— : —';
+  }
+  return '${score['home']} : ${score['away']}';
+}
+
+String? _liveFieldLatestEvent(
+  FootballMatch match,
+  MatchDetail detail,
+  Snapshot data,
+) {
+  final events = mergedMatchTimeline(
+    match,
+    detail,
+  ).where((event) => !_neutralEvents.contains(event['type'])).toList();
+  if (events.isEmpty) return null;
+  final event = events.last;
+  final type = timelineDisplayType(event);
+  final player = _timelinePlayerName(event, data);
+  return [eventMinuteLabel(event), eventLabel(type), ?player].join(' · ');
 }
 
 class _TabBarHeader extends SliverPersistentHeaderDelegate {

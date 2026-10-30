@@ -588,4 +588,36 @@ void main() {
     expect(find.text('Anotador Parcial'), findsWidgets);
     await _close(tester, container);
   });
+
+  testWidgets('LIVE pitch is illustrative and uses the canonical score', (
+    tester,
+  ) async {
+    final container = await _open(
+      tester,
+      _Server((_) => _context(status: 'LIVE'), detail: (_) => _detail()),
+    );
+    await _tab(tester, 'En vivo');
+    expect(find.byKey(const ValueKey('live-field-card')), findsOneWidget);
+    expect(find.text('2 : 1'), findsOneWidget);
+    expect(find.text('Vista ilustrativa'), findsOneWidget);
+    expect(
+      find.text('Sin seguimiento de balón ni posición de ataque.'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await _close(tester, container);
+  });
+
+  testWidgets(
+    'finished match with no verified video has an honest empty state',
+    (tester) async {
+      final container = await _open(
+        tester,
+        _Server((_) => _context(status: 'FINISHED'), detail: (_) => _detail()),
+      );
+      await _scrollTo(tester, find.text('Videos oficiales'));
+      expect(find.text('Sin videos oficiales verificados'), findsOneWidget);
+      await _close(tester, container);
+    },
+  );
 }
