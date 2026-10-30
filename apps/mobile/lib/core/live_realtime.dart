@@ -319,6 +319,16 @@ class LiveRealtimeClient {
     sync: true,
   );
   Future<void> Function()? _refreshActiveScope;
+  void Function(bool)? _setActiveScope;
+  bool _appActive = true;
+
+  /// Pause sport traffic while the app is not visible. Resume only the
+  /// currently selected LIVE match scopes on return to the foreground.
+  void setAppActive(bool active) {
+    if (_appActive == active) return;
+    _appActive = active;
+    _setActiveScope?.call(active);
+  }
 
   /// Closes the gap left by Android suspending the socket in the background.
   /// The existing bootstrap reads only the currently visible match IDs.
@@ -366,6 +376,7 @@ class LiveRealtimeClient {
 
   void dispose() {
     _refreshActiveScope = null;
+    _setActiveScope = null;
     _scopes.clear();
     _scopeChanges.close();
   }
@@ -415,6 +426,8 @@ class LiveRealtimeClient {
     }
 
     Future<void> bootstrapOnce() async {
+      if (!_appActive) return;
+      final requestedScopeVersion = scopeVersion;
       final ids = scopedRealtime ? realtimeMatchIds : null;
       if (ids != null && ids.isEmpty) return;
       final before = scopedRealtime
@@ -436,7 +449,9 @@ class LiveRealtimeClient {
           since: since,
           matchIds: ids,
         );
-        if (disposed) return;
+        if (disposed || !_appActive || requestedScopeVersion != scopeVersion) {
+          return;
+        }
         final deviceNow = DateTime.now().toUtc();
         final serverNow = read.serverNow;
         if (serverNow != null) serverOffset = serverNow.difference(deviceNow);
@@ -465,6 +480,7 @@ class LiveRealtimeClient {
     }
 
     Future<void> bootstrap() async {
+      if (!_appActive) return;
       if (bootstrapping) {
         bootstrapAgain = true;
         return;
@@ -474,7 +490,7 @@ class LiveRealtimeClient {
         do {
           bootstrapAgain = false;
           await bootstrapOnce();
-        } while (bootstrapAgain && !disposed);
+        } while (bootstrapAgain && !disposed && _appActive);
       } finally {
         bootstrapping = false;
       }
@@ -485,7 +501,7 @@ class LiveRealtimeClient {
       joined = false;
       heartbeat?.cancel();
       joinTimeout?.cancel();
-      if (scopedRealtime && realtimeMatchIds.isEmpty) return;
+      if (!_appActive || (scopedRealtime && realtimeMatchIds.isEmpty)) return;
       if (!disposed && !(retry?.isActive ?? false)) {
         retry = Timer(retryDelay, () {
           unawaited(connect());
@@ -494,7 +510,7 @@ class LiveRealtimeClient {
     }
 
     connect = () async {
-      if (disposed || connecting) return;
+      if (disposed || connecting || !_appActive) return;
       final scopedIds = scopedRealtime ? realtimeMatchIds : const <String>[];
       if (scopedRealtime && scopedIds.isEmpty) return;
       final joiningScopeVersion = scopeVersion;
@@ -502,7 +518,7 @@ class LiveRealtimeClient {
       try {
         final current = await WebSocket.connect(config.websocketUri.toString())
             .timeout(const Duration(seconds: 10));
-        if (disposed || joiningScopeVersion != scopeVersion) {
+        if (disposed || !_appActive || joiningScopeVersion != scopeVersion) {
           await current.close();
           if (!disposed) reconnect();
           return;
@@ -555,6 +571,7 @@ class LiveRealtimeClient {
             try {
               if (raw is! String ||
                   disposed ||
+                  !_appActive ||
                   !identical(socket, current) ||
                   joiningScopeVersion != scopeVersion) {
                 return;
@@ -622,8 +639,27 @@ class LiveRealtimeClient {
           return;
         }
         _refreshActiveScope = () async {
-          if (disposed || (scopedRealtime && realtimeMatchIds.isEmpty)) return;
+          if (disposed ||
+              !_appActive ||
+              (scopedRealtime && realtimeMatchIds.isEmpty))
+            return;
           await bootstrap();
+        };
+        _setActiveScope = (active) {
+          scopeVersion++;
+          retry?.cancel();
+          retry = null;
+          heartbeat?.cancel();
+          joinTimeout?.cancel();
+          scopeDebounce?.cancel();
+          joined = false;
+          final old = socket;
+          socket = null;
+          if (old != null) unawaited(old.close());
+          if (active && !disposed) {
+            unawaited(connect());
+            unawaited(bootstrap());
+          }
         };
         if (!scopedRealtime || realtimeMatchIds.isNotEmpty) {
           unawaited(bootstrap());
@@ -642,12 +678,15 @@ class LiveRealtimeClient {
               final old = socket;
               socket = null;
               if (old != null) unawaited(old.close());
-              if (realtimeMatchIds.isNotEmpty) unawaited(bootstrap());
+              if (_appActive && realtimeMatchIds.isNotEmpty) {
+                unawaited(bootstrap());
+              }
               unawaited(connect());
             });
           });
         }
         refresh = Timer.periodic(refreshInterval, (_) {
+          if (!_appActive) return;
           if (scopedRealtime && realtimeMatchIds.isEmpty) return;
           // Joined: realtime carries the changes, REST is only a safety net.
           final last = lastBootstrap;
@@ -663,6 +702,7 @@ class LiveRealtimeClient {
       onCancel: () async {
         disposed = true;
         _refreshActiveScope = null;
+        _setActiveScope = null;
         retry?.cancel();
         scopeDebounce?.cancel();
         await scopeSubscription?.cancel();

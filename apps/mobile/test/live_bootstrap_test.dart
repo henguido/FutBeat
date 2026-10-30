@@ -583,6 +583,53 @@ void main() {
       }
     });
 
+    test('background closes LIVE channel and stops REST refresh; resume '
+        'reconciles only the current scope', () async {
+      final server = FakeSupabase([liveRow(id(1), updatedAt: now)]);
+      await server.start();
+      final dio = Dio();
+      final client = LiveRealtimeClient(
+        LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+        dio,
+        scopedRealtime: true,
+        refreshInterval: const Duration(milliseconds: 40),
+      );
+      client.setScope('match:open', [id(1)]);
+      var latest = <String, LiveMatchUpdate>{};
+      final subscription = client.watch().listen((value) => latest = value);
+      try {
+        await until(() => latest.containsKey(id(1)) && server.joins.isNotEmpty);
+        client.setAppActive(false);
+        final requestsBefore = server.restRequests.length;
+        final joinsBefore = server.joins.length;
+        client.setScope('match:open', [id(2)]);
+        server.rows[id(2)] = liveRow(
+          id(2),
+          status: 'FINISHED_PENDING_VERIFICATION',
+          revision: 2,
+          updatedAt: DateTime.now().toUtc(),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(server.restRequests.length, requestsBefore);
+        expect(server.joins.length, joinsBefore);
+        await client.refreshOnResume();
+        expect(server.restRequests.length, requestsBefore);
+        client.setAppActive(true);
+        await until(
+          () => latest.containsKey(id(2)) && server.joins.length > joinsBefore,
+        );
+        expect(
+          server.restRequests.last.queryParameters['match_id'],
+          'in.(${id(2)})',
+        );
+      } finally {
+        await subscription.cancel();
+        client.dispose();
+        dio.close(force: true);
+        await server.stop();
+      }
+    });
+
     test('a scoped channel ignores an unrelated realtime row', () async {
       final server = FakeSupabase([liveRow(id(1), updatedAt: now)]);
       await server.start();
