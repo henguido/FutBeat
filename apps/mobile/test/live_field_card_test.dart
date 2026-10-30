@@ -32,4 +32,30 @@ void main() {
     expect(find.text('Vista ilustrativa'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('LIVE pulse stops when reduced motion is requested', (
+    tester,
+  ) async {
+    final home = Entity({'id': 'home', 'name': 'Local'});
+    final away = Entity({'id': 'away', 'name': 'Visitante'});
+    Widget screen(bool reduceMotion) => MaterialApp(
+      home: MediaQuery(
+        data: MediaQueryData(disableAnimations: reduceMotion),
+        child: Scaffold(
+          body: LiveFieldCard(
+            home: home,
+            away: away,
+            score: '1 : 0',
+            status: 'En vivo',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(screen(false));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpWidget(screen(true));
+    await tester.pumpAndSettle();
+    expect(find.text('1 : 0'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

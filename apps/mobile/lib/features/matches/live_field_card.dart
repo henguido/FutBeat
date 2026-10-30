@@ -33,7 +33,20 @@ class _LiveFieldCardState extends State<LiveFieldCard>
     duration: const Duration(milliseconds: 1100),
     lowerBound: .45,
     upperBound: 1,
-  )..repeat(reverse: true);
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final shouldAnimate =
+        !MediaQuery.disableAnimationsOf(context) &&
+        TickerMode.valuesOf(context).enabled;
+    if (shouldAnimate && !_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    } else if (!shouldAnimate && _pulse.isAnimating) {
+      _pulse.stop();
+    }
+  }
 
   @override
   void dispose() {
