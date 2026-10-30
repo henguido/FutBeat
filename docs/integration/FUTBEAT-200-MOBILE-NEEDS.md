@@ -5,7 +5,7 @@ Estado local: el archivo `FUTBEAT-200-API-CONTRACT.md` todavía no está present
 | Área | Necesidad móvil | Estado actual |
 | --- | --- | --- |
 | Calendario | `GET /v1/calendar` por fecha y zona horaria, con `updatedAt` comparable para descartar respuestas atrasadas. | El cliente conserva la respuesta más reciente en memoria y SQLite. |
-| Detalle | `GET /v1/match-detail?id=<ID canónico>` debe incluir cobertura y frescura de alineaciones, estadísticas, eventos y videos. | La lectura local existe; la precarga de detalle queda acotada a un plan, pendiente de conexión segura al feed. |
+| Detalle | `GET /v1/match-detail?id=<ID canónico>` debe incluir cobertura y frescura de alineaciones, estadísticas, eventos y videos. | El feed precarga como máximo dos detalles relevantes por tanda y ocho por sesión activa; falta medir tráfico físico. |
 | Contexto | `GET /v1/match-context?id=<ID canónico>` debe identificar temporada, fase y grupo exactos de la tabla. | La UI no inventa posiciones cuando faltan filas. |
 | LIVE | Cambios por ID canónico, revisión y tiempo de cambio; reconexión con lectura incremental para recuperar eventos perdidos. | Canal filtrado se cierra en segundo plano y se reconcilia al volver. |
 | Imágenes | URL, identidad canónica, verificación y revocación explícitas; ausencia significa placeholder. | La app no debe inferir fotografías por nombre. |
