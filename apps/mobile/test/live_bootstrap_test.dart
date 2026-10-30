@@ -600,6 +600,9 @@ void main() {
       try {
         await until(() => latest.containsKey(id(1)) && server.joins.isNotEmpty);
         client.setAppActive(false);
+        // A read already in flight at suspension may reach the fake server.
+        // Measure new traffic only after that read has settled.
+        await Future<void>.delayed(const Duration(milliseconds: 80));
         final requestsBefore = server.restRequests.length;
         final joinsBefore = server.joins.length;
         client.setScope('match:open', [id(2)]);

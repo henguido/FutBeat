@@ -59,7 +59,7 @@ void main() {
     () async {
       final plan = MatchPrefetchPlan.build(
         matches: [fixture('a', 'x', 'a', 'b'), fixture('b', 'x', 'c', 'd')],
-        follows: const {},
+        follows: const {'team:a', 'team:c'},
         selectedCountry: null,
         competitions: const {},
       );
