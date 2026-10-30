@@ -51,6 +51,11 @@ void main() {
         maxMatches: 5,
       );
       expect(plan.matchIds, ['open', 'team', 'league', 'country', 'highlight']);
+      expect(plan.excluding({'open', 'team'}).matchIds, [
+        'league',
+        'country',
+        'highlight',
+      ]);
     },
   );
 

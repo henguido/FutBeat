@@ -8,6 +8,11 @@ class MatchPrefetchPlan {
 
   final List<String> matchIds;
 
+  MatchPrefetchPlan excluding(Set<String> attempted) => MatchPrefetchPlan._([
+    for (final id in matchIds)
+      if (!attempted.contains(id)) id,
+  ]);
+
   static MatchPrefetchPlan build({
     required Iterable<FootballMatch> matches,
     required Set<String> follows,

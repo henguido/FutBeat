@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,6 +8,7 @@ import '../../core/interests.dart';
 import '../../core/database.dart';
 import '../../core/load_errors.dart';
 import '../../core/models.dart';
+import '../../core/match_prefetch_plan.dart';
 import '../../core/providers.dart';
 import '../../core/relevance.dart';
 import '../../core/theme.dart';
@@ -251,7 +253,7 @@ class MatchesScreen extends ConsumerStatefulWidget {
 }
 
 class _MatchesScreenState extends ConsumerState<MatchesScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   DateTime? date;
   String filter = 'Todos';
   bool _retrying = false;
@@ -270,9 +272,107 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   int _dayDirection = 1;
   // "Today" of the feed being shown (the demo feed has its own).
   DateTime? _today;
+  bool _sportsActive = true;
+  bool _prefetchQueued = false;
+  bool _prefetchRunning = false;
+  int _prefetchGeneration = 0;
+  int _prefetchRemaining = 8;
+  CancelToken? _prefetchToken;
+  final Set<String> _prefetchAttempted = {};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final active = state == AppLifecycleState.resumed;
+    if (active == _sportsActive) return;
+    _sportsActive = active;
+    if (!active) {
+      _prefetchGeneration++;
+      _prefetchToken?.cancel('Feed backgrounded');
+      _prefetchToken = null;
+    } else if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _warmRelevantMatches(
+    Snapshot data,
+    List<FootballMatch> games,
+    Set<String> follows,
+    String? country,
+  ) {
+    if (data.demo ||
+        !_sportsActive ||
+        _prefetchRunning ||
+        _prefetchQueued ||
+        _prefetchRemaining <= 0) {
+      return;
+    }
+    final plan = MatchPrefetchPlan.build(
+      matches: games.where((match) => match.isUpcoming || match.isLive),
+      follows: follows,
+      selectedCountry: country,
+      competitions: {for (final entry in data.competitions) entry.id: entry},
+      maxMatches: 8,
+    ).excluding(_prefetchAttempted);
+    if (plan.matchIds.isEmpty) return;
+    _prefetchQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _prefetchQueued = false;
+      if (!mounted || !_sportsActive || _prefetchRunning) return;
+      final repository = ref.read(repositoryProvider);
+      if (repository is! ApiRepository) return;
+      final memory = ref.read(matchDetailMemoryProvider);
+      final token = CancelToken();
+      _prefetchToken = token;
+      final generation = ++_prefetchGeneration;
+      _prefetchRunning = true;
+      try {
+        await runMatchPrefetch(
+          plan,
+          maxRequests: _prefetchRemaining < 2 ? _prefetchRemaining : 2,
+          isActive: () =>
+              mounted &&
+              _sportsActive &&
+              generation == _prefetchGeneration &&
+              !token.isCancelled,
+          fetch: (id) async {
+            if (!_prefetchAttempted.add(id)) return;
+            _prefetchRemaining--;
+            if (memory[id]?.available == true) return;
+            final detail = await repository.loadMatchDetail(
+              id,
+              cancelToken: token,
+            );
+            if (detail.available &&
+                mounted &&
+                _sportsActive &&
+                generation == _prefetchGeneration &&
+                memory[id] == null) {
+              memory[id] = detail;
+              while (memory.length > matchDetailMemoryLimit) {
+                memory.remove(memory.keys.first);
+              }
+            }
+          },
+        );
+      } finally {
+        if (identical(_prefetchToken, token)) _prefetchToken = null;
+        _prefetchRunning = false;
+      }
+    });
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _prefetchGeneration++;
+    _prefetchToken?.cancel('Feed closed');
     _dayTransition.dispose();
     super.dispose();
   }
@@ -282,6 +382,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     // With no date picked yet the feed shows its own "today" (the anchor).
     final previous = DateUtils.dateOnly(date ?? today);
     final next = DateUtils.dateOnly(value);
+    if (next != previous) {
+      _prefetchGeneration++;
+      _prefetchToken?.cancel('Feed date changed');
+      _prefetchToken = null;
+    }
     setState(() {
       date = value;
       _collapsed.clear();
@@ -393,6 +498,14 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
           final allGames = dedupeFixtures(data.onDate(selected, 'Todos'));
+          _warmRelevantMatches(
+            data,
+            allGames,
+            follows,
+            // A detected country alone must not trigger detail reads; an
+            // explicit selection or follow is required for warming.
+            preference?.selectedCountry,
+          );
           // Filter after deduplication so a stale scheduled/LIVE twin cannot
           // reappear in a tab when its final result won in Todos.
           final games = allGames
