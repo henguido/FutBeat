@@ -148,6 +148,7 @@ class ApiRepository implements FootballRepository {
   final Map<String, int> _calendarFailures = {};
   final Map<String, _CalendarFlight> _calendarInFlight = {};
   final Set<Future<void>> _diskWrites = {};
+  final Map<String, Future<void>> _detailDiskWrites = {};
   Future<void> _prefetchTask = Future<void>.value();
   int _prefetchGeneration = 0;
   bool _appActive = true;
@@ -956,9 +957,48 @@ class ApiRepository implements FootballRepository {
   }
 
   void persistMatchDetail(String id, MatchDetail detail) {
-    if (id.startsWith('fb_') && detail.available && detail.matchId == id) {
-      _persistPublicJson('match-detail:$id', detail.sourceJson);
+    final db = database;
+    if (db == null ||
+        !id.startsWith('fb_') ||
+        !detail.available ||
+        detail.matchId != id ||
+        _containsPrivateCacheField(detail.sourceJson)) {
+      return;
     }
+    final key = 'public:match-detail:$id';
+    // Serialize writes for one fixture. A late, less complete response must
+    // not replace richer detail already persisted for offline use.
+    final preceding = _detailDiskWrites[id] ?? Future<void>.value();
+    late final Future<void> write;
+    write = preceding
+        .then((_) async {
+          MatchDetail accepted = detail;
+          final row = await db.readPublicSnapshot(key);
+          if (row != null &&
+              DateTime.now().toUtc().difference(row.savedAt.toUtc()) <=
+                  publicSnapshotRetention) {
+            try {
+              final previous = MatchDetail(jsonDecode(row.payload) as Json);
+              if (previous.available && previous.matchId == id) {
+                accepted = _monotonicDetail(previous, detail);
+              }
+            } catch (_) {
+              // Replace a malformed cached value with the verified response.
+            }
+          }
+          if (!_containsPrivateCacheField(accepted.sourceJson)) {
+            await db.savePublicSnapshot(key, jsonEncode(accepted.sourceJson));
+          }
+        })
+        .catchError((Object _) {})
+        .whenComplete(() {
+          if (identical(_detailDiskWrites[id], write)) {
+            _detailDiskWrites.remove(id);
+          }
+          _diskWrites.remove(write);
+        });
+    _detailDiskWrites[id] = write;
+    _diskWrites.add(write);
   }
 
   /// Recent form + head-to-head (DB-only on the server: never registers

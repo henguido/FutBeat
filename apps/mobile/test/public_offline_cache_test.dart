@@ -453,6 +453,42 @@ void main() {
       }
     },
   );
+
+  test(
+    'a partial later detail keeps verified lineup and statistics offline',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final dio = _dio((_) => throw StateError('offline'));
+      try {
+        final repository = ApiRepository(dio, db);
+        repository.persistMatchDetail(
+          'fb_a',
+          MatchDetail({
+            ...const _DetailFixture('fb_a').value.sourceJson,
+            'home': <String, dynamic>{
+              'starters': [
+                <String, dynamic>{'id': 'fb_player_a'},
+              ],
+            },
+            'statistics': [
+              <String, dynamic>{'type': 'shots', 'home': 4, 'away': 2},
+            ],
+          }),
+        );
+        repository.persistMatchDetail(
+          'fb_a',
+          const _DetailFixture('fb_a').value,
+        );
+        await repository.settleBackground();
+        final cached = await repository.readStoredMatchDetail('fb_a');
+        expect(cached?.json['statistics'], isNotEmpty);
+        expect((cached?.json['home'] as Map)['starters'], isNotEmpty);
+      } finally {
+        dio.close();
+        await db.close();
+      }
+    },
+  );
 }
 
 class _DetailFixture {
