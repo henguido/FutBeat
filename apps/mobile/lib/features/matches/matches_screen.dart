@@ -310,7 +310,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       return;
     }
     final plan = MatchPrefetchPlan.build(
-      matches: games.where((match) => match.isUpcoming || match.isLive),
+      // A finished fixture can be followed too. Its persisted Match Center
+      // detail should paint from disk as promptly as a live fixture.
+      matches: games.where(
+        (match) => match.isUpcoming || match.isLive || match.isFinished,
+      ),
       follows: follows,
       selectedCountry: country,
       competitions: {for (final entry in data.competitions) entry.id: entry},
