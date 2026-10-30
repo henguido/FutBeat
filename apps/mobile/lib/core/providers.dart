@@ -2093,7 +2093,14 @@ final matchDetailProvider = StreamProvider.autoDispose
                 );
         current = _monotonicDetail(current, loaded);
         remember(current);
-      } catch (_) {
+      } catch (error) {
+        if (error is DioException &&
+            error.type == DioExceptionType.connectionError) {
+          // No read-only polling can help while the device has no route.
+          // Keep the last cached detail, but resolve missing sections now.
+          if (!disposed) yield current.withOfflineUnavailable();
+          return;
+        }
         // A failed read is not evidence that data is absent: keep what we
         // had and try bounded read-only refreshes.
         final currentBlocked = repository is ApiRepository

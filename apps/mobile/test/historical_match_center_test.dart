@@ -269,6 +269,40 @@ Map<String, dynamic> _waiting() => _detail(
 );
 
 void main() {
+  test('connection failure preserves available detail and marks it stale', () {
+    final cached = MatchDetail(_full());
+    final offline = cached.withOfflineUnavailable();
+    expect(offline.available, isTrue);
+    expect(offline.homeStarters, isNotEmpty);
+    expect(offline.statistics, isNotEmpty);
+    expect(offline.pending, isFalse);
+    expect(offline.offlineStale, isTrue);
+    expect(offline.offlineUnavailable, isTrue);
+    expect(cached.sourceJson.containsKey('offlineUnavailable'), isFalse);
+  });
+
+  testWidgets('offline detail failure ends lineup and statistics loading', (
+    tester,
+  ) async {
+    final server = _Server((_, _) => null);
+    final container = await _open(tester, server);
+    await _elapse(tester, const Duration(seconds: 3));
+    await _tab(tester, 'Alineación');
+    expect(find.text('Cargando alineaciones…'), findsNothing);
+    expect(
+      find.text('No se pudo conectar. Alineaciones no disponibles.'),
+      findsOneWidget,
+    );
+    await _tab(tester, 'Estadísticas');
+    expect(find.text('Cargando estadísticas…'), findsNothing);
+    expect(
+      find.text('No se pudo conectar. Estadísticas no disponibles.'),
+      findsOneWidget,
+    );
+    expect(server.detailCalls.length, 1, reason: 'no offline recheck loop');
+    await _close(tester, container);
+  });
+
   testWidgets('1. a partial historical detail paints immediately', (
     tester,
   ) async {

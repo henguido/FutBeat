@@ -595,6 +595,14 @@ class MatchDetail {
     'pending': pending,
   }, blockedAliasIds: blockedAliasIds);
 
+  /// Transient read failure. This flag is never written to the detail cache.
+  MatchDetail withOfflineUnavailable() => MatchDetail({
+    ..._sourceJson,
+    'pending': false,
+    'offlineUnavailable': true,
+    if (available) 'offlineStale': true,
+  }, blockedAliasIds: blockedAliasIds);
+
   factory MatchDetail.waiting(String matchId) =>
       MatchDetail({...MatchDetail.empty(matchId).json, 'pending': true});
 
@@ -620,6 +628,7 @@ class MatchDetail {
 
   /// Last public detail shown from device storage while revalidating/offline.
   bool get offlineStale => json['offlineStale'] == true;
+  bool get offlineUnavailable => json['offlineUnavailable'] == true;
   bool get pending => json['pending'] == true;
 
   /// Server-side answer to "would registering demand still help?" (fetchable,

@@ -1821,6 +1821,12 @@ class Statistics extends StatelessWidget {
   Widget build(BuildContext context) {
     final stats = matchStatisticsForDisplay(match, detail);
     if (stats.isEmpty) {
+      if (detail?.offlineUnavailable == true) {
+        return const _EmptySection(
+          Icons.wifi_off_rounded,
+          'No se pudo conectar. Estadísticas no disponibles.',
+        );
+      }
       if (detail?.statisticsPending == true) {
         return const _PendingSection('Cargando estadísticas…');
       }
@@ -3219,6 +3225,12 @@ class Lineups extends StatelessWidget {
         detail.awayCoach != null ||
         detail.awayFormation != null;
     if (!homeHasInfo && !awayHasInfo) {
+      if (detail.offlineUnavailable) {
+        return const _EmptySection(
+          Icons.wifi_off_rounded,
+          'No se pudo conectar. Alineaciones no disponibles.',
+        );
+      }
       // A stale SCHEDULED/PRE_MATCH row can remain globally pending long
       // after kickoff when the provider never published an XI. Retrying may
       // continue in the background, but the section must not look like an
