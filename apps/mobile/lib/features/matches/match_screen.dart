@@ -91,7 +91,7 @@ class MatchScreen extends ConsumerStatefulWidget {
 }
 
 class _MatchScreenState extends ConsumerState<MatchScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   LiveRealtimeClient? _liveClient;
   late final String _liveScope = 'match:${identityHashCode(this)}';
   final Set<String> _recordedTeamInterests = {};
@@ -105,10 +105,15 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   int _staleLiveAttempts = 0;
   Timer? _detailRefreshIndicatorTimer;
   bool _detailRefreshIndicatorExpired = false;
+  bool _sportsActive = true;
+  bool _lineupPending = false;
+  bool _standingsPending = false;
+  bool _liveStale = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Stable structure: Tabla always exists (its content reports the state),
     // so tabs never appear/disappear while data arrives.
     _tabs = TabController(length: 6, vsync: this);
@@ -128,14 +133,15 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   }
 
   void _scheduleLineupEnrichmentRefresh() {
-    if (_lineupEnrichmentRetry != null ||
+    if (!_sportsActive ||
+        _lineupEnrichmentRetry != null ||
         _lineupEnrichmentAttempts >= _lineupEnrichmentRetryDelays.length) {
       return;
     }
     _lineupEnrichmentRetry = Timer(
       _lineupEnrichmentRetryDelays[_lineupEnrichmentAttempts],
       () {
-        if (!mounted) return;
+        if (!mounted || !_sportsActive) return;
         setState(() {
           _lineupEnrichmentAttempts++;
           _lineupEnrichmentRetry = null;
@@ -146,12 +152,13 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   }
 
   void _scheduleStandingsRefresh() {
-    if (_standingsRetry != null ||
+    if (!_sportsActive ||
+        _standingsRetry != null ||
         _standingsAttempts >= _standingsSchedule.length) {
       return;
     }
     _standingsRetry = Timer(_standingsSchedule[_standingsAttempts], () {
-      if (!mounted) return;
+      if (!mounted || !_sportsActive) return;
       setState(() {
         _standingsAttempts++;
         _standingsRetry = null;
@@ -161,22 +168,46 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   }
 
   void _watchStaleLive(Snapshot merged) {
-    if (merged.match(widget.id)?.liveDataStale != true) {
+    _liveStale = merged.match(widget.id)?.liveDataStale == true;
+    if (!_liveStale) {
       _staleLiveRefresh?.cancel();
       _staleLiveRefresh = null;
       _staleLiveAttempts = 0;
       return;
     }
-    if (_staleLiveRefresh != null ||
+    if (!_sportsActive ||
+        _staleLiveRefresh != null ||
         _staleLiveAttempts >= staleLiveRefreshDelays.length) {
       return;
     }
     _staleLiveRefresh = Timer(staleLiveRefreshDelays[_staleLiveAttempts], () {
-      if (!mounted) return;
+      if (!mounted || !_sportsActive) return;
       _staleLiveAttempts++;
       _staleLiveRefresh = null;
       ref.invalidate(matchContextSnapshotProvider(widget.id));
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final active = state == AppLifecycleState.resumed;
+    if (_sportsActive == active) return;
+    _sportsActive = active;
+    if (!active) {
+      _lineupEnrichmentRetry?.cancel();
+      _lineupEnrichmentRetry = null;
+      _standingsRetry?.cancel();
+      _standingsRetry = null;
+      _staleLiveRefresh?.cancel();
+      _staleLiveRefresh = null;
+      return;
+    }
+    // Recheck only the data that was still incomplete when this screen was
+    // suspended. The app-wide lifecycle owner handles the regular feed.
+    if (_lineupPending) ref.invalidate(matchDetailProvider(widget.id));
+    if (_standingsPending || _liveStale) {
+      ref.invalidate(matchContextSnapshotProvider(widget.id));
+    }
   }
 
   /// "Reintentar": one more read of the same context in this screen. The
@@ -196,6 +227,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _liveClient?.clearScope(_liveScope);
     _tabs.dispose();
     _lineupEnrichmentRetry?.cancel();
@@ -226,6 +258,9 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         ? const <String, LiveMatchUpdate>{}
         : <String, LiveMatchUpdate>{widget.id: ownUpdate};
     ref.listen(matchDetailProvider(widget.id), (_, next) {
+      if (!next.isLoading) {
+        _lineupPending = next.asData?.value.lineupEnrichmentPending == true;
+      }
       // Ignore the refresh-in-progress state (it still carries old data).
       if (!next.isLoading &&
           next.asData?.value.lineupEnrichmentPending == true) {
@@ -238,6 +273,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     if (watchesContext) {
       ref.listen(matchContextSnapshotProvider(widget.id), (_, next) {
         if (next.isLoading || next.value == null) return;
+        _standingsPending = next.value!.standingsPending;
         if (next.value!.standingsPending) {
           _scheduleStandingsRefresh();
         } else {
