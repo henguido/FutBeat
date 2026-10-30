@@ -842,6 +842,17 @@ void main() {
       expect(production.testAds, isFalse);
     });
 
+    test('explicitly disabled release ads never request a unit', () {
+      final disabled = AdsConfig.resolve(
+        release: true,
+        adsDisabled: true,
+        testAds: false,
+        matchesFeedUnitId: real,
+      );
+      expect(disabled.configured, isFalse);
+      expect(disabled.unitFor(AdPlacement.matchesFeed), isNull);
+    });
+
     test('Google test ids are recognised by publisher', () {
       expect(isGoogleTestAdId(admobTestBannerUnitId), isTrue);
       expect(

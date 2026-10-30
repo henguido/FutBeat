@@ -31,6 +31,7 @@ class AdsConfig {
     if (!Platform.isAndroid) return const AdsConfig();
     return AdsConfig.resolve(
       release: kReleaseMode,
+      adsDisabled: const bool.fromEnvironment('FUTBEAT_ADS_DISABLED'),
       testAds: const bool.fromEnvironment('FUTBEAT_ADMOB_TEST_ADS'),
       matchesFeedUnitId: const String.fromEnvironment(
         'FUTBEAT_ADMOB_MATCHES_FEED_ID',
@@ -44,9 +45,11 @@ class AdsConfig {
   /// backstop): a test unit or the test flag there means no ads at all.
   factory AdsConfig.resolve({
     required bool release,
+    bool adsDisabled = false,
     required bool testAds,
     required String matchesFeedUnitId,
   }) {
+    if (adsDisabled) return const AdsConfig();
     if (release) {
       return testAds || isGoogleTestAdId(matchesFeedUnitId)
           ? const AdsConfig()

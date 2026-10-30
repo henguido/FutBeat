@@ -42,13 +42,20 @@ fun dartDefines(): Map<String, String> {
 
 fun releaseAdsProblems(): List<String> {
     val problems = mutableListOf<String>()
+    val defines = dartDefines()
+    val adsDisabled = defines["FUTBEAT_ADS_DISABLED"]?.trim()?.lowercase() == "true"
+    if (adsDisabled) {
+        if (defines["FUTBEAT_ADMOB_TEST_ADS"]?.trim()?.lowercase() == "true") {
+            problems += "FUTBEAT_ADMOB_TEST_ADS conflicts with FUTBEAT_ADS_DISABLED"
+        }
+        return problems
+    }
     val appId = System.getenv("FUTBEAT_ADMOB_APP_ID")?.trim().orEmpty()
     when {
         appId.isEmpty() -> problems += "FUTBEAT_ADMOB_APP_ID (environment) is missing"
         appId.startsWith(googleTestAdPublisher) -> problems += "FUTBEAT_ADMOB_APP_ID is Google's test App ID"
         !admobAppIdPattern.matches(appId) -> problems += "FUTBEAT_ADMOB_APP_ID is not an AdMob App ID (ca-app-pub-…~…)"
     }
-    val defines = dartDefines()
     if (defines["FUTBEAT_ADMOB_TEST_ADS"]?.trim()?.lowercase() == "true") {
         problems += "--dart-define=FUTBEAT_ADMOB_TEST_ADS=true is not allowed in a release"
     }
