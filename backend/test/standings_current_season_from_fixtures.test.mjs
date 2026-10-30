@@ -185,3 +185,11 @@ test('a season with current fixtures is never closed as "no longer current"', ()
   const served = await reserve(db);
   assert.deepEqual([served.allowed, served.seasonKey], [true, '2026-2027']);
 }));
+
+test('a fixture labelled with a season that starts after it was played never becomes current', () => withDb(async (db) => {
+  const comp = await competition(db, { season: '2026' });
+  await played(db, comp, '2026', [-2000]);
+  const year = new Date().getUTCFullYear();
+  await played(db, comp, String(year + 4), [-100]);
+  assert.equal(await seasonKey(db, comp), '2026');
+}));

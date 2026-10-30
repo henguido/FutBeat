@@ -31,7 +31,9 @@
 --     the last 180 days (indexed by entities_match_competition_idx). Order:
 --     season_rank (end year, then start year: "2026/2027" > "2025/2026",
 --     "2026" > "2025"; text labels such as Apertura/Clausura rank by their
---     year), then the latest started fixture, then the entity. An entity that
+--     year), then the latest started fixture, then the entity. A fixture
+--     season that starts after the year the fixture was played is ignored
+--     (mislabelled). An entity that
 --     is ahead (new season announced, opener not played) still wins, as
 --     before; an entity that is behind its own fixtures no longer does. A
 --     stray replayed fixture of an older season never rolls it back.
@@ -84,7 +86,10 @@ begin
       and (m.payload->>'startTime')::timestamptz between now()-interval '180 days' and now()
     group by 1
   ), cand as (
+    -- A fixture never belongs to a season that starts after the year it was
+    -- played in (a mislabelled fixture cannot jump the season ahead).
     select r.k,r.last_start,false is_entity from recent r where r.k<>''
+      and coalesce(futbeat_private.season_rank(r.k)%10000<=extract(year from r.last_start),true)
     union all
     select entity_key,(select r.last_start from recent r where r.k=entity_key),true
     where entity_key<>''
