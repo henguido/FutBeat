@@ -375,9 +375,14 @@ class ApiRepository implements FootballRepository {
     String key,
     String path, {
     Map<String, dynamic>? queryParameters,
+    CancelToken? cancelToken,
   }) async {
     try {
-      final raw = await _getJson(path, queryParameters: queryParameters);
+      final raw = await _getJson(
+        path,
+        queryParameters: queryParameters,
+        cancelToken: cancelToken,
+      );
       final snapshot = _canonical(raw);
       final previous = _snapshotCache[key];
       if (_publicSnapshotMatches(key, snapshot, queryParameters) &&
@@ -391,6 +396,9 @@ class ApiRepository implements FootballRepository {
       }
       return snapshot;
     } catch (error, stack) {
+      if (cancelToken?.isCancelled == true) {
+        Error.throwWithStackTrace(error, stack);
+      }
       final cached = _snapshotCache[key];
       if (cached != null) return cached.asStale();
       final stored = await _readPublicSnapshot(key, queryParameters);
@@ -415,7 +423,10 @@ class ApiRepository implements FootballRepository {
     if (stored == null || !answer.stale) yield answer;
   }
 
-  Stream<Snapshot> watchPublicMatchContext(String id) async* {
+  Stream<Snapshot> watchPublicMatchContext(
+    String id, {
+    CancelToken? cancelToken,
+  }) async* {
     final key = 'match-context:$id';
     final stored =
         _snapshotCache[key] ?? await _readPublicSnapshot(key, {'id': id});
@@ -423,8 +434,17 @@ class ApiRepository implements FootballRepository {
       _remember(key, stored);
       yield stored.asStale();
     }
-    final answer = await loadMatchContext(id);
-    if (stored == null || !answer.stale) yield answer;
+    if (cancelToken?.isCancelled == true) return;
+    try {
+      final answer = await loadMatchContext(id, cancelToken: cancelToken);
+      if (cancelToken?.isCancelled != true &&
+          (stored == null || !answer.stale)) {
+        yield answer;
+      }
+    } catch (_) {
+      if (cancelToken?.isCancelled == true) return;
+      rethrow;
+    }
   }
 
   @override
@@ -898,11 +918,13 @@ class ApiRepository implements FootballRepository {
     ),
   );
 
-  Future<Snapshot> loadMatchContext(String id) => _loadSnapshot(
-    'match-context:$id',
-    '/v1/match-context',
-    queryParameters: {'id': id},
-  );
+  Future<Snapshot> loadMatchContext(String id, {CancelToken? cancelToken}) =>
+      _loadSnapshot(
+        'match-context:$id',
+        '/v1/match-context',
+        queryParameters: {'id': id},
+        cancelToken: cancelToken,
+      );
 
   Future<MatchDetail?> readStoredMatchDetail(String id) async {
     if (!id.startsWith('fb_')) {
@@ -1677,8 +1699,10 @@ void _retainSettled(Ref ref) {
 final matchContextSnapshotProvider = StreamProvider.autoDispose
     .family<Snapshot, String>((ref, id) async* {
       final repository = ref.watch(repositoryProvider);
+      final token = CancelToken();
+      ref.onDispose(() => token.cancel('Match Center closed'));
       final answers = repository is ApiRepository
-          ? repository.watchPublicMatchContext(id)
+          ? repository.watchPublicMatchContext(id, cancelToken: token)
           : Stream.fromFuture(repository.load());
       await for (final value in answers) {
         // Data still arriving is re-read, never pinned by the retention cache.
@@ -1687,7 +1711,10 @@ final matchContextSnapshotProvider = StreamProvider.autoDispose
         }
         yield value;
       }
-    });
+      // The repository already bounds HTTP retries. Riverpod's automatic
+      // error retry would restart a failed read on every tab rebuild, while
+      // the Match Center remains visible from its initial calendar snapshot.
+    }, retry: (_, _) => null);
 
 /// Recent form + head-to-head of a match, loaded after (and independently
 /// of) the match context: it never blocks the header or the tabs, fails on
