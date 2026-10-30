@@ -266,7 +266,7 @@ void main() {
   );
 
   for (final slow in [false, true]) {
-    test('initial detail failure keeps finite pending window (slow=$slow)', () async {
+    test('initial detail failure resolves within its failure policy (slow=$slow)', () async {
       final dio = Dio();
       var reads = 0;
       var central = 0;
@@ -317,12 +317,15 @@ void main() {
       });
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(values, isNotEmpty);
-      expect(values.every((value) => value.pending), true);
+      expect(values.first.pending, true);
+      if (slow) expect(values.every((value) => value.pending), true);
       await done.future.timeout(const Duration(seconds: 17));
-      // Initial open + one read-only refresh per bounded schedule step.
-      expect(reads, 6);
+      // A proven connection failure ends immediately; a timed-out read still
+      // gets the bounded read-only schedule because connectivity is unknown.
+      expect(reads, slow ? 6 : 1);
       expect(central, 1, reason: 'rechecks never request the provider');
       expect(values.last.pending, false);
+      expect(values.last.offlineUnavailable, !slow);
       expect(values.last.statistics, isEmpty);
       expect(values.last.homeStarters, isEmpty);
       if (slow) {
