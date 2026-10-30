@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:futbeat/core/models.dart';
 import 'package:futbeat/features/matches/live_field_card.dart';
 
 void main() {
@@ -11,11 +12,14 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
-      const MaterialApp(
+      MaterialApp(
         home: Scaffold(
           body: LiveFieldCard(
-            homeName: 'Club Deportivo de Nombre Largo',
-            awayName: 'Otro Club de Nombre Largo',
+            home: Entity({
+              'id': 'home',
+              'name': 'Club Deportivo de Nombre Largo',
+            }),
+            away: Entity({'id': 'away', 'name': 'Otro Club de Nombre Largo'}),
             score: '2 : 1',
             status: "78′ · En vivo",
             latestEvent: "64′ · Gol · Jugador de prueba",

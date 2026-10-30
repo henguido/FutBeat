@@ -493,8 +493,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
           ),
           ...previewSections,
         ],
-        if (detail.videos.isNotEmpty) ...[
-          const _SectionTitle('Resumen oficial'),
+        if (verifiedVideoLinks(detail).isNotEmpty) ...[
+          const _SectionTitle('Videos de canales verificados'),
           PostMatchVideos(detail),
         ] else if (!match.showKickoff && !match.isLive && !detail.pending) ...[
           const _SectionTitle('Videos oficiales'),
@@ -578,8 +578,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         if (data.demo) const DemoNotice(),
         if (match.isLive)
           LiveFieldCard(
-            homeName: home.displayName,
-            awayName: away.displayName,
+            home: home,
+            away: away,
             score: _liveFieldScore(match),
             status: match.statusLabel,
             latestEvent: _liveFieldLatestEvent(match, detail, data),
@@ -1478,7 +1478,7 @@ class PostMatchVideos extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      for (final video in detail.videos)
+      for (final video in verifiedVideoLinks(detail))
         Card(
           child: ListTile(
             leading: const CircleAvatar(child: Icon(Icons.play_arrow_rounded)),
@@ -1497,9 +1497,9 @@ class PostMatchVideos extends StatelessWidget {
               tooltip: 'Copiar enlace de YouTube',
               icon: const Icon(Icons.link),
               onPressed: () async {
-                final url = video['url']?.toString() ?? '';
-                if (!url.startsWith('https://www.youtube.com/watch?v=')) return;
-                await Clipboard.setData(ClipboardData(text: url));
+                final url = _safeVerifiedVideoUrl(video);
+                if (url == null) return;
+                await Clipboard.setData(ClipboardData(text: url.toString()));
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Enlace de YouTube copiado')),
@@ -1510,6 +1510,33 @@ class PostMatchVideos extends StatelessWidget {
         ),
     ],
   );
+}
+
+/// v1 supplies links from an approved channel, not playback or image rights.
+/// Only expose a link when its canonical YouTube ID, HTTPS URL and channel
+/// verification agree. The future API must add separate embed/thumbnail rights.
+List<Json> verifiedVideoLinks(MatchDetail detail) => [
+  for (final video in detail.videos)
+    if (_safeVerifiedVideoUrl(video) != null) video,
+];
+
+Uri? _safeVerifiedVideoUrl(Json video) {
+  if (video['verificationStatus'] != 'VERIFIED_CHANNEL') return null;
+  final id = video['videoId']?.toString() ?? '';
+  final channel = video['channelId']?.toString() ?? '';
+  if (!RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(id) || channel.isEmpty) {
+    return null;
+  }
+  final uri = Uri.tryParse(video['url']?.toString() ?? '');
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host != 'www.youtube.com' ||
+      uri.path != '/watch' ||
+      uri.userInfo.isNotEmpty ||
+      uri.queryParameters['v'] != id) {
+    return null;
+  }
+  return uri;
 }
 
 /// Calm section skeleton while detail is still arriving.

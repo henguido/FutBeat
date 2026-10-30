@@ -1,21 +1,23 @@
 import 'package:flutter/material.dart';
 
+import '../../core/models.dart';
 import '../../core/theme.dart';
+import '../../shared/widgets.dart';
 
 /// An illustrative pitch for a LIVE match. It never claims to track a ball,
 /// possession, or the location of an attack.
 class LiveFieldCard extends StatefulWidget {
   const LiveFieldCard({
     super.key,
-    required this.homeName,
-    required this.awayName,
+    required this.home,
+    required this.away,
     required this.score,
     required this.status,
     this.latestEvent,
   });
 
-  final String homeName;
-  final String awayName;
+  final Entity home;
+  final Entity away;
   final String score;
   final String status;
   final String? latestEvent;
@@ -94,12 +96,18 @@ class _LiveFieldCardState extends State<LiveFieldCard>
                       color: const Color(0xFF0E1B19).withValues(alpha: .92),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text(
-                      widget.score,
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w900,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                    child: AnimatedSwitcher(
+                      duration: reduceMotion
+                          ? Duration.zero
+                          : const Duration(milliseconds: 250),
+                      child: Text(
+                        widget.score,
+                        key: ValueKey(widget.score),
+                        style: const TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
                       ),
                     ),
                   ),
@@ -109,9 +117,11 @@ class _LiveFieldCardState extends State<LiveFieldCard>
             const SizedBox(height: 9),
             Row(
               children: [
+                EntityAvatar(widget.home, size: 30),
+                const SizedBox(width: 7),
                 Expanded(
                   child: Text(
-                    widget.homeName,
+                    widget.home.displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w700),
@@ -120,26 +130,33 @@ class _LiveFieldCardState extends State<LiveFieldCard>
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    widget.awayName,
+                    widget.away.displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.end,
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
+                const SizedBox(width: 7),
+                EntityAvatar(widget.away, size: 30),
               ],
             ),
             if (widget.latestEvent != null) ...[
               const SizedBox(height: 12),
-              Text(
-                widget.latestEvent!,
-                key: const ValueKey('live-field-latest-event'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: lime,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+              AnimatedSwitcher(
+                duration: reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 250),
+                child: Text(
+                  widget.latestEvent!,
+                  key: ValueKey('live-field-latest-${widget.latestEvent}'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: lime,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
