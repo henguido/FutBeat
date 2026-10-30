@@ -1,4 +1,3 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -277,7 +276,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   bool _prefetchRunning = false;
   int _prefetchGeneration = 0;
   int _prefetchRemaining = 8;
-  CancelToken? _prefetchToken;
   final Set<String> _prefetchAttempted = {};
 
   @override
@@ -293,8 +291,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     _sportsActive = active;
     if (!active) {
       _prefetchGeneration++;
-      _prefetchToken?.cancel('Feed backgrounded');
-      _prefetchToken = null;
     } else if (mounted) {
       setState(() {});
     }
@@ -328,8 +324,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       final repository = ref.read(repositoryProvider);
       if (repository is! ApiRepository) return;
       final memory = ref.read(matchDetailMemoryProvider);
-      final token = CancelToken();
-      _prefetchToken = token;
       final generation = ++_prefetchGeneration;
       _prefetchRunning = true;
       try {
@@ -337,24 +331,21 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           plan,
           maxRequests: _prefetchRemaining < 2 ? _prefetchRemaining : 2,
           isActive: () =>
-              mounted &&
-              _sportsActive &&
-              generation == _prefetchGeneration &&
-              !token.isCancelled,
+              mounted && _sportsActive && generation == _prefetchGeneration,
           fetch: (id) async {
             if (!_prefetchAttempted.add(id)) return;
             _prefetchRemaining--;
             if (memory[id]?.available == true) return;
-            final detail = await repository.loadMatchDetail(
-              id,
-              cancelToken: token,
-            );
-            if (detail.available &&
+            // A match-detail HTTP read can register provider work even with
+            // request=0. Warm only previously persisted data here; the user
+            // opening Match Center owns the explicit remote demand.
+            final detail = await repository.readStoredMatchDetail(id);
+            if (detail?.available == true &&
                 mounted &&
                 _sportsActive &&
                 generation == _prefetchGeneration &&
                 memory[id] == null) {
-              memory[id] = detail;
+              memory[id] = detail!;
               while (memory.length > matchDetailMemoryLimit) {
                 memory.remove(memory.keys.first);
               }
@@ -362,8 +353,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           },
         );
       } finally {
-        if (identical(_prefetchToken, token)) _prefetchToken = null;
         _prefetchRunning = false;
+        if (mounted && _sportsActive && generation != _prefetchGeneration) {
+          setState(() {});
+        }
       }
     });
   }
@@ -372,7 +365,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _prefetchGeneration++;
-    _prefetchToken?.cancel('Feed closed');
     _dayTransition.dispose();
     super.dispose();
   }
@@ -384,8 +376,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     final next = DateUtils.dateOnly(value);
     if (next != previous) {
       _prefetchGeneration++;
-      _prefetchToken?.cancel('Feed date changed');
-      _prefetchToken = null;
     }
     setState(() {
       date = value;

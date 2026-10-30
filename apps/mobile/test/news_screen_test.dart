@@ -289,9 +289,10 @@ void main() {
     );
     expect(requests.single.path, '/v1/news');
     expect(
-      requests.single.queryParameters['subjects'],
+      requests.single.queryParameters['follows'],
       'player:fb_player_x,team:fb_team_a,team:fb_team_b',
     );
+    expect(requests.single.queryParameters.containsKey('subjects'), isFalse);
     expect(requests.single.queryParameters['country'], 'CR');
     expect(find.text('Titular a1'), findsOneWidget);
     expect(find.text('Titular a2'), findsOneWidget);
@@ -431,9 +432,10 @@ void main() {
       );
       expect(requests, hasLength(1));
       expect(
-        requests.single.queryParameters['subjects'],
+        requests.single.queryParameters['follows'],
         'competition:fb_comp_a,player:fb_player_a',
       );
+      expect(requests.single.queryParameters.containsKey('subjects'), isFalse);
 
       await tester.ensureVisible(find.text('Jugadores seguidos'));
       await tester.tap(find.text('Jugadores seguidos'));

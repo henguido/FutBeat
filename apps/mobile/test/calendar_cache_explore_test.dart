@@ -38,6 +38,120 @@ Map<String, dynamic> calendarPayload({
 
 void main() {
   test(
+    'visible calendar timer stops on pause and rechecks on resume',
+    () async {
+      final dio = Dio();
+      var calls = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            calls++;
+            handler.resolve(
+              Response(requestOptions: options, data: calendarPayload()),
+            );
+          },
+        ),
+      );
+      final repo = ApiRepository(
+        dio,
+        null,
+        const CalendarCachePolicy(
+          todayTtl: Duration.zero,
+          prefetchRadius: 0,
+          revalidateEvery: Duration(milliseconds: 200),
+        ),
+      );
+      final container = ProviderContainer(
+        overrides: [repositoryProvider.overrideWithValue(repo)],
+      );
+      final now = costaRicaNow();
+      final date = DateTime(now.year, now.month, now.day);
+      final listener = container.listen(
+        calendarSnapshotProvider(date),
+        (_, _) {},
+      );
+      await container.read(calendarSnapshotProvider(date).future);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(calls, 1);
+      container.read(sportsAppActiveProvider).value = false;
+      repo.setAppActive(false);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(calls, 1);
+      repo.refreshDate(date);
+      repo.setAppActive(true);
+      container.read(sportsAppActiveProvider).value = true;
+      for (var i = 0; i < 20 && calls < 2; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(calls, 2);
+      listener.close();
+      container.dispose();
+      dio.close();
+    },
+  );
+
+  test(
+    'complete historical day keeps past TTL despite revalidating hint',
+    () async {
+      final dio = Dio();
+      var calls = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            calls++;
+            final raw = calendarPayload();
+            raw['freshness'] = {'stale': false, 'revalidating': true};
+            raw['coverage'] = {
+              'partial': false,
+              'calendar': {'complete': true},
+            };
+            handler.resolve(Response(requestOptions: options, data: raw));
+          },
+        ),
+      );
+      final repo = ApiRepository(
+        dio,
+        null,
+        const CalendarCachePolicy(recoveringTtl: Duration.zero),
+      );
+      final date = costaRicaNow().subtract(const Duration(days: 1));
+      await repo.loadDate(date);
+      await repo.watchDate(date).toList();
+      expect(calls, 1);
+      dio.close();
+    },
+  );
+
+  test(
+    'calendar performs zero reads while backgrounded and resumes on demand',
+    () async {
+      final dio = Dio();
+      var calls = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            calls++;
+            handler.resolve(
+              Response(requestOptions: options, data: calendarPayload()),
+            );
+          },
+        ),
+      );
+      final repo = ApiRepository(dio);
+      final today = costaRicaNow();
+      final date = DateTime(today.year, today.month, today.day);
+      repo.setAppActive(false);
+      expect(await repo.watchDate(date).toList(), isEmpty);
+      await repo.prefetchDate(date);
+      expect(calls, 0);
+      repo.setAppActive(true);
+      expect(await repo.watchDate(date).toList(), isNotEmpty);
+      expect(calls, greaterThanOrEqualTo(1));
+      dio.close();
+    },
+  );
+
+  test(
     'older calendar response cannot replace newer memory and disk',
     () async {
       final db = AppDatabase(NativeDatabase.memory());

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -146,12 +147,26 @@ class ApiRepository implements FootballRepository {
   final Set<Future<void>> _diskWrites = {};
   Future<void> _prefetchTask = Future<void>.value();
   int _prefetchGeneration = 0;
+  bool _appActive = true;
   final Set<String> _forcedDates = {};
   final Map<String, DateTime> _catalogFetchedAt = {};
   final Set<String> _detailRequested = {};
   final Map<String, Future<MatchDetail>> _detailRequestInFlight = {};
 
   final Map<String, Snapshot> _snapshotCache = <String, Snapshot>{};
+
+  /// Stops background calendar warming and cancels in-flight date reads.
+  /// The visible screen revalidates its date when the app resumes.
+  void setAppActive(bool active) {
+    if (_appActive == active) return;
+    _appActive = active;
+    if (!active) {
+      _prefetchGeneration++;
+      for (final flight in _calendarInFlight.values) {
+        flight.token.cancel('App backgrounded');
+      }
+    }
+  }
 
   static String _dateParam(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'
@@ -406,18 +421,20 @@ class ApiRepository implements FootballRepository {
     final fetched = _calendarFetchedAt[value];
     if (fetched == null) return false;
     final snapshot = _snapshotCache['calendar:$value'];
+    final today = _dateParam(costaRicaNow());
+    final calendarCoverage = snapshot?.coverage?['calendar'];
+    final completeHistorical =
+        value.compareTo(today) < 0 &&
+        calendarCoverage is Map &&
+        calendarCoverage['complete'] == true;
     // Partial, stale or still-live days (e.g. yesterday just after midnight)
     // revalidate on the short TTL.
     final recovering =
         snapshot?.coverage?['partial'] == true ||
         snapshot?.stale == true ||
-        snapshot?.revalidating == true ||
+        (snapshot?.revalidating == true && !completeHistorical) ||
         (snapshot?.matches.any((match) => match.isLive) ?? false);
-    final ttl = calendarPolicy.ttl(
-      value,
-      _dateParam(costaRicaNow()),
-      recovering: recovering,
-    );
+    final ttl = calendarPolicy.ttl(value, today, recovering: recovering);
     return DateTime.now().toUtc().difference(fetched) < ttl;
   }
 
@@ -556,6 +573,7 @@ class ApiRepository implements FootballRepository {
     Snapshot? cached = await _readStored(value);
     final freshCache = cached != null && _freshDate(value);
     if (cached != null) yield cached.withFreshness(revalidating: !freshCache);
+    if (!_appActive) return;
     if (freshCache) {
       _prefetchAround(date);
       return;
@@ -650,6 +668,7 @@ class ApiRepository implements FootballRepository {
   /// D+2, D-2, ...), only inside the window around today. A newer visible date
   /// supersedes the previous chain; missing and expired days are both fetched.
   void _prefetchAround(DateTime anchor) {
+    if (!_appActive) return;
     final generation = ++_prefetchGeneration;
     final now = costaRicaNow();
     final today = DateTime.utc(now.year, now.month, now.day);
@@ -659,7 +678,7 @@ class ApiRepository implements FootballRepository {
       await previous;
       for (var step = 1; step <= calendarPolicy.prefetchRadius; step++) {
         for (final sign in const [1, -1]) {
-          if (generation != _prefetchGeneration) return;
+          if (!_appActive || generation != _prefetchGeneration) return;
           final day = DateTime.utc(
             anchor.year,
             anchor.month,
@@ -677,10 +696,11 @@ class ApiRepository implements FootballRepository {
   }
 
   Future<void> prefetchDate(DateTime date) async {
+    if (!_appActive) return;
     final value = _dateParam(date);
     try {
       await _readStored(value);
-      if (_freshDate(value)) return;
+      if (!_appActive || _freshDate(value)) return;
       await _fetchDate(value);
     } catch (_) {
       // Opportunistic, deduplicated and independent of the visible request.
@@ -1141,7 +1161,6 @@ class ApiRepository implements FootballRepository {
         'tab': 'for_you',
         'limit': 40,
         if (keys.isNotEmpty) 'follows': keys.join(','),
-        if (keys.isNotEmpty) 'subjects': keys.join(','),
         'country': ?code,
       },
       cancelToken: cancelToken,
@@ -1189,7 +1208,8 @@ class ApiRepository implements FootballRepository {
     // persisted detail at once (partial or full) and only registers demand
     // when hydration is actually needed (deduplicated, never waits for the
     // provider). `available` (displayable) is not "complete".
-    // Later opens are read-only unless the server says demand would help.
+    // Later opens avoid detail demand unless the server reports missing data.
+    // The API may still request lineup-photo hydration on any detail read.
     if (_detailRequested.contains(id)) {
       final cached = await readMatchDetail(id, cancelToken: cancelToken);
       if (!cached.hydrationNeeded) return cached;
@@ -1333,22 +1353,43 @@ final snapshotProvider = FutureProvider<Snapshot>(
   (ref) => ref.watch(repositoryProvider).load(),
 );
 
+/// Shared app visibility signal. It is not persisted and never starts work.
+final sportsAppActiveProvider = Provider<ValueNotifier<bool>>((ref) {
+  final active = ValueNotifier(true);
+  ref.onDispose(active.dispose);
+  return active;
+});
+
 final calendarSnapshotProvider = StreamProvider.autoDispose
     .family<Snapshot, DateTime>((ref, date) {
       // Watched synchronously so the view can peek the memory cache in the
       // first frame of a date switch.
       final repository = ref.watch(repositoryProvider);
-      if (repository is! ApiRepository) {
-        return Stream.fromFuture(repository.loadDate(date));
-      }
+      final active = ref.watch(sportsAppActiveProvider);
       final token = CancelToken();
       Timer? timer;
       var disposed = false;
+      void onVisibility() {
+        if (!active.value) {
+          token.cancel('Calendar backgrounded');
+          timer?.cancel();
+          timer = null;
+        } else if (ref.mounted) {
+          ref.invalidateSelf();
+        }
+      }
+
+      active.addListener(onVisibility);
       ref.onDispose(() {
         disposed = true;
+        active.removeListener(onVisibility);
         token.cancel('Calendar date closed');
         timer?.cancel();
       });
+      if (!active.value) return const Stream<Snapshot>.empty();
+      if (repository is! ApiRepository) {
+        return Stream.fromFuture(repository.loadDate(date));
+      }
       return () async* {
         var hasData = false;
         try {
@@ -1363,7 +1404,7 @@ final calendarSnapshotProvider = StreamProvider.autoDispose
           // Revalidate only a date that has data, with backoff after failures.
           // A date that never got a snapshot ends in an error with Retry: it
           // is not restarted on a timer (no endless loading loop).
-          if (!disposed && hasData) {
+          if (!disposed && active.value && hasData) {
             timer = Timer(
               repository.calendarRevalidateDelay(date),
               ref.invalidateSelf,
@@ -1606,21 +1647,20 @@ final matchPreviewProvider = FutureProvider.autoDispose
       // "Reintentar" in Cara a cara only).
     }, retry: (_, _) => null);
 
-/// First read-only recheck after the open. The provider usually answers in
-/// ~1 s once the worker is woken, so rechecks start early (reads only: never
-/// a provider request).
+/// First bounded recheck after the open. Detail rechecks use request=0, but
+/// the API may independently request lineup-photo hydration.
 final detailPollIntervalProvider = Provider<Duration>(
   (ref) => const Duration(seconds: 2),
 );
 
-/// Bounded, growing read-only refreshes while the server reports pending
+/// Bounded, growing detail refreshes while the server reports pending
 /// sections (5 s, 10 s, 20 s, 40 s by default), then stop.
 final detailPollScheduleProvider = Provider<List<Duration>>((ref) {
   final base = ref.watch(detailPollIntervalProvider);
   // 2, 4, 8, 15, 40 s by default: the last read lands ~69 s after the open,
   // clearly after the worker's 1-minute cron fallback (+ ~1 s GOAL + write
   // latency) when a debounced wake-up was skipped. Then a stable state.
-  // Finite: 5 read-only rechecks at most.
+  // Finite: 5 rechecks at most.
   return [base, base * 2, base * 4, base * 7.5, base * 20];
 });
 
