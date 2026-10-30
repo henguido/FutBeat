@@ -475,6 +475,12 @@ class ApiRepository implements FootballRepository {
         final fresh = _canonical(raw);
         // A "pending" answer (server still materializing) is never cached.
         if (fresh.calendarPending) return fresh;
+        // A delayed response must not roll back a newer day already painted
+        // by another request (or persisted for the next app launch).
+        final current = _snapshotCache['calendar:$value'];
+        if (current != null && fresh.updatedAt.isBefore(current.updatedAt)) {
+          return current;
+        }
         _remember('calendar:$value', fresh);
         _calendarFetchedAt[value] = DateTime.now().toUtc();
         _forcedDates.remove(value);

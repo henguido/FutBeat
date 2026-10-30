@@ -37,6 +37,45 @@ Map<String, dynamic> calendarPayload({
 }
 
 void main() {
+  test(
+    'older calendar response cannot replace newer memory and disk',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final dio = Dio();
+      var calls = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (o, h) {
+            calls++;
+            final raw = calendarPayload(score: calls == 1);
+            raw['updatedAt'] = calls == 1
+                ? '2026-08-20T20:00:00Z'
+                : '2026-08-20T19:00:00Z';
+            h.resolve(Response(requestOptions: o, data: raw));
+          },
+        ),
+      );
+      final repo = ApiRepository(dio, db);
+      final date = DateTime(2026, 8, 20);
+      expect((await repo.loadDate(date)).matches.single.score, '1 - 1');
+      await repo.settleBackground();
+      expect((await repo.loadDate(date)).matches.single.score, '1 - 1');
+      await repo.settleBackground();
+      expect(repo.peekDate(date)?.matches.single.score, '1 - 1');
+      final persisted = await db.readCalendarSnapshot('2026-08-20');
+      expect(
+        Snapshot(jsonDecode(persisted!) as Map<String, dynamic>)
+            .matches
+            .single
+            .score,
+        '1 - 1',
+      );
+      expect(calls, 2);
+      dio.close();
+      await db.close();
+    },
+  );
+
   test('calendar refresh requests remain single-flight without request cache headers', () async {
     final dio = Dio();
     final entered = Completer<void>();
