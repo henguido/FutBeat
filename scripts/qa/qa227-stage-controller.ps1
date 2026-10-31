@@ -12,10 +12,26 @@ function Replace-One([string]$Text,[string]$Needle,[string]$Replacement){
     if($Text.IndexOf($Needle) -lt 0 -or $Text.IndexOf($Needle) -ne $Text.LastIndexOf($Needle)){throw 'Controller baseline changed; do not apply blindly'}
     return $Text.Replace($Needle,$Replacement)
 }
+function Replace-Function([string]$Text,[string]$Name,[string]$ExpectedHash,[string]$Replacement){
+    $errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput($Text,[ref]$null,[ref]$errors)
+    if($errors){throw 'Invalid baseline syntax'}
+    $nodes=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $Name},$true))
+    if($nodes.Count-ne1){throw 'Ambiguous baseline function'}
+    $e=$nodes[0].Extent
+    $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($e.Text)))
+    if($digest-cne$ExpectedHash){throw 'ADB baseline changed; review its checks before replacing it'}
+    return $Text.Substring(0,$e.StartOffset)+$Replacement+$Text.Substring($e.EndOffset)
+}
 $launcher=(Get-Content -LiteralPath $LauncherPath -Raw).Replace("`r",'')
 $failsafe=(Get-Content -LiteralPath $FailsafePath -Raw).Replace("`r",'')
-$launcher=Replace-One $launcher 'function Invoke-AdbBounded([string[]]$Arguments) {' 'function Invoke-AdbBounded([string[]]$Arguments, [int]$TimeoutMs=8000) {'
-$launcher=Replace-One $launcher '$proc.WaitForExit(8000)' '$proc.WaitForExit($TimeoutMs)'
+$launcher=Replace-Function $launcher 'Invoke-AdbBounded' '584981277949B522650B4189FF5B4B5F76E5CC43635577735B4C762EF6840A8D' @'
+function Invoke-AdbBounded([string[]]$Arguments,[int]$TimeoutMs=8000) {
+    $result=Invoke-QaBoundedAdb -Executable $adb -Arguments $Arguments -TimeoutMs $TimeoutMs
+    if($result.exit_code -notin @(0,1)){throw 'adb_failed'}
+    return $result
+}
+'@
 $import=". (Join-Path `$PSScriptRoot 'qa227-development-policy.ps1')`n"
 $launcher=Replace-One $launcher ". (Join-Path `$PSScriptRoot 'qa123-coordination-rotate.ps1')" (". (Join-Path `$PSScriptRoot 'qa123-coordination-rotate.ps1')`n"+$import)
 $launcher=$launcher.Replace("'^QA12[36]-[A-Za-z0-9-]+$'","'^QA(?:12[36]|DEV)-[A-Za-z0-9-]+$'")
@@ -84,11 +100,12 @@ $launcher=Replace-One $launcher '        # No controller owns the QA package out
 $launcher=Replace-One $launcher '[IO.File]::Move($tmp, $Path, $true)' 'Move-QaDevelopmentAtomicFile -TemporaryPath $tmp -DestinationPath $Path'
 $failsafe=Replace-One $failsafe "    [string]`$EvidencePath = ''," "    [string]`$DevelopmentStateRoot = '',`n    [string]`$DevelopmentGateDirectory = '',`n    [string]`$DevelopmentReadyPath = '',`n    [string]`$EvidencePath = '',"
 $failsafe=Replace-One $failsafe ". (Join-Path `$PSScriptRoot 'qa81-contract-v2.ps1')" (". (Join-Path `$PSScriptRoot 'qa81-contract-v2.ps1')`n"+$import)
-$failsafe=Replace-One $failsafe 'function Invoke-AdbBounded([string[]]$Arguments) {' ('function Invoke-AdbBounded([string[]]$Arguments,[int]$TimeoutMs=0) {'+"`n"+'    $commandTimeout=if($DevelopmentStateRoot){if($TimeoutMs -gt 0){$TimeoutMs}else{5000}}else{8000}')
-$failsafe=Replace-One $failsafe '$process.WaitForExit(8000)' '$process.WaitForExit($commandTimeout)'
-$failsafe=Replace-One $failsafe "throw 'adb_command_timeout_8s'" 'throw ("adb_command_timeout_"+$commandTimeout+"ms")'
-$failsafe=Replace-One $failsafe '        [void]$process.Start()' ('        [void]$process.Start()'+"`n"+'        $stdoutTask=$process.StandardOutput.ReadToEndAsync()'+"`n"+'        $stderrTask=$process.StandardError.ReadToEndAsync()')
-$failsafe=Replace-One $failsafe 'output = $process.StandardOutput.ReadToEnd()' 'output = $stdoutTask.GetAwaiter().GetResult()'
+$failsafe=Replace-Function $failsafe 'Invoke-AdbBounded' '6D15568371C9F89A10CCB6E6F3FD6EEDAA2D3590E65F946A74E919D92C094DDF' @'
+function Invoke-AdbBounded([string[]]$Arguments,[int]$TimeoutMs=0) {
+    $limit=if($DevelopmentStateRoot){if($TimeoutMs-gt0){$TimeoutMs}else{5000}}else{8000}
+    return Invoke-QaBoundedAdb -Executable $adb -Arguments $Arguments -TimeoutMs $limit
+}
+'@
 $failsafe=Replace-One $failsafe '[IO.File]::Move($tmp, $EvidencePath, $true)' 'Move-QaDevelopmentAtomicFile -TemporaryPath $tmp -DestinationPath $EvidencePath'
 $start=$failsafe.IndexOf('        $gate = Get-Content -LiteralPath $GatePath')
 $end=$failsafe.IndexOf('        if (-not (Test-Path -LiteralPath $HeartbeatPath', $start)

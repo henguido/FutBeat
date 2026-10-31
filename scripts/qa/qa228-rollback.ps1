@@ -5,6 +5,7 @@ param([Parameter(Mandatory)][ValidateSet('Backup','Guard','Restore','Verify')][s
 $ErrorActionPreference='Stop'
 $repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 . (Join-Path $PSScriptRoot 'qa228-trial-validation.ps1')
+. (Join-Path $PSScriptRoot 'qa227-development-policy.ps1')
 $runRoot=Join-Path $repo ('artifacts/'+$TrialName.ToLowerInvariant())
 $backup=Join-Path $runRoot 'backup'
 $q='C:\Users\hen_g\.codex\visualizations\2026\10\08\01a11d81-14eb-7170-966a-ead982b2856f\qa123'
@@ -12,14 +13,8 @@ $adb='C:\Users\hen_g\AppData\Local\Android\Sdk\platform-tools\adb.exe'
 $taskName='FutBeat-QA123-Launcher'
 $manifestPath=Join-Path $runRoot 'rollback-manifest.json'
 function Adb([string[]]$Arguments){
-    $si=[Diagnostics.ProcessStartInfo]::new($adb);$si.UseShellExecute=$false;$si.CreateNoWindow=$true
-    $si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true
-    foreach($arg in $Arguments){[void]$si.ArgumentList.Add($arg)}
-    $p=[Diagnostics.Process]::new();$p.StartInfo=$si
-    try{[void]$p.Start();$o=$p.StandardOutput.ReadToEndAsync();$e=$p.StandardError.ReadToEndAsync()
-        if(-not $p.WaitForExit(5000)){$p.Kill($true);throw 'ADB timeout'}
-        return @{code=$p.ExitCode;output=$o.GetAwaiter().GetResult().Trim();error=$e.GetAwaiter().GetResult().Trim()}
-    }finally{$p.Dispose()}
+    $r=Invoke-QaBoundedAdb -Executable $adb -Arguments $Arguments -TimeoutMs 5000
+    return @{code=$r.exit_code;output=$r.output.Trim();error=$r.error.Trim()}
 }
 function Log([string]$Message){[IO.File]::AppendAllText((Join-Path $runRoot 'rollback.log'),[datetimeoffset]::UtcNow.ToString('o')+' '+$Message+[Environment]::NewLine)}
 function Xml { ((Export-ScheduledTask -TaskName $taskName) -replace "`r",'').TrimEnd() }

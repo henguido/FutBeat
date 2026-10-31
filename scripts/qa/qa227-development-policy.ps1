@@ -2,6 +2,38 @@
 # One explicit approval per supervised development session, not per screen.
 $script:qa227Apk=$null
 
+# A process can exit while a descendant still owns its redirected pipes.
+# One deadline covers both process exit and draining stdout/stderr. Never kill
+# the process tree: an ADB client may have started the shared server.
+function Invoke-QaBoundedAdb {
+    param([string]$Executable,[string[]]$Arguments,[ValidateRange(100,8000)][int]$TimeoutMs=3000)
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    $si=[Diagnostics.ProcessStartInfo]::new($Executable)
+    $si.UseShellExecute=$false;$si.CreateNoWindow=$true
+    $si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true
+    $si.RedirectStandardInput=$true
+    foreach($argument in $Arguments){[void]$si.ArgumentList.Add($argument)}
+    $p=[Diagnostics.Process]::new();$p.StartInfo=$si
+    try {
+        [void]$p.Start();$p.StandardInput.Close()
+        $stdout=$p.StandardOutput.ReadToEndAsync();$stderr=$p.StandardError.ReadToEndAsync()
+        if($clock.ElapsedMilliseconds -ge $TimeoutMs){
+            if(-not $p.HasExited){$p.Kill()}
+            throw 'adb_process_timeout'
+        }
+        $remaining=[int][Math]::Max(0,$TimeoutMs-$clock.ElapsedMilliseconds)
+        if(-not $p.WaitForExit($remaining)){
+            if(-not $p.HasExited){$p.Kill()}
+            throw 'adb_process_timeout'
+        }
+        $remaining=[int][Math]::Max(0,$TimeoutMs-$clock.ElapsedMilliseconds)
+        if(-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout,$stderr),$remaining) -or $clock.ElapsedMilliseconds -ge $TimeoutMs){
+            throw 'adb_stream_timeout'
+        }
+        return @{exit_code=$p.ExitCode;output=$stdout.GetAwaiter().GetResult();error=$stderr.GetAwaiter().GetResult();elapsed_ms=$clock.ElapsedMilliseconds}
+    }finally{$p.Dispose()}
+}
+
 # Windows readers without FileShare.Delete can briefly block an atomic rename.
 # Keep the old complete record until replacement succeeds; never delete it or
 # extend a lease. A persistent lock/permission error still fails closed.
