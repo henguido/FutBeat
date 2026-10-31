@@ -418,8 +418,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     }
     setState(() {
       date = value;
-      _collapsed.clear();
-      if (next != previous) _dayDirection = next.isAfter(previous) ? 1 : -1;
+      if (next != previous) {
+        _collapsed.clear();
+        _dayDirection = next.isAfter(previous) ? 1 : -1;
+      }
       // #168: "En vivo" only makes sense today. On any other day it would
       // leave an empty screen although that day has matches.
       filter = matchFilterForDate(filter, next, today);
