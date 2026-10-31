@@ -14,9 +14,10 @@ import '../core/relevance.dart';
 import '../core/theme.dart';
 
 class EntityAvatar extends StatelessWidget {
-  const EntityAvatar(this.entity, {super.key, this.size = 42});
+  const EntityAvatar(this.entity, {super.key, this.size = 42, this.cache});
   final Entity entity;
   final double size;
+  final SportsImageDiskCache? cache;
   @override
   Widget build(BuildContext context) {
     final hex = entity.json['color'] as String?;
@@ -24,6 +25,15 @@ class EntityAvatar extends StatelessWidget {
         ? lime
         : Color(int.parse(hex.replaceFirst('#', 'FF'), radix: 16));
     final image = entityImageOf(context, entity);
+    // Legacy squad rows can already resolve a verified canonical person's
+    // photo through entityImageOf. Keep that same identity as the disk key
+    // instead of falling back to an uncached network image for the alias.
+    final rawCanonicalId = entity.json['canonicalId'];
+    final canonicalId = rawCanonicalId is String ? rawCanonicalId.trim() : '';
+    final imageId =
+        !entity.id.startsWith('fb_') && canonicalId.startsWith('fb_player_')
+        ? canonicalId
+        : entity.id;
     final fallback = Container(
       width: size,
       height: size,
@@ -47,10 +57,11 @@ class EntityAvatar extends StatelessWidget {
       image: true,
       child: image == null
           ? fallback
-          : entity.id.startsWith('fb_')
+          : imageId.startsWith('fb_')
           ? SportsImage(
-              canonicalId: entity.id,
+              canonicalId: imageId,
               url: image,
+              cache: cache,
               width: size,
               height: size,
               fit: BoxFit.contain,
