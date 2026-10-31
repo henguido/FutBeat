@@ -217,8 +217,22 @@ test('a fixture missing apiId/id is silently skipped upstream, not a finalizatio
   assert.equal(value.results.results, 0);
 }));
 
+test('a failed link records the paid results but keeps the date PARTIAL for a retry', () => withDb(async (db) => {
+  const { external } = await seedResultsDueMatch(db);
+  const h = harness(db, {
+    failAt: 'futbeat_link_goal_live_matches',
+    provider: () => Response.json({ success: true, data: [resultFixture(external)], pagination: { total: 1 } }),
+  });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
+  assert.equal(h.rpcCalls('futbeat_record_live_batch').length, 1);
+  const attempt = h.rpcCalls('futbeat_complete_results_date_attempt')[0].body;
+  assert.equal(attempt.p_outcome, 'PARTIAL');
+  assert.equal(attempt.p_unmatched_count, 1);
+  assert.match(h.rpcCalls('futbeat_complete_provider_call')[0].body.p_metadata.linkFailure, /injected failure/);
+}));
+
 for (const [failAt, expectedStage] of [
-  ['futbeat_link_goal_live_matches', 'link'],
   ['futbeat_record_live_batch', 'record'],
   ['futbeat_finalize_goal_results_date', 'finalize'],
   ['futbeat_complete_results_date_attempt', 'complete_attempt'],

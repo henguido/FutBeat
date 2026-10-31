@@ -199,6 +199,25 @@ async function recordObservationsInChunks(
   return { insertedObservations, duplicates, chunks: progress.chunks };
 }
 
+// BE-237: the batch is already paid for. Observations of unlinked fixtures
+// link on a later poll; losing all of them froze every live match.
+async function linkFixtures(fixtures: Record<string, unknown>[]) {
+  try {
+    const linkResult: Record<string, unknown> | null = await rpc(
+      "futbeat_link_goal_live_matches",
+      { p_fixtures: fixtures },
+      30000,
+    );
+    return { linkResult, linkFailure: null };
+  } catch (error) {
+    const linkFailure = error instanceof Error
+      ? error.message.slice(0, 200)
+      : "unknown";
+    console.warn("live link unavailable", linkFailure);
+    return { linkResult: null, linkFailure };
+  }
+}
+
 async function readGoalKey() {
   const key = await rpc("futbeat_read_goal_live_secret");
   const value = clean(key);
@@ -504,9 +523,7 @@ async function syncLive() {
       }
     }
 
-    const linkResult = await rpc("futbeat_link_goal_live_matches", {
-      p_fixtures: fixtures,
-    }, 30000);
+    const { linkResult, linkFailure } = await linkFixtures(fixtures);
 
     const observations = await Promise.all(
       fixtures.map((fixture) =>
@@ -551,6 +568,7 @@ async function syncLive() {
       p_metadata: {
         mode: "live",
         ...(unmappedStatuses.length ? { unmappedStatuses } : {}),
+        ...(linkFailure ? { linkFailure } : {}),
         fromStart,
         reachedEnd,
         recovery,
@@ -716,9 +734,7 @@ async function syncOneResultsDate() {
     }
 
     stage = "link";
-    const linkResult = await rpc("futbeat_link_goal_live_matches", {
-      p_fixtures: fixtures,
-    }, 30000);
+    const { linkResult, linkFailure } = await linkFixtures(fixtures);
     stage = "normalize";
     const observations = await Promise.all(
       fixtures.map((fixture) =>
@@ -740,10 +756,15 @@ async function syncOneResultsDate() {
       p_received_at: receivedAt,
     }, 30000);
     stage = "complete_attempt";
-    const unmatchedCount = Number(linkResult?.unmappedCount ?? 0);
+    // Without a link nothing proves the date complete: PARTIAL keeps it retried.
+    const unmatchedCount = linkFailure
+      ? fixtures.length
+      : Number(linkResult?.unmappedCount ?? 0);
     await rpc("futbeat_complete_results_date_attempt", {
       p_provider_date: providerDate,
-      p_outcome: finalized?.resultsComplete === true ? "SUCCEEDED" : "PARTIAL",
+      p_outcome: finalized?.resultsComplete === true && !linkFailure
+        ? "SUCCEEDED"
+        : "PARTIAL",
       p_result_count: observations.length,
       p_unmatched_count: Number.isFinite(unmatchedCount) ? unmatchedCount : 0,
     });
@@ -769,6 +790,7 @@ async function syncOneResultsDate() {
         recordChunks: persistence.chunks,
         resultsComplete: finalized?.resultsComplete ?? false,
         unresolved: finalized?.unresolved ?? null,
+        ...(linkFailure ? { linkFailure } : {}),
         ...(truncatedBy ? { truncatedBy } : {}),
         transport: "supabase-cron",
         provider: "GOAL API",
