@@ -34,7 +34,8 @@ class SportsImageDiskCache {
   final int maxEntries;
   final int maxImageBytes;
   final Map<String, Future<File?>> _inFlight = {};
-  Future<void> _eviction = Future<void>.value();
+  Future<void>? _eviction;
+  bool _evictionRequested = false;
 
   static final Future<SportsImageDiskCache> shared = () async {
     final root = await getApplicationCacheDirectory();
@@ -107,8 +108,24 @@ class SportsImageDiskCache {
   }
 
   Future<void> evict() {
-    final run = _eviction.then((_) => _evict());
-    _eviction = run.catchError((Object _) {});
+    _evictionRequested = true;
+    final active = _eviction;
+    if (active != null) return active;
+    // A lineup can finish many downloads together. Share their traversal
+    // instead of queuing a full directory scan for every single image.
+    final run = Future<void>.microtask(() async {
+      try {
+        do {
+          _evictionRequested = false;
+          await _evict();
+          // A download may have written after the scan began. Run again
+          // before completing any waiter, so byte/entry limits still hold.
+        } while (_evictionRequested);
+      } finally {
+        _eviction = null;
+      }
+    });
+    _eviction = run;
     return run;
   }
 

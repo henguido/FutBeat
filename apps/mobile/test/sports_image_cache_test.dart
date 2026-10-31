@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -5,6 +6,49 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/sports_image_cache.dart';
+
+/// Counts real directory traversals without replacing filesystem behavior.
+class _ScanCountingDirectory implements Directory {
+  _ScanCountingDirectory(this.directory);
+
+  final Directory directory;
+  int scans = 0;
+  Future<void> Function(int scan)? afterSnapshot;
+
+  @override
+  String get path => directory.path;
+
+  @override
+  Future<bool> exists() => directory.exists();
+
+  @override
+  Future<Directory> create({bool recursive = false}) =>
+      directory.create(recursive: recursive);
+
+  @override
+  Stream<FileSystemEntity> list({
+    bool recursive = false,
+    bool followLinks = true,
+  }) async* {
+    scans++;
+    final entries = directory.list(
+      recursive: recursive,
+      followLinks: followLinks,
+    );
+    final callback = afterSnapshot;
+    if (callback == null) {
+      yield* entries;
+    } else {
+      final snapshot = await entries.toList();
+      await callback(scans);
+      yield* Stream.fromIterable(snapshot);
+    }
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnsupportedError('Unexpected directory operation: $invocation');
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -180,6 +224,84 @@ void main() {
       ),
     ]);
     expect(requests, 1);
+  });
+
+  test(
+    'one frame of cache maintenance shares one directory traversal',
+    () async {
+      final counted = _ScanCountingDirectory(directory);
+      final cache = SportsImageDiskCache(directory: counted);
+      await Future.wait([for (var i = 0; i < 18; i++) cache.evict()]);
+      expect(counted.scans, 1);
+    },
+  );
+
+  test(
+    'a write during eviction gets a second scan before waiters finish',
+    () async {
+      final counted = _ScanCountingDirectory(directory);
+      final firstScan = Completer<void>();
+      final releaseScan = Completer<void>();
+      counted.afterSnapshot = (scan) async {
+        if (scan == 1) {
+          firstScan.complete();
+          await releaseScan.future;
+        }
+      };
+      final cache = SportsImageDiskCache(directory: counted, maxEntries: 1);
+      await File('${directory.path}/old.img').writeAsBytes(png);
+      final first = cache.evict();
+      await firstScan.future;
+      await File('${directory.path}/late.img').writeAsBytes(png);
+      final second = cache.evict();
+      releaseScan.complete();
+      await Future.wait([first, second]);
+      expect(counted.scans, 2);
+      expect(directory.listSync().whereType<File>().length, 1);
+    },
+  );
+
+  test('failed shared maintenance does not poison the next eviction', () async {
+    final counted = _ScanCountingDirectory(directory);
+    counted.afterSnapshot = (scan) async {
+      if (scan == 1) throw const FileSystemException('fixture storage failure');
+    };
+    final cache = SportsImageDiskCache(directory: counted);
+    await expectLater(cache.evict(), throwsA(isA<FileSystemException>()));
+    await cache.evict();
+    expect(counted.scans, 2);
+  });
+
+  test('concurrent downloads retain entry and byte bounds with fewer scans', () async {
+    final counted = _ScanCountingDirectory(directory);
+    final cache = SportsImageDiskCache(
+      directory: counted,
+      maxEntries: 3,
+      maxBytes: png.length * 3,
+      fetch: (_) async => png,
+    );
+    await Future.wait([
+      for (var i = 0; i < 18; i++)
+        cache.resolve(
+          canonicalId: 'fb_player_batch_$i',
+          url: 'https://media.example.test/batch-$i.png',
+        ),
+    ]);
+    final files = directory.listSync().whereType<File>().toList();
+    expect(files.length, lessThanOrEqualTo(3));
+    expect(
+      files.fold<int>(0, (sum, file) => sum + file.lengthSync()),
+      lessThanOrEqualTo(png.length * 3),
+    );
+    // Filesystem scheduling varies by platform; the deterministic same-frame
+    // test above checks coalescing. This batch checks bounds and records work.
+    expect(counted.scans, lessThanOrEqualTo(18));
+    // Diagnostic local filesystem count, not an Android latency claim.
+    // ignore: avoid_print
+    print(
+      'SPORTS_CACHE_BENCH downloads=18 scans=${counted.scans} '
+      'files=${files.length} bytes=${files.fold<int>(0, (n, f) => n + f.lengthSync())}',
+    );
   });
 
   test(
