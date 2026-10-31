@@ -129,9 +129,14 @@ void main() {
           'schemaVersion': 1,
           'demo': false,
           'updatedAt': now.toIso8601String(),
-          'teams': [],
+          'teams': [
+            {'id': 'fb_team_h', 'name': 'Synthetic H'},
+            {'id': 'fb_team_a', 'name': 'Synthetic A'},
+          ],
           'players': [],
-          'competitions': [],
+          'competitions': [
+            {'id': 'fb_comp_synthetic', 'name': 'Synthetic'},
+          ],
           'matches': [
             {
               'id': 'fb_match_synthetic243',
