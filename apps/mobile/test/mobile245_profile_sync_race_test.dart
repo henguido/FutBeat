@@ -123,8 +123,9 @@ void main() {
                   return;
                 }
               }
-              if (request.path.endsWith('futbeat_sync_user_profile_v2'))
+              if (request.path.endsWith('futbeat_sync_user_profile_v2')) {
                 legacyWrites++;
+              }
               handler.resolve(
                 Response(requestOptions: request, data: <String, dynamic>{}),
               );

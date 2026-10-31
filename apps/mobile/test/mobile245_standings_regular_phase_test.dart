@@ -40,7 +40,7 @@ Snapshot _data({
               'teamId': team,
               'position': index + 1,
               if (group != null) 'stage': genericStage,
-              if (group != null) 'group': group,
+              'group': ?group,
               if (group != null && subgroup != null) 'subgroup': subgroup,
               'played': 3,
               'won': 1,
