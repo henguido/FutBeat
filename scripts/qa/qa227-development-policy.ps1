@@ -2,6 +2,25 @@
 # One explicit approval per supervised development session, not per screen.
 $script:qa227Apk=$null
 
+# Windows readers without FileShare.Delete can briefly block an atomic rename.
+# Keep the old complete record until replacement succeeds; never delete it or
+# extend a lease. A persistent lock/permission error still fails closed.
+function Move-QaDevelopmentAtomicFile {
+    param([string]$TemporaryPath,[string]$DestinationPath)
+    $elapsed=[Diagnostics.Stopwatch]::StartNew()
+    while($true){
+        try {[IO.File]::Move($TemporaryPath,$DestinationPath,$true);return}
+        catch {
+            $errorObject=$_.Exception
+            while($errorObject.InnerException){$errorObject=$errorObject.InnerException}
+            $code=$errorObject.HResult -band 0xffff
+            if(($errorObject -isnot [IO.IOException] -and $errorObject -isnot [UnauthorizedAccessException]) -or
+                $code -notin @(5,32,33) -or $elapsed.ElapsedMilliseconds -ge 500){throw}
+            Start-Sleep -Milliseconds 10
+        }
+    }
+}
+
 # A newly created OS process is not evidence that its guard loop has started.
 # The independent failsafe writes this record only after a full successful pass.
 function Test-QaDevelopmentGuardReady {

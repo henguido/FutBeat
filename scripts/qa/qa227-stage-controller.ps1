@@ -81,12 +81,14 @@ $block=@'
 '@
 $block=$block.Replace('Invoke-AdbBounded -Arguments $Arguments','Invoke-AdbBounded -Arguments $Arguments -TimeoutMs 1500')
 $launcher=Replace-One $launcher '        # No controller owns the QA package outside an active-window ledger.' ($block+"`n        # No controller owns the QA package outside an active-window ledger.")
+$launcher=Replace-One $launcher '[IO.File]::Move($tmp, $Path, $true)' 'Move-QaDevelopmentAtomicFile -TemporaryPath $tmp -DestinationPath $Path'
 $failsafe=Replace-One $failsafe "    [string]`$EvidencePath = ''," "    [string]`$DevelopmentStateRoot = '',`n    [string]`$DevelopmentGateDirectory = '',`n    [string]`$DevelopmentReadyPath = '',`n    [string]`$EvidencePath = '',"
 $failsafe=Replace-One $failsafe ". (Join-Path `$PSScriptRoot 'qa81-contract-v2.ps1')" (". (Join-Path `$PSScriptRoot 'qa81-contract-v2.ps1')`n"+$import)
 $failsafe=Replace-One $failsafe 'function Invoke-AdbBounded([string[]]$Arguments) {' ('function Invoke-AdbBounded([string[]]$Arguments) {'+"`n"+'    $commandTimeout=if($DevelopmentStateRoot){1500}else{8000}')
 $failsafe=Replace-One $failsafe '$process.WaitForExit(8000)' '$process.WaitForExit($commandTimeout)'
 $failsafe=Replace-One $failsafe '        [void]$process.Start()' ('        [void]$process.Start()'+"`n"+'        $stdoutTask=$process.StandardOutput.ReadToEndAsync()'+"`n"+'        $stderrTask=$process.StandardError.ReadToEndAsync()')
 $failsafe=Replace-One $failsafe 'output = $process.StandardOutput.ReadToEnd()' 'output = $stdoutTask.GetAwaiter().GetResult()'
+$failsafe=Replace-One $failsafe '[IO.File]::Move($tmp, $EvidencePath, $true)' 'Move-QaDevelopmentAtomicFile -TemporaryPath $tmp -DestinationPath $EvidencePath'
 $start=$failsafe.IndexOf('        $gate = Get-Content -LiteralPath $GatePath')
 $end=$failsafe.IndexOf('        if (-not (Test-Path -LiteralPath $HeartbeatPath', $start)
 if($start -lt 0 -or $end -le $start){throw 'Failsafe baseline changed'}
@@ -110,7 +112,7 @@ $readyWrite=@'
         $ready=@{schema='qa-development-guard-v1';status='READY';utc=[datetimeoffset]::UtcNow.ToString('o');session_id=$ExpectedWindowId;nonce=$ExpectedNonce;process_id=$PID}
         $tmp="$DevelopmentReadyPath.tmp.$PID"
         [IO.File]::WriteAllText($tmp,($ready|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
-        [IO.File]::Move($tmp,$DevelopmentReadyPath,$true)
+        Move-QaDevelopmentAtomicFile -TemporaryPath $tmp -DestinationPath $DevelopmentReadyPath
     }
 '@
 $failsafe=Replace-One $failsafe '    if ($DryRun -and $DryRunMaxSeconds' ($readyWrite+"`n"+'    if ($DryRun -and $DryRunMaxSeconds')

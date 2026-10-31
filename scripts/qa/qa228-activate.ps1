@@ -3,6 +3,7 @@ param([Parameter(Mandatory)][ValidateSet('Deploy','Arm')][string]$Mode,[Validate
 $ErrorActionPreference='Stop'
 $repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 . (Join-Path $PSScriptRoot 'qa228-trial-validation.ps1')
+. (Join-Path $PSScriptRoot 'qa227-development-policy.ps1')
 $root=Join-Path $repo ('artifacts/'+$TrialName.ToLowerInvariant());$candidate=Join-Path $repo 'artifacts/qa227/controller-candidate'
 $m=Get-Content (Join-Path $root 'rollback-manifest.json') -Raw|ConvertFrom-Json
 $q=$m.qa_root;$task='FutBeat-QA123-Launcher';$adb='C:\Users\hen_g\AppData\Local\Android\Sdk\platform-tools\adb.exe'
@@ -12,7 +13,7 @@ function AtomicPrivate([string]$Path,[object]$Value){
     $acl=[Security.AccessControl.FileSecurity]::new();$acl.SetAccessRuleProtection($true,$false)
     $owner=[Security.Principal.WindowsIdentity]::GetCurrent().User;$acl.SetOwner($owner)
     foreach($sid in @($owner,[Security.Principal.SecurityIdentifier]::new('S-1-5-18'),[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','Allow'))}
-    Set-Acl -LiteralPath $tmp -AclObject $acl;[IO.File]::Move($tmp,$Path,$true)
+    Set-Acl -LiteralPath $tmp -AclObject $acl;Move-QaDevelopmentAtomicFile -TemporaryPath $tmp -DestinationPath $Path
 }
 function Check {
     if(Test-Path (Join-Path $root 'restore-result.json')){throw 'Trial already restored'}
