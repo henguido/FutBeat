@@ -9,8 +9,8 @@ const _first = 'fb_team_244first';
 const _second = 'fb_team_244second';
 Json _row(String team, {Object? position, String? group}) => {
   'teamId': team,
-  if (position != null) 'position': position,
-  if (group != null) 'group': group,
+  'position': ?position,
+  'group': ?group,
   'played': 1,
   'won': 1,
   'drawn': 0,

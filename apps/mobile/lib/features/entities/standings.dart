@@ -123,7 +123,7 @@ List<StandingsGroup>? standingsGroups(
   for (final group in groups.values) {
     final positions = [
       for (final row in group)
-        if (_standingsPosition(row['position']) case final position?) position,
+        ?_standingsPosition(row['position']),
     ];
     final teams = [
       for (final row in group)

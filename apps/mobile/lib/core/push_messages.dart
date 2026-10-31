@@ -40,8 +40,9 @@ class PushMessage {
       final value = raw.trim();
       if (value.isNotEmpty &&
           value.length <= 200 &&
-          !RegExp(r'[\x00-\x1f\x7f]').hasMatch(value))
+          !RegExp(r'[\x00-\x1f\x7f]').hasMatch(value)) {
         return value;
+      }
     }
     return null;
   }
