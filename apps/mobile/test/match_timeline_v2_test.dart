@@ -181,6 +181,80 @@ Future<void> _pumpTimeline(
 }
 
 void main() {
+  testWidgets('paired detail keeps the canonical substitute navigation', (
+    tester,
+  ) async {
+    await _pumpTimeline(
+      tester,
+      events: [
+        {
+          ..._event(
+            'sub',
+            'SUBSTITUTION',
+            68,
+            team: _home,
+            player: 'player_out',
+            assist: 'player_in',
+          ),
+          'providerEventKey': 'sub-provider-68',
+        },
+      ],
+      incidents: [
+        {
+          'type': 'SUBSTITUTION',
+          'minute': 68,
+          'side': 'home',
+          'providerEventId': 'sub-provider-68',
+          'outPlayerId': 'provider-out',
+          'inPlayerId': 'provider-in',
+          'detail': 'Salida | Entrada',
+        },
+      ],
+    );
+    expect(find.text('↓ Jugador que sale'), findsOneWidget);
+    expect(find.text('↑ Jugador que entra'), findsOneWidget);
+    await tester.tap(find.text('↑ Jugador que entra'));
+    await tester.pumpAndSettle();
+    expect(find.text('profile:player_in'), findsOneWidget);
+  });
+
+  testWidgets('paired goal retains canonical assist navigation', (
+    tester,
+  ) async {
+    await _pumpTimeline(
+      tester,
+      events: [
+        {
+          ..._event(
+            'goal',
+            'GOAL',
+            12,
+            team: _home,
+            player: 'player_goal',
+            assist: 'player_assist',
+          ),
+          'providerEventKey': 'goal-provider-12',
+        },
+      ],
+      incidents: [
+        {
+          'type': 'GOAL',
+          'minute': 12,
+          'side': 'home',
+          'providerEventId': 'goal-provider-12',
+          'playerId': 'provider-scorer',
+          'assistPlayerId': 'provider-assist',
+          'playerName': 'Nombre del proveedor',
+          'assistName': 'Asistente del proveedor',
+        },
+      ],
+    );
+    expect(find.text('Asistencia: Asistente Real'), findsOneWidget);
+    await tester.tap(find.text('Asistencia: Asistente Real'));
+    await tester.pumpAndSettle();
+    expect(find.text('profile:player_assist'), findsOneWidget);
+  });
+
   test('display helpers only use explicit structured evidence', () {
     expect(timelineDisplayType({'type': 'GOAL', 'ownGoal': true}), 'OWN_GOAL');
     expect(

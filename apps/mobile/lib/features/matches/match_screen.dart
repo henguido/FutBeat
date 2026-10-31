@@ -2566,8 +2566,11 @@ String? timelineScoreAfter(Json event) {
 
 String? _timelinePlayerId(Json event, Snapshot data, {bool assist = false}) {
   final raw =
-      event[assist ? 'assistPlayerId' : 'canonicalPlayerId'] ??
-      event[assist ? 'assistPlayerId' : 'playerId'];
+      event[assist ? 'canonicalAssistPlayerId' : 'canonicalPlayerId'] ??
+      event[assist ? 'assistPlayerId' : 'playerId'] ??
+      (event['type'] == 'SUBSTITUTION'
+          ? event[assist ? 'inPlayerId' : 'outPlayerId']
+          : null);
   final id = raw?.toString();
   return id != null && id.isNotEmpty && data.player(id) != null ? id : null;
 }

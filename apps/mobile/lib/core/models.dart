@@ -971,6 +971,8 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
           'assistName',
           'playerId',
           'assistPlayerId',
+          'outPlayerId',
+          'inPlayerId',
           'teamId',
           'score',
           'ownGoal',
@@ -1011,6 +1013,7 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
   // identity (canonicalPlayerId) for the scorer summary.
   final replaced = <Json>{};
   final paired = <Json, Json>{};
+  final identityPairs = <Json>{};
   for (final row in detailed) {
     final key = _upstreamKey(row);
     if (key == null) continue;
@@ -1018,33 +1021,46 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
       if (event['type'] == row['type'] && _upstreamKey(event) == key) {
         replaced.add(event);
         paired.putIfAbsent(row, () => event);
+        identityPairs.add(row);
       }
     }
   }
+  bool compatible(Json row, Json event) {
+    if (event['type'] != row['type']) return false;
+    final ka = _upstreamKey(row), kb = _upstreamKey(event);
+    // Two different upstream rows of the same feed are two occurrences.
+    if (ka != null && kb != null && ka != kb && !kb.contains(':')) return false;
+    final sideA = _eventSide(row, match), sideB = _eventSide(event, match);
+    if (sideA != null && sideB != null && sideA != sideB) return false;
+    final sa = _scoreAfter(row), sb = _scoreAfter(event);
+    if (sa != null && sb != null && sa != sb) return false;
+    return _minutesCompatible(row, event);
+  }
+
   for (final row in detailed) {
     if (paired.containsKey(row)) continue;
     for (final event in canonical) {
-      if (replaced.contains(event) || event['type'] != row['type']) continue;
-      final ka = _upstreamKey(row), kb = _upstreamKey(event);
-      // Two different upstream rows of the same feed are two occurrences.
-      if (ka != null && kb != null && ka != kb && !kb.contains(':')) continue;
-      final sideA = _eventSide(row, match), sideB = _eventSide(event, match);
-      if (sideA != null && sideB != null && sideA != sideB) continue;
-      final sa = _scoreAfter(row), sb = _scoreAfter(event);
-      if (sa != null && sb != null && sa != sb) continue;
-      if (!_minutesCompatible(row, event)) continue;
+      if (replaced.contains(event) || !compatible(row, event)) continue;
       replaced.add(event);
       paired[row] = event;
+      // Counts are over the original sets, not the shrinking unpaired set:
+      // the last of three simultaneous substitutions is still ambiguous.
+      if (canonical.where((e) => compatible(row, e)).length == 1 &&
+          detailed.where((r) => compatible(r, event)).length == 1) {
+        identityPairs.add(row);
+      }
       break;
     }
   }
   final rich = [
     ...canonical.where((event) => !replaced.contains(event)),
     for (final row in detailed)
-      if (paired[row]?['playerId'] != null)
+      if (identityPairs.contains(row) && paired[row]?['playerId'] != null)
         {
           ...row,
           'canonicalPlayerId': paired[row]!['playerId'],
+          if (paired[row]!['assistPlayerId'] != null)
+            'canonicalAssistPlayerId': paired[row]!['assistPlayerId'],
           // Detail can omit goal qualifiers while canonical events retain
           // them. An explicit detail false still wins as a correction.
           if (!row.containsKey('ownGoal') && paired[row]!['ownGoal'] != null)

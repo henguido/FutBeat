@@ -41,6 +41,24 @@ void main() {
           .toSet();
       expect(actual, containsAll(expected));
       expect(expected, hasLength(22));
+      for (final source in detail.incidents.where(
+        (event) => event['type'] == 'SUBSTITUTION',
+      )) {
+        final row = timeline.singleWhere(
+          (event) => event['providerEventId'] == source['providerEventId'],
+        );
+        expect(row['outPlayerId'], source['outPlayerId']);
+        expect(row['inPlayerId'], source['inPlayerId']);
+      }
+      // Three away substitutions at 46': minute/side cannot identify which
+      // canonical player belongs to which provider row. Keep the supplied
+      // provider identities, but never attach a positional canonical guess.
+      for (final row in timeline.where(
+        (event) => event['type'] == 'SUBSTITUTION' && event['minute'] == 46,
+      )) {
+        expect(row['canonicalPlayerId'], isNull);
+        expect(row['canonicalAssistPlayerId'], isNull);
+      }
     },
   );
 }
