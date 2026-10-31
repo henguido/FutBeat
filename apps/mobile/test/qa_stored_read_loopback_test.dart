@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/qa_development.dart';
+import 'package:futbeat/core/models.dart';
 
 // Only the test wire adapter maps approved HTTPS requests to an ephemeral HTTP
 // loopback server. The production interceptor still requires HTTPS unchanged.
@@ -22,15 +23,22 @@ class _LoopbackWireAdapter implements HttpClientAdapter {
     RequestOptions options,
     Stream<Uint8List>? stream,
     Future<void>? cancellation,
-  ) {
+  ) async {
     if (options.uri.host != '127.0.0.1' || options.uri.port != port) {
       throw StateError('Only the test loopback server is reachable');
     }
-    return delegate.fetch(
-      options.copyWith(baseUrl: 'http://127.0.0.1:$port'),
-      stream,
-      cancellation,
-    );
+    try {
+      return await delegate.fetch(
+        options.copyWith(baseUrl: 'http://127.0.0.1:$port'),
+        stream,
+        cancellation,
+      );
+    } on DioException catch (error) {
+      // Only this test adapter clones the request to translate HTTPS to HTTP.
+      // Real IO receives the original object. Preserve that identity on errors
+      // too, otherwise the harness falsely leaks a concurrency slot.
+      throw error.copyWith(requestOptions: options);
+    }
   }
 
   @override
@@ -46,12 +54,16 @@ void main() {
   Completer<void>? holdCalendar;
   var acknowledge = true;
   var redirect = false;
+  var disconnectOnce = false;
+  late Map<String, dynamic> payload;
 
   setUp(() async {
     now = DateTime.utc(2026, 10, 31);
     paths = [];
     acknowledge = true;
     redirect = false;
+    disconnectOnce = false;
+    payload = {'schemaVersion': 1, 'matches': []};
     holdCalendar = null;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
@@ -62,13 +74,21 @@ void main() {
         await holdCalendar?.future;
       }
       try {
+        if (disconnectOnce) {
+          disconnectOnce = false;
+          final socket = await request.response.detachSocket(
+            writeHeaders: false,
+          );
+          socket.destroy();
+          return;
+        }
         request.response.headers.contentType = ContentType.json;
         if (ack) request.response.headers.set('x-futbeat-qa-stored', 'v1');
         if (redirectResponse) {
           request.response.statusCode = HttpStatus.found;
           request.response.headers.set('location', '/v1/calendar');
         }
-        request.response.write(jsonEncode({'schemaVersion': 1, 'matches': []}));
+        request.response.write(jsonEncode(payload));
         await request.response.close();
       } on SocketException {
         // Cancellation deliberately closes these loopback sockets.
@@ -253,4 +273,104 @@ void main() {
       );
     }
   });
+
+  test(
+    'connection loss has no retry or fallback and recovery keeps the budget',
+    () async {
+      policy.close();
+      dio.interceptors.clear();
+      policy = QaStoredReadInterceptor(
+        origin: Uri.parse(dio.options.baseUrl),
+        clock: () => now,
+        sessionLimit: 2,
+      );
+      dio.interceptors.add(policy);
+      disconnectOnce = true;
+      await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+      expect(paths, ['/v1/qa-stored/calendar']);
+      expect(policy.counters['active'], 0);
+      // Explicit retry by the local test, not an automatic recovery loop.
+      await dio.get('/v1/match-context');
+      expect(policy.counters['requests'], 2);
+      await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+      expect(paths, ['/v1/qa-stored/calendar', '/v1/qa-stored/match-context']);
+    },
+  );
+
+  test('first-session proposal enforces 30 total, 8 per minute and 15-minute expiry', () async {
+    policy.close();
+    dio.interceptors.clear();
+    final started = now;
+    policy = QaStoredReadInterceptor(
+      origin: Uri.parse(dio.options.baseUrl),
+      clock: () => now,
+      sessionLimit: 30,
+      minuteLimit: 8,
+      concurrentLimit: 2,
+      sessionDuration: const Duration(minutes: 15),
+    );
+    dio.interceptors.add(policy);
+    for (final allowance in [8, 8, 8, 6]) {
+      for (var i = 0; i < allowance; i++) {
+        await dio.get('/v1/calendar');
+      }
+      await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+      now = now.add(const Duration(minutes: 1));
+    }
+    expect(paths, hasLength(30));
+    expect(policy.counters, {'requests': 30, 'active': 0, 'blocked': 4});
+    now = started.add(const Duration(minutes: 15));
+    await expectLater(
+      dio.get('/v1/match-detail'),
+      throwsA(isA<DioException>()),
+    );
+    expect(paths, hasLength(30));
+  });
+
+  test(
+    'stored response acknowledgment never renews an old LIVE observation',
+    () async {
+      final old = now.subtract(const Duration(minutes: 20));
+      final match = <String, dynamic>{
+        'id': 'fb_match_fixture',
+        'competitionId': 'fb_comp_fixture',
+        'homeTeamId': 'fb_team_h',
+        'awayTeamId': 'fb_team_a',
+        'startTime': old.subtract(const Duration(hours: 1)).toIso8601String(),
+        'status': 'LIVE',
+        'score': {'home': 2, 'away': 1},
+        'liveObservedAt': old.toIso8601String(),
+      };
+      payload = {
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': now.toIso8601String(),
+        'matches': [match],
+        'teams': [
+          {'id': 'fb_team_h', 'name': 'Local sintético'},
+          {'id': 'fb_team_a', 'name': 'Visitante sintético'},
+        ],
+        'players': [],
+        'competitions': [
+          {'id': 'fb_comp_fixture', 'name': 'Competición sintética'},
+        ],
+        'standings': [],
+      };
+      final response = await dio.get<Map<String, dynamic>>('/v1/match-context');
+      final shown = Snapshot(response.data!).match('fb_match_fixture')!;
+      expect(shown.score, '2 - 1');
+      expect(shown.liveDataStaleAt(now), isTrue);
+      match['liveObservedAt'] = now.toIso8601String();
+      final recovered = await dio.get<Map<String, dynamic>>(
+        '/v1/match-context',
+      );
+      expect(
+        Snapshot(recovered.data!)
+            .match('fb_match_fixture')!
+            .liveDataStaleAt(now),
+        isFalse,
+      );
+      expect(paths.every((path) => path.startsWith('/v1/qa-stored/')), isTrue);
+    },
+  );
 }
