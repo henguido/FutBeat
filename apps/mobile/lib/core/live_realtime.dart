@@ -17,11 +17,15 @@ import 'models.dart';
 /// it is kept. [stateBeforeRequest] also protects a pre-existing key updated
 /// by Realtime while the REST pages were being read. A partial answer never
 /// removes anything.
+/// [deletedDuringRequest] protects realtime DELETE frames from a REST page
+/// captured before that deletion. A later bootstrap may authoritatively read
+/// the key again; these tombstones only live for the in-flight request.
 Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
   Map<String, LiveMatchUpdate> current,
   Iterable<Json> rows, {
   Set<String>? keysBeforeRequest,
   Map<String, LiveMatchUpdate>? stateBeforeRequest,
+  Set<String> deletedDuringRequest = const {},
   DateTime? serverNow,
   DateTime? deviceNow,
   bool complete = true,
@@ -47,6 +51,7 @@ Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
       );
       if (!update.matchId.startsWith('fb_')) continue;
       fetched.add(update.matchId);
+      if (deletedDuringRequest.contains(update.matchId)) continue;
       final previous = result[update.matchId];
       if (previous != null &&
           (update.changedAt.isBefore(previous.changedAt) ||
@@ -399,6 +404,7 @@ class LiveRealtimeClient {
     var joined = false;
     var scopeVersion = 0;
     CancelToken? bootstrapToken;
+    Set<String>? bootstrapDeletes;
     DateTime? lastBootstrap;
     // Server minus device clock, from the last answer's `Date`.
     var serverOffset = Duration.zero;
@@ -435,6 +441,8 @@ class LiveRealtimeClient {
       if (ids != null && ids.isEmpty) return;
       final token = CancelToken();
       bootstrapToken = token;
+      final deletedDuringRequest = <String>{};
+      bootstrapDeletes = deletedDuringRequest;
       final before = scopedRealtime
           ? <String, LiveMatchUpdate>{
               for (final id in ids!)
@@ -465,6 +473,7 @@ class LiveRealtimeClient {
           state,
           read.rows,
           stateBeforeRequest: before,
+          deletedDuringRequest: deletedDuringRequest,
           serverNow: serverNow,
           deviceNow: deviceNow,
           complete: read.complete,
@@ -484,6 +493,9 @@ class LiveRealtimeClient {
         lastBootstrap = null;
       } finally {
         if (identical(bootstrapToken, token)) bootstrapToken = null;
+        if (identical(bootstrapDeletes, deletedDuringRequest)) {
+          bootstrapDeletes = null;
+        }
       }
     }
 
@@ -617,8 +629,15 @@ class LiveRealtimeClient {
               }
               if (data['type'] == 'DELETE') {
                 state.remove(matchId);
+                if (matchId is String) bootstrapDeletes?.add(matchId);
               } else if (data['record'] is Map) {
                 accept(Map<String, dynamic>.from(data['record'] as Map));
+                // A later valid INSERT/UPDATE supersedes this request's
+                // deletion marker; normal revision checks protect it from
+                // an older REST answer.
+                if (matchId is String && state.containsKey(matchId)) {
+                  bootstrapDeletes?.remove(matchId);
+                }
               }
               emit();
             } catch (_) {
