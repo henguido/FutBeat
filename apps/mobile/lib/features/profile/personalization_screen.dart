@@ -69,16 +69,31 @@ class PersonalizationScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final preference = ref.watch(preferenceProvider).asData?.value;
-    final settings = ref.watch(profileSettingsProvider).asData?.value;
+    final preferenceState = ref.watch(preferenceProvider);
+    final preference = preferenceState.asData?.value;
+    final settingsState = ref.watch(profileSettingsProvider);
+    final settings = settingsState.asData?.value;
     final follows =
         ref.watch(followsProvider).asData?.value ?? const <String>{};
     int count(String type) =>
         follows.where((v) => v.startsWith('$type:')).length;
-    if (preference == null || settings == null) {
+    if (preference == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Personalizar FutBeat')),
-        body: const Center(child: CircularProgressIndicator()),
+        body: Center(
+          child: preferenceState.hasError
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('No pudimos leer tus preferencias.'),
+                    TextButton(
+                      onPressed: () => ref.invalidate(preferenceProvider),
+                      child: const Text('Reintentar'),
+                    ),
+                  ],
+                )
+              : const CircularProgressIndicator(),
+        ),
       );
     }
     final country = preference.effectiveCountry;
@@ -141,34 +156,57 @@ class PersonalizationScreen extends ConsumerWidget {
           ProfileSection(
             title: 'Formato de hora',
             children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: DropdownButtonFormField<String>(
-                  key: const ValueKey('hour-format'),
-                  initialValue: settings.hourFormat,
-                  decoration: const InputDecoration(
-                    border: InputBorder.none,
-                    labelText: 'Formato de hora',
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'system',
-                      child: Text('Según el dispositivo'),
+              // Hour-format settings are independent of local interests. A
+              // delayed/failed read must not lock country/follow navigation.
+              if (settings == null)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: settingsState.hasError
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('No pudimos cargar el formato de hora.'),
+                            TextButton(
+                              key: const ValueKey('retry-hour-format'),
+                              onPressed: () =>
+                                  ref.invalidate(profileSettingsProvider),
+                              child: const Text('Reintentar'),
+                            ),
+                          ],
+                        )
+                      : const LinearProgressIndicator(
+                          key: ValueKey('hour-format-loading'),
+                        ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: DropdownButtonFormField<String>(
+                    key: const ValueKey('hour-format'),
+                    initialValue: settings.hourFormat,
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      labelText: 'Formato de hora',
                     ),
-                    DropdownMenuItem(value: '12h', child: Text('12 horas')),
-                    DropdownMenuItem(value: '24h', child: Text('24 horas')),
-                  ],
-                  onChanged: (value) async {
-                    if (value == null) return;
-                    await ref
-                        .read(pushServiceProvider)
-                        .saveProfileSettings(
-                          settings.copyWith(hourFormat: value),
-                        );
-                    ref.invalidate(profileSettingsProvider);
-                  },
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'system',
+                        child: Text('Según el dispositivo'),
+                      ),
+                      DropdownMenuItem(value: '12h', child: Text('12 horas')),
+                      DropdownMenuItem(value: '24h', child: Text('24 horas')),
+                    ],
+                    onChanged: (value) async {
+                      if (value == null) return;
+                      await ref
+                          .read(pushServiceProvider)
+                          .saveProfileSettings(
+                            settings.copyWith(hourFormat: value),
+                          );
+                      ref.invalidate(profileSettingsProvider);
+                    },
+                  ),
                 ),
-              ),
             ],
           ),
           ProfileSection(
