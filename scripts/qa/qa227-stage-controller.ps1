@@ -57,9 +57,9 @@ $block=@'
                         Heartbeat 'QADEV_CACHE_ONLY' $devApproval.session_id
                     } -Wait {Start-Sleep -Seconds 2} -CloseQa {
                         param($reason)
-                        $stop=Invoke-AdbBounded -Arguments @('-s','RF8R32GQWGL','shell','am','force-stop','com.futbeat.futbeat.qa') -TimeoutMs 1500
-                        $check=Invoke-AdbBounded -Arguments @('-s','RF8R32GQWGL','shell','pidof','com.futbeat.futbeat.qa') -TimeoutMs 1500
-                        $device=Invoke-AdbBounded -Arguments @('-s','RF8R32GQWGL','get-state') -TimeoutMs 1500
+                        $stop=Invoke-AdbBounded -Arguments @('-s','RF8R32GQWGL','shell','am','force-stop','com.futbeat.futbeat.qa') -TimeoutMs 5000
+                        $check=Invoke-AdbBounded -Arguments @('-s','RF8R32GQWGL','shell','pidof','com.futbeat.futbeat.qa') -TimeoutMs 5000
+                        $device=Invoke-AdbBounded -Arguments @('-s','RF8R32GQWGL','get-state') -TimeoutMs 5000
                         return ($stop.exit_code -eq 0 -and $check.exit_code -eq 1 -and [string]::IsNullOrWhiteSpace($check.output) -and $device.exit_code -eq 0 -and $device.output.Trim() -ceq 'device')
                     }
                     if($result.status -ceq 'CLOSED'){
@@ -79,13 +79,14 @@ $block=@'
             }
         }
 '@
-$block=$block.Replace('Invoke-AdbBounded -Arguments $Arguments','Invoke-AdbBounded -Arguments $Arguments -TimeoutMs 1500')
+$block=$block.Replace('Invoke-AdbBounded -Arguments $Arguments','Invoke-AdbBounded -Arguments $Arguments -TimeoutMs 3000')
 $launcher=Replace-One $launcher '        # No controller owns the QA package outside an active-window ledger.' ($block+"`n        # No controller owns the QA package outside an active-window ledger.")
 $launcher=Replace-One $launcher '[IO.File]::Move($tmp, $Path, $true)' 'Move-QaDevelopmentAtomicFile -TemporaryPath $tmp -DestinationPath $Path'
 $failsafe=Replace-One $failsafe "    [string]`$EvidencePath = ''," "    [string]`$DevelopmentStateRoot = '',`n    [string]`$DevelopmentGateDirectory = '',`n    [string]`$DevelopmentReadyPath = '',`n    [string]`$EvidencePath = '',"
 $failsafe=Replace-One $failsafe ". (Join-Path `$PSScriptRoot 'qa81-contract-v2.ps1')" (". (Join-Path `$PSScriptRoot 'qa81-contract-v2.ps1')`n"+$import)
-$failsafe=Replace-One $failsafe 'function Invoke-AdbBounded([string[]]$Arguments) {' ('function Invoke-AdbBounded([string[]]$Arguments) {'+"`n"+'    $commandTimeout=if($DevelopmentStateRoot){1500}else{8000}')
+$failsafe=Replace-One $failsafe 'function Invoke-AdbBounded([string[]]$Arguments) {' ('function Invoke-AdbBounded([string[]]$Arguments,[int]$TimeoutMs=0) {'+"`n"+'    $commandTimeout=if($DevelopmentStateRoot){if($TimeoutMs -gt 0){$TimeoutMs}else{5000}}else{8000}')
 $failsafe=Replace-One $failsafe '$process.WaitForExit(8000)' '$process.WaitForExit($commandTimeout)'
+$failsafe=Replace-One $failsafe "throw 'adb_command_timeout_8s'" 'throw ("adb_command_timeout_"+$commandTimeout+"ms")'
 $failsafe=Replace-One $failsafe '        [void]$process.Start()' ('        [void]$process.Start()'+"`n"+'        $stdoutTask=$process.StandardOutput.ReadToEndAsync()'+"`n"+'        $stderrTask=$process.StandardError.ReadToEndAsync()')
 $failsafe=Replace-One $failsafe 'output = $process.StandardOutput.ReadToEnd()' 'output = $stdoutTask.GetAwaiter().GetResult()'
 $failsafe=Replace-One $failsafe '[IO.File]::Move($tmp, $EvidencePath, $true)' 'Move-QaDevelopmentAtomicFile -TemporaryPath $tmp -DestinationPath $EvidencePath'
@@ -96,7 +97,7 @@ $original=$failsafe.Substring($start,$end-$start)
 $devGuard=@'
         if($DevelopmentStateRoot){
             if($ExpectedWindowId -cnotmatch '^QADEV-[A-Za-z0-9-]{8,80}$' -or [string]::IsNullOrWhiteSpace($DevelopmentGateDirectory)){throw 'development_guard_identity_invalid'}
-            $dev=Get-QaDevelopmentDecision -StateRoot $DevelopmentStateRoot -GateDirectory $DevelopmentGateDirectory -Now $now -Clock {[datetimeoffset]::UtcNow} -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments} -IndependentWatchdogVerified $true
+            $dev=Get-QaDevelopmentDecision -StateRoot $DevelopmentStateRoot -GateDirectory $DevelopmentGateDirectory -Now $now -Clock {[datetimeoffset]::UtcNow} -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments -TimeoutMs 3000} -IndependentWatchdogVerified $true
             $a=Get-Content -LiteralPath (Join-Path $DevelopmentStateRoot 'qa227-development-approval.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
             if(-not $dev.allowed -or $dev.session_id -cne $ExpectedWindowId -or $a.nonce -cne $ExpectedNonce){throw ('development_policy_'+$dev.reason)}
         }else{

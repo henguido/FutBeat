@@ -57,6 +57,16 @@ function Get-QaDevelopmentDecision {
         [scriptblock]$Clock
     )
     try {
+        # Bound the whole read pass as well as each ADB command. Slow device
+        # reads must not consume the time reserved for force-stop + PID checks.
+        $probeClock=[Diagnostics.Stopwatch]::StartNew()
+        $readProbe=$Probe
+        $boundedProbe={param($Arguments)
+            if($probeClock.ElapsedMilliseconds -ge 5000){throw 'adb_read_budget_exhausted'}
+            $answer=& $readProbe -Arguments $Arguments
+            if($probeClock.ElapsedMilliseconds -ge 5000){throw 'adb_read_budget_exhausted'}
+            return $answer
+        }
         $a = Get-Content -LiteralPath (Join-Path $StateRoot 'qa227-development-approval.json') -Raw -ErrorAction Stop |
             ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
         $s = Get-Content -LiteralPath (Join-Path $StateRoot 'qa227-development-state.json') -Raw -ErrorAction Stop |
@@ -83,23 +93,23 @@ function Get-QaDevelopmentDecision {
             if ($g.status -ceq 'GO' -and [datetimeoffset]::Parse($g.expires_utc) -gt $Now) { $other=$true }
             if ($g.status -ceq 'PENDING' -and [datetimeoffset]::Parse($g.go_by_utc) -gt $Now) { $other=$true }
         }
-        $device = & $Probe -Arguments @('-s','RF8R32GQWGL','get-state')
+        $device = & $boundedProbe -Arguments @('-s','RF8R32GQWGL','get-state')
         if ($device.exit_code -ne 0 -or $device.output.Trim() -cne 'device') { throw 'adb_unavailable' }
-        $model = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','getprop','ro.product.model')
+        $model = & $boundedProbe -Arguments @('-s','RF8R32GQWGL','shell','getprop','ro.product.model')
         if ($model.exit_code -ne 0 -or $model.output.Trim() -cne 'SM-A325M') { throw 'wrong_device' }
-        $path = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','pm','path','com.futbeat.futbeat.qa')
+        $path = & $boundedProbe -Arguments @('-s','RF8R32GQWGL','shell','pm','path','com.futbeat.futbeat.qa')
         if ($path.exit_code -ne 0 -or $path.output.Trim() -cnotmatch '^package:(/data/app/[^\r\n]+/base\.apk)$') { throw 'apk_path_unknown' }
         $apkPath=$Matches[1]
         # Package replacement changes this path. Cache only the digest of that
         # exact installed path, never a versionCode or a filename supplied by QA.
         if (-not $script:qa227Apk -or $script:qa227Apk.path -cne $apkPath) {
-            $digest = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','sha256sum',$apkPath)
+            $digest = & $boundedProbe -Arguments @('-s','RF8R32GQWGL','shell','sha256sum',$apkPath)
             if ($digest.exit_code -ne 0) { throw 'apk_hash_unavailable' }
             $script:qa227Apk=@{path=$apkPath;sha=($digest.output.Trim() -split '\s+')[0].ToUpperInvariant()}
         }
-        $wifi = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','settings','get','global','wifi_on')
-        $data = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','settings','get','global','mobile_data')
-        $network = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','dumpsys','connectivity')
+        $wifi = & $boundedProbe -Arguments @('-s','RF8R32GQWGL','shell','settings','get','global','wifi_on')
+        $data = & $boundedProbe -Arguments @('-s','RF8R32GQWGL','shell','settings','get','global','mobile_data')
+        $network = & $boundedProbe -Arguments @('-s','RF8R32GQWGL','shell','dumpsys','connectivity')
         $offline=$wifi.exit_code -eq 0 -and $data.exit_code -eq 0 -and $wifi.output.Trim() -ceq '0' -and $data.output.Trim() -ceq '0' -and $network.exit_code -eq 0 -and $network.output -match 'Active default network:\s*(?:none|null|-1)(?:\s|$)'
         # Slow host/ADB probes may outlive the first state snapshot. Re-read
         # STOP, revocation and the latest beat before sampling the actual clock.

@@ -100,7 +100,7 @@ while(-not (Test-Path (Join-Path $runRoot 'restore-result.json'))){
     $expired=[datetimeoffset]::UtcNow -ge [datetimeoffset]::Parse($m.expires_at)
     $controllerLost=$false
     if(Test-Path (Join-Path $runRoot 'ARMED')){
-        try{$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw|ConvertFrom-Json;$controllerLost=(Get-ScheduledTask -TaskName $taskName).State -ne 'Running' -or ([datetimeoffset]::UtcNow-[datetimeoffset]::Parse($hb.updated_at)).TotalSeconds -gt 20}catch{$controllerLost=$true}
+        try{$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw|ConvertFrom-Json;$session=Get-Content (Join-Path $runRoot 'current-session.json') -Raw|ConvertFrom-Json;$controllerLost=(Get-ScheduledTask -TaskName $taskName).State -ne 'Running' -or -not (Test-QaTrialActiveHeartbeat -Heartbeat $hb -Session $session -Now ([datetimeoffset]::UtcNow))}catch{$controllerLost=$true}
     }
     if($controllerLost -and -not $controllerLostAt){$controllerLostAt=[datetimeoffset]::UtcNow;Log 'CONTROLLER_LOST: allowing independent failsafe up to 10 s before rollback fallback'}
     $emergency=$controllerLostAt -and ([datetimeoffset]::UtcNow-$controllerLostAt).TotalSeconds -ge 10
