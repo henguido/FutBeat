@@ -63,11 +63,18 @@ Set<String> standingsLabelTokens(String? text) {
   };
 }
 
+/// Only a provider-backed, positive integral position is a position. Missing or
+/// malformed ranks stay unknown; array order is not classification evidence.
+int? _standingsPosition(Object? value) =>
+    value is num && value.isFinite && value > 0 && value == value.roundToDouble()
+    ? value.toInt()
+    : null;
+
 /// The groups of [table] that can be shown, or null when the table must not
 /// be shown at all ("Tabla no disponible"):
 ///  * no rows, or the server could not tell its groups apart;
 ///  * a row whose team entity is unknown (never a placeholder name);
-///  * a repeated position inside one group (unlabelled groups mixed).
+///  * a repeated position or canonical team inside one group (mixed rows).
 /// Without [focusTeamIds], every group; the unlabelled one is labelled
 /// [overallStandingsLabel] when labelled groups are shown with it.
 /// With one group and [focusTeamIds], it is shown only when it holds every
@@ -116,9 +123,16 @@ List<StandingsGroup>? standingsGroups(
   for (final group in groups.values) {
     final positions = [
       for (final row in group)
-        if (row['position'] != null) (row['position'] as num).toInt(),
+        ?_standingsPosition(row['position']),
     ];
-    if (positions.toSet().length != positions.length) return null;
+    final teams = [
+      for (final row in group)
+        data.resolveEntityId(row['teamId']?.toString() ?? ''),
+    ];
+    if (positions.toSet().length != positions.length ||
+        teams.toSet().length != teams.length) {
+      return null;
+    }
   }
   final all = [
     for (final entry in groups.entries)
@@ -719,7 +733,7 @@ class _Entry {
     required this.values,
   });
 
-  factory _Entry.from(Json row, int index, Snapshot data) {
+  factory _Entry.from(Json row, int _, Snapshot data) {
     final teamId = row['teamId']?.toString() ?? '';
     int? value(String key) {
       final raw = row[key];
@@ -739,7 +753,7 @@ class _Entry {
       formTeamId: data.resolveEntityId(teamId),
       // standingsGroups only lets through rows whose team is known.
       team: standingsTeam(data, teamId)!,
-      position: (row['position'] as num?)?.toInt() ?? index + 1,
+      position: _standingsPosition(row['position']),
       values: {
         'played': value('played'),
         'won': value('won'),
@@ -758,7 +772,7 @@ class _Entry {
   /// [teamId] through the snapshot's entity redirects (canonical id).
   final String formTeamId;
   final Entity team;
-  final int position;
+  final int? position;
   final Map<String, int?> values;
 
   String get name => team.displayName;
@@ -947,7 +961,9 @@ class _TeamRow extends StatelessWidget {
       container: true,
       button: entry.teamId.isNotEmpty,
       label: [
-        'Posición ${entry.position}',
+        entry.position == null
+            ? 'Posición no disponible'
+            : 'Posición ${entry.position}',
         entry.name,
         if (live) 'en vivo',
         for (final column in columns) ?semantic(column),
@@ -975,7 +991,7 @@ class _TeamRow extends StatelessWidget {
               SizedBox(
                 width: 28,
                 child: Text(
-                  '${entry.position}',
+                  entry.position?.toString() ?? '—',
                   textAlign: TextAlign.center,
                   style: _numberStyle.copyWith(
                     color: highlighted ? accent : muted,

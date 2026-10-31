@@ -103,9 +103,18 @@ List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
     }
   }
   final kept = <FootballMatch>[];
+  // Only equal canonical competition/home/away triplets can be twins. Keep
+  // their indexes so unrelated fixtures never enter the comparison scan,
+  // while replacements preserve the original visible position.
+  final candidates = <(String, String, String), List<int>>{};
   for (final match in byId.values) {
-    final twin = kept.indexWhere((other) => _sameFixture(match, other));
-    if (twin < 0) {
+    final key = (match.competitionId, match.homeId, match.awayId);
+    final indexes = candidates.putIfAbsent(key, () => <int>[]);
+    final twin = indexes
+        .where((index) => _sameFixture(match, kept[index]))
+        .firstOrNull;
+    if (twin == null) {
+      indexes.add(kept.length);
       kept.add(match);
       continue;
     }
@@ -116,6 +125,13 @@ List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
     }
   }
   return kept;
+}
+
+/// Stable chronological feed order even if a snapshot returns tied kickoffs
+/// in a different order after revalidation or a Realtime update.
+int compareFeedKickoffs(FootballMatch a, FootballMatch b) {
+  final byTime = a.startTime.compareTo(b.startTime);
+  return byTime != 0 ? byTime : a.id.compareTo(b.id);
 }
 
 String _feedEventLabel(String type) => switch (type) {
@@ -536,13 +552,13 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
               games
                   .where((match) => isFollowedTeamMatch(match, follows))
                   .toList()
-                ..sort((a, b) => a.startTime.compareTo(b.startTime));
+                ..sort(compareFeedKickoffs);
           // Each canonical fixture has one visible owner: favorites first,
           // then its league for the remaining games (MOBILE239).
           final favoriteIds = followedGames.map((match) => match.id).toSet();
           final regularGames =
               games.where((match) => !favoriteIds.contains(match.id)).toList()
-                ..sort((a, b) => a.startTime.compareTo(b.startTime));
+                ..sort(compareFeedKickoffs);
 
           final regularByCompetition = <String, List<FootballMatch>>{};
           for (final match in regularGames) {

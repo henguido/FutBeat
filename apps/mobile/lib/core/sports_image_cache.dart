@@ -22,8 +22,15 @@ class SportsImageDiskCache {
     this.maxBytes = 32 * 1024 * 1024,
     this.maxEntries = 400,
     this.maxImageBytes = 2 * 1024 * 1024,
-  }) : fetch = fetch ?? _fetchImage,
-       clock = clock ?? DateTime.now;
+    Duration downloadTimeout = const Duration(seconds: 15),
+  }) : fetch = fetch ?? ((uri) => _fetchImage(uri, downloadTimeout)),
+       clock = clock ?? DateTime.now {
+    // Tests may shorten the owned HTTP deadline; callers cannot expand it.
+    if (downloadTimeout <= Duration.zero ||
+        downloadTimeout > const Duration(seconds: 15)) {
+      throw ArgumentError.value(downloadTimeout, 'downloadTimeout');
+    }
+  }
 
   final Directory directory;
   final SportsImageFetch fetch;
@@ -176,9 +183,9 @@ class SportsImageDiskCache {
     }
   }
 
-  static Future<Uint8List> _fetchImage(Uri uri) async {
+  static Future<Uint8List> _fetchImage(Uri uri, Duration deadline) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-    try {
+    Future<Uint8List> download() async {
       var target = uri;
       for (var redirect = 0; redirect <= 3; redirect++) {
         final request = await client.getUrl(target);
@@ -191,7 +198,9 @@ class SportsImageDiskCache {
           final next = location == null
               ? null
               : validUri(target.resolve(location).toString());
-          await response.drain<void>();
+          // Discarded bodies may never finish (or be unbounded). Cancel
+          // the subscription rather than draining provider bytes we cannot use.
+          await response.listen(null).cancel();
           if (next == null) throw const HttpException('Unsafe image redirect');
           target = next;
           continue;
@@ -199,7 +208,9 @@ class SportsImageDiskCache {
         if (response.statusCode != HttpStatus.ok ||
             response.headers.contentType?.primaryType != 'image' ||
             response.contentLength > 2 * 1024 * 1024) {
-          await response.drain<void>();
+          // Discarded bodies may never finish (or be unbounded). Cancel
+          // the subscription rather than draining provider bytes we cannot use.
+          await response.listen(null).cancel();
           throw const HttpException('Image response rejected');
         }
         final builder = BytesBuilder(copy: false);
@@ -214,6 +225,12 @@ class SportsImageDiskCache {
         return builder.takeBytes();
       }
       throw const HttpException('Too many image redirects');
+    }
+
+    try {
+      // An idle timeout alone lets a slow-drip body (or redirects) keep the
+      // canonical in-flight slot forever. Bound the complete HTTP operation.
+      return await download().timeout(deadline);
     } finally {
       client.close(force: true);
     }

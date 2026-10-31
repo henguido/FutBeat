@@ -419,12 +419,16 @@ class LiveRealtimeClient {
 
     void accept(Json row) {
       // Delivery is not a new observation: replayed old rows stay old.
+      // Use the same server/device mapping learned by REST. Comparing the
+      // provider timestamp directly with the device clock falsely ages fresh
+      // websocket frames (or makes old frames appear fresh) on a skewed device.
+      final deviceNow = DateTime.now().toUtc();
       final update = LiveMatchUpdate.fromJson(
         row,
         receivedAt: LiveMatchUpdate.bootstrapReceivedAt(
           row,
-          deviceNow: DateTime.now().toUtc(),
-          serverNow: DateTime.now().toUtc(),
+          deviceNow: deviceNow,
+          serverNow: deviceNow.add(serverOffset),
         ),
       );
       if (!update.matchId.startsWith('fb_')) return;
