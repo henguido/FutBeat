@@ -52,3 +52,22 @@ export function nextLivePage(input: {
     input.rowCount >= effectiveLimit;
   return { next: hasMore ? end : null, stalled: false };
 }
+
+// BE-244: GOAL refreshes clockUpdatedAt about once a minute (6 h of production:
+// p95 75 s, max 231 s, LIVE and HALF_TIME). 15 minutes spans three polls, so an
+// old clock is already a multi-poll signal. Only reported: it changes no state.
+const LIVE_CLOCK_STALE_SECONDS = 900;
+
+export function liveFeedFreshness(clocks: unknown[], nowMs: number) {
+  const ages = clocks
+    .map((clock) => Date.parse(String(clock ?? "")))
+    .filter((parsed) => Number.isFinite(parsed))
+    .map((parsed) => Math.max(0, Math.floor((nowMs - parsed) / 1000)));
+  const newest = ages.length ? Math.min(...ages) : null;
+  return {
+    inPlayClocks: ages.length,
+    staleClocks: ages.filter((age) => age >= LIVE_CLOCK_STALE_SECONDS).length,
+    newestClockAgeSeconds: newest,
+    stale: newest != null && newest >= LIVE_CLOCK_STALE_SECONDS,
+  };
+}

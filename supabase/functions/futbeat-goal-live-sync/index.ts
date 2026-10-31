@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {
+  liveFeedFreshness,
   nextLivePage,
   nextResultsOffset,
 } from "../_shared/results_pagination.ts";
@@ -185,6 +186,12 @@ const LIVE_PAGE_CAP = 3;
 const LIVE_EXTRA_PAGE_MARGIN = 100;
 // note_live_poll grows with the ids it receives: one call per page's worth.
 const LIVE_NOTE_CHUNK_SIZE = 100;
+const IN_PLAY_STATUSES = new Set([
+  "LIVE",
+  "HALFTIME",
+  "EXTRA_TIME",
+  "PENALTIES",
+]);
 
 async function recordObservationsInChunks(
   receivedAt: string,
@@ -617,10 +624,24 @@ async function syncLive() {
     // silently maps to SCHEDULED (never inferred as live or final).
     const unmappedStatuses = unmappedGoalStatuses(fixtures);
 
+    const receivedAt = new Date();
     const persistence = await recordObservationsInChunks(
-      new Date().toISOString(),
+      receivedAt.toISOString(),
       observations,
     );
+    const feed = {
+      ...liveFeedFreshness(
+        observations.flatMap((observation, index) =>
+          IN_PLAY_STATUSES.has(observation.status)
+            ? [fixtures[index].clockUpdatedAt ?? fixtures[index].updatedAt]
+            : []
+        ),
+        receivedAt.getTime(),
+      ),
+      // Nothing new for any match. One poll proves little: read it as a streak.
+      unchanged: observations.length > 0 &&
+        persistence.insertedObservations === 0,
+    };
 
     // #120: absence from the feed is evidence only once a whole sweep (offset
     // 0 to the last page, possibly across resumed polls) was read; it only
@@ -663,7 +684,19 @@ async function syncLive() {
         linkedMatches: linkResult?.linked ?? 0,
         alreadyLinkedMatches: linkResult?.alreadyLinked ?? 0,
         unmappedMatches: linkResult?.unmappedCount ?? 0,
-        providerTotal: providerTotal ?? observations.length,
+        providerTotal,
+        // Seen against what the database expects to be in play. Expected only
+        // knows mapped matches, so it can sit below seen.
+        coverage: {
+          seen: observations.length,
+          mappedSeen: linkResult
+            ? (Number(linkResult.linked) || 0) +
+              (Number(linkResult.alreadyLinked) || 0)
+            : null,
+          expectedActive: nonNegativeInteger(plan.activeMatches),
+          expectedLive: nonNegativeInteger(plan.liveMatches),
+        },
+        feed,
         insertedObservations: persistence?.insertedObservations ?? 0,
         duplicates: persistence?.duplicates ?? 0,
         transport: "supabase-cron",

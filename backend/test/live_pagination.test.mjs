@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../storage/database.mjs';
 import { worker } from './helpers/worker_harness.mjs';
-import { nextLivePage } from '../../supabase/functions/_shared/results_pagination.ts';
+import { liveFeedFreshness, nextLivePage } from '../../supabase/functions/_shared/results_pagination.ts';
 
 // BE-239: real worker, real SQL, simulated GOAL. 21 days of polls read one page
 // while up to 445 matches were in play; 585 finished without ever showing live.
@@ -211,13 +211,68 @@ test('a sweep older than its window proves no absence', () => withDb(async (db) 
   assert.equal(await absent(db), 0);
 }));
 
-// BE-244: how low quota and partial failures meet a resumed sweep.
+// BE-244: feed health, coverage and how low quota meets a resumed sweep.
 const quotaAt = (db, left) => db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining,reserved_at,completed_at)
   values('goal_api','global-ingest','test','SUCCEEDED',$1,now(),now())`, [left]);
 const liveFloor = (db) => db.query("select (class_floors->>'live')::int f from futbeat_private.provider_quota_policy where provider='goal_api'").then((r) => r.rows[0].f);
 const offsets = (w) => liveCalls(w).map((u) => Number(new URL(u).searchParams.get('offset')));
 const noteCalls = (w) => w.calls.filter((u) => u.includes('futbeat_note_live_poll'));
 const peak = (o) => ({ data: rows(o, o < 400 ? 100 : 45) });
+
+test('liveFeedFreshness: only a whole feed of old clocks is stale', () => {
+  const now = Date.parse('2026-10-31T20:00:00Z');
+  const ago = (s) => new Date(now - s * 1000).toISOString();
+  assert.deepEqual(liveFeedFreshness([ago(60), ago(2000)], now), { inPlayClocks: 2, staleClocks: 1, newestClockAgeSeconds: 60, stale: false });
+  assert.deepEqual(liveFeedFreshness([ago(900), ago(2000)], now), { inPlayClocks: 2, staleClocks: 2, newestClockAgeSeconds: 900, stale: true });
+  assert.deepEqual(liveFeedFreshness([null, 'nonsense'], now), { inPlayClocks: 0, staleClocks: 0, newestClockAgeSeconds: null, stale: false });
+  assert.equal(liveFeedFreshness([ago(-30)], now).newestClockAgeSeconds, 0);
+});
+
+test('a frozen feed is flagged across polls, with no status invented and no extra call', () => withDb(async (db) => {
+  const ext = await mapped(db, 'frozen');
+  const old = new Date(Date.now() - 1800000).toISOString();
+  const fixture = { ...liveRow(ext), clockUpdatedAt: old, updatedAt: old };
+  const metas = [];
+  let calls = 0;
+  for (let poll = 0; poll < 3; poll += 1) {
+    const w = worker(db, goal(() => ({ data: [fixture] })));
+    await w.run('live');
+    calls += liveCalls(w).length;
+    metas.push(await lastPoll(db));
+    await nextPoll(db);
+  }
+  assert.deepEqual(metas.map((m) => m.feed.unchanged), [false, true, true]);
+  assert.ok(metas.every((m) => m.feed.stale && m.feed.staleClocks === 1));
+  assert.equal(calls, 3);
+  assert.equal(await shownStatus(db, ext), 'LIVE');
+  assert.equal(await absent(db), 0);
+}));
+
+test('a moving feed with fresh clocks is not flagged', () => withDb(async (db) => {
+  const ext = await mapped(db, 'moving');
+  const fresh = () => new Date().toISOString();
+  for (const minute of [30, 35]) {
+    await worker(db, goal(() => ({ data: [{ ...liveRow(ext, minute), clockUpdatedAt: fresh() }] }))).run('live');
+    await nextPoll(db);
+  }
+  const { feed } = await lastPoll(db);
+  assert.equal(feed.unchanged, false);
+  assert.equal(feed.stale, false);
+  assert.equal(feed.inPlayClocks, 1);
+}));
+
+test('coverage: the ledger holds seen against expected, and no made-up provider total', () => withDb(async (db) => {
+  const ext = await mapped(db, 'cov');
+  await worker(db, goal(() => ({ data: [liveRow(ext)] }))).run('live');
+  await nextPoll(db);
+  await worker(db, goal((o) => ({ data: o === 0 ? [liveRow(ext), ...rows(1, 99)] : rows(100, 20) }))).run('live');
+  const m = await lastPoll(db);
+  assert.equal(m.providerTotal ?? null, null);
+  assert.equal(m.coverage.seen, 120);
+  assert.equal(m.coverage.mappedSeen, 1);
+  assert.ok(m.coverage.expectedActive >= 1);
+  assert.ok(m.coverage.expectedLive >= 1);
+}));
 
 test('quota margin on a resumed poll: high quota later starts a clean sweep from zero', () => withDb(async (db) => {
   const gone = await mapped(db, 'gone');
