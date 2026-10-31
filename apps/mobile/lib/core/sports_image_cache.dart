@@ -191,7 +191,9 @@ class SportsImageDiskCache {
           final next = location == null
               ? null
               : validUri(target.resolve(location).toString());
-          await response.drain<void>();
+          // Discarded bodies may never finish (or be unbounded). Cancel
+          // the subscription rather than draining provider bytes we cannot use.
+          await response.listen(null).cancel();
           if (next == null) throw const HttpException('Unsafe image redirect');
           target = next;
           continue;
@@ -199,7 +201,9 @@ class SportsImageDiskCache {
         if (response.statusCode != HttpStatus.ok ||
             response.headers.contentType?.primaryType != 'image' ||
             response.contentLength > 2 * 1024 * 1024) {
-          await response.drain<void>();
+          // Discarded bodies may never finish (or be unbounded). Cancel
+          // the subscription rather than draining provider bytes we cannot use.
+          await response.listen(null).cancel();
           throw const HttpException('Image response rejected');
         }
         final builder = BytesBuilder(copy: false);
