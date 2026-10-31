@@ -2,7 +2,7 @@ name: FutBeat checks
 
 on:
   pull_request:
-    branches: [main, codex/mobile-243]
+    branches: [main, codex/mobile-243, codex/autonomous-mobile-244]
 
 concurrency:
   group: futbeat-ci-${{ github.event.pull_request.number || github.ref }}
@@ -126,7 +126,7 @@ jobs:
             xargs -0 flutter test
 
       - name: Attribute MOBILE244 golden failures against its exact base
-        if: failure() && github.base_ref == 'codex/mobile-243' && steps.changes.outputs.run == 'true'
+        if: failure() && (github.base_ref == 'codex/mobile-243' || github.base_ref == 'codex/autonomous-mobile-244') && steps.changes.outputs.run == 'true'
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -155,7 +155,7 @@ jobs:
             --output "$RUNNER_TEMP/mobile244-render-comparison.json"
 
       - name: Upload MOBILE244 baseline attribution
-        if: failure() && github.base_ref == 'codex/mobile-243' && steps.changes.outputs.run == 'true'
+        if: failure() && (github.base_ref == 'codex/mobile-243' || github.base_ref == 'codex/autonomous-mobile-244') && steps.changes.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mobile244-baseline-attribution
