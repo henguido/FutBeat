@@ -48,8 +48,9 @@ function Invoke-RestMethod {
     return [pscustomobject]@{ accepted = @($p.events).Count }
   }
   if ($p.mode -eq 'calendar') {
-    if ($env:MOCK_CAL_FAIL -and @($p.dates) -contains $env:MOCK_CAL_FAIL) { throw 'Response status code does not indicate success: 500' }
+    if ($env:MOCK_CAL_FAIL -and @($p.dates | Where-Object { @($env:MOCK_CAL_FAIL -split ',') -contains $_ }).Count -gt 0) { throw 'Response status code does not indicate success: 500' }
     Write-Host "MOCK_CAL dates=$(@($p.dates) -join ',') events=$(@($p.events).Count)"
+    if ($env:MOCK_NO_DEFERRED -eq '1') { return [pscustomobject]@{ accepted = @($p.events).Count } }
     return [pscustomobject]@{ accepted = @($p.events).Count; deferredDates = @() }
   }
   throw "unexpected call $Uri $Body"
@@ -110,20 +111,44 @@ test('a healthy run exits 0 and expands exactly the planned dates once', { skip 
   assert.equal(r.code, 0);
 });
 
-test('the expansion stops at the 350 reserve and never fetches below it', { skip }, async () => {
+test('the expansion stops above the 350 reserve with room for a whole large date', { skip }, async () => {
   const plan = Array.from({ length: 12 }, (_, i) => `2026-11-${String(i + 1).padStart(2, '0')}`);
-  const r = await run({ MOCK_START_REMAINING: '360', MOCK_PLAN: plan.join(',') });
-  assert.match(r.out, /CALENDAR_EXPAND_GATE expand=False/, '360 left is not a fresh quota');
-  assert.match(r.out, /CALENDAR_EXPAND_STOP reason=quota_reserve reserve=350/);
+  const r = await run({ MOCK_START_REMAINING: '380', MOCK_PLAN: plan.join(',') });
+  assert.match(r.out, /CALENDAR_EXPAND_GATE expand=False/, '380 left is not a fresh quota');
+  assert.match(r.out, /CALENDAR_EXPAND_STOP reason=quota_margin remaining=365/);
   assert.ok(r.fetched.length > 0 && r.fetched.length < plan.length);
-  assert.equal(Math.min(...r.fetched.map((f) => f.remaining)), 350);
+  assert.equal(Math.min(...r.fetched.map((f) => f.remaining)), 365);
   assert.deepEqual(r.stored, r.fetched.map((f) => f.date), 'every fetched date is stored, none twice');
   assert.equal(r.code, 0);
 });
 
-test('a failing calendar date stops the run before fetching later dates (next run resumes from the plan)', { skip }, async () => {
+test('a failing calendar date does not stop the next dates; the run still fails', { skip }, async () => {
   const r = await run({ MOCK_PLAN: '2026-10-31,2026-11-01,2026-11-02', MOCK_CAL_FAIL: '2026-11-01' });
-  assert.deepEqual(r.stored, ['2026-10-31']);
-  assert.deepEqual(r.fetched.map((f) => f.date), ['2026-10-31', '2026-11-01'], 'no GOAL call after the failed date');
+  assert.deepEqual(r.stored, ['2026-10-31', '2026-11-02']);
+  assert.deepEqual(r.fetched.map((f) => f.date), ['2026-10-31', '2026-11-01', '2026-11-02']);
   assert.notEqual(r.code, 0);
+});
+
+test('a second failure in a row stops the run: no GOAL call after it', { skip }, async () => {
+  const r = await run({ MOCK_PLAN: '2026-10-31,2026-11-01,2026-11-02,2026-11-03', MOCK_CAL_FAIL: '2026-10-31,2026-11-01' });
+  assert.deepEqual(r.stored, []);
+  assert.deepEqual(r.fetched.map((f) => f.date), ['2026-10-31', '2026-11-01']);
+  assert.notEqual(r.code, 0);
+});
+
+test('a success between two failed dates keeps the run going', { skip }, async () => {
+  const r = await run({ MOCK_PLAN: '2026-11-07,2026-11-08,2026-11-14,2026-11-15,2026-11-16', MOCK_CAL_FAIL: '2026-11-07,2026-11-14' });
+  assert.deepEqual(r.stored, ['2026-11-08', '2026-11-15', '2026-11-16'], 'two stubborn Saturdays must not freeze the plan');
+  assert.equal(r.code, 1);
+});
+
+test('a production without deferredDates prints no deferred line', { skip }, async () => {
+  const r = await run({ MOCK_PLAN: '2026-11-07', MOCK_NO_DEFERRED: '1' });
+  assert.doesNotMatch(r.out, /CALENDAR_INGEST_DEFERRED/);
+});
+
+test('inside the margin no date starts', { skip }, async () => {
+  const r = await run({ MOCK_START_REMAINING: '362', MOCK_PLAN: '2026-10-31,2026-11-01' });
+  assert.deepEqual(r.fetched, []);
+  assert.equal(r.code, 0);
 });

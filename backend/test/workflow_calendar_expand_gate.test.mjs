@@ -12,7 +12,7 @@ test('scheduled runs expand the cold calendar whenever the daily quota is fresh'
   // The gate is evaluated after the post-hot quota check, on its providerRemaining.
   assert.ok(workflow.indexOf('$postHotRemaining = $postHotQuota.plan.providerRemaining') > workflow.indexOf('action = "global-quota-plan"'));
   assert.ok(workflow.indexOf('$shouldExpand =') > workflow.indexOf('$postHotRemaining ='));
-  assert.ok(workflow.indexOf('$shouldExpand =') < workflow.indexOf('if ($planDates.Count -eq 0 -and $shouldExpand)'));
+  assert.ok(workflow.indexOf('$shouldExpand =') < workflow.indexOf('if ($shouldExpand) {'));
 });
 
 test('a fresh-quota expansion cannot eat into the reserve: threshold >= reserve + request budget', () => {
