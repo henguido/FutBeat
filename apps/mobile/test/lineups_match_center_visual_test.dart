@@ -1,7 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
@@ -9,18 +8,12 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 
+import 'support/visual_test_fonts.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUpAll(() async {
-    final font = FontLoader('FutBeatRoboto')
-      ..addFont(rootBundle.load('assets/fonts/roboto-regular.ttf'))
-      ..addFont(rootBundle.load('assets/fonts/roboto-bold.ttf'));
-    await font.load();
-    final icons = FontLoader('MaterialIcons')
-      ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
-    await icons.load();
-  });
+  setUpAll(loadFutBeatVisualFonts);
 
   testWidgets('Visual review: complete Match Center lineups', (tester) async {
     tester.view.physicalSize = const Size(390, 844);

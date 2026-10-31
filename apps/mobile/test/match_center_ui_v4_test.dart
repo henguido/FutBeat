@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 
+import 'support/visual_test_fonts.dart';
+
 void main() {
+  setUpAll(loadFutBeatVisualFonts);
   test('formation rows map a 4-3-3 from attack to goalkeeper', () {
     final starters = [
       for (var i = 1; i <= 11; i++)
@@ -668,28 +672,69 @@ void main() {
       }
       expect(tester.takeException(), isNull);
 
-      // Galaxy A32: 1080x2400 physical pixels, 420 dpi, font scale 1.1.
+      // Galaxy A32: 1080x2400 physical pixels, 420 dpi, bundled Roboto.
       // Event badges used to exceed the fixed pitch row by one physical pixel.
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 2.625;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: MediaQuery(
-            data: const MediaQueryData(
-              size: Size(1080 / 2.625, 2400 / 2.625),
-              devicePixelRatio: 2.625,
-              textScaler: TextScaler.linear(1.1),
-            ),
-            child: Scaffold(
-              body: SingleChildScrollView(
-                child: Lineups(snapshot, snapshot.matches.single, detail),
+      for (final scale in [1.0, 1.1, 1.3]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(fontFamily: 'FutBeatRoboto'),
+            home: MediaQuery(
+              data: MediaQueryData(
+                size: Size(1080 / 2.625, 2400 / 2.625),
+                devicePixelRatio: 2.625,
+                textScaler: TextScaler.linear(scale),
+              ),
+              child: Scaffold(
+                body: SingleChildScrollView(
+                  child: Lineups(snapshot, snapshot.matches.single, detail),
+                ),
               ),
             ),
           ),
-        ),
-      );
-      expect(find.byKey(const ValueKey('lineups-combined-pitch')), findsOne);
-      expect(tester.takeException(), isNull);
+        );
+        expect(find.byKey(const ValueKey('lineups-combined-pitch')), findsOne);
+        // Every existing starter stays inside its own pitch half even when
+        // labels/incidents grow. Keep this independent of screenshot baselines.
+        for (final side in ['home', 'away']) {
+          final half = tester.getRect(
+            find.byKey(ValueKey('lineups-$side-half')),
+          );
+          for (var number = 1; number <= 11; number++) {
+            final player = tester.getRect(
+              find.byKey(ValueKey('lineup-pitch-$side-$side-$number')),
+            );
+            expect(player.top, greaterThanOrEqualTo(half.top));
+            expect(player.bottom, lessThanOrEqualTo(half.bottom));
+          }
+        }
+        final layoutError = tester.takeException();
+        if (layoutError != null) {
+          for (final flex in tester.renderObjectList<RenderFlex>(
+            find.byType(Column),
+          )) {
+            var bottom = 0.0;
+            flex.visitChildren((child) {
+              final box = child as RenderBox;
+              final offset = (box.parentData! as FlexParentData).offset;
+              if (offset.dy + box.size.height > bottom) {
+                bottom = offset.dy + box.size.height;
+              }
+            });
+            if (bottom > flex.size.height + .01) {
+              debugPrint(
+                'A32 scale $scale overflow ${bottom - flex.size.height}: ${flex.debugCreator}',
+              );
+            }
+          }
+        }
+        expect(
+          layoutError,
+          isNull,
+          reason: 'A32 bundled Roboto scale $scale must not overflow',
+        );
+      }
       tester.view.physicalSize = const Size(390, 1400);
       tester.view.devicePixelRatio = 1;
 

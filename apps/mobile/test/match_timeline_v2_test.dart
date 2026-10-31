@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/theme.dart';
+import 'package:futbeat/shared/widgets.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:go_router/go_router.dart';
 
@@ -149,11 +150,14 @@ Future<void> _pumpTimeline(
   String status = 'VERIFIED',
   List<Json> incidents = const [],
   Size size = const Size(390, 844),
+  List<Json>? players,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final data = Snapshot(_payload(status: status, events: events));
+  final raw = _payload(status: status, events: events);
+  if (players != null) raw['players'] = players;
+  final data = Snapshot(raw);
   final match = data.match('match')!;
   final router = GoRouter(
     routes: [
@@ -181,6 +185,82 @@ Future<void> _pumpTimeline(
 }
 
 void main() {
+  testWidgets('timeline reuses only verified canonical player photos', (
+    tester,
+  ) async {
+    await _pumpTimeline(
+      tester,
+      events: [
+        _event('verified', 'GOAL', 12, team: _home, player: 'fb_player_photo'),
+        _event(
+          'unverified',
+          'YELLOW_CARD',
+          20,
+          team: _away,
+          player: 'fb_player_unverified',
+        ),
+        _event(
+          'no-photo',
+          'YELLOW_CARD',
+          22,
+          team: _away,
+          player: 'fb_player_absent',
+        ),
+      ],
+      players: [
+        {
+          'id': 'fb_player_photo',
+          'name': 'Persona verificada',
+          'media': {
+            'url': 'https://media.invalid/canonical.png',
+            'verificationStatus': 'VERIFIED',
+          },
+        },
+        {
+          'id': 'fb_player_unverified',
+          'name': 'Persona sin verificar',
+          'media': {
+            'url': 'https://media.invalid/not-allowed.png',
+            'verificationStatus': 'UNVERIFIED',
+          },
+        },
+        {'id': 'fb_player_absent', 'name': 'Persona sin foto'},
+      ],
+    );
+    final avatars = tester
+        .widgetList<EntityAvatar>(find.byType(EntityAvatar))
+        .toList();
+    expect(avatars.map((a) => a.entity.id), ['fb_player_photo']);
+    expect(find.text('Persona sin foto'), findsOneWidget);
+    expect(find.text('Persona sin verificar'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'structured scorer/assist/score render once while VAR detail survives',
+    (tester) async {
+      await _pumpTimeline(
+        tester,
+        events: [
+          _event(
+            'compact',
+            'GOAL',
+            12,
+            team: _home,
+            player: 'player_goal',
+            assist: 'player_assist',
+            score: {'home': 1, 'away': 0},
+            detail: 'Goleador de Nombre Extraordinariamente Largo · Asistencia: Asistente Real · 1 - 0 · Revisión confirmada',
+          ),
+        ],
+      );
+      expect(find.textContaining('Asistencia: Asistente Real'), findsOneWidget);
+      expect(find.textContaining('Revisión confirmada'), findsOneWidget);
+      expect(find.text('1–0'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('paired detail keeps the canonical substitute navigation', (
     tester,
   ) async {

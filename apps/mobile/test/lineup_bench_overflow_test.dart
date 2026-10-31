@@ -3,13 +3,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 
+import 'support/visual_test_fonts.dart';
+
 void main() {
-  for (final scale in [1.0, 1.3]) {
+  setUpAll(loadFutBeatVisualFonts);
+  for (final scale in [1.0, 1.1, 1.3]) {
     testWidgets(
       'A32 compact substitutes keep two-line names, dorsal and events at $scale',
       (tester) async {
         tester.view.physicalSize = const Size(1080, 2400);
-        tester.view.devicePixelRatio = 3;
+        tester.view.devicePixelRatio = 2.625;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
 
@@ -92,7 +95,11 @@ void main() {
 
         await tester.pumpWidget(
           MaterialApp(
-            theme: ThemeData.dark(useMaterial3: true),
+            theme: ThemeData.dark(useMaterial3: true).copyWith(
+              textTheme: ThemeData.dark().textTheme.apply(
+                fontFamily: 'FutBeatRoboto',
+              ),
+            ),
             home: Scaffold(
               body: MediaQuery(
                 data: MediaQueryData(textScaler: TextScaler.linear(scale)),
@@ -108,6 +115,14 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('Ainsley Maitland-Niles'), findsOneWidget);
         expect(find.text('Bazoumana Touré'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('lineup-home-suplente-grid')),
+          findsOneWidget,
+        );
+        // Preserve all incident information rather than merely clipping the
+        // failing card to suppress RenderFlex diagnostics.
+        expect(find.text('67′'), findsOneWidget);
+        expect(find.text('81′'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );

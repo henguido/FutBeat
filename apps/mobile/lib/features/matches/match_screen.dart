@@ -20,6 +20,7 @@ import 'match_preview_sections.dart';
 import 'lineup_history_section.dart';
 import 'live_field_card.dart';
 import 'match_period_scores.dart';
+import 'timeline_presentation.dart';
 
 const _headerTop = Color(0xFF1B2B31);
 const _headerBottom = Color(0xFF0F181C);
@@ -2898,15 +2899,18 @@ class _TimelineRow extends StatelessWidget {
             : rawLabel.isNotEmpty
             ? rawLabel
             : typeLabel);
-    final metadata = <String>[
-      if (title != typeLabel) typeLabel,
-      for (final part in detailParts)
-        if (part != title) part,
-      if (side == null && team != null) team.displayName,
-    ];
     final score = timelineScoreAfter(event);
-
+    final metadata = timelineMetadata(
+      event: event,
+      typeLabel: typeLabel,
+      title: title,
+      playerName: playerName,
+      assistName: assistName,
+      score: score,
+      teamName: side == null ? team?.displayName : null,
+    );
     final content = _TimelineContent(
+      data: data,
       type: type,
       title: title,
       metadata: metadata,
@@ -3015,6 +3019,7 @@ class _MinuteBubble extends StatelessWidget {
 
 class _TimelineContent extends StatelessWidget {
   const _TimelineContent({
+    required this.data,
     required this.type,
     required this.title,
     required this.metadata,
@@ -3026,6 +3031,7 @@ class _TimelineContent extends StatelessWidget {
     required this.alignEnd,
   });
 
+  final Snapshot data;
   final String type;
   final String title;
   final List<String> metadata;
@@ -3047,6 +3053,10 @@ class _TimelineContent extends StatelessWidget {
             : CrossAxisAlignment.start,
         children: [
           _TimelinePerson(
+            entity: data.player(
+              (isSubstitution && assistName != null ? assistId : playerId) ??
+                  '',
+            ),
             name: isSubstitution && assistName != null ? assistName! : title,
             id: isSubstitution && assistName != null ? assistId : playerId,
             prefix: isSubstitution
@@ -3064,6 +3074,7 @@ class _TimelineContent extends StatelessWidget {
             _TimelinePerson(
               name: title,
               id: playerId,
+              entity: data.player(playerId ?? ''),
               prefix: '↓ ',
               alignEnd: alignEnd,
             ),
@@ -3071,6 +3082,7 @@ class _TimelineContent extends StatelessWidget {
             _TimelinePerson(
               name: assistName!,
               id: assistId,
+              entity: data.player(assistId ?? ''),
               prefix: 'Asistencia: ',
               alignEnd: alignEnd,
               mutedStyle: true,
@@ -3115,42 +3127,70 @@ class _TimelinePerson extends StatelessWidget {
     required this.id,
     required this.prefix,
     required this.alignEnd,
+    this.entity,
     this.prominent = false,
     this.mutedStyle = false,
   });
-
   final String name;
   final String? id;
   final String prefix;
-  final bool alignEnd;
-  final bool prominent;
-  final bool mutedStyle;
+  final bool alignEnd, prominent, mutedStyle;
+  final Entity? entity;
 
   @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: id == null ? null : () => context.push('/player/$id'),
-    borderRadius: BorderRadius.circular(4),
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 24),
-      child: Align(
-        alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
-        child: Text(
-          '$prefix$name',
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          textAlign: alignEnd ? TextAlign.end : TextAlign.start,
-          style: TextStyle(
-            color: mutedStyle ? muted : Colors.white,
-            decoration: id == null ? null : TextDecoration.underline,
-            decorationColor: muted,
-            fontSize: mutedStyle ? 11 : 13,
-            height: 1.2,
-            fontWeight: prominent ? FontWeight.w900 : FontWeight.w700,
-          ),
+  Widget build(BuildContext context) {
+    final person = entity;
+    final label = Text(
+      '$prefix$name',
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: alignEnd ? TextAlign.end : TextAlign.start,
+      style: TextStyle(
+        color: mutedStyle ? muted : Colors.white,
+        decoration: id == null ? null : TextDecoration.underline,
+        decorationColor: muted,
+        fontSize: mutedStyle ? 11 : 13,
+        height: 1.2,
+        fontWeight: prominent ? FontWeight.w900 : FontWeight.w700,
+      ),
+    );
+    // Same verified canonical media/cache as Lineups and Profile. No name
+    // lookup or new API request; absent/unverified media keeps the text.
+    final photo =
+        person != null &&
+            entityImageCacheId(person).startsWith('fb_player_') &&
+            entityImageOf(context, person) != null
+        ? ExcludeSemantics(
+            child: ClipOval(child: EntityAvatar(person, size: 20)),
+          )
+        : null;
+    return InkWell(
+      onTap: id == null ? null : () => context.push('/player/$id'),
+      borderRadius: BorderRadius.circular(4),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 24),
+        child: Align(
+          alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
+          child: photo == null
+              ? label
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: alignEnd
+                      ? [
+                          Flexible(child: label),
+                          const SizedBox(width: 4),
+                          photo,
+                        ]
+                      : [
+                          photo,
+                          const SizedBox(width: 4),
+                          Flexible(child: label),
+                        ],
+                ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// Distinct visual per event type (cards drawn as real cards).
@@ -3675,6 +3715,21 @@ class _CombinedFormationPitch extends StatelessWidget {
           ],
         );
       }
+      final homeHeight = _requiredPitchRowHeight(
+        context,
+        constraints.maxWidth,
+        homeRows,
+        incidents,
+        'home',
+      );
+      final awayHeight = _requiredPitchRowHeight(
+        context,
+        constraints.maxWidth,
+        awayRows,
+        incidents,
+        'away',
+      );
+      final rowHeight = homeHeight > awayHeight ? homeHeight : awayHeight;
       return Semantics(
         container: true,
         label:
@@ -3694,6 +3749,7 @@ class _CombinedFormationPitch extends StatelessWidget {
               ),
               _FormationHalf(
                 key: const ValueKey('lineups-home-half'),
+                rowHeight: rowHeight,
                 rows: homeRows.reversed.toList(),
                 side: 'home',
                 incidents: incidents,
@@ -3701,6 +3757,7 @@ class _CombinedFormationPitch extends StatelessWidget {
               ),
               _FormationHalf(
                 key: const ValueKey('lineups-away-half'),
+                rowHeight: rowHeight,
                 rows: awayRows,
                 side: 'away',
                 incidents: incidents,
@@ -3729,18 +3786,20 @@ class _FormationHalf extends StatelessWidget {
     required this.side,
     required this.incidents,
     required this.goalAtTop,
+    required this.rowHeight,
   });
 
   final List<List<Json>> rows;
   final String side;
   final List<Json> incidents;
   final bool goalAtTop;
+  final double rowHeight;
 
   @override
   Widget build(BuildContext context) {
-    const rowHeight = lineupPitchRowHeight;
     const edgeInset = 12.0;
-    const height = lineupPitchHalfHeight;
+    final height =
+        lineupPitchHalfHeight + (rowHeight - lineupPitchRowHeight) * 5;
     final travel = height - rowHeight - edgeInset * 2;
     return SizedBox(
       height: height,
@@ -3761,6 +3820,7 @@ class _FormationHalf extends StatelessWidget {
                 height: rowHeight,
                 child: _PitchPlayerRow(
                   row: rows[index],
+                  height: rowHeight,
                   side: side,
                   incidents: incidents,
                 ),
@@ -3777,15 +3837,17 @@ class _PitchPlayerRow extends StatelessWidget {
     required this.row,
     required this.side,
     required this.incidents,
+    this.height = lineupPitchRowHeight,
   });
 
+  final double height;
   final List<Json> row;
   final String side;
   final List<Json> incidents;
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    height: lineupPitchRowHeight,
+    height: height,
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Row(
@@ -4028,6 +4090,81 @@ class _PitchHalfPainter extends CustomPainter {
 const double lineupPitchRowHeight = 100;
 const double lineupPitchHalfHeight = lineupPitchRowHeight * 5 + 24;
 const double lineupPenaltyAreaDepth = 132;
+
+// Reserve the real scaled label and Wrap height. Two badges wrap in a five-
+// defender row on A32 with bundled Roboto at 1.3; fixed 100px cells overflowed.
+// Both halves share the maximum so the pitch stays symmetric. No intrinsic
+// layout or extra requests: each distinct label is measured once per layout.
+double _requiredPitchRowHeight(
+  BuildContext context,
+  double width,
+  List<List<Json>> rows,
+  List<Json> incidents,
+  String side,
+) {
+  var required = lineupPitchRowHeight;
+  final cache = <String, Size>{};
+  final base = DefaultTextStyle.of(context).style;
+  Size measure(String value, double fontSize) =>
+      cache.putIfAbsent('$fontSize:$value', () {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: value,
+            style: base.merge(
+              TextStyle(
+                fontSize: fontSize,
+                fontWeight: fontSize == 11 ? FontWeight.w700 : null,
+              ),
+            ),
+          ),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          maxLines: 1,
+        )..layout();
+        final size = painter.size;
+        painter.dispose();
+        return size;
+      });
+  for (final row in rows) {
+    if (row.isEmpty) continue;
+    final slot = (width - 16) / row.length;
+    for (final player in row) {
+      final events = lineupEventsForPlayer(player, incidents, side);
+      if (events.isEmpty) continue;
+      var lineWidth = 0.0, lineHeight = 0.0, badgesHeight = 0.0;
+      for (final event in events) {
+        final size = event.minute == null
+            ? Size.zero
+            : measure('${event.minute}′', 8);
+        final badgeWidth = 12 + size.width;
+        final badgeHeight = size.height > 12 ? size.height : 12.0;
+        if (lineWidth > 0 && lineWidth + 3 + badgeWidth > slot) {
+          badgesHeight += lineHeight + 2;
+          lineWidth = 0;
+          lineHeight = 0;
+        }
+        lineWidth += (lineWidth > 0 ? 3 : 0) + badgeWidth;
+        if (badgeHeight > lineHeight) lineHeight = badgeHeight;
+      }
+      badgesHeight += lineHeight;
+      final name = measure(
+        _pitchName(player['name']?.toString() ?? 'Jugador'),
+        11,
+      ).height;
+      final number = measure(
+        _lineupShirtNumber(player)?.toString() ?? '',
+        11,
+      ).height;
+      final labelHeight = name > number ? name : number;
+      // 46px avatar + its 1px border on each side, existing 3/2px gaps,
+      // and 4px rounding reserve for platform font metrics.
+      final needed = (48 + 3 + labelHeight + 2 + badgesHeight + 4)
+          .ceilToDouble();
+      if (needed > required) required = needed;
+    }
+  }
+  return required;
+}
 
 String _pitchName(String name) {
   final words = name.trim().split(RegExp(r'\s+'));
