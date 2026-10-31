@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../../shared/live_freshness_notice.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -534,11 +537,12 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                   .where((match) => isFollowedTeamMatch(match, follows))
                   .toList()
                 ..sort((a, b) => a.startTime.compareTo(b.startTime));
-          // A followed-team fixture belongs in both the single Favoritos
-          // section and its competition. `games` was already deduplicated, so
-          // neither section can repeat the same canonical fixture internally.
-          final regularGames = [...games]
-            ..sort((a, b) => a.startTime.compareTo(b.startTime));
+          // Each canonical fixture has one visible owner: favorites first,
+          // then its league for the remaining games (MOBILE239).
+          final favoriteIds = followedGames.map((match) => match.id).toSet();
+          final regularGames =
+              games.where((match) => !favoriteIds.contains(match.id)).toList()
+                ..sort((a, b) => a.startTime.compareTo(b.startTime));
 
           final regularByCompetition = <String, List<FootballMatch>>{};
           for (final match in regularGames) {
@@ -805,8 +809,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             }
           }
 
-          // Then every competition with all of its matches, including those
-          // also highlighted in Favoritos. Each group remains deduplicated.
+          // The remaining matches stay visible in their competition.
           for (final (index, competition) in visibleCompetitions.indexed) {
             final ordinal = index + 1;
             addCompetition(competition, ordinal);
@@ -1528,6 +1531,7 @@ class MatchCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
             child: Column(
               children: [
+                LiveFreshnessNotice(match),
                 Row(
                   children: [
                     Expanded(

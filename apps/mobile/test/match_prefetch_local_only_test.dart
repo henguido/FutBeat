@@ -129,7 +129,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(
         find.byKey(const ValueKey('match-row-fb_match_local')),
-        findsNWidgets(2),
+        findsOneWidget,
       );
       await tester.runAsync(() async {
         for (var i = 0; i < 30; i++) {
