@@ -35,3 +35,10 @@ Socket tests bind only 127.0.0.1 on an ephemeral port. A test-only wire adapter 
 ## Activation checklist for Claude
 
 Verify deployed reader definitions and dependencies are read-only; inspect candidate SQL grants (service_role only); review central API dispatch and disabled default; approve explicit host/route namespace and three-hour session limit. Keep the independent watchdog, restoration and expiry. Review image network access separately: this interceptor counts the three API reads only and is not a global image traffic limiter. Do not treat local handler tests as authorization to enable production.
+## Follow-up: guard startup is not guard readiness
+
+The subsequent offline trial reported QADEV_STARTED before there was any evidence that the independent child had entered its guard loop. The app later required manual closure. A live child PID alone cannot establish protection. The archived pending-close record lacked the exception detail, so the exact original close failure cannot be reconstructed from that generic record.
+
+The staged launcher now waits for an identity-bound READY record (session, nonce, child PID and timestamp) emitted only after the guard passes its full policy/heartbeat checks. Startup may wait at most 180 seconds with the app still closed and controller heartbeat maintained. Normal readiness freshness stays 15 seconds; neither the 8-second failsafe heartbeat limit nor the normal policy TTL is enlarged. Missing/stale/wrong readiness blocks opening and ends an existing exemption. The failsafe refreshes its time after slow policy probes before comparing the current heartbeat; this avoids comparing a newly written beat against time captured before those probes. Pending-close records now include the actual exception/reason, and the candidate close probes use 1500 ms bounds.
+
+Validation: 11 pure readiness tests PASS, 42 existing policy tests PASS, four staged mock-ADB DryRun tests PASS including readiness emitted only for valid guard state. Generated scripts parse successfully. These changes are candidates only and are not a claim of physical closure or a permanent QA123 update.

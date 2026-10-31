@@ -2,6 +2,7 @@
 param([Parameter(Mandatory)][ValidateSet('Deploy','Arm')][string]$Mode,[ValidateSet('NORMAL','FAILSAFE')][string]$SessionSuffix='NORMAL', [ValidatePattern('^QA[0-9]{3}$')][string]$TrialName='QA228', [ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$ExpectedApkSha256='56785DC431B0706E349639AF1AE35610DF99964225D5A04C798331862DD22280')
 $ErrorActionPreference='Stop'
 $repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+. (Join-Path $PSScriptRoot 'qa228-trial-validation.ps1')
 $root=Join-Path $repo ('artifacts/'+$TrialName.ToLowerInvariant());$candidate=Join-Path $repo 'artifacts/qa227/controller-candidate'
 $m=Get-Content (Join-Path $root 'rollback-manifest.json') -Raw|ConvertFrom-Json
 $q=$m.qa_root;$task='FutBeat-QA123-Launcher';$adb='C:\Users\hen_g\AppData\Local\Android\Sdk\platform-tools\adb.exe'
@@ -36,13 +37,13 @@ try{
         if((Get-ScheduledTask -TaskName $task).State -eq 'Running'){throw 'Original task did not stop'}
         foreach($name in @('qa123-launcher.ps1','qa123-failsafe.ps1','qa227-development-policy.ps1')){Copy-Item -LiteralPath (Join-Path $candidate $name) -Destination (Join-Path $q $name) -Force}
         $started=[datetimeoffset]::UtcNow;Start-ScheduledTask -TaskName $task
-        for($i=0;$i -lt 30;$i++){Start-Sleep 1;$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw|ConvertFrom-Json;if([datetimeoffset]::Parse($hb.updated_at) -gt $started -and $hb.status -like 'DISARMED*'){break}}
-        if($hb.status -notlike 'DISARMED*' -or [datetimeoffset]::Parse($hb.updated_at) -le $started){throw 'Candidate did not start disarmed'}
+        for($i=0;$i -lt 180;$i++){Start-Sleep 1;$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw|ConvertFrom-Json;$owner=Get-Process -Id ([int]$hb.launcher_pid) -ErrorAction SilentlyContinue;if(Test-QaTrialLauncherHeartbeat -Heartbeat $hb -Process $owner -TaskStarted $started -Now ([datetimeoffset]::UtcNow)){break}}
+        if(-not (Test-QaTrialLauncherHeartbeat -Heartbeat $hb -Process (Get-Process -Id ([int]$hb.launcher_pid) -ErrorAction SilentlyContinue) -TaskStarted $started -Now ([datetimeoffset]::UtcNow))){throw 'Candidate did not start disarmed'}
         "DEPLOYED_TEMPORARILY status=$($hb.status) pid=$($hb.launcher_pid)";exit
     }
     foreach($name in @('qa123-launcher.ps1','qa123-failsafe.ps1','qa227-development-policy.ps1')){if((Get-FileHash (Join-Path $q $name) -Algorithm SHA256).Hash -cne (Get-FileHash (Join-Path $candidate $name) -Algorithm SHA256).Hash){throw 'Candidate source mismatch'}}
     if(Test-Path (Join-Path $q 'qa123-active-window.json')){throw 'An active ledger exists'}
-    foreach($name in @('qa227-development-approval.json','qa227-development-state.json','qa227-supervisor-heartbeat.json','qa227-close.json','qa227-failsafe-evidence.json')){
+    foreach($name in @('qa227-development-approval.json','qa227-development-state.json','qa227-supervisor-heartbeat.json','qa227-close.json','qa227-failsafe-evidence.json','qa227-failsafe-ready.json')){
         $path=Join-Path $q $name;if(Test-Path $path){$record=Get-Content $path -Raw|ConvertFrom-Json;if($record.session_id -like ('QADEV-'+$TrialName+'-*') -or $record.window_id -like ('QADEV-'+$TrialName+'-*')){Copy-Item $path (Join-Path $root ('prior-'+$name)) -Force;Remove-Item -LiteralPath $path}else{throw "Foreign state: $name"}}
     }
     $now=[datetimeoffset]::UtcNow;$id='QADEV-'+$TrialName+'-'+$now.ToString('yyyyMMddTHHmmssZ')+'-'+$SessionSuffix
@@ -52,7 +53,7 @@ try{
     $s.status='ACTIVE';$s.stop=$false;$s.supervisor_heartbeat_at=$now.ToString('o');$s.http_requests=0;$s.http_in_minute=0;$s.local_network_block_verified=$true
     AtomicPrivate (Join-Path $q 'qa227-development-approval.json') $a
     AtomicPrivate (Join-Path $q 'qa227-development-state.json') $s
-    for($i=0;$i -lt 40;$i++){Start-Sleep 1;$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw|ConvertFrom-Json;if($hb.status -ceq 'QADEV_CACHE_ONLY' -and $hb.window_id -ceq $id){break}}
+    for($i=0;$i -lt 180;$i++){Start-Sleep 1;$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw|ConvertFrom-Json;if($hb.status -ceq 'QADEV_CACHE_ONLY' -and $hb.window_id -ceq $id){break}}
     if($hb.status -cne 'QADEV_CACHE_ONLY' -or $hb.window_id -cne $id){throw "Candidate did not own session: $($hb.status)"}
     $guards=@(Get-CimInstance Win32_Process|Where-Object{$_.CommandLine -match 'qa123-failsafe\.ps1' -and $_.CommandLine -match [regex]::Escape($id)})
     if($guards.Count -ne 1){throw "Expected one independent failsafe, got $($guards.Count)"}

@@ -1,6 +1,32 @@
 # Candidate library only. Not loaded by the installed QA123 launcher.
 # One explicit approval per supervised development session, not per screen.
 $script:qa227Apk=$null
+
+# A newly created OS process is not evidence that its guard loop has started.
+# The independent failsafe writes this record only after a full successful pass.
+function Test-QaDevelopmentGuardReady {
+    param([string]$Path,[string]$SessionId,[string]$Nonce,[int]$GuardPid,[datetimeoffset]$Now)
+    try {
+        $r=Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+        $at=[datetimeoffset]::Parse($r.utc)
+        return ($r.schema -ceq 'qa-development-guard-v1' -and $r.status -ceq 'READY' -and
+            $r.session_id -ceq $SessionId -and $r.nonce -ceq $Nonce -and
+            $r.process_id -eq $GuardPid -and $at -le $Now -and ($Now-$at).TotalSeconds -le 15)
+    } catch { return $false }
+}
+
+function Wait-QaDevelopmentGuardReady {
+    param([scriptblock]$Ready,[scriptblock]$Alive,[scriptblock]$Pulse,[scriptblock]$Wait,[ValidateRange(1,720)][int]$MaxChecks=720)
+    # Bound startup to 180 seconds at 250 ms intervals, always with the app closed.
+    for($i=0;$i -lt $MaxChecks;$i++) {
+        if((& $Alive) -cne $true){return $false}
+        & $Pulse | Out-Null
+        if((& $Ready) -ceq $true){return $true}
+        & $Wait | Out-Null
+    }
+    return $false
+}
+
 function Get-QaDevelopmentDecision {
     param(
         [Parameter(Mandatory)][string]$StateRoot,

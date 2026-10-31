@@ -32,26 +32,34 @@ $block=@'
                 $devBeat=Join-Path $StateRoot 'qa227-supervisor-heartbeat.json'
                 $devClose=Join-Path $StateRoot 'qa227-close.json'
                 $devEvidence=Join-Path $StateRoot 'qa227-failsafe-evidence.json'
+                $devReady=Join-Path $StateRoot 'qa227-failsafe-ready.json'
                 $guard=$null
                 try {
                     Write-AtomicJson $devBeat @{status='ACTIVE';utc=[datetimeoffset]::UtcNow.ToString('o');session_id=$devApproval.session_id;nonce=$devApproval.nonce}
                     $psi=[Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
                     $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
-                    foreach($arg in @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'qa123-failsafe.ps1'),'-HeartbeatPath',$devBeat,'-AbsoluteExpiryUtc',$devApproval.expires_at,'-GatePath',(Join-Path $StateRoot 'qa227-development-state.json'),'-ExpectedWindowId',$devApproval.session_id,'-ExpectedNonce',$devApproval.nonce,'-EvidencePath',$devEvidence,'-DevelopmentStateRoot',$StateRoot,'-DevelopmentGateDirectory',$CoordinationDirectory)){[void]$psi.ArgumentList.Add([string]$arg)}
+                    Remove-Item -LiteralPath $devReady -ErrorAction SilentlyContinue
+                    foreach($arg in @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'qa123-failsafe.ps1'),'-HeartbeatPath',$devBeat,'-AbsoluteExpiryUtc',$devApproval.expires_at,'-GatePath',(Join-Path $StateRoot 'qa227-development-state.json'),'-ExpectedWindowId',$devApproval.session_id,'-ExpectedNonce',$devApproval.nonce,'-EvidencePath',$devEvidence,'-DevelopmentStateRoot',$StateRoot,'-DevelopmentGateDirectory',$CoordinationDirectory,'-DevelopmentReadyPath',$devReady)){[void]$psi.ArgumentList.Add([string]$arg)}
                     $guard=[Diagnostics.Process]::Start($psi)
+                    $guardReady={Test-QaDevelopmentGuardReady -Path $devReady -SessionId $devApproval.session_id -Nonce $devApproval.nonce -GuardPid $guard.Id -Now ([datetimeoffset]::UtcNow)}
+                    $ready=Wait-QaDevelopmentGuardReady -Ready $guardReady -Alive {$guard.Refresh();return (-not $guard.HasExited)} -Pulse {
+                        Write-AtomicJson $devBeat @{status='ACTIVE';utc=[datetimeoffset]::UtcNow.ToString('o');session_id=$devApproval.session_id;nonce=$devApproval.nonce}
+                        Heartbeat 'QADEV_WAITING_FOR_FAILSAFE' $devApproval.session_id
+                    } -Wait {Start-Sleep -Milliseconds 250}
+                    if(-not $ready){throw 'independent_guard_not_ready'}
                     Write-AtomicJson $activeWindowPath @{window_id=$devApproval.session_id;serial='RF8R32GQWGL';package='com.futbeat.futbeat.qa';close_path=$devClose}
                     Log-Event 'QADEV_STARTED_WITH_INDEPENDENT_FAILSAFE' $devApproval.session_id
                     $result=Invoke-QaDevelopmentSession -Decision {
                         $guard.Refresh()
-                        Get-QaDevelopmentDecision -StateRoot $StateRoot -GateDirectory $CoordinationDirectory -Now ([datetimeoffset]::UtcNow) -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments} -IndependentWatchdogVerified (-not $guard.HasExited)
-                    } -WatchdogAlive {$guard.Refresh();return (-not $guard.HasExited)} -Heartbeat {
+                        Get-QaDevelopmentDecision -StateRoot $StateRoot -GateDirectory $CoordinationDirectory -Now ([datetimeoffset]::UtcNow) -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments} -IndependentWatchdogVerified ((-not $guard.HasExited) -and (& $guardReady))
+                    } -WatchdogAlive {$guard.Refresh();return ((-not $guard.HasExited) -and (& $guardReady))} -Heartbeat {
                         Write-AtomicJson $devBeat @{status='ACTIVE';utc=[datetimeoffset]::UtcNow.ToString('o');session_id=$devApproval.session_id;nonce=$devApproval.nonce}
                         Heartbeat 'QADEV_CACHE_ONLY' $devApproval.session_id
                     } -Wait {Start-Sleep -Seconds 2} -CloseQa {
                         param($reason)
-                        $stop=Invoke-AdbBounded @('-s','RF8R32GQWGL','shell','am','force-stop','com.futbeat.futbeat.qa')
-                        $check=Invoke-AdbBounded @('-s','RF8R32GQWGL','shell','pidof','com.futbeat.futbeat.qa')
-                        $device=Invoke-AdbBounded @('-s','RF8R32GQWGL','get-state')
+                        $stop=Invoke-AdbBounded -Arguments @('-s','RF8R32GQWGL','shell','am','force-stop','com.futbeat.futbeat.qa') -TimeoutMs 1500
+                        $check=Invoke-AdbBounded -Arguments @('-s','RF8R32GQWGL','shell','pidof','com.futbeat.futbeat.qa') -TimeoutMs 1500
+                        $device=Invoke-AdbBounded -Arguments @('-s','RF8R32GQWGL','get-state') -TimeoutMs 1500
                         return ($stop.exit_code -eq 0 -and $check.exit_code -eq 1 -and [string]::IsNullOrWhiteSpace($check.output) -and $device.exit_code -eq 0 -and $device.output.Trim() -ceq 'device')
                     }
                     if($result.status -ceq 'CLOSED'){
@@ -59,12 +67,12 @@ $block=@'
                         Write-AtomicJson $devBeat @{status='CLOSED';utc=[datetimeoffset]::UtcNow.ToString('o');session_id=$devApproval.session_id;nonce=$devApproval.nonce}
                         if(-not $guard.WaitForExit(8000)){$guard.Kill()} # app already confirmed closed
                         Remove-Item -LiteralPath $activeWindowPath -ErrorAction SilentlyContinue
-                    }else{throw 'development_close_not_confirmed'}
+                    }else{throw ('development_close_not_confirmed:'+$result.reason)}
                     Log-Event ('QADEV_CLOSED_'+$result.reason) $devApproval.session_id
                 }catch{
                     # Existing recovery retries through ADB loss/restart. Never
                     # kill the failsafe while app closure remains unconfirmed.
-                    Write-AtomicJson $pendingClosePath @{window_id=$devApproval.session_id;serial='RF8R32GQWGL';package='com.futbeat.futbeat.qa';recorded_at=[datetimeoffset]::UtcNow.ToString('o');reason='qa227_controller_error'}
+                    Write-AtomicJson $pendingClosePath @{window_id=$devApproval.session_id;serial='RF8R32GQWGL';package='com.futbeat.futbeat.qa';recorded_at=[datetimeoffset]::UtcNow.ToString('o');reason='qa227_controller_error';detail=$_.Exception.Message}
                     Log-Event 'QADEV_PENDING_CLOSE' $devApproval.session_id
                 }
                 continue
@@ -73,7 +81,7 @@ $block=@'
 '@
 $block=$block.Replace('Invoke-AdbBounded -Arguments $Arguments','Invoke-AdbBounded -Arguments $Arguments -TimeoutMs 1500')
 $launcher=Replace-One $launcher '        # No controller owns the QA package outside an active-window ledger.' ($block+"`n        # No controller owns the QA package outside an active-window ledger.")
-$failsafe=Replace-One $failsafe "    [string]`$EvidencePath = ''," "    [string]`$DevelopmentStateRoot = '',`n    [string]`$DevelopmentGateDirectory = '',`n    [string]`$EvidencePath = '',"
+$failsafe=Replace-One $failsafe "    [string]`$EvidencePath = ''," "    [string]`$DevelopmentStateRoot = '',`n    [string]`$DevelopmentGateDirectory = '',`n    [string]`$DevelopmentReadyPath = '',`n    [string]`$EvidencePath = '',"
 $failsafe=Replace-One $failsafe ". (Join-Path `$PSScriptRoot 'qa81-contract-v2.ps1')" (". (Join-Path `$PSScriptRoot 'qa81-contract-v2.ps1')`n"+$import)
 $failsafe=Replace-One $failsafe 'function Invoke-AdbBounded([string[]]$Arguments) {' ('function Invoke-AdbBounded([string[]]$Arguments) {'+"`n"+'    $commandTimeout=if($DevelopmentStateRoot){1500}else{8000}')
 $failsafe=Replace-One $failsafe '$process.WaitForExit(8000)' '$process.WaitForExit($commandTimeout)'
@@ -92,6 +100,20 @@ $devGuard=@'
         }else{
 '@
 $failsafe=$failsafe.Substring(0,$start)+$devGuard+"`n"+$original+"        }`n"+$failsafe.Substring($end)
+# Slow policy/ADB checks must not compare a new beat with a timestamp captured
+# before those checks; that produces a false future-heartbeat STOP.
+$failsafe=Replace-One $failsafe '        if (-not (Test-Path -LiteralPath $HeartbeatPath' ('        $now=[datetimeoffset]::UtcNow'+"`n"+'        if (-not (Test-Path -LiteralPath $HeartbeatPath')
+$readyWrite=@'
+    if($DevelopmentStateRoot -and $DevelopmentReadyPath){
+        $expectedReady=Join-Path $DevelopmentStateRoot 'qa227-failsafe-ready.json'
+        if([IO.Path]::GetFullPath($DevelopmentReadyPath) -cne [IO.Path]::GetFullPath($expectedReady)){throw 'development_ready_path_invalid'}
+        $ready=@{schema='qa-development-guard-v1';status='READY';utc=[datetimeoffset]::UtcNow.ToString('o');session_id=$ExpectedWindowId;nonce=$ExpectedNonce;process_id=$PID}
+        $tmp="$DevelopmentReadyPath.tmp.$PID"
+        [IO.File]::WriteAllText($tmp,($ready|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+        [IO.File]::Move($tmp,$DevelopmentReadyPath,$true)
+    }
+'@
+$failsafe=Replace-One $failsafe '    if ($DryRun -and $DryRunMaxSeconds' ($readyWrite+"`n"+'    if ($DryRun -and $DryRunMaxSeconds')
 foreach($item in @(@{name='qa123-launcher.ps1';text=$launcher},@{name='qa123-failsafe.ps1';text=$failsafe})){
     $path=Join-Path $out $item.name
     [IO.File]::WriteAllText($path,$item.text,[Text.UTF8Encoding]::new($false))

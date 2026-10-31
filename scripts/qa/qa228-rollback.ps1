@@ -4,6 +4,7 @@
 param([Parameter(Mandatory)][ValidateSet('Backup','Guard','Restore','Verify')][string]$Mode, [ValidatePattern('^(QA[0-9]{3})$')][string]$TrialName='QA228')
 $ErrorActionPreference='Stop'
 $repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+. (Join-Path $PSScriptRoot 'qa228-trial-validation.ps1')
 $runRoot=Join-Path $repo ('artifacts/'+$TrialName.ToLowerInvariant())
 $backup=Join-Path $runRoot 'backup'
 $q='C:\Users\hen_g\.codex\visualizations\2026\10\08\01a11d81-14eb-7170-966a-ead982b2856f\qa123'
@@ -47,8 +48,11 @@ function Verify {
     $hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw | ConvertFrom-Json
     $age=([datetimeoffset]::UtcNow-[datetimeoffset]::Parse($hb.updated_at)).TotalSeconds
     $state=(Get-ScheduledTask -TaskName $taskName).State.ToString()
+    $owner=Get-Process -Id ([int]$hb.launcher_pid) -ErrorAction SilentlyContinue
+    $taskStarted=[datetimeoffset](Get-ScheduledTaskInfo -TaskName $taskName).LastRunTime.ToUniversalTime()
+    $ownerValid=Test-QaTrialLauncherHeartbeat -Heartbeat $hb -Process $owner -TaskStarted $taskStarted -Now ([datetimeoffset]::UtcNow)
     $app=Adb @('-s','RF8R32GQWGL','shell','pidof','com.futbeat.futbeat.qa');$device=Adb @('-s','RF8R32GQWGL','get-state')
-    return @{files_same=$same;task_xml_same=$xmlSame;task_state=$state;heartbeat=$hb.status;heartbeat_age_s=[int]$age;app_closed=($app.code -eq 1 -and -not $app.output -and $device.code -eq 0 -and $device.output -eq 'device');ok=($same -and $xmlSame -and $state -eq $m.task_state -and $hb.status -like 'DISARMED*' -and $age -le 15 -and $app.code -eq 1 -and -not $app.output -and $device.output -eq 'device')}
+    return @{heartbeat_owner_valid=$ownerValid;files_same=$same;task_xml_same=$xmlSame;task_state=$state;heartbeat=$hb.status;heartbeat_age_s=[int]$age;app_closed=($app.code -eq 1 -and -not $app.output -and $device.code -eq 0 -and $device.output -eq 'device');ok=($ownerValid -and $same -and $xmlSame -and $state -eq $m.task_state -and $hb.status -like 'DISARMED*' -and $age -le 15 -and $app.code -eq 1 -and -not $app.output -and $device.output -eq 'device')}
 }
 function Restore {
     $mutex=[Threading.Mutex]::new($false,'Local\FutBeatQa228Rollback')
@@ -64,7 +68,7 @@ function Restore {
         # can be stopped, and only after physical app closure was confirmed.
         Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -match 'qa123-failsafe\.ps1' -and $_.CommandLine -match ([regex]::Escape('QADEV-'+$TrialName+'-')) -and $_.CommandLine -match '\-DevelopmentStateRoot'} | ForEach-Object {Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue}
         foreach($f in $m.files){$path=Join-Path $q $f.name;if($f.existed){Copy-Item -LiteralPath (Join-Path $backup $f.name) -Destination $path -Force;$acl=Get-Acl $path;$acl.SetSecurityDescriptorSddlForm($f.sddl);Set-Acl -LiteralPath $path -AclObject $acl}else{Remove-Item -LiteralPath $path -ErrorAction SilentlyContinue}}
-        foreach($name in @('qa227-development-approval.json','qa227-development-state.json','qa227-supervisor-heartbeat.json','qa227-close.json','qa227-failsafe-evidence.json','qa123-active-window.json','qa123-pending-close.json')){
+        foreach($name in @('qa227-development-approval.json','qa227-development-state.json','qa227-supervisor-heartbeat.json','qa227-close.json','qa227-failsafe-evidence.json','qa227-failsafe-ready.json','qa123-active-window.json','qa123-pending-close.json')){
             $path=Join-Path $q $name;if(-not (Test-Path $path)){continue}
             $record=Get-Content $path -Raw | ConvertFrom-Json
             if($record.session_id -like ('QADEV-'+$TrialName+'-*') -or $record.window_id -like ('QADEV-'+$TrialName+'-*')){
@@ -73,13 +77,13 @@ function Restore {
             }else{throw "Foreign operational state preserved: $name"}
         }
         if($m.task_state -eq 'Running'){Start-ScheduledTask -TaskName $taskName}
-        for($i=0;$i -lt 30;$i++){Start-Sleep 1;$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw | ConvertFrom-Json;if($hb.status -like 'DISARMED*' -and ([datetimeoffset]::UtcNow-[datetimeoffset]::Parse($hb.updated_at)).TotalSeconds -lt 8){break}}
+        for($i=0;$i -lt 180;$i++){Start-Sleep 1;$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw | ConvertFrom-Json;$owner=Get-Process -Id ([int]$hb.launcher_pid) -ErrorAction SilentlyContinue;$taskStarted=[datetimeoffset](Get-ScheduledTaskInfo -TaskName $taskName).LastRunTime.ToUniversalTime();if(Test-QaTrialLauncherHeartbeat -Heartbeat $hb -Process $owner -TaskStarted $taskStarted -Now ([datetimeoffset]::UtcNow)){break}}
         # Network restoration is after app closure, never while QA is active.
         $airplane=if($m.airplane -eq '1'){'enable'}else{'disable'}
         Adb @('-s','RF8R32GQWGL','shell','cmd','connectivity','airplane-mode',$airplane) | Out-Null
         $wifi=if($m.wifi -eq '1'){'enable'}else{'disable'};$data=if($m.mobile_data -eq '1'){'enable'}else{'disable'}
         Adb @('-s','RF8R32GQWGL','shell','svc','wifi',$wifi) | Out-Null;Adb @('-s','RF8R32GQWGL','shell','svc','data',$data) | Out-Null
-        $result=Verify;SaveJson (Join-Path $runRoot 'restore-result.json') $result;Log ('RESTORED '+($result|ConvertTo-Json -Compress));return $true
+        $result=Verify;if(-not $result.ok){SaveJson (Join-Path $runRoot 'restore-pending.json') $result;Log ('RESTORATION_NOT_CONFIRMED '+($result|ConvertTo-Json -Compress));return $false};SaveJson (Join-Path $runRoot 'restore-result.json') $result;Log ('RESTORED '+($result|ConvertTo-Json -Compress));return $true
     }finally{$mutex.ReleaseMutex();$mutex.Dispose()}
 }
 if($Mode -eq 'Verify'){Verify|ConvertTo-Json;exit}

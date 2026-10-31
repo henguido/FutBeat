@@ -42,13 +42,17 @@ try {
         $network=if($case -eq 'network-active'){'129'}else{'none'}
         [IO.File]::WriteAllText($fixture,$prefix+$mock.Replace('__NETWORK__',$network)+"`n"+$suffix,[Text.UTF8Encoding]::new($false))
         $evidence=Join-Path $root 'evidence.json';Remove-Item -LiteralPath $evidence -ErrorAction SilentlyContinue
-        $log=& (Get-Process -Id $PID).Path -NoProfile -File $fixture -HeartbeatPath $beat -AbsoluteExpiryUtc $approval.expires_at -GatePath (Join-Path $root 'unused-gate.json') -ExpectedWindowId $id -ExpectedNonce $nonce -EvidencePath $evidence -DevelopmentStateRoot $root -DevelopmentGateDirectory (Join-Path $root 'gates') -DryRun -DryRunMaxSeconds 1 -PollSeconds 1 2>&1
+        $ready=Join-Path $root 'qa227-failsafe-ready.json';Remove-Item -LiteralPath $ready -ErrorAction SilentlyContinue
+        $log=& (Get-Process -Id $PID).Path -NoProfile -File $fixture -HeartbeatPath $beat -AbsoluteExpiryUtc $approval.expires_at -GatePath (Join-Path $root 'unused-gate.json') -ExpectedWindowId $id -ExpectedNonce $nonce -EvidencePath $evidence -DevelopmentStateRoot $root -DevelopmentGateDirectory (Join-Path $root 'gates') -DevelopmentReadyPath $ready -DryRun -DryRunMaxSeconds 1 -PollSeconds 1 2>&1
         if($LASTEXITCODE -ne 0){throw "candidate fixture failed: $log"}
         if($case -eq 'valid'){
             if(($log -join '') -notmatch 'DRYRUN_FAILSAFE_EXIT_NO_APP_ACTION'){throw "valid fixture refused: $log"}
+            $ack=Get-Content $ready -Raw|ConvertFrom-Json
+            if($ack.status -cne 'READY' -or $ack.session_id -cne $id -or $ack.nonce -cne $nonce -or $ack.process_id -le 0){throw 'guard did not publish identity-bound readiness'}
         }else{
             $record=Get-Content $evidence -Raw | ConvertFrom-Json
             if($record.status -cne 'SIMULATED_ONLY' -or ($log -join '') -notmatch 'SIMULATED_FORCE_STOP'){throw "unsafe fixture not rejected: $case"}
+            if(Test-Path $ready){throw 'unsafe guard published readiness'}
         }
         $passed++
     }
