@@ -75,9 +75,9 @@ test('1/2/3. units are real requests: 1 page = 1 unit, 2 pages = 2, two 2-page p
   assert.equal(await units(db, 'live-goal'), 1);
 
   await db.query("delete from futbeat_private.provider_call_ledger where call_kind='live-goal'");
-  const filler = Array.from({ length: 100 }, (_, i) => ({ ...fixtureOf(m), apiId: `unmapped-${i}` }));
+  const filler = (page) => Array.from({ length: 100 }, (_, i) => ({ ...fixtureOf(m), apiId: `unmapped-${page}-${i}` }));
   for (let poll = 0; poll < 2; poll++) {
-    w = worker(db, goal({ pages: [filler, [fixtureOf(m)]] }));
+    w = worker(db, goal({ pages: [filler(0), [fixtureOf(m)]] }));
     await w.run('live');
     assert.equal(livePath(w).length, 2);
     await nextPoll(db);
@@ -151,8 +151,8 @@ test('an in-flight LIVE poll commits its whole page budget; completion releases 
 
 test('6. a failure after several pages keeps every request spent and the reported remaining', () => withDb(async (db) => {
   const [m] = await seedLive(db, 1);
-  const filler = Array.from({ length: 100 }, (_, i) => ({ ...fixtureOf(m), apiId: `unmapped-${i}` }));
-  const w = worker(db, goal({ pages: [filler, filler, [fixtureOf(m)]], remainingStart: 600, failAt: 3 }));
+  const filler = (page) => Array.from({ length: 100 }, (_, i) => ({ ...fixtureOf(m), apiId: `unmapped-${page}-${i}` }));
+  const w = worker(db, goal({ pages: [filler(0), filler(1), [fixtureOf(m)]], remainingStart: 600, failAt: 3 }));
   assert.equal((await w.run('live')).live.status, 'failed');
   const [row] = await liveRows(db);
   assert.equal(row.status, 'FAILED');
@@ -176,19 +176,21 @@ test('8. near the floor a poll never pages through the protected LIVE reserve', 
   const [m] = await seedLive(db, 1);
   await db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining,reserved_at,completed_at)
     values('goal_api','global-ingest','test','SUCCEEDED',23,now(),now())`);
-  const filler = Array.from({ length: 100 }, (_, i) => ({ ...fixtureOf(m), apiId: `unmapped-${i}` }));
-  // Five pages needed; remaining goes 22, 21, 20 ... per request.
-  const w = worker(db, goal({ pages: [filler, filler, filler, filler, [fixtureOf(m)]], remainingStart: 23 }));
+  const filler = (page) => Array.from({ length: 100 }, (_, i) => ({ ...fixtureOf(m), apiId: `unmapped-${page}-${i}` }));
+  // Five pages needed; BE-239: low quota stays on the first one.
+  const w = worker(db, goal({ pages: [filler(0), filler(1), filler(2), filler(3), [fixtureOf(m)]], remainingStart: 23 }));
   const result = await w.run('live');
   assert.equal(result.live.status, 'ok');
   assert.equal(result.live.paginationTruncated, true);
-  assert.equal(livePath(w).length, 3, 'page budget = remaining 23 - floor 20');
+  assert.equal(livePath(w).length, 1, 'no page beyond the first inside the quota margin');
   const [row] = await liveRows(db);
   assert.equal(row.metadata.pageBudget, 3);
   assert.equal(row.metadata.paginationTruncated, true);
-  assert.equal(row.metadata.resumeOffset, 300);
-  assert.equal(row.provider_remaining, 20, 'stopped at the floor, never below it');
+  assert.equal(row.metadata.stopReason, 'quota_margin');
+  assert.equal(row.provider_remaining, 22, 'stopped above the floor');
   // At the floor the next poll is refused by the central policy.
+  await db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining,reserved_at,completed_at)
+    values('goal_api','global-ingest','test','SUCCEEDED',20,now()+interval '1 second',now())`);
   await nextPoll(db);
   assert.equal((await db.query("select public.futbeat_reserve_goal_live_call('test') v")).rows[0].v.reason, 'provider_remaining_reserve');
 }));
@@ -197,12 +199,12 @@ test('8b. the observed remaining stops paging even inside the page budget', () =
   const [m] = await seedLive(db, 1);
   await db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining,reserved_at,completed_at)
     values('goal_api','global-ingest','test','SUCCEEDED',500,now(),now())`);
-  const filler = Array.from({ length: 100 }, (_, i) => ({ ...fixtureOf(m), apiId: `unmapped-${i}` }));
+  const filler = (page) => Array.from({ length: 100 }, (_, i) => ({ ...fixtureOf(m), apiId: `unmapped-${page}-${i}` }));
   // The ledger is stale (500) but the provider now reports 22, 21, 20...
-  const w = worker(db, goal({ pages: [filler, filler, filler, filler, [fixtureOf(m)]], remainingStart: 23 }));
+  const w = worker(db, goal({ pages: [filler(0), filler(1), filler(2), filler(3), [fixtureOf(m)]], remainingStart: 23 }));
   await w.run('live');
-  assert.equal(livePath(w).length, 3);
-  assert.equal((await liveRows(db))[0].provider_remaining, 20);
+  assert.equal(livePath(w).length, 1);
+  assert.equal((await liveRows(db))[0].provider_remaining, 22);
 }));
 
 test('9. a partial batch never produces a false final/scheduled; the next poll resumes where it stopped', () => withDb(async (db) => {

@@ -1,5 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { nextResultsOffset } from "../_shared/results_pagination.ts";
+import {
+  nextLivePage,
+  nextResultsOffset,
+} from "../_shared/results_pagination.ts";
 import {
   GOAL_PLAYER_ENDPOINTS,
   normalizeGoalPlayerProfile,
@@ -175,6 +178,12 @@ async function normalizeLiveFixture(
 // independent fixtures (one row per provider id), share one receivedAt, and
 // what a failed run already stored is kept: the retry only pays for the rest.
 const RECORD_CHUNK_SIZE = 25;
+// BE-239: one full sweep of a peak Saturday (445 matches) spans two polls.
+const LIVE_PAGE_SIZE = 100;
+const LIVE_PAGE_CAP = 3;
+// Calls left above the LIVE floor before pages beyond the first are read.
+const LIVE_EXTRA_PAGE_MARGIN = 100;
+
 async function recordObservationsInChunks(
   receivedAt: string,
   observations: unknown[],
@@ -450,8 +459,12 @@ async function syncLive() {
   const fixtures: Record<string, unknown>[] = [];
   const seen = new Set<string>();
   // Page budget from the central reservation (never through the protected
-  // LIVE reserve nor past the live-goal cap); 10 is the historical hard max.
-  const pageBudget = Math.min(Math.max(nonNegativeInteger(plan.pageBudget) ?? 10, 1), 10);
+  // LIVE reserve nor past the live-goal cap). Unread pages resume on the next
+  // poll, inside the liveSweepMaxMinutes window.
+  const pageBudget = Math.min(
+    Math.max(nonNegativeInteger(plan.pageBudget) ?? LIVE_PAGE_CAP, 1),
+    LIVE_PAGE_CAP,
+  );
   const floor = nonNegativeInteger(plan.reserve);
   const startOffset = nonNegativeInteger(plan.startOffset) ?? 0;
   let offset = startOffset;
@@ -462,6 +475,9 @@ async function syncLive() {
   let remaining: number | null = null;
   let paginationTruncated = false;
   let resumeOffset: number | null = null;
+  let stopReason: string | null = null;
+  // What the provider said on the first page: settles whether it paginates.
+  let paginationSeen: unknown = null;
 
   try {
     const goalKey = await readGoalKey();
@@ -471,7 +487,7 @@ async function syncLive() {
       try {
         response = await fetchGoal(
           goalKey,
-          `/fixtures/live?limit=100&offset=${offset}`,
+          `/fixtures/live?limit=${LIVE_PAGE_SIZE}&offset=${offset}`,
         );
       } catch (error) {
         const errorRemaining = (error as { remaining?: unknown })?.remaining;
@@ -484,13 +500,20 @@ async function syncLive() {
       if (!Array.isArray(data)) {
         throw new Error("GOAL live payload data must be an array");
       }
-      // A resumed offset past the (shrunk) live list: start over once.
-      if (data.length === 0 && offset > 0 && !restarted) {
+      // A resumed offset past the (shrunk) live list: start over once. An
+      // empty page later in the poll is the end of the list, not a restart.
+      if (data.length === 0 && offset > 0 && !restarted && page === 0) {
+        if (pageBudget === 1) {
+          paginationTruncated = true;
+          stopReason = "resume_past_end";
+          break;
+        }
         restarted = true;
         offset = 0;
         continue;
       }
 
+      const before = fixtures.length;
       for (const item of data) {
         if (!item || typeof item !== "object" || Array.isArray(item)) continue;
         const fixture = item as Record<string, unknown>;
@@ -501,17 +524,27 @@ async function syncLive() {
       }
 
       const pagination = response.payload.pagination;
+      if (page === 0) paginationSeen = pagination ?? null;
       const paginationRow = pagination && typeof pagination === "object" &&
           !Array.isArray(pagination)
         ? pagination as Record<string, unknown>
         : null;
       const total = nonNegativeInteger(paginationRow?.total);
       if (total != null) providerTotal = total;
-      const hasMore = paginationRow?.hasMore === true;
-      if (!hasMore) break;
-
-      const pageLimit = nonNegativeInteger(paginationRow?.limit) ?? 100;
-      offset += Math.max(pageLimit, 1);
+      const { next, stalled } = nextLivePage({
+        pagination: paginationRow,
+        rowCount: data.length,
+        added: fixtures.length - before,
+        currentOffset: offset,
+        requestedLimit: LIVE_PAGE_SIZE,
+      });
+      if (stalled) {
+        paginationTruncated = true;
+        stopReason = "offset_ignored";
+        break;
+      }
+      if (next == null) break;
+      offset = next;
       // Stop at the page budget or when the provider reports the protected
       // reserve: a partial batch is recorded as partial and the next poll
       // resumes here. Unread pages are never treated as evidence.
@@ -519,6 +552,17 @@ async function syncLive() {
       if (page + 1 >= pageBudget || atFloor) {
         paginationTruncated = true;
         resumeOffset = offset;
+        stopReason = atFloor ? "quota_floor" : "page_budget";
+        break;
+      }
+      // Low quota keeps the first page fresh instead of rotating through the
+      // rest: no resume, and the sweep stays unproven.
+      if (
+        floor != null && remaining != null &&
+        remaining - floor < LIVE_EXTRA_PAGE_MARGIN
+      ) {
+        paginationTruncated = true;
+        stopReason = "quota_margin";
         break;
       }
     }
@@ -577,6 +621,8 @@ async function syncLive() {
         startOffset,
         paginationTruncated,
         resumeOffset,
+        ...(stopReason ? { stopReason } : {}),
+        paginationSeen,
         liveMatches: observations.length,
         linkedMatches: linkResult?.linked ?? 0,
         alreadyLinkedMatches: linkResult?.alreadyLinked ?? 0,
