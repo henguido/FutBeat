@@ -1,5 +1,6 @@
 import { withSupabase } from 'npm:@supabase/server';
 import { calendarCacheControl } from '../_shared/calendar_cache.ts';
+import { handleQaStoredRead, qaStoredPrefix } from '../_shared/qa_stored_reads.ts';
 import {
   asRecord,
   cleanText,
@@ -135,6 +136,12 @@ const validSeasonKey = (value: string | null) =>
 
 export default {
   fetch: withSupabase({ auth: 'none' }, async (request, ctx) => {
+    // Separate namespace: an old deployment returns 404, never falls through
+    // to a demand-aware route. No changes to ordinary application requests.
+    if (new URL(request.url).pathname.includes(qaStoredPrefix)) {
+      return handleQaStoredRead(request, (fn, args) => ctx.supabaseAdmin.rpc(fn, args),
+        Deno.env.get('FUTBEAT_QA_STORED_READS_ENABLED') === 'true');
+    }
     if (request.method !== 'GET') {
       return reply(405, { error: 'Method not allowed' });
     }
