@@ -161,26 +161,51 @@ List<StandingsGroup>? standingsGroups(
   // A lone table is not proof that it belongs to this match's phase. When
   // both sides name a stage, refuse a table from a different stage.
   final matchStageTokens = standingsLabelTokens(stage);
+  const phases = {'apertura', 'clausura'};
+  final matchPhases = matchStageTokens.intersection(phases);
+  bool regularStageHasExactPhase(StandingsGroup group) {
+    final storedStage = standingsLabelTokens(group.stage);
+    final storedGroup = standingsLabelTokens(group.group);
+    final storedPhases = storedGroup.intersection(phases);
+    return matchStageTokens.length == 1 &&
+        matchPhases.length == 1 &&
+        storedStage.length == 2 &&
+        storedStage.containsAll(const {'regular', 'season'}) &&
+        storedGroup.length == 1 &&
+        group.subgroup == null &&
+        storedPhases.length == 1 &&
+        matchPhases.containsAll(storedPhases);
+  }
+
   bool matchesMatchStage(StandingsGroup group) {
     final groupStageTokens = standingsLabelTokens(group.stage);
-    // Some stored tables put Apertura/Clausura in `group`, not `stage`.
-    // A sole/common group is no stronger evidence than several groups:
-    // explicit conflicting phases must still fail closed. Generic labels
-    // such as "Grupo A" or "Regular season" do not establish a phase.
-    if (groupStageTokens.isEmpty) {
-      const phases = {'apertura', 'clausura'};
-      final matchPhases = matchStageTokens.intersection(phases);
-      final tablePhases = standingsLabelTokens(group.group)
-          .intersection(phases);
-      if (matchPhases.isNotEmpty && tablePhases.isNotEmpty) {
-        return matchPhases.length == 1 &&
-            tablePhases.length == 1 &&
-            matchPhases.containsAll(tablePhases);
-      }
+    // A provider can send generic stage="Regular season" alongside an
+    // explicit group="Clausura". The generic stage must not hide a phase
+    // conflict with an Apertura match. Inspect both stored fields first;
+    // neither generic labels nor wall-clock freshness prove a phase.
+    final tablePhases = {
+      ...groupStageTokens,
+      ...standingsLabelTokens(group.group),
+    }.intersection(phases);
+    if (matchPhases.isNotEmpty &&
+        tablePhases.isNotEmpty &&
+        (matchPhases.length != 1 ||
+            tablePhases.length != 1 ||
+            !matchPhases.containsAll(tablePhases))) {
+      return false;
     }
+    // Provider `stage=Regular season, group=Clausura` is enough for an exact
+    // Clausura request. It does not establish a final, playoff or substage.
+    if (regularStageHasExactPhase(group)) return true;
     return matchStageTokens.isEmpty ||
         groupStageTokens.isEmpty ||
         matchStageTokens.containsAll(groupStageTokens);
+  }
+
+  bool namedByMatchStage(StandingsGroup group) {
+    if (regularStageHasExactPhase(group)) return true;
+    final tokens = standingsLabelTokens(group.stage ?? group.group ?? group.label);
+    return tokens.isNotEmpty && matchStageTokens.containsAll(tokens);
   }
 
   if (focusTeamIds.isEmpty) {
@@ -207,11 +232,10 @@ List<StandingsGroup>? standingsGroups(
     if (stageTokens.isNotEmpty) {
       final named = [
         for (final group in all)
-          if (group.label != null)
-            if (standingsLabelTokens(group.stage ?? group.group ?? group.label)
-                case final tokens
-                when tokens.isNotEmpty && stageTokens.containsAll(tokens))
-              group,
+          if (group.label != null &&
+              matchesMatchStage(group) &&
+              namedByMatchStage(group))
+            group,
       ];
       if (named.length == 1 && whole.contains(named.single)) {
         return [named.single];

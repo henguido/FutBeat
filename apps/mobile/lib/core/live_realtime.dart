@@ -38,8 +38,18 @@ Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
       current.keys.toSet();
   final fetched = <String>{};
   final arrivedAt = (deviceNow ?? DateTime.now()).toUtc();
+  var canRemoveAbsent = complete;
 
   for (final row in rows) {
+    // A malformed row is not proof of deletion. Preserve a readable match
+    // identity even when another field cannot be parsed. Without an identity,
+    // this batch cannot establish which pre-existing overlay was absent.
+    final rowId = row['match_id'];
+    if (rowId is String && rowId.startsWith('fb_')) {
+      fetched.add(rowId);
+    } else {
+      canRemoveAbsent = false;
+    }
     try {
       var update = LiveMatchUpdate.fromJson(
         row,
@@ -74,7 +84,7 @@ Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
     }
   }
 
-  if (!complete) return result;
+  if (!canRemoveAbsent) return result;
   result.removeWhere(
     (matchId, update) =>
         before.contains(matchId) &&
@@ -189,6 +199,9 @@ Future<LiveBootstrapRead> fetchLiveBootstrap(
         .map((row) => Map<String, dynamic>.from(row))
         .toList();
     rows.addAll(pageRows);
+    // Dropping a malformed list entry does not make the remaining page a
+    // complete snapshot. Its missing identity could belong to a local overlay.
+    if (pageRows.length != data.length) return partial();
     if (data.length <
         (matchIds == null ? policy.pageSize : matchIds.length + 1)) {
       return (

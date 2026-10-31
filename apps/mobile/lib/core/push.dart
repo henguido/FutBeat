@@ -1534,6 +1534,7 @@ class PushService {
   /// it does not.
   Future<void> _syncProfileSettings(UserProfileSettings settings) async {
     if (!authenticated || disposed) return;
+    final generation = _generation;
     var saved = false;
     if (!_preferencesRpcMissing) {
       try {
@@ -1544,10 +1545,12 @@ class PushService {
         );
         saved = true;
       } on DioException catch (error) {
+        if (_stale(generation)) return;
         if (!isMissingRpc(error)) rethrow;
         _preferencesRpcMissing = true;
       }
     }
+    if (_stale(generation)) return;
     if (!saved) {
       await dio.post(
         '${config.supabaseUrl}/rest/v1/rpc/futbeat_sync_user_profile_v2',
@@ -1561,6 +1564,14 @@ class PushService {
             'p_$key': settings.notificationPreferences[key],
         },
       );
+    }
+    if (_stale(generation)) return;
+    // An older acknowledgement cannot mark a newer, failed/local-only edit
+    // as synced. It also belongs only to the account generation that sent it.
+    final current = await loadProfileSettings();
+    if (_stale(generation) ||
+        jsonEncode(current.toJson()) != jsonEncode(settings.toJson())) {
+      return;
     }
     await storage.write(key: 'futbeat.profile.dirty', value: 'false');
   }

@@ -1273,13 +1273,31 @@ String matchHeroSemanticLabel(
         '${matchDateLabel(match.startTime)} a las '
         '${localTime(context, match.startTime)}';
   }
-  final score = match.json['score'];
-  final result = score is Map
-      ? '${home.displayName} ${score['home']}, '
-            '${away.displayName} ${score['away']}'
-      : '${home.displayName} contra ${away.displayName}';
+  final score = _heroScore(match);
+  final result = score == null
+      ? '${home.displayName} contra ${away.displayName}, Marcador no disponible'
+      : '${home.displayName} ${score.home}, ${away.displayName} ${score.away}';
   final status = match.statusLabel;
   return status.isEmpty ? result : '$result, $status';
+}
+
+/// The header must not speak or paint raw nulls, fractional or negative goals.
+/// An incomplete provider response is unknown, never an inferred 0–0.
+int? _heroGoalCount(Object? value) =>
+    value is num &&
+        value.isFinite &&
+        value >= 0 &&
+        value == value.roundToDouble()
+    ? value.toInt()
+    : null;
+
+({int home, int away})? _heroScore(FootballMatch match) {
+  final raw = match.json['score'];
+  if (raw is! Map) return null;
+  final home = _heroGoalCount(raw['home']), away = _heroGoalCount(raw['away']);
+  return home != null && away != null
+      ? (home: home, away: away)
+      : null;
 }
 
 class _HeroScoreContext extends StatelessWidget {
@@ -1405,6 +1423,7 @@ class _HeaderCenter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (color, _) = matchStatusTone(match);
+    final score = _heroScore(match);
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Column(
@@ -1436,7 +1455,7 @@ class _HeaderCenter extends StatelessWidget {
             FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                match.score,
+                score == null ? '—' : '${score.home} - ${score.away}',
                 style: TextStyle(
                   fontSize: 40,
                   height: 1.05,
@@ -2602,7 +2621,27 @@ String? _timelinePlayerId(Json event, Snapshot data, {bool assist = false}) {
           ? event[assist ? 'inPlayerId' : 'outPlayerId']
           : null);
   final id = raw?.toString();
-  return id != null && id.isNotEmpty && data.player(id) != null ? id : null;
+  if (id == null || id.isEmpty || data.player(id) == null) return null;
+  // A canonical event may still name an older explicit ID. Reuse the known
+  // canonical roster row without confusing reversible display aliases with
+  // backend identity evidence. Unknown/cyclic chains keep the existing route.
+  var current = id;
+  final seen = <String>{};
+  for (var i = 0; i < 8; i++) {
+    if (!seen.add(current) || data.presentationRedirectIds.contains(current)) {
+      return id;
+    }
+    final next = data.entityRedirects[current];
+    if (next == null || next.isEmpty || next == current) {
+      if (current == id) return id;
+      final target = data.players.where((player) => player.id == current).firstOrNull;
+      return target != null && target.json['displaySourceAliasId'] == null
+          ? current
+          : id;
+    }
+    current = next;
+  }
+  return id;
 }
 
 String? _timelinePlayerName(Json event, Snapshot data, {bool assist = false}) {
@@ -2667,9 +2706,9 @@ String _heroGoalMinute(Json event) {
   }
   final score = match.json['score'];
   for (final side in ['home', 'away']) {
-    final cap = score is Map ? score[side] : null;
+    final cap = _heroGoalCount(score is Map ? score[side] : null);
     final list = goals[side]!;
-    if (cap is! int || cap < 0) continue;
+    if (cap == null) continue;
     while (list.length > cap) {
       final anonymous = list.lastIndexWhere(
         (event) => _scorerName(event, data, canonicalOf) == null,
