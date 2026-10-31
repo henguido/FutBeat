@@ -169,6 +169,7 @@ jobs:
           # the missing dates never ran). The calendar ingests per date with its own
           # stores; the run still fails at the end so the hot failure stays visible.
           $hotFailed = $false
+          $calendarFailures = 0
           try {
             $hotResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
               source = "GOAL API"
@@ -187,7 +188,7 @@ jobs:
           }
 
           function Complete-GlobalRun {
-            if ($hotFailed) {
+            if ($hotFailed -or $calendarFailures -gt 0) {
               Write-Output "GLOBAL_RUN_FAILED stage=hot"
               exit 1
             }
@@ -225,19 +226,19 @@ jobs:
 
           # Keep the near future warm on every run, not only once a day: the
           # plan returns only missing/stale dates, so quota use stays bounded.
-          if ($planDates.Count -eq 0) {
-            $nearToday = [DateTime]::UtcNow.Date
-            $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-              action = "calendar-plan"
-              fromDate = $nearToday.AddDays(2).ToString("yyyy-MM-dd")
-              toDate = $nearToday.AddDays(7).ToString("yyyy-MM-dd")
-              requestedOnly = $false
-              limit = 6
-            })
-            $planDates = @($plan.dates)
-          }
+          # The tiers add up: dates already planned must not close the next one
+          # (BE-229). Budget and reserve bound the sum; the order is the priority.
+          $nearToday = [DateTime]::UtcNow.Date
+          $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+            action = "calendar-plan"
+            fromDate = $nearToday.AddDays(2).ToString("yyyy-MM-dd")
+            toDate = $nearToday.AddDays(7).ToString("yyyy-MM-dd")
+            requestedOnly = $false
+            limit = 6
+          })
+          $planDates = @($planDates + @($plan.dates) | Select-Object -Unique)
 
-          if ($planDates.Count -eq 0 -and $shouldExpand) {
+          if ($shouldExpand) {
             $todayUtc = [DateTime]::UtcNow.Date
             $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
               action = "calendar-plan"
@@ -246,7 +247,7 @@ jobs:
               requestedOnly = $false
               limit = 45
             })
-            $planDates = @($plan.dates)
+            $planDates = @($planDates + @($plan.dates) | Select-Object -Unique)
           }
 
           if ($planDates.Count -eq 0) {
@@ -256,8 +257,13 @@ jobs:
           }
 
           $quotaReserve = 350
-          $calendarRequestBudget = 180
+          $calendarRequestBudget = 90
+          $calendarFailureLimit = 2
+          $largeDateCalls = 15
+          $largeDateFixtures = 800
+          $lastRemaining = $postHotRemaining
           $calendarRequestsUsed = 0
+          $consecutiveFailures = 0
           # One date per ingest call: a large date is stored in sub-batches
           # (futbeat-global-ingest v39) and takes ~40-50 s of the 90 s call.
           $batchSize = 1
@@ -270,6 +276,12 @@ jobs:
           $stopForQuota = $false
 
           foreach ($date in $planDates) {
+            # A date is fetched whole; a large one costs up to 15 pages and must
+            # not cross the reserve halfway.
+            if ($null -ne $lastRemaining -and $lastRemaining -le $quotaReserve + $largeDateCalls) {
+              Write-Output "CALENDAR_EXPAND_STOP reason=quota_margin remaining=$lastRemaining"
+              break
+            }
             if ($calendarRequestsUsed -ge $calendarRequestBudget) {
               $stopForQuota = $true
               Write-Output "CALENDAR_EXPAND_STOP reason=request_budget budget=$calendarRequestBudget"
@@ -280,6 +292,7 @@ jobs:
             $calendarRequestsUsed += [int]$page.Requests
             if ($null -ne $page.Remaining) {
               $batchRemaining = [int]$page.Remaining
+              $lastRemaining = [int]$page.Remaining
             }
             Write-Output "CALENDAR_FETCH date=$date fixtures=$($page.Count) remaining=$($page.Remaining) requests=$($page.Requests) used=$calendarRequestsUsed"
 
@@ -310,17 +323,35 @@ jobs:
             }
 
             if ($batchDates.Count -ge $batchSize -or $stopForQuota) {
-              $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-                source = "GOAL API"
-                mode = "calendar"
-                dates = $batchDates.ToArray()
-                coverage = $batchCoverage.ToArray()
-                providerRemaining = $batchRemaining
-                events = $batchEvents.ToArray()
-              })
-              Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
-              if (@($calendarResult.deferredDates).Count -gt 0) {
-                Write-Output "CALENDAR_INGEST_DEFERRED dates=$(@($calendarResult.deferredDates) -join ',')"
+              # A date that fails must not stop the dates after it (BE-229: one
+              # September date timed out on every run). It stays missing in the plan.
+              try {
+                $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
+                  source = "GOAL API"
+                  mode = "calendar"
+                  dates = $batchDates.ToArray()
+                  coverage = $batchCoverage.ToArray()
+                  providerRemaining = $batchRemaining
+                  events = $batchEvents.ToArray()
+                })
+                # v44 answers 200 skipped past 64 ingests a day: nothing was stored
+                # and every later date would spend GOAL the same way.
+                if ($calendarResult.status -eq "skipped") {
+                  Write-Output "CALENDAR_EXPAND_STOP reason=ingest_skipped detail=$($calendarResult.reason)"
+                  $batchDates.Clear()
+                  break
+                }
+                Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
+                $consecutiveFailures = 0
+                if ($calendarResult.deferredDates) {
+                  Write-Output "CALENDAR_INGEST_DEFERRED dates=$(@($calendarResult.deferredDates) -join ',')"
+                }
+              } catch {
+                $calendarFailures += 1
+                if ($page.Count -lt $largeDateFixtures) {
+                  $consecutiveFailures += 1
+                }
+                Write-Output "CALENDAR_INGEST_FAILED date=$($batchDates -join ',') error=$($_.Exception.Message)"
               }
 
               $batchDates = New-Object System.Collections.Generic.List[string]
@@ -331,6 +362,13 @@ jobs:
 
               if ($stopForQuota) {
                 Write-Output "CALENDAR_EXPAND_STOP reason=quota_reserve reserve=$quotaReserve"
+                break
+              }
+              # Two small dates in a row point at the store. A large date can time
+              # out alone, and the budget bounds those: stored dates leave the plan,
+              # so failing Saturdays end up adjacent and must not freeze it (BE-231).
+              if ($consecutiveFailures -ge $calendarFailureLimit) {
+                Write-Output "CALENDAR_EXPAND_STOP reason=ingest_failures failures=$calendarFailures"
                 break
               }
             }
