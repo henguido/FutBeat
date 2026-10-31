@@ -422,14 +422,17 @@ void main() {
           deviceNow: deviceNow,
         )['fb_match_rt']!;
 
-    test('1. REST row last updated 2 h ago never overlays LIVE', () {
-      final update = bootstrapped(
-        row(status: 'LIVE', at: serverNow.subtract(const Duration(hours: 2))),
-      );
-      final shown = update.applyTo(canonical('SCHEDULED'), now: deviceNow);
-      expect(shown['status'], 'SCHEDULED');
-      expect(FootballMatch(shown).isLive, isFalse);
-    });
+    test(
+      '1. old REST observation retains the last known LIVE score, marked stale',
+      () {
+        final update = bootstrapped(
+          row(status: 'LIVE', at: serverNow.subtract(const Duration(hours: 2))),
+        );
+        final shown = update.applyTo(canonical('SCHEDULED'), now: deviceNow);
+        expect(shown['status'], 'LIVE');
+        expect(FootballMatch(shown).liveDataStaleAt(deviceNow), isTrue);
+      },
+    );
 
     test('1b. no server Date + device clock 2 h behind: a LIVE REST row '
         'never overlays (no device vs server comparison)', () {
@@ -438,7 +441,8 @@ void main() {
         row(status: 'LIVE', at: serverNow),
       ], deviceNow: behind)['fb_match_rt']!;
       final shown = update.applyTo(canonical('SCHEDULED'), now: behind);
-      expect(shown['status'], 'SCHEDULED');
+      expect(shown['status'], 'LIVE');
+      expect(FootballMatch(shown).liveDataStaleAt(behind), isTrue);
       // A real realtime frame then applies normally.
       final live = LiveMatchUpdate.fromJson(
         row(status: 'LIVE', at: serverNow, revision: 4),
@@ -474,7 +478,12 @@ void main() {
           canonical('SCHEDULED'),
           now: deviceNow.add(const Duration(minutes: 11)),
         )['status'],
-        'SCHEDULED',
+        'LIVE',
+      );
+      expect(
+        FootballMatch(update.applyTo(canonical('SCHEDULED')))
+            .liveDataStaleAt(deviceNow.add(const Duration(minutes: 11))),
+        isTrue,
       );
     });
 
@@ -496,7 +505,12 @@ void main() {
           canonical('SCHEDULED'),
           now: deviceNow.add(const Duration(minutes: 16)),
         )['status'],
-        'SCHEDULED',
+        'LIVE',
+      );
+      expect(
+        FootballMatch(update.applyTo(canonical('SCHEDULED')))
+            .liveDataStaleAt(deviceNow.add(const Duration(minutes: 16))),
+        isTrue,
       );
     });
 

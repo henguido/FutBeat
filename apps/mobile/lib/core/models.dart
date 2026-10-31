@@ -413,6 +413,7 @@ class LiveMatchUpdate {
     this.events = const [],
     this.hasEventList = false,
     this.receivedAt,
+    this.observedAt,
   });
 
   /// [receivedAt] is the device time the row arrived (realtime), or the
@@ -437,6 +438,7 @@ class LiveMatchUpdate {
             .toList(),
         hasEventList: json['latest_events'] is List,
         receivedAt: receivedAt,
+        observedAt: observationTime(json),
       );
 
   /// Device-clock receipt time for a row fetched by REST: its age on the
@@ -455,12 +457,23 @@ class LiveMatchUpdate {
         staleAfter + const Duration(seconds: 1),
       );
     }
-    final observed =
-        DateTime.tryParse(row['updated_at'] as String? ?? '') ??
-        DateTime.parse(row['changed_at'] as String);
+    final observed = observationTime(row);
     final age = serverNow.toUtc().difference(observed.toUtc());
+    if (age < const Duration(minutes: -1)) {
+      return deviceNow.toUtc().subtract(
+        staleAfter + const Duration(seconds: 1),
+      );
+    }
     return deviceNow.toUtc().subtract(age.isNegative ? Duration.zero : age);
   }
+
+  /// updated_at can be rewritten by publication/maintenance without a new
+  /// provider observation. Without explicit evidence use the last content
+  /// change conservatively; neither HTTP receipt nor an event minute proves
+  /// that the provider has just checked an unchanged score.
+  static DateTime observationTime(Json row) =>
+      DateTime.tryParse(row['provider_observed_at'] as String? ?? '') ??
+      DateTime.parse(row['changed_at'] as String);
 
   final String matchId, provider, externalMatchId, status;
   final int? minute, homeScore, awayScore;
@@ -477,7 +490,10 @@ class LiveMatchUpdate {
   /// Staleness is measured on the device clock only.
   final DateTime? receivedAt;
 
-  /// Same window as the server failsafe: a LIVE row this silent is not live.
+  /// Explicit provider observation, or conservative last content change.
+  final DateTime? observedAt;
+
+  /// Confidence window, not permission to erase a score or invent a final.
   static const staleAfter = Duration(minutes: 15);
 
   Json applyTo(Json match, {DateTime? now}) {
@@ -506,17 +522,8 @@ class LiveMatchUpdate {
         return match;
       }
     }
-    // #120: a silent LIVE overlay (missed DELETE, failed refresh) must not
-    // keep a match "EN VIVO"; chronologically coherent terminal overlays do
-    // not expire merely because their last update is old.
-    const liveStatuses = {'LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'};
-    if (liveStatuses.contains(status) &&
-        (now ?? DateTime.now()).toUtc().difference(
-              (receivedAt ?? changedAt).toUtc(),
-            ) >
-            staleAfter) {
-      return match;
-    }
+    // Expiry changes confidence, never the last known score/status. Dropping
+    // the overlay here would restore a scheduled snapshot after disconnection.
 
     final previousAt = DateTime.tryParse(
       match['liveChangedAt'] as String? ?? '',
@@ -569,7 +576,11 @@ class LiveMatchUpdate {
       ..['minute'] = minute
       ..['liveRevision'] = revision
       ..['liveProvider'] = provider
-      ..['liveChangedAt'] = changedAt.toIso8601String();
+      ..['liveChangedAt'] = changedAt.toIso8601String()
+      ..['liveObservedAt'] = (observedAt ?? changedAt).toIso8601String()
+      ..['liveObservationDeviceAt'] = (receivedAt ?? observedAt ?? changedAt)
+          .toUtc()
+          .toIso8601String();
     if (homeScore != null && awayScore != null) {
       result['score'] = {'home': homeScore, 'away': awayScore};
     }
@@ -890,10 +901,23 @@ class FootballMatch {
       DateTime.tryParse(json['liveChangedAt'] as String? ?? '');
 
   bool get liveDataStale {
-    final changedAt = liveChangedAt;
-    if (!isLive || changedAt == null) return false;
-    return DateTime.now().toUtc().difference(changedAt.toUtc()) >
-        const Duration(minutes: 15);
+    return liveDataStaleAt(DateTime.now());
+  }
+
+  bool liveDataStaleAt(DateTime now) {
+    if (!isLive) return false;
+    final at = DateTime.tryParse(
+      (json['liveObservationDeviceAt'] ??
+              json['liveObservedAt'] ??
+              json['liveChangedAt'] ??
+              json['provenance']?['providerObservedAt'] ??
+              '')
+          .toString(),
+    );
+    if (at == null) return true;
+    final age = now.toUtc().difference(at.toUtc());
+    return age < const Duration(minutes: -1) ||
+        age > LiveMatchUpdate.staleAfter;
   }
 
   String get statusLabel {

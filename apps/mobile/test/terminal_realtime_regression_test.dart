@@ -321,8 +321,12 @@ void main() {
         canonical,
         now: changedAt.add(const Duration(minutes: 16)),
       );
-      expect(identical(silent, canonical), isTrue);
-      expect(FootballMatch(silent).isLive, isFalse);
+      expect(FootballMatch(silent).score, '2 - 3');
+      expect(
+        FootballMatch(silent)
+            .liveDataStaleAt(changedAt.add(const Duration(minutes: 16))),
+        isTrue,
+      );
     },
   );
 
@@ -371,6 +375,11 @@ void main() {
       canonical,
       now: received.add(const Duration(minutes: 16)),
     );
-    expect(identical(silent, canonical), isTrue);
+    expect(FootballMatch(silent).score, '1 - 0');
+    expect(
+      FootballMatch(silent)
+          .liveDataStaleAt(received.add(const Duration(minutes: 16))),
+      isTrue,
+    );
   });
 }

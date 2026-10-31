@@ -418,10 +418,14 @@ class LiveRealtimeClient {
     }
 
     void accept(Json row) {
-      // A realtime frame is new now: its receipt time is local.
+      // Delivery is not a new observation: replayed old rows stay old.
       final update = LiveMatchUpdate.fromJson(
         row,
-        receivedAt: DateTime.now().toUtc(),
+        receivedAt: LiveMatchUpdate.bootstrapReceivedAt(
+          row,
+          deviceNow: DateTime.now().toUtc(),
+          serverNow: DateTime.now().toUtc(),
+        ),
       );
       if (!update.matchId.startsWith('fb_')) return;
       final previous = state[update.matchId];

@@ -447,9 +447,10 @@ void main() {
         'awayTeamId': 'a',
       };
       expect(
-        identical(result['fb_match_old_live']!.applyTo(match, now: now), match),
+        FootballMatch(result['fb_match_old_live']!.applyTo(match, now: now))
+            .liveDataStaleAt(now),
         isTrue,
-        reason: 'a stale LIVE overlay never changes the match',
+        reason: 'a stale overlay retains the last known state with stale confidence',
       );
     });
 

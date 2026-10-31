@@ -94,18 +94,12 @@ void main() {
     () {
       final row = update('LIVE', 1);
       final canonical = scheduled();
-      expect(
-        identical(
-          row.applyTo(
-            canonical,
-            now: row.receivedAt!.add(
-              LiveMatchUpdate.staleAfter + const Duration(seconds: 1),
-            ),
-          ),
-          canonical,
-        ),
-        isTrue,
+      final now = row.receivedAt!.add(
+        LiveMatchUpdate.staleAfter + const Duration(seconds: 1),
       );
+      final retained = FootballMatch(row.applyTo(canonical, now: now));
+      expect(retained.status, 'LIVE');
+      expect(retained.liveDataStaleAt(now), isTrue);
     },
   );
 }
