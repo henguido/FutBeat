@@ -69,15 +69,38 @@ String? mergeFirstLinkCountry({
 }
 
 /// Diagnostic label for a failed account request: type, HTTP status and
-/// the PostgREST/GoTrue error code only (never headers, tokens or bodies).
+/// a known PostgREST/GoTrue error code only (never headers, tokens or bodies).
 String describeAccountError(Object error) {
   if (error is! DioException) return '${error.runtimeType}';
   final data = error.response?.data;
   final code = data is Map ? (data['code'] ?? data['error_code']) : null;
-  final message = data is Map ? '${data['message'] ?? ''}' : '';
-  final short = message.length > 120 ? message.substring(0, 120) : message;
+  // The response is untrusted: even "code" can contain arbitrary private
+  // text. Unknown codes are omitted rather than copied into diagnostics.
+  final safeCode =
+      code is String &&
+          (RegExp(r'^PGRST[0-9]{3}$').hasMatch(code) ||
+              const {
+                'bad_jwt',
+                'email_exists',
+                'email_not_confirmed',
+                'email_provider_disabled',
+                'invalid_credentials',
+                'invalid_grant',
+                'otp_expired',
+                'over_email_send_rate_limit',
+                'over_request_rate_limit',
+                'refresh_token_already_used',
+                'refresh_token_not_found',
+                'same_password',
+                'session_not_found',
+                'signup_disabled',
+                'user_already_exists',
+                'weak_password',
+              }.contains(code))
+      ? code
+      : '';
   return 'DioException ${error.type.name} '
-          '${error.response?.statusCode ?? '-'} ${code ?? ''} $short'
+          '${error.response?.statusCode ?? '-'} $safeCode'
       .trim();
 }
 
