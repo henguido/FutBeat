@@ -334,6 +334,13 @@ jobs:
                   providerRemaining = $batchRemaining
                   events = $batchEvents.ToArray()
                 })
+                # v44 answers 200 skipped past 64 ingests a day: nothing was stored
+                # and every later date would spend GOAL the same way.
+                if ($calendarResult.status -eq "skipped") {
+                  Write-Output "CALENDAR_EXPAND_STOP reason=ingest_skipped detail=$($calendarResult.reason)"
+                  $batchDates.Clear()
+                  break
+                }
                 Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
                 $consecutiveFailures = 0
                 if ($calendarResult.deferredDates) {
