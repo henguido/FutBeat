@@ -41,6 +41,19 @@ void main() {
           .toSet();
       expect(actual, containsAll(expected));
       expect(expected, hasLength(22));
+      // The provider detail omits structured score; the paired canonical
+      // event already has it. Preserve all four without parsing free text.
+      expect(
+        timeline
+            .where((event) => event['type'] == 'GOAL')
+            .map((event) => event['score']),
+        [
+          {'home': 1, 'away': 0},
+          {'home': 2, 'away': 0},
+          {'home': 3, 'away': 0},
+          {'home': 3, 'away': 1},
+        ],
+      );
       for (final source in detail.incidents.where(
         (event) => event['type'] == 'SUBSTITUTION',
       )) {

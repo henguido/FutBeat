@@ -978,7 +978,9 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
           'ownGoal',
           'penalty',
         ])
-          if (detail.incidents[i][key] != null) key: detail.incidents[i][key],
+          if (detail.incidents[i][key] != null ||
+              (key == 'score' && detail.incidents[i].containsKey(key)))
+            key: detail.incidents[i][key],
         'detailSource': true,
       },
   ];
@@ -1052,12 +1054,33 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
       break;
     }
   }
+  Json retainedScore(Json row) {
+    // Explicit detail presence, even null, is a correction. Never revive a
+    // prior score after it was cleared by the authoritative detail.
+    if (row.containsKey('score') || !identityPairs.contains(row)) return {};
+    final source = paired[row];
+    final score = source?['score'];
+    if (source == null || score is! Map) return {};
+    final home = score['home'], away = score['away'];
+    if (home is! int || away is! int || home < 0 || away < 0) return {};
+    final key = _upstreamKey(row);
+    final sameKey = key != null && key == _upstreamKey(source);
+    final side = _eventSide(row, match);
+    if (!sameKey && (side == null || side != _eventSide(source, match))) {
+      return {};
+    }
+    return {
+      'score': {'home': home, 'away': away},
+    };
+  }
+
   final rich = [
     ...canonical.where((event) => !replaced.contains(event)),
     for (final row in detailed)
       if (identityPairs.contains(row) && paired[row]?['playerId'] != null)
         {
           ...row,
+          ...retainedScore(row),
           'canonicalPlayerId': paired[row]!['playerId'],
           if (paired[row]!['assistPlayerId'] != null)
             'canonicalAssistPlayerId': paired[row]!['assistPlayerId'],
@@ -1071,6 +1094,7 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
       else
         {
           ...row,
+          ...retainedScore(row),
           if (paired[row] case final source?) ...{
             if (!row.containsKey('ownGoal') && source['ownGoal'] != null)
               'ownGoal': source['ownGoal'],
