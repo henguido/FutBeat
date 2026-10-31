@@ -210,3 +210,149 @@ test('a sweep older than its window proves no absence', () => withDb(async (db) 
   await worker(db, goal(feed)).run('live');
   assert.equal(await absent(db), 0);
 }));
+
+// BE-244: how low quota and partial failures meet a resumed sweep.
+const quotaAt = (db, left) => db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining,reserved_at,completed_at)
+  values('goal_api','global-ingest','test','SUCCEEDED',$1,now(),now())`, [left]);
+const liveFloor = (db) => db.query("select (class_floors->>'live')::int f from futbeat_private.provider_quota_policy where provider='goal_api'").then((r) => r.rows[0].f);
+const offsets = (w) => liveCalls(w).map((u) => Number(new URL(u).searchParams.get('offset')));
+const noteCalls = (w) => w.calls.filter((u) => u.includes('futbeat_note_live_poll'));
+const peak = (o) => ({ data: rows(o, o < 400 ? 100 : 45) });
+
+test('quota margin on a resumed poll: high quota later starts a clean sweep from zero', () => withDb(async (db) => {
+  const gone = await mapped(db, 'gone');
+  await worker(db, goal(() => ({ data: [liveRow(gone)] }))).run('live');
+  await nextPoll(db);
+  const f = await liveFloor(db);
+  await worker(db, goal(peak)).run('live');
+  await nextPoll(db);
+  await quotaAt(db, f + 500);
+  // The provider reveals the low quota on the resumed page.
+  let w = worker(db, goal(peak, f + 50));
+  await w.run('live');
+  let m = await lastPoll(db);
+  assert.deepEqual(offsets(w), [300]);
+  assert.equal(m.stopReason, 'quota_margin');
+  assert.equal(m.resumeOffset ?? null, null);
+  await nextPoll(db);
+  await quotaAt(db, 700);
+  w = worker(db, goal((o) => ({ data: rows(o, o < 100 ? 100 : 10) })));
+  await w.run('live');
+  m = await lastPoll(db);
+  assert.deepEqual(offsets(w), [0, 100]);
+  assert.equal(m.fromStart, true);
+  assert.equal(m.reachedEnd, true);
+  assert.equal(await absent(db), 1, 'a whole fresh sweep, not the abandoned one');
+}));
+
+test('the protected floor leaves no resume for a later day', () => withDb(async (db) => {
+  const f = await liveFloor(db);
+  await worker(db, goal(peak, f)).run('live');
+  const m = await lastPoll(db);
+  assert.equal(m.stopReason, 'quota_floor');
+  assert.equal(m.resumeOffset ?? null, null);
+}));
+
+test('budget 1: the first page stays fresh instead of rotating through the tail', () => withDb(async (db) => {
+  const f = await liveFloor(db);
+  const ext = await mapped(db, 'first');
+  const feed = (minute) => (o) => ({ data: o === 0 ? [liveRow(ext, minute), ...rows(1, 99)] : rows(o, o < 400 ? 100 : 45) });
+  await worker(db, goal(feed(30))).run('live');
+  assert.equal((await lastPoll(db)).resumeOffset, 300);
+  const seenOffsets = [];
+  for (const minute of [35, 40]) {
+    await nextPoll(db);
+    await quotaAt(db, f + 1);
+    const w = worker(db, goal(feed(minute), f));
+    await w.run('live');
+    seenOffsets.push(...offsets(w));
+  }
+  assert.deepEqual(seenOffsets, [0, 0]);
+  const minute = await db.query("select minute from futbeat_private.live_match_state where external_match_id=$1", [ext]);
+  assert.equal(minute.rows[0].minute, 40);
+}));
+
+test('budget above 1 with quota inside the margin also drops the resume', () => withDb(async (db) => {
+  const f = await liveFloor(db);
+  await worker(db, goal(peak)).run('live');
+  await nextPoll(db);
+  await quotaAt(db, f + 50);
+  const w = worker(db, goal(peak, f + 49));
+  await w.run('live');
+  const m = await lastPoll(db);
+  assert.deepEqual(offsets(w), [0]);
+  assert.equal(m.startOffset, 0);
+  assert.equal(m.abandonedOffset, 300);
+  assert.equal(m.fromStart, true);
+  assert.equal(m.reachedEnd, false);
+}));
+
+test('reservation: units in flight follow livePageLimit, completion leaves the real count', () => withDb(async (db) => {
+  await quotaAt(db, 700);
+  const held = async () => {
+    const r = (await db.query("select public.futbeat_reserve_goal_live_call('test') v")).rows[0].v;
+    const row = (await db.query("select futbeat_private.provider_call_units(metadata) u from futbeat_private.provider_call_ledger where id=$1", [r.reservationId])).rows[0];
+    return { r, units: row.u };
+  };
+  await db.query("update futbeat_private.entities set payload=payload||jsonb_build_object('startTime',now()-interval '10 minutes') where id='fb_match_p'");
+  const first = await held();
+  assert.equal(first.units, 10, 'policy livePageLimit, measured in production too');
+  await db.query(`select public.futbeat_complete_provider_call($1,'SUCCEEDED',null,200,null,'{"providerRequests":3,"pageBudget":3}'::jsonb)`, [first.r.reservationId]);
+  assert.equal(await units(db), 3);
+  await nextPoll(db);
+  await db.query("update futbeat_private.provider_quota_policy set freshness=freshness||'{\"livePageLimit\":3}' where provider='goal_api'");
+  assert.equal((await held()).units, 3, 'the policy row alone aligns the reservation with the cap');
+}));
+
+test('a later page failing keeps the pages already paid for and still fails the poll', () => withDb(async (db) => {
+  const ext = await mapped(db, 'paid');
+  const w = worker(db, (url) => {
+    if (url.pathname !== '/v1/fixtures/live') return new Response(JSON.stringify({ success: true, data: [] }), { status: 200 });
+    if (Number(url.searchParams.get('offset')) > 0) return new Response('{}', { status: 500, headers: { 'x-ratelimit-remaining': '650' } });
+    return new Response(JSON.stringify({ success: true, data: [liveRow(ext), ...rows(1, 99)] }),
+      { status: 200, headers: { 'x-ratelimit-remaining': '651', 'content-type': 'application/json' } });
+  });
+  assert.equal((await w.run('live')).live.status, 'failed');
+  const { rows: [row] } = await db.query("select status,provider_remaining,metadata m from futbeat_private.provider_call_ledger where call_kind='live-goal' order by id desc limit 1");
+  assert.equal(row.status, 'FAILED');
+  assert.equal(row.provider_remaining, 650);
+  assert.equal(row.m.providerRequests, 2);
+  assert.equal(row.m.matchesFetched, 100);
+  assert.equal(await shownStatus(db, ext), 'LIVE');
+  assert.equal(await absent(db), 0);
+  await nextPoll(db);
+  assert.equal((await db.query("select public.futbeat_reserve_goal_live_call('test') v")).rows[0].v.startOffset, 0);
+}));
+
+test('note: long polls go in page-sized calls and an absence still needs the whole sweep', () => withDb(async (db) => {
+  const gone = await mapped(db, 'gone');
+  await worker(db, goal(() => ({ data: [liveRow(gone)] }))).run('live');
+  await nextPoll(db);
+  const w = worker(db, goal((o) => ({ data: rows(o, o < 200 ? 100 : 30) })));
+  await w.run('live');
+  const m = await lastPoll(db);
+  assert.equal(noteCalls(w).length, 3);
+  assert.equal(m.liveMatches, 230);
+  assert.equal(m.reachedEnd, true);
+  assert.equal(m.recovery.complete, true);
+  assert.equal(m.recovery.absent, 1);
+  assert.equal(await absent(db), 1);
+}));
+
+test('note: an empty sweep still closes, in one call', () => withDb(async (db) => {
+  const w = worker(db, goal(() => ({ data: [] })));
+  await w.run('live');
+  assert.equal(noteCalls(w).length, 1);
+  assert.equal((await lastPoll(db)).recovery.complete, true);
+}));
+
+test('note failure: the resume is dropped so a sweep with a gap can never close', () => withDb(async (db) => {
+  await db.query('alter function public.futbeat_note_live_poll(text,jsonb,boolean,boolean) rename to note_off');
+  await worker(db, goal(peak)).run('live');
+  await db.query('alter function public.note_off(text,jsonb,boolean,boolean) rename to futbeat_note_live_poll');
+  const m = await lastPoll(db);
+  assert.equal(m.noteFailed, true);
+  assert.equal(m.resumeOffset ?? null, null);
+  await nextPoll(db);
+  assert.equal((await db.query("select public.futbeat_reserve_goal_live_call('test') v")).rows[0].v.startOffset, 0);
+}));
