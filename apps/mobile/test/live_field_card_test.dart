@@ -4,6 +4,44 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/features/matches/live_field_card.dart';
 
 void main() {
+  testWidgets(
+    'LIVE animation stops while Android is backgrounded and resumes',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: LiveFieldCard(
+              home: Entity({'id': 'home', 'name': 'Local'}),
+              away: Entity({'id': 'away', 'name': 'Visitante'}),
+              score: '1 : 0',
+              status: 'En vivo',
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.binding.transientCallbackCount, greaterThan(0));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        tester.binding.transientCallbackCount,
+        0,
+        reason:
+            'No animation frames should be scheduled behind Android dialogs',
+      );
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump(const Duration(seconds: 1));
+      expect(tester.binding.transientCallbackCount, 0);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.binding.transientCallbackCount, greaterThan(0));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      expect(tester.binding.transientCallbackCount, 0);
+    },
+  );
+
   testWidgets('illustrative LIVE field fits a narrow Android screen', (
     tester,
   ) async {

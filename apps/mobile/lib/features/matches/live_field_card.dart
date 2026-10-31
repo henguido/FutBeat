@@ -27,7 +27,7 @@ class LiveFieldCard extends StatefulWidget {
 }
 
 class _LiveFieldCardState extends State<LiveFieldCard>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final AnimationController _pulse = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1100),
@@ -35,10 +35,32 @@ class _LiveFieldCardState extends State<LiveFieldCard>
     upperBound: 1,
   );
 
+  bool _foreground = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _foreground =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    _updatePulse();
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _updatePulse();
+  }
+
+  void _updatePulse() {
     final shouldAnimate =
+        _foreground &&
         !MediaQuery.disableAnimationsOf(context) &&
         TickerMode.valuesOf(context).enabled;
     if (shouldAnimate && !_pulse.isAnimating) {
@@ -50,6 +72,7 @@ class _LiveFieldCardState extends State<LiveFieldCard>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulse.dispose();
     super.dispose();
   }
