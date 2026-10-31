@@ -147,3 +147,21 @@ cambio de favoritos, y se reintenta cada 10 minutos y al volver a primer
 plano. `futbeat_read_user_profile` crea la fila de preferencias del usuario
 en el servidor en la primera lectura, así que una cuenta sin fila de
 preferencias nunca completó una lectura autenticada desde la app.
+
+## MOBILE 229 — validación local y ciclo de vida
+
+Las alertas de gol, inicio, final, roja, titular, banquillo, entrada, salida y
+corrección conservan el `matchId` del contrato y abren el mismo Match Center,
+incluso si también contienen `playerId` o `teamId`. No se infiere identidad
+por nombre. Los payloads sin destino no abren enlaces externos.
+
+Se rechazan IDs que no sean texto, segmentos `.`/`..` y caracteres de control.
+Los IDs de versiones anteriores siguen codificados como un único segmento.
+
+El controlador de navegación queda inerte al destruirse: una respuesta tardía
+de `initial()` ya no puede abrir una pantalla ni mostrar un banner. La prueba
+de regresión falló antes de introducir esta protección.
+
+Validación realizada con mensajes sintéticos y RPC simulado. No acredita entrega
+FCM real ni configuración remota de dry_run; no se modificaron flags, dispatcher,
+credenciales o servicios, y los builds QA siguen sin fuente Firebase.

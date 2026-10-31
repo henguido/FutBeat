@@ -32,8 +32,19 @@ class PushMessage {
 /// `data.teamId` → team, news → News. Ids are path segments, so they are encoded.
 String? pushRouteFor(Map<String, dynamic> data) {
   String? id(String key) {
-    final value = data[key]?.toString().trim();
-    return value == null || value.isEmpty ? null : Uri.encodeComponent(value);
+    final raw = data[key];
+    if (raw is! String) return null;
+    final value = raw.trim();
+    // A target is an identifier, never an arbitrary object or URI dot segment.
+    // Preserve older IDs (including encoded separators) without guessing IDs
+    // from a player's name or another entity in the payload.
+    if (value.isEmpty ||
+        value == '.' ||
+        value == '..' ||
+        RegExp(r'[\x00-\x1f\x7f]').hasMatch(value)) {
+      return null;
+    }
+    return Uri.encodeComponent(value);
   }
 
   final match = id('matchId');
@@ -128,6 +139,7 @@ class PushMessageRouter {
   final _subscriptions = <StreamSubscription<PushMessage>>[];
   String? _pending;
   bool _started = false;
+  bool _disposed = false;
 
   /// Routes before the app shell (startup gate, onboarding) would replace a
   /// pushed screen, so a tap waits until the user reaches the shell.
@@ -135,7 +147,7 @@ class PushMessageRouter {
       path == '/start' || path.startsWith('/onboarding');
 
   void start() {
-    if (_started) return;
+    if (_started || _disposed) return;
     _started = true;
     router.routerDelegate.addListener(_flush);
     _subscriptions
@@ -151,6 +163,7 @@ class PushMessageRouter {
   String get _location => router.routerDelegate.currentConfiguration.uri.path;
 
   void open(PushMessage message) {
+    if (_disposed) return;
     final route = message.route;
     if (route == null) return;
     _pending = route;
@@ -158,6 +171,7 @@ class PushMessageRouter {
   }
 
   void _flush() {
+    if (_disposed) return;
     final route = _pending;
     if (route == null) return;
     final location = _location;
@@ -168,6 +182,7 @@ class PushMessageRouter {
   }
 
   void showBanner(PushMessage message) {
+    if (_disposed) return;
     final state = messenger.currentState;
     final title = message.title?.trim() ?? '';
     final body = message.body?.trim() ?? '';
@@ -226,6 +241,9 @@ class PushMessageRouter {
   }
 
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _pending = null;
     router.routerDelegate.removeListener(_flush);
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());

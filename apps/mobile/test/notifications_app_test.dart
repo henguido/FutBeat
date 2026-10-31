@@ -155,6 +155,7 @@ class _Messages implements PushMessageSource {
   final foregroundController = StreamController<PushMessage>.broadcast();
   final openedController = StreamController<PushMessage>.broadcast();
   PushMessage? launch;
+  Future<PushMessage?>? delayedLaunch;
 
   @override
   Stream<PushMessage> get foreground => foregroundController.stream;
@@ -163,7 +164,7 @@ class _Messages implements PushMessageSource {
   Stream<PushMessage> get opened => openedController.stream;
 
   @override
-  Future<PushMessage?> initial() async => launch;
+  Future<PushMessage?> initial() async => delayedLaunch ?? launch;
 }
 
 GoRouter _router({String initial = '/matches'}) => GoRouter(
@@ -526,6 +527,65 @@ void main() {
   });
 
   group('push routing', () {
+    for (final event in [
+      'GOAL',
+      'KICKOFF',
+      'FINAL',
+      'RED_CARD',
+      'PLAYER_STARTER',
+      'PLAYER_BENCH',
+      'PLAYER_SUB_IN',
+      'PLAYER_SUB_OUT',
+      'GOAL_ANNULLED',
+    ]) {
+      test('$event retains the canonical match target', () {
+        const match = 'fb_match_e1a2f376dd034af69f203f5bb959c73e';
+        expect(
+          pushRouteFor({
+            'type': event,
+            'matchId': match,
+            'playerId': 'fb_player_1',
+            'teamId': 'fb_team_1',
+          }),
+          '/match/$match',
+        );
+      });
+    }
+
+    test('malformed and dot-segment targets never become app routes', () {
+      for (final id in <Object>[
+        '.',
+        '..',
+        'bad\nidentifier',
+        {'id': 'p1'},
+        ['p1'],
+        42,
+      ]) {
+        expect(pushRouteFor({'matchId': id}), isNull);
+      }
+      expect(pushRouteFor({'url': 'https://external.test/article'}), isNull);
+    });
+
+    testWidgets('late launch message cannot navigate after router disposal', (
+      tester,
+    ) async {
+      final initial = Completer<PushMessage?>();
+      final source = _Messages()..delayedLaunch = initial.future;
+      final router = _router();
+      final handler = PushMessageRouter(
+        source: source,
+        router: router,
+        messenger: GlobalKey<ScaffoldMessengerState>(),
+      );
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      handler.start();
+      handler.dispose();
+      initial.complete(const PushMessage(data: {'matchId': 'fb_match_1'}));
+      await tester.pumpAndSettle();
+      expect(find.text('Partidos'), findsOneWidget);
+      expect(find.text('match fb_match_1'), findsNothing);
+    });
+
     test('matchId wins over playerId over teamId; ids are encoded', () {
       expect(
         pushRouteFor({'matchId': 'm1', 'playerId': 'p1', 'teamId': 't1'}),
