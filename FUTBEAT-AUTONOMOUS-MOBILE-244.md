@@ -105,3 +105,35 @@ READY, then separately authorized passive connected QA after backend handoff.
 
 CI preparation commit: `07e9443`; no job, deployment or permission change.
 Physical data and +35 preserved; QA123 remains untouched and DISARMED.
+
+## Checkpoint and continuation 2026-10-31T21:36:04.231Z
+
+MOBILE244 did not stop at 21:06 UTC; work continued on real CI and then MOBILE245.
+PR Draft: https://github.com/henguido/FutBeat/pull/234. Initial real CI run
+41242084480: contracts SUCCESS (backend unchanged; npm suite skipped), mobile
+1457 PASS / 11 FAIL. All eleven failures are golden comparisons across 18 PNGs.
+Three inspected pairs differ along glyph/icon edges with unchanged visible
+content; this does not prove the OS/font cause. No references, thresholds or
+existing test exclusions were changed.
+
+A same-runner exact-base diagnostic is now prepared: fresh pinned baseline,
+actual tested merge SHA separately from PR head, Flutter/lock/font metadata,
+byte-for-byte comparison of actual and master PNGs with nonempty complete
+relative-path sets. Original golden check stays failed even when attribution
+matches. Eight comparator regressions PASS, YAML structural validation PASS,
+native Git Bash syntax PASS. Real baseline comparison is not yet asserted.
+
+Four inspected local fixture PNGs are in artifacts/244/previews/: timeline,
+canonical player panel, timeline network error, and unknown table rank. The
+preview runner passed; these are not A32 screenshots or golden replacements.
+
+Execution recovery: plain CMD and direct installed Python/Dart executables work;
+WindowsApps Python alias and default app-container temp caused access errors.
+The same eight assertions passed with stdlib Python and workspace-owned temp.
+No system security, antivirus, shared process or SDK configuration changed.
+
+MOBILE245 continuation is active in this session with three isolated agents.
+A requested persistent heartbeat was rejected by automatic approval review:
+explicit user approval is pending; no scheduler was created and no future
+12-hour execution is promised. Operational checkpoints are separate from QA
+gates and cannot authorize connected activity.

@@ -125,6 +125,48 @@ jobs:
           find test -type f -name '*_test.dart' ! -name 'visual_test.dart' -print0 |
             xargs -0 flutter test
 
+      - name: Attribute MOBILE244 golden failures against its exact base
+        if: failure() && github.base_ref == 'codex/mobile-243' && steps.changes.outputs.run == 'true'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Diagnostic only: the original test step remains failed. No reference
+          # updates, threshold changes, or exclusions are introduced here.
+          base_dir="$RUNNER_TEMP/mobile244-golden-base"
+          git -C "$GITHUB_WORKSPACE" worktree add --detach "$base_dir" "$BASE_SHA"
+          flutter --version --machine > "$RUNNER_TEMP/mobile244-flutter.json"
+          printf 'BASE=%s PR_HEAD=%s TESTED_SHA=%s TZ=%s\n' "$BASE_SHA" "$HEAD_SHA" "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" "$TZ" > "$RUNNER_TEMP/mobile244-baseline.log"
+          cd "$base_dir/apps/mobile"
+          sha256sum pubspec.lock assets/fonts/*.ttf >> "$RUNNER_TEMP/mobile244-baseline.log"
+          flutter pub get --offline --enforce-lockfile >> "$RUNNER_TEMP/mobile244-baseline.log" 2>&1
+          set +e
+          flutter test --no-pub --reporter expanded \
+            test/lineups_match_center_visual_test.dart test/lineups_visual_test.dart \
+            test/standings_ux_v2_test.dart test/match_timeline_v2_test.dart \
+            test/favorites_hub_v2_test.dart >> "$RUNNER_TEMP/mobile244-baseline.log" 2>&1
+          baseline_exit=$?
+          set -e
+          printf '\nBASELINE_EXIT=%s\n' "$baseline_exit" >> "$RUNNER_TEMP/mobile244-baseline.log"
+          cd "$GITHUB_WORKSPACE/apps/mobile"
+          sha256sum pubspec.lock assets/fonts/*.ttf > "$RUNNER_TEMP/mobile244-head-inputs.log"
+          python3 tool/compare_golden_renders.py test/failures "$base_dir/apps/mobile/test/failures" \
+            --output "$RUNNER_TEMP/mobile244-render-comparison.json"
+
+      - name: Upload MOBILE244 baseline attribution
+        if: failure() && github.base_ref == 'codex/mobile-243' && steps.changes.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile244-baseline-attribution
+          path: |
+            ${{ runner.temp }}/mobile244-golden-base/apps/mobile/test/failures/
+            ${{ runner.temp }}/mobile244-baseline.log
+            ${{ runner.temp }}/mobile244-head-inputs.log
+            ${{ runner.temp }}/mobile244-flutter.json
+            ${{ runner.temp }}/mobile244-render-comparison.json
+          if-no-files-found: warn
+
       - name: Upload Flutter golden failures
         if: failure() && steps.changes.outputs.run == 'true'
         uses: actions/upload-artifact@v4
