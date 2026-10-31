@@ -385,13 +385,22 @@ class ApiRepository implements FootballRepository {
         queryParameters: queryParameters,
         cancelToken: cancelToken,
       );
-      final snapshot = _canonical(raw);
       final previous = _snapshotCache[key];
-      if (_publicSnapshotMatches(key, snapshot, queryParameters) &&
-          previous != null &&
-          snapshot.updatedAt.isBefore(previous.updatedAt)) {
-        return previous.asStale();
+      if (previous != null &&
+          (key.startsWith('match-context:') || key.startsWith('entity:'))) {
+        // Decide freshness before _canonical absorbs media and redirects into
+        // shared memory. A rejected late snapshot must not roll those back
+        // while the visible Match Center correctly keeps its newer data.
+        final candidate = Snapshot(
+          raw,
+          blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+        );
+        if (_publicSnapshotMatches(key, candidate, queryParameters) &&
+            candidate.updatedAt.isBefore(previous.updatedAt)) {
+          return previous.asStale();
+        }
       }
+      final snapshot = _canonical(raw);
       _remember(key, snapshot);
       if (_publicSnapshotMatches(key, snapshot, queryParameters)) {
         _persistPublicJson(key, raw);
@@ -950,8 +959,9 @@ class ApiRepository implements FootballRepository {
         ...raw,
         'offlineStale': true,
       }, blockedAliasIds: media?.revokedDisplayAliases ?? const {});
+      if (!detail.available || detail.matchId != id) return null;
       media?.absorbMatchDetail(detail);
-      return detail.available && detail.matchId == id ? detail : null;
+      return detail;
     } catch (_) {
       return null;
     }
@@ -1329,6 +1339,7 @@ class ApiRepository implements FootballRepository {
           ),
           blockedAliasIds: media?.revokedDisplayAliases ?? const {},
         );
+        _validateMatchDetailIdentity(id, detail);
         media?.absorbMatchDetail(detail);
         // Remember accepted requests only. Errors/timeouts remain retryable.
         _detailRequested.add(id);
@@ -1353,9 +1364,18 @@ class ApiRepository implements FootballRepository {
       ),
       blockedAliasIds: media?.revokedDisplayAliases ?? const {},
     );
+    _validateMatchDetailIdentity(id, detail);
     media?.absorbMatchDetail(detail);
     persistMatchDetail(id, detail);
     return detail;
+  }
+
+  void _validateMatchDetailIdentity(String id, MatchDetail detail) {
+    // Missing IDs in legacy/empty answers are not evidence of another match.
+    // An explicit foreign ID on displayable detail must never reach UI/media.
+    if (detail.available && detail.matchId.isNotEmpty && detail.matchId != id) {
+      throw const FormatException('Match detail identity mismatch');
+    }
   }
 
   /// Tabla v2 "Forma" (#158), loaded only when the user opens it. DB-only on
