@@ -261,7 +261,7 @@ void main() {
       ),
     );
     expect(find.byKey(const ValueKey('standings-show-full')), findsNothing);
-    expect(find.text('Sin tabla disponible'), findsOneWidget);
+    expect(find.text('Tabla aún no descargada'), findsOneWidget);
   });
 
   testWidgets('partial context without a team hides only that match safely', (
@@ -435,7 +435,7 @@ void main() {
       );
       final container = await _open(tester, server);
       await _tab(tester, 'Tabla');
-      expect(find.text('Sin tabla disponible'), findsOneWidget);
+      expect(find.text('Tabla aún no descargada'), findsOneWidget);
       expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
       await _elapse(tester, const Duration(minutes: 1));
       expect(server.contextReads, 1);

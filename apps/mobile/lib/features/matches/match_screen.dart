@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../../shared/live_freshness_notice.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -614,6 +616,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ]),
       _MatchTabId.live: _MatchTabList('live', [
         if (data.demo) const DemoNotice(),
+        LiveFreshnessNotice(match),
         if (match.isLive)
           LiveFieldCard(
             home: home,
@@ -1689,6 +1692,12 @@ class MatchStandingsTab extends StatelessWidget {
                 style: TextStyle(color: muted, fontSize: 12),
               ),
             ),
+          if (data.standingsStale || data.stale)
+            const Text(
+              'Tabla guardada · Puede no estar actualizada',
+              key: ValueKey('standings-saved'),
+              style: TextStyle(color: muted, fontSize: 12),
+            ),
           Standings(
             data,
             competitionId,
@@ -1737,8 +1746,25 @@ class MatchStandingsTab extends StatelessWidget {
         ],
       );
     }
-    // NO_DATA negative cache, missing or not fetchable: no retry action.
-    // unavailable (provider has no table), missing or not fetchable.
+    if (data.standingsState != 'unavailable') {
+      return Column(
+        children: [
+          _EmptySection(
+            Icons.table_rows_outlined,
+            data.stale || data.standingsState == 'error'
+                ? 'No se pudo actualizar la tabla'
+                : 'Tabla aún no descargada',
+          ),
+          if (onRetry != null)
+            OutlinedButton.icon(
+              key: const ValueKey('standings-retry'),
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Reintentar'),
+            ),
+        ],
+      );
+    }
     return const _EmptySection(
       Icons.table_rows_outlined,
       'Sin tabla disponible',

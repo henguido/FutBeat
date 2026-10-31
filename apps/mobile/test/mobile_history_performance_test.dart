@@ -656,7 +656,7 @@ void main() {
         expect(identical(_controller(tester), controller), isTrue);
         expect(controller.index, _tabIndex(tester, 'Tabla'));
         expect(controller.length, 6);
-        expect(find.text('Sin tabla disponible'), findsOneWidget);
+        expect(find.text('Tabla aún no descargada'), findsOneWidget);
         expect(detailStarts, 1);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());

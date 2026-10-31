@@ -430,7 +430,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Tabla'));
     await tester.pumpAndSettle();
-    expect(find.text('Sin tabla disponible'), findsOneWidget);
+    expect(find.text('Tabla aún no descargada'), findsOneWidget);
     expect(find.text('Clasificación'), findsNothing);
   });
 
