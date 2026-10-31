@@ -161,7 +161,7 @@ void main() {
           requestOptions: options,
           statusCode: status,
           headers: Headers.fromMap({
-            if (ack != null) 'x-futbeat-qa-stored': ack,
+            'x-futbeat-qa-stored': ?ack,
           }),
         ),
         type: DioExceptionType.badResponse,
