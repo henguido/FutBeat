@@ -14,6 +14,12 @@ function Get-QaDevelopmentDecision {
             ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
         $s = Get-Content -LiteralPath (Join-Path $StateRoot 'qa227-development-state.json') -Raw -ErrorAction Stop |
             ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+        $beatPath=Join-Path $StateRoot 'qa227-supervisor-heartbeat.json'
+        if (Test-Path -LiteralPath $beatPath) {
+            $beat=Get-Content -LiteralPath $beatPath -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+            if ($beat.session_id -cne $a.session_id -or $beat.nonce -cne $a.nonce -or $beat.status -cne 'ACTIVE') { throw 'supervisor_heartbeat_identity_invalid' }
+            $s.supervisor_heartbeat_at=$beat.utc
+        }
         # Initial integration is CACHE ONLY. Connected policy cannot be enabled
         # by editing an approval file: it needs a separately reviewed adapter.
         if ($a.mode -cne 'cache_only') { throw 'connected_mode_not_activated' }
@@ -41,7 +47,8 @@ function Get-QaDevelopmentDecision {
         }
         $wifi = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','settings','get','global','wifi_on')
         $data = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','settings','get','global','mobile_data')
-        $offline=$wifi.exit_code -eq 0 -and $data.exit_code -eq 0 -and $wifi.output.Trim() -ceq '0' -and $data.output.Trim() -ceq '0'
+        $network = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','dumpsys','connectivity')
+        $offline=$wifi.exit_code -eq 0 -and $data.exit_code -eq 0 -and $wifi.output.Trim() -ceq '0' -and $data.output.Trim() -ceq '0' -and $network.exit_code -eq 0 -and $network.output -match 'Active default network:\s*(?:none|null|-1)(?:\s|$)'
         $result=Test-QaDevelopmentLease -Approval $a -State $s -Now $Now -InstalledSha256 $script:qa227Apk.sha -DeviceOffline $offline -OtherWindowActive $other -IndependentWatchdogVerified $IndependentWatchdogVerified
         $result.session_id=$a.session_id
         return $result

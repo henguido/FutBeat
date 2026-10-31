@@ -48,15 +48,27 @@ existentes; su prueba simula STOP, fallo del ejecutor y cierre no confirmado.
 No crea tareas, procesos, aprobaciones reales ni gates. No se ha probado aún
 como controlador activo en el A32 y no autoriza suspender el QA123 actual.
 
+`qa227-stage-controller.ps1` genera las dos copias candidatas del launcher y
+failsafe actuales en `artifacts/qa227/controller-candidate`, con hashes de sus
+fuentes. La rama nueva usa el mismo proceso failsafe, heartbeat y recuperación
+de cierre; no registra otra tarea. El launcher solo reconoce una sesión nueva
+con la app cerrada, crea su ledger y mantiene al guardián independiente. El
+failsafe conserva la expiración absoluta y su detección de heartbeat perdido.
+Las sondas ADB del modo nuevo tienen timeout de 1,5 s; los controles ordinarios
+conservan sus valores previos. No se instalaron esas copias.
+
 Archivos previstos en el StateRoot **del QA123 existente**, una vez autorizado:
 `qa227-development-approval.json` (emitido solo tras aprobación expresa del usuario)
 y `qa227-development-state.json` (supervisor activo). Ambos deben tener ACL solo
 usuario/SYSTEM/administradores y escritura atómica. No reutilizar archivos QA123,
 QA126 o QA2xx como aprobación. El estado incluye el mismo session_id, nonce,
 package, serial, apk_sha256, mode, expires_at; además status ACTIVE, stop false,
-supervisor_heartbeat_at vigente (15 s), http_requests, http_in_minute y evidencia
-local_network_block_verified. El heartbeat debe proceder del supervisor real,
-nunca de una tarea que afirme presencia mientras el operador no está disponible.
+supervisor_heartbeat_at inicial vigente (15 s), http_requests, http_in_minute y
+evidencia local_network_block_verified. Después, el launcher escribe únicamente
+`qa227-supervisor-heartbeat.json`, sin sobrescribir STOP en el archivo de estado.
+Ese heartbeat prueba vida del proceso, **no presencia humana**. La aprobación
+exige un operador supervisando y no autoriza una QA desatendida. El guardián
+conserva además el máximo existente de 8 s sin heartbeat del controlador.
 
 ## Handoff puntual para Claude (sin envío ni despliegue)
 
@@ -74,12 +86,18 @@ corresponden al adaptador local y al RPC mock, no a un ensayo online.
 
 ## Activación y reversión
 
-1. Revisar y aprobar la integración de esta biblioteca en **ambos** caminos del
-   QA123 existente: launcher/controlador y failsafe. Ninguna excepción de proceso
-   huérfano puede instalarse aislada del watchdog. Guardar XML, hashes y copias de
-   scripts como en QA225-C; comprobar ausencia de otra ventana y app cerrada.
-2. Solo con autorización específica, integrar primero `cache_only`, generar una
-   APK QA marcada y verificar flags/SHA/firma. No sustituir +32 durante una QA.
+1. Revisar y aprobar **ambas** copias generadas del QA123 existente y la biblioteca.
+   Comparar `BASELINE-HASHES.json` contra los scripts activos justo antes de
+   instalarlos; STOP si difieren. Ninguna excepción de proceso huérfano puede
+   instalarse aislada del watchdog. Guardar XML y copias como en QA225-C;
+   comprobar ausencia de otra ventana y app cerrada.
+2. Solo con autorización específica, detener el launcher con la app cerrada,
+   copiar juntos launcher, failsafe y biblioteca al mismo directorio existente,
+   y volver a iniciar la misma tarea. Verificar un proceso, heartbeat y XML.
+   Generar una APK QA `cache_only` marcada y verificar flags/SHA/firma antes de
+   autorizar su instalación. No sustituir +32 durante una QA. Inicializar una
+   aprobación nueva y estado únicamente tras consentimiento expreso; retirar
+   archivos de heartbeat/cierre de la sesión anterior para evitar reutilización.
 3. Ensayo offline de la integración activa: abrir/cerrar/reabrir; matar supervisor;
    pérdida de heartbeat, red habilitada, ADB perdido/recuperado y STOP. Exigir
    cierre por PID en <=30 s con ADB disponible; sin confirmación, NO PASS.
@@ -104,6 +122,9 @@ producción, claves, cron ni configuración remota.
 - Política/control local: 40 PASS, incluyendo lectura real de archivos sintéticos,
   exclusión de ventanas, ADB perdido, watchdog perdido, cierre no confirmado y
   excepción del controlador. Estas pruebas no actúan sobre el A32.
+- Failsafe candidato: 4 PASS ejecutando la rama nueva en otro proceso PowerShell,
+  con ADB mock y DryRun (válido, heartbeat ausente, STOP y red activa). No se
+  presenta SIMULATED_FORCE_STOP como cierre físico. Ambas copias pasan el parser.
 - Backend relevante: 22 PASS; cuatro cubren específicamente las rutas nuevas y
   el SQL en PGlite READ ONLY. `npm run check`, sintaxis TypeScript con Node y
   sintaxis PowerShell comprobadas. Deno no está disponible en PATH; falta el

@@ -41,6 +41,7 @@ try {
             'pm path' {'package:/data/app/synthetic/com.futbeat.futbeat.qa/base.apk';break}
             'sha256sum' {('a'*64)+'  /data/app/synthetic/com.futbeat.futbeat.qa/base.apk';break}
             'wifi_on$|mobile_data$' {'0';break}
+            'dumpsys connectivity$' {'Active default network: none';break}
             default {throw "unexpected probe: $line"}
         }
         return @{exit_code=0;output=$output}
