@@ -236,6 +236,27 @@ String _selectedTab(WidgetTester tester) {
 }
 
 void main() {
+  testWidgets(
+    'unknown LIVE observation is labelled without adding context polling',
+    (tester) async {
+      final raw = _context(standingsState: 'unavailable');
+      (raw['matches'] as List).single['status'] = 'LIVE';
+      final server = _Server(
+        detail: (_) => _detail(lineup: true, stats: true),
+        context: (_) => raw,
+      );
+      final container = await _open(tester, server);
+      await _elapse(tester, const Duration(minutes: 2));
+      expect(
+        server.contextReads,
+        1,
+        reason:
+            'missing observation metadata cannot be repaired by repeated reads',
+      );
+      await _close(tester, container);
+    },
+  );
+
   testWidgets('other-season standings do not offer a full-table link', (
     tester,
   ) async {

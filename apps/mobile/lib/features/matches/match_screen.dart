@@ -172,7 +172,10 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   }
 
   void _watchStaleLive(Snapshot merged) {
-    _liveStale = merged.match(widget.id)?.liveDataStale == true;
+    final match = merged.match(widget.id);
+    // Unknown timestamps get a UI warning, not new polling. Preserve the
+    // existing bounded recovery only for an actual dated LIVE overlay.
+    _liveStale = match?.liveChangedAt != null && match?.liveDataStale == true;
     if (!_liveStale) {
       _staleLiveRefresh?.cancel();
       _staleLiveRefresh = null;
