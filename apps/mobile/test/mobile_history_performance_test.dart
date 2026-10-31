@@ -397,10 +397,13 @@ void main() {
       final dio = Dio();
       final gate = Completer<void>();
       var requests = 0;
+      final requestStarted = Completer<void>();
+      final localShown = Completer<void>();
       dio.interceptors.add(
         InterceptorsWrapper(
           onRequest: (options, handler) async {
             requests++;
+            if (!requestStarted.isCompleted) requestStarted.complete();
             await gate.future;
             handler.resolve(Response(requestOptions: options, data: payload()));
           },
@@ -411,17 +414,26 @@ void main() {
       final values = <Snapshot>[];
       final stream = ApiRepository(dio, db).watchDate(DateTime(2026, 8, 20));
       final complete = Completer<void>();
-      final subscription = stream.listen(values.add, onDone: complete.complete);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(values, hasLength(1));
-      expect(requests, 1);
-      gate.complete();
-      await complete.future;
-      expect(values, hasLength(2));
-      expect(requests, 1); // No historical prefetch cascade.
-      await subscription.cancel();
-      dio.close();
-      await db.close();
+      final subscription = stream.listen((value) {
+        values.add(value);
+        if (!localShown.isCompleted) localShown.complete();
+      }, onDone: complete.complete);
+      try {
+        // Observe causal milestones; host scheduling speed is not correctness.
+        await localShown.future.timeout(const Duration(seconds: 5));
+        await requestStarted.future.timeout(const Duration(seconds: 5));
+        expect(values, hasLength(1));
+        expect(requests, 1);
+        gate.complete();
+        await complete.future;
+        expect(values, hasLength(2));
+        expect(requests, 1); // No historical prefetch cascade.
+      } finally {
+        if (!gate.isCompleted) gate.complete();
+        await subscription.cancel();
+        dio.close();
+        await db.close();
+      }
     },
   );
 
