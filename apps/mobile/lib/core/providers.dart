@@ -14,6 +14,7 @@ import 'models.dart';
 import 'player_display_identity.dart';
 import 'profile_context.dart';
 import 'qa_diagnostics.dart';
+import 'qa_development.dart';
 import 'team_matches.dart';
 import '../features/news/news_feed_adapter.dart';
 
@@ -2197,7 +2198,7 @@ final matchDetailProvider = StreamProvider.autoDispose
     });
 
 final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(
-  (ref) => ref.watch(demoModeProvider)
+  (ref) => (ref.watch(demoModeProvider) || qaLocalCacheOnly)
       ? const LiveRealtimeConfig(supabaseUrl: '', publicKey: '')
       : LiveRealtimeConfig.fromEnvironment(),
 );
@@ -2220,7 +2221,7 @@ final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
 });
 
 final liveMatchUpdatesProvider = StreamProvider<Map<String, LiveMatchUpdate>>(
-  (ref) => ref.watch(demoModeProvider)
+  (ref) => (ref.watch(demoModeProvider) || qaLocalCacheOnly)
       ? Stream.value(const <String, LiveMatchUpdate>{})
       : ref.watch(liveRealtimeClientProvider).watch(),
 );

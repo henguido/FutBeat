@@ -14,6 +14,7 @@ import 'core/entity_media.dart';
 import 'core/models.dart';
 import 'core/password_reset_links.dart';
 import 'core/providers.dart';
+import 'core/qa_development.dart';
 import 'core/theme.dart';
 import 'core/push.dart';
 import 'core/push_messages.dart';
@@ -36,6 +37,7 @@ import 'features/onboarding/onboarding_screen.dart';
 import 'features/profile/password_reset_sheet.dart';
 
 Future<void> main() async {
+  installQaLocalCachePolicy();
   WidgetsFlutterBinding.ensureInitialized();
   await loadDeviceRegion();
   runApp(const ProviderScope(child: FutBeatApp()));
@@ -378,7 +380,13 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
           data: query.copyWith(alwaysUse24HourFormat: use24HourClock),
           child: EntityMediaScope(
             memory: media,
-            child: child ?? const SizedBox.shrink(),
+            child: qaLocalCacheOnly
+                ? Banner(
+                    message: 'QA LOCAL · SIN RED',
+                    location: BannerLocation.topEnd,
+                    child: child ?? const SizedBox.shrink(),
+                  )
+                : child ?? const SizedBox.shrink(),
           ),
         );
       },
