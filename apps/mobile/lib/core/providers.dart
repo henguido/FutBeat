@@ -2155,6 +2155,12 @@ final matchDetailProvider = StreamProvider.autoDispose
         current = _monotonicDetail(current, loaded);
         remember(current);
       } catch (error) {
+        if (isQaStoredDetailAbsent(error)) {
+          // Acknowledged passive absence cannot schedule provider work. Keep
+          // any cached detail without fabricating data or retrying hydration.
+          if (!disposed) yield current.withPending(false);
+          return;
+        }
         if (error is DioException &&
             error.type == DioExceptionType.connectionError) {
           // No read-only polling can help while the device has no route.
@@ -2202,7 +2208,11 @@ final matchDetailProvider = StreamProvider.autoDispose
           current = _monotonicDetail(current, next);
           remember(current);
           yield current;
-        } catch (_) {
+        } catch (error) {
+          if (isQaStoredDetailAbsent(error)) {
+            if (!disposed) yield current.withPending(false);
+            return;
+          }
           // Retain the latest detail; the schedule stays bounded.
         }
       }

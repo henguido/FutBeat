@@ -34,6 +34,20 @@ void installQaLocalCachePolicy() {
   HttpOverrides.global = QaOfflineHttpOverrides();
 }
 
+/// A passive detail reader's acknowledged 404 means no stored answer, not
+/// pending provider work. Never infer that meaning from an ordinary endpoint,
+/// disabled reader (no ACK), forbidden response, write or another stored route.
+bool isQaStoredDetailAbsent(Object error) {
+  if (error is! DioException ||
+      error.response?.statusCode != 404 ||
+      error.requestOptions.method != 'GET' ||
+      error.requestOptions.path != '/v1/qa-stored/match-detail') {
+    return false;
+  }
+  final acknowledgment = error.response!.headers['x-futbeat-qa-stored'];
+  return acknowledgment?.length == 1 && acknowledgment!.single == 'v1';
+}
+
 /// Opt-in adapter for the proposed stored-only API. It cannot call ordinary
 /// demand-aware routes, including on an older server that lacks this contract.
 /// Not installed in repositoryProvider until backend + controller activation
