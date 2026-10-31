@@ -260,6 +260,7 @@ jobs:
           $calendarRequestBudget = 90
           $calendarFailureLimit = 2
           $largeDateCalls = 15
+          $largeDateFixtures = 800
           $lastRemaining = $postHotRemaining
           $calendarRequestsUsed = 0
           $consecutiveFailures = 0
@@ -340,7 +341,9 @@ jobs:
                 }
               } catch {
                 $calendarFailures += 1
-                $consecutiveFailures += 1
+                if ($page.Count -lt $largeDateFixtures) {
+                  $consecutiveFailures += 1
+                }
                 Write-Output "CALENDAR_INGEST_FAILED date=$($batchDates -join ',') error=$($_.Exception.Message)"
               }
 
@@ -354,8 +357,9 @@ jobs:
                 Write-Output "CALENDAR_EXPAND_STOP reason=quota_reserve reserve=$quotaReserve"
                 break
               }
-              # Two in a row point at the store, not at one date. Two large
-              # Saturdays apart must not freeze every date after them (BE-231).
+              # Two small dates in a row point at the store. A large date can time
+              # out alone, and the budget bounds those: stored dates leave the plan,
+              # so failing Saturdays end up adjacent and must not freeze it (BE-231).
               if ($consecutiveFailures -ge $calendarFailureLimit) {
                 Write-Output "CALENDAR_EXPAND_STOP reason=ingest_failures failures=$calendarFailures"
                 break
