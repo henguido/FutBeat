@@ -22,7 +22,7 @@ $launcher=$launcher.Replace("'^QA12[36]-[A-Za-z0-9-]+$'","'^QA(?:12[36]|DEV)-[A-
 $block=@'
         # QA227 CACHE ONLY. Same launcher, same failsafe, same close recovery.
         # No process exemption is granted before its independent guard starts.
-        $dev=Get-QaDevelopmentDecision -StateRoot $StateRoot -GateDirectory $CoordinationDirectory -Now ([datetimeoffset]::UtcNow) -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments} -IndependentWatchdogVerified $true
+        $dev=Get-QaDevelopmentDecision -StateRoot $StateRoot -GateDirectory $CoordinationDirectory -Now ([datetimeoffset]::UtcNow) -Clock {[datetimeoffset]::UtcNow} -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments} -IndependentWatchdogVerified $true
         if($dev.allowed){
             $devApproval=Read-Json (Join-Path $StateRoot 'qa227-development-approval.json')
             $devPid=Invoke-AdbBounded @('-s','RF8R32GQWGL','shell','pidof','com.futbeat.futbeat.qa')
@@ -41,7 +41,7 @@ $block=@'
                     Remove-Item -LiteralPath $devReady -ErrorAction SilentlyContinue
                     foreach($arg in @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'qa123-failsafe.ps1'),'-HeartbeatPath',$devBeat,'-AbsoluteExpiryUtc',$devApproval.expires_at,'-GatePath',(Join-Path $StateRoot 'qa227-development-state.json'),'-ExpectedWindowId',$devApproval.session_id,'-ExpectedNonce',$devApproval.nonce,'-EvidencePath',$devEvidence,'-DevelopmentStateRoot',$StateRoot,'-DevelopmentGateDirectory',$CoordinationDirectory,'-DevelopmentReadyPath',$devReady)){[void]$psi.ArgumentList.Add([string]$arg)}
                     $guard=[Diagnostics.Process]::Start($psi)
-                    $guardReady={Test-QaDevelopmentGuardReady -Path $devReady -SessionId $devApproval.session_id -Nonce $devApproval.nonce -GuardPid $guard.Id -Now ([datetimeoffset]::UtcNow)}
+                    $guardReady={Test-QaDevelopmentGuardReady -Path $devReady -SessionId $devApproval.session_id -Nonce $devApproval.nonce -GuardPid $guard.Id -Now ([datetimeoffset]::UtcNow) -Clock {[datetimeoffset]::UtcNow}}
                     $ready=Wait-QaDevelopmentGuardReady -Ready $guardReady -Alive {$guard.Refresh();return (-not $guard.HasExited)} -Pulse {
                         Write-AtomicJson $devBeat @{status='ACTIVE';utc=[datetimeoffset]::UtcNow.ToString('o');session_id=$devApproval.session_id;nonce=$devApproval.nonce}
                         Heartbeat 'QADEV_WAITING_FOR_FAILSAFE' $devApproval.session_id
@@ -51,7 +51,7 @@ $block=@'
                     Log-Event 'QADEV_STARTED_WITH_INDEPENDENT_FAILSAFE' $devApproval.session_id
                     $result=Invoke-QaDevelopmentSession -Decision {
                         $guard.Refresh()
-                        Get-QaDevelopmentDecision -StateRoot $StateRoot -GateDirectory $CoordinationDirectory -Now ([datetimeoffset]::UtcNow) -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments} -IndependentWatchdogVerified ((-not $guard.HasExited) -and (& $guardReady))
+                        Get-QaDevelopmentDecision -StateRoot $StateRoot -GateDirectory $CoordinationDirectory -Now ([datetimeoffset]::UtcNow) -Clock {[datetimeoffset]::UtcNow} -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments} -IndependentWatchdogVerified ((-not $guard.HasExited) -and (& $guardReady))
                     } -WatchdogAlive {$guard.Refresh();return ((-not $guard.HasExited) -and (& $guardReady))} -Heartbeat {
                         Write-AtomicJson $devBeat @{status='ACTIVE';utc=[datetimeoffset]::UtcNow.ToString('o');session_id=$devApproval.session_id;nonce=$devApproval.nonce}
                         Heartbeat 'QADEV_CACHE_ONLY' $devApproval.session_id
@@ -94,7 +94,7 @@ $original=$failsafe.Substring($start,$end-$start)
 $devGuard=@'
         if($DevelopmentStateRoot){
             if($ExpectedWindowId -cnotmatch '^QADEV-[A-Za-z0-9-]{8,80}$' -or [string]::IsNullOrWhiteSpace($DevelopmentGateDirectory)){throw 'development_guard_identity_invalid'}
-            $dev=Get-QaDevelopmentDecision -StateRoot $DevelopmentStateRoot -GateDirectory $DevelopmentGateDirectory -Now $now -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments} -IndependentWatchdogVerified $true
+            $dev=Get-QaDevelopmentDecision -StateRoot $DevelopmentStateRoot -GateDirectory $DevelopmentGateDirectory -Now $now -Clock {[datetimeoffset]::UtcNow} -Probe {param($Arguments) Invoke-AdbBounded -Arguments $Arguments} -IndependentWatchdogVerified $true
             $a=Get-Content -LiteralPath (Join-Path $DevelopmentStateRoot 'qa227-development-approval.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
             if(-not $dev.allowed -or $dev.session_id -cne $ExpectedWindowId -or $a.nonce -cne $ExpectedNonce){throw ('development_policy_'+$dev.reason)}
         }else{

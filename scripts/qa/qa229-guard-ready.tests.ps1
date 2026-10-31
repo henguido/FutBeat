@@ -22,6 +22,12 @@ try {
         $actual=Test-QaDevelopmentGuardReady -Path $path -SessionId $session -Nonce $nonce -GuardPid $guard -Now $now
         Assert ($actual -eq ($case -ceq 'valid')) $case
     }
+    $r=@{schema='qa-development-guard-v1';status='READY';session_id=$session;nonce=$nonce;process_id=$guard;utc=$now.AddSeconds(1).ToString('o')}
+    $r|ConvertTo-Json|Set-Content $path
+    $script:clockSample=$now.AddSeconds(1)
+    Assert (Test-QaDevelopmentGuardReady -Path $path -SessionId $session -Nonce $nonce -GuardPid $guard -Now $now -Clock {$script:clockSample}) 'sample clock after reading a newly written guard record'
+    $r.utc=$now.AddSeconds(2).ToString('o');$r|ConvertTo-Json|Set-Content $path
+    Assert (-not (Test-QaDevelopmentGuardReady -Path $path -SessionId $session -Nonce $nonce -GuardPid $guard -Now $now -Clock {$script:clockSample})) 'genuinely future guard record still denied'
     $script:pulses=0;$script:waits=0
     $ready=Wait-QaDevelopmentGuardReady -Ready {$script:pulses -ge 3} -Alive {$true} -Pulse {$script:pulses++} -Wait {$script:waits++} -MaxChecks 5
     Assert ($ready -and $script:pulses -eq 3 -and $script:waits -eq 2) 'slow-start only grants after real ready'

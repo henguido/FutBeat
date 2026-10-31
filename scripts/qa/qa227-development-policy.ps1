@@ -5,9 +5,10 @@ $script:qa227Apk=$null
 # A newly created OS process is not evidence that its guard loop has started.
 # The independent failsafe writes this record only after a full successful pass.
 function Test-QaDevelopmentGuardReady {
-    param([string]$Path,[string]$SessionId,[string]$Nonce,[int]$GuardPid,[datetimeoffset]$Now)
+    param([string]$Path,[string]$SessionId,[string]$Nonce,[int]$GuardPid,[datetimeoffset]$Now,[scriptblock]$Clock)
     try {
         $r=Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+        if($Clock){$Now=[datetimeoffset](& $Clock)}
         $at=[datetimeoffset]::Parse($r.utc)
         return ($r.schema -ceq 'qa-development-guard-v1' -and $r.status -ceq 'READY' -and
             $r.session_id -ceq $SessionId -and $r.nonce -ceq $Nonce -and
@@ -33,7 +34,8 @@ function Get-QaDevelopmentDecision {
         [Parameter(Mandatory)][string]$GateDirectory,
         [Parameter(Mandatory)][datetimeoffset]$Now,
         [Parameter(Mandatory)][scriptblock]$Probe,
-        [bool]$IndependentWatchdogVerified = $false
+        [bool]$IndependentWatchdogVerified = $false,
+        [scriptblock]$Clock
     )
     try {
         $a = Get-Content -LiteralPath (Join-Path $StateRoot 'qa227-development-approval.json') -Raw -ErrorAction Stop |
@@ -80,6 +82,18 @@ function Get-QaDevelopmentDecision {
         $data = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','settings','get','global','mobile_data')
         $network = & $Probe -Arguments @('-s','RF8R32GQWGL','shell','dumpsys','connectivity')
         $offline=$wifi.exit_code -eq 0 -and $data.exit_code -eq 0 -and $wifi.output.Trim() -ceq '0' -and $data.output.Trim() -ceq '0' -and $network.exit_code -eq 0 -and $network.output -match 'Active default network:\s*(?:none|null|-1)(?:\s|$)'
+        # Slow host/ADB probes may outlive the first state snapshot. Re-read
+        # STOP, revocation and the latest beat before sampling the actual clock.
+        # Explicit -Now remains deterministic for existing synthetic callers.
+        $a=Get-Content -LiteralPath (Join-Path $StateRoot 'qa227-development-approval.json') -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+        $s=Get-Content -LiteralPath (Join-Path $StateRoot 'qa227-development-state.json') -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+        if($a.mode -cne 'cache_only'){throw 'connected_mode_not_activated'}
+        if(Test-Path -LiteralPath $beatPath){
+            $beat=Get-Content -LiteralPath $beatPath -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+            if($beat.session_id -cne $a.session_id -or $beat.nonce -cne $a.nonce -or $beat.status -cne 'ACTIVE'){throw 'supervisor_heartbeat_identity_invalid'}
+            $s.supervisor_heartbeat_at=$beat.utc
+        }
+        if($Clock){$Now=[datetimeoffset](& $Clock)}
         $result=Test-QaDevelopmentLease -Approval $a -State $s -Now $Now -InstalledSha256 $script:qa227Apk.sha -DeviceOffline $offline -OtherWindowActive $other -IndependentWatchdogVerified $IndependentWatchdogVerified
         $result.session_id=$a.session_id
         return $result

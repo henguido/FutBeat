@@ -53,7 +53,25 @@ try{
     $s.status='ACTIVE';$s.stop=$false;$s.supervisor_heartbeat_at=$now.ToString('o');$s.http_requests=0;$s.http_in_minute=0;$s.local_network_block_verified=$true
     AtomicPrivate (Join-Path $q 'qa227-development-approval.json') $a
     AtomicPrivate (Join-Path $q 'qa227-development-state.json') $s
-    for($i=0;$i -lt 180;$i++){Start-Sleep 1;$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw|ConvertFrom-Json;if($hb.status -ceq 'QADEV_CACHE_ONLY' -and $hb.window_id -ceq $id){break}}
+    for($i=0;$i -lt 180;$i++){
+        Start-Sleep 1
+        if(Test-Path (Join-Path $root 'restore-result.json')){throw 'Trial already restored while arming'}
+        $hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw|ConvertFrom-Json
+        if($hb.status -ceq 'QADEV_CACHE_ONLY' -and $hb.window_id -ceq $id){break}
+        foreach($name in @('qa227-close.json','qa123-pending-close.json')){
+            if(Test-Path (Join-Path $q $name)){throw 'Closure requested while arming'}
+        }
+        $guard=Get-Content (Join-Path $root 'guard-process.json') -Raw|ConvertFrom-Json -DateKind String
+        $gp=Get-Process -Id $guard.pid -ErrorAction Stop
+        if([Math]::Abs(($gp.StartTime.ToUniversalTime()-[datetime]::Parse($guard.started_at).ToUniversalTime()).TotalSeconds) -gt 1){throw 'Rollback process identity changed'}
+        $at=[datetimeoffset]::Parse((Get-Content (Join-Path $root 'guard-heartbeat.txt') -Raw).Trim())
+        if(([datetimeoffset]::UtcNow-$at).TotalSeconds -gt 8){throw 'Rollback guard stale while arming'}
+        # Real, bounded supervision by this live arming process. Never renew
+        # approval expiry or overwrite STOP/state; stop pulsing as soon as owned.
+        AtomicPrivate (Join-Path $q 'qa227-supervisor-heartbeat.json') @{
+            status='ACTIVE';utc=[datetimeoffset]::UtcNow.ToString('o');session_id=$id;nonce=$nonce
+        }
+    }
     if($hb.status -cne 'QADEV_CACHE_ONLY' -or $hb.window_id -cne $id){throw "Candidate did not own session: $($hb.status)"}
     $guards=@(Get-CimInstance Win32_Process|Where-Object{$_.CommandLine -match 'qa123-failsafe\.ps1' -and $_.CommandLine -match [regex]::Escape($id)})
     if($guards.Count -ne 1){throw "Expected one independent failsafe, got $($guards.Count)"}
