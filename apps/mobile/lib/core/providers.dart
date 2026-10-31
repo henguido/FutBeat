@@ -2155,6 +2155,11 @@ final matchDetailProvider = StreamProvider.autoDispose
         current = _monotonicDetail(current, loaded);
         remember(current);
       } catch (error) {
+        if (error is DioException && error.type == DioExceptionType.cancel) {
+          // STOP/disposal is an instruction to stop, not a retryable read.
+          if (!disposed) yield current.withPending(false);
+          return;
+        }
         if (isQaStoredDetailAbsent(error)) {
           // Acknowledged passive absence cannot schedule provider work. Keep
           // any cached detail without fabricating data or retrying hydration.
@@ -2209,6 +2214,9 @@ final matchDetailProvider = StreamProvider.autoDispose
           remember(current);
           yield current;
         } catch (error) {
+          if (error is DioException && error.type == DioExceptionType.cancel) {
+            break;
+          }
           if (isQaStoredDetailAbsent(error)) {
             if (!disposed) yield current.withPending(false);
             return;
