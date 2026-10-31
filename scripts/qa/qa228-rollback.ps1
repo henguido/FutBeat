@@ -1,10 +1,10 @@
-# Temporary rollback guard for the owner-authorized QA228 offline trial.
+# Temporary rollback guard for an explicitly authorized offline trial.
 # Reuses the QA225 ordering: close QA -> verify PID/device -> restore QA123.
 # No new scheduled task, no remote operation, no app launch.
-param([Parameter(Mandatory)][ValidateSet('Backup','Guard','Restore','Verify')][string]$Mode)
+param([Parameter(Mandatory)][ValidateSet('Backup','Guard','Restore','Verify')][string]$Mode, [ValidatePattern('^(QA[0-9]{3})$')][string]$TrialName='QA228')
 $ErrorActionPreference='Stop'
 $repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$runRoot=Join-Path $repo 'artifacts/qa228'
+$runRoot=Join-Path $repo ('artifacts/'+$TrialName.ToLowerInvariant())
 $backup=Join-Path $runRoot 'backup'
 $q='C:\Users\hen_g\.codex\visualizations\2026\10\08\01a11d81-14eb-7170-966a-ead982b2856f\qa123'
 $adb='C:\Users\hen_g\AppData\Local\Android\Sdk\platform-tools\adb.exe'
@@ -60,14 +60,14 @@ function Restore {
         Stop-ScheduledTask -TaskName $taskName
         for($i=0;$i -lt 15 -and (Get-ScheduledTask -TaskName $taskName).State -eq 'Running';$i++){Start-Sleep 1}
         if((Get-ScheduledTask -TaskName $taskName).State -eq 'Running'){throw 'Task did not stop'}
-        # A child failsafe may survive the launcher. Only our QADEV-QA228 guard
+        # A child failsafe may survive the launcher. Only this trial-specific guard
         # can be stopped, and only after physical app closure was confirmed.
-        Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -match 'qa123-failsafe\.ps1' -and $_.CommandLine -match 'QADEV-QA228-' -and $_.CommandLine -match '\-DevelopmentStateRoot'} | ForEach-Object {Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue}
+        Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -match 'qa123-failsafe\.ps1' -and $_.CommandLine -match ([regex]::Escape('QADEV-'+$TrialName+'-')) -and $_.CommandLine -match '\-DevelopmentStateRoot'} | ForEach-Object {Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue}
         foreach($f in $m.files){$path=Join-Path $q $f.name;if($f.existed){Copy-Item -LiteralPath (Join-Path $backup $f.name) -Destination $path -Force;$acl=Get-Acl $path;$acl.SetSecurityDescriptorSddlForm($f.sddl);Set-Acl -LiteralPath $path -AclObject $acl}else{Remove-Item -LiteralPath $path -ErrorAction SilentlyContinue}}
         foreach($name in @('qa227-development-approval.json','qa227-development-state.json','qa227-supervisor-heartbeat.json','qa227-close.json','qa227-failsafe-evidence.json','qa123-active-window.json','qa123-pending-close.json')){
             $path=Join-Path $q $name;if(-not (Test-Path $path)){continue}
             $record=Get-Content $path -Raw | ConvertFrom-Json
-            if($record.session_id -like 'QADEV-QA228-*' -or $record.window_id -like 'QADEV-QA228-*'){
+            if($record.session_id -like ('QADEV-'+$TrialName+'-*') -or $record.window_id -like ('QADEV-'+$TrialName+'-*')){
                 Copy-Item -LiteralPath $path -Destination (Join-Path $runRoot ('final-'+$name)) -Force
                 Remove-Item -LiteralPath $path
             }else{throw "Foreign operational state preserved: $name"}
@@ -99,7 +99,7 @@ while(-not (Test-Path (Join-Path $runRoot 'restore-result.json'))){
     if(Test-Path $testMarker){
         $test=Get-Content $testMarker -Raw|ConvertFrom-Json -DateKind String
         $session=Get-Content (Join-Path $runRoot 'current-session.json') -Raw|ConvertFrom-Json -DateKind String
-        if($test.session_id -ceq $session.session_id -and $test.session_id -like 'QADEV-QA228-*' -and ([datetimeoffset]::UtcNow-[datetimeoffset]::Parse($test.started_at)).TotalSeconds -ge 12){$emergency=$true}
+        if($test.session_id -ceq $session.session_id -and $test.session_id -like ('QADEV-'+$TrialName+'-*') -and ([datetimeoffset]::UtcNow-[datetimeoffset]::Parse($test.started_at)).TotalSeconds -ge 12){$emergency=$true}
     }
     if($expired -or $emergency -or (Test-Path (Join-Path $runRoot 'REQUEST-RESTORE'))){
         Log 'GUARD_RESTORE_REQUESTED';try{if(Restore){break}}catch{Log ('RESTORE_ERROR '+$_.Exception.Message)}

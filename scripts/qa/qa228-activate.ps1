@@ -1,11 +1,11 @@
-# QA228 owner-authorized temporary offline trial. No new task or app launch.
-param([Parameter(Mandatory)][ValidateSet('Deploy','Arm')][string]$Mode,[ValidateSet('NORMAL','FAILSAFE')][string]$SessionSuffix='NORMAL')
+# Reusable owner-authorized offline trial (QA228 defaults). No new task or app launch.
+param([Parameter(Mandatory)][ValidateSet('Deploy','Arm')][string]$Mode,[ValidateSet('NORMAL','FAILSAFE')][string]$SessionSuffix='NORMAL', [ValidatePattern('^QA[0-9]{3}$')][string]$TrialName='QA228', [ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$ExpectedApkSha256='56785DC431B0706E349639AF1AE35610DF99964225D5A04C798331862DD22280')
 $ErrorActionPreference='Stop'
 $repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$root=Join-Path $repo 'artifacts/qa228';$candidate=Join-Path $repo 'artifacts/qa227/controller-candidate'
+$root=Join-Path $repo ('artifacts/'+$TrialName.ToLowerInvariant());$candidate=Join-Path $repo 'artifacts/qa227/controller-candidate'
 $m=Get-Content (Join-Path $root 'rollback-manifest.json') -Raw|ConvertFrom-Json
 $q=$m.qa_root;$task='FutBeat-QA123-Launcher';$adb='C:\Users\hen_g\AppData\Local\Android\Sdk\platform-tools\adb.exe'
-$expected='56785DC431B0706E349639AF1AE35610DF99964225D5A04C798331862DD22280'
+$expected=$ExpectedApkSha256.ToUpperInvariant()
 function AtomicPrivate([string]$Path,[object]$Value){
     $tmp="$Path.qa228.tmp";[IO.File]::WriteAllText($tmp,($Value|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
     $acl=[Security.AccessControl.FileSecurity]::new();$acl.SetAccessRuleProtection($true,$false)
@@ -43,9 +43,9 @@ try{
     foreach($name in @('qa123-launcher.ps1','qa123-failsafe.ps1','qa227-development-policy.ps1')){if((Get-FileHash (Join-Path $q $name) -Algorithm SHA256).Hash -cne (Get-FileHash (Join-Path $candidate $name) -Algorithm SHA256).Hash){throw 'Candidate source mismatch'}}
     if(Test-Path (Join-Path $q 'qa123-active-window.json')){throw 'An active ledger exists'}
     foreach($name in @('qa227-development-approval.json','qa227-development-state.json','qa227-supervisor-heartbeat.json','qa227-close.json','qa227-failsafe-evidence.json')){
-        $path=Join-Path $q $name;if(Test-Path $path){$record=Get-Content $path -Raw|ConvertFrom-Json;if($record.session_id -like 'QADEV-QA228-*' -or $record.window_id -like 'QADEV-QA228-*'){Copy-Item $path (Join-Path $root ('prior-'+$name)) -Force;Remove-Item -LiteralPath $path}else{throw "Foreign state: $name"}}
+        $path=Join-Path $q $name;if(Test-Path $path){$record=Get-Content $path -Raw|ConvertFrom-Json;if($record.session_id -like ('QADEV-'+$TrialName+'-*') -or $record.window_id -like ('QADEV-'+$TrialName+'-*')){Copy-Item $path (Join-Path $root ('prior-'+$name)) -Force;Remove-Item -LiteralPath $path}else{throw "Foreign state: $name"}}
     }
-    $now=[datetimeoffset]::UtcNow;$id='QADEV-QA228-'+$now.ToString('yyyyMMddTHHmmssZ')+'-'+$SessionSuffix
+    $now=[datetimeoffset]::UtcNow;$id='QADEV-'+$TrialName+'-'+$now.ToString('yyyyMMddTHHmmssZ')+'-'+$SessionSuffix
     $nonce=[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(16)).ToLowerInvariant()
     $a=@{schema='qa-development-v1';approved=$true;approved_by='user';session_id=$id;nonce=$nonce;package='com.futbeat.futbeat.qa';serial='RF8R32GQWGL';apk_sha256=$expected;mode='cache_only';approved_at=$now.ToString('o');expires_at=$now.AddMinutes(20).ToString('o')}
     $s=@{};foreach($key in @('session_id','nonce','package','serial','apk_sha256','mode','expires_at')){$s[$key]=$a[$key]}
