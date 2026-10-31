@@ -48,10 +48,26 @@
 --     due/not unavailable, and opening the match requeues them before
 --     next_retry_at. A truly finished season never becomes current again, so
 --     it stays closed. Self-healing: no data migration.
+--   * A calendar-year fixture label (or entity) that ends the same year as a
+--     split season with more fixtures in the last 45 days is a stray, not a
+--     season: production holds "2026" fixtures inside La Liga and Liga MX
+--     2026/2027 (2026-09-17, 2026-09-19). Without this, the same stray in the
+--     spring ("2027" next to "2026/2027") would outrank the real season.
+--   * GOAL rows carry no season label (26 of 26 standings_cache rows have
+--     season ''), so a table is filed under the key at fetch time. While an
+--     entity was rolled back, current tables were filed under the finished
+--     season (La Liga, UEFA Champions League, Costa Rica 2025-2026, October
+--     fetches). The new key stops that; those three rows are a separate,
+--     data-only step of the BE-205 kit, not this migration.
+--   * standings_current_group: when no recent stage names a group (Costa Rica
+--     stage "Current" on every detail), the one labelled group whose teams
+--     ALL played in the last 21 days is the current phase. A previous phase
+--     holds a relegated team, so it fails this; parallel groups all pass and
+--     yield no hint. Tables with an unlabelled overall group keep their rule.
 -- Public response shapes are unchanged (reconcile's internal summary gains a
 -- "reopened" counter).
 -- Rollback: supabase/manual/20261031080000_standings_current_season_from_fixtures_rollback.sql
--- (previous bodies of the three functions + drop of the two helpers).
+-- (previous bodies of the five functions + drop of the two helpers).
 
 -- Order of a normalized season key: end year * 10000 + start year.
 -- '2026-2027' -> 20272026, '2026' -> 20262026, 'apertura 2026' -> 20262026,
@@ -78,7 +94,8 @@ begin
   if not found then return null; end if;
   with recent as (
     select futbeat_private.normalize_season(m.payload->>'season') k,
-      max((m.payload->>'startTime')::timestamptz) last_start
+      max((m.payload->>'startTime')::timestamptz) last_start,
+      count(*) filter (where (m.payload->>'startTime')::timestamptz>=now()-interval '45 days') recent_n
     from futbeat_private.entities m
     where m.kind='match' and m.payload->>'competitionId'=comp
       and nullif(m.payload->>'startTime','') is not null
@@ -95,6 +112,10 @@ begin
     where entity_key<>''
   )
   select c.k into best from cand c
+  -- A calendar-year label inside a split season ending that year is a stray.
+  where not (c.k ~ '^\d{4}$' and exists(select 1 from recent o
+    where o.k ~ ('^\d{4}-'||c.k||'$')
+      and o.recent_n>coalesce((select r.recent_n from recent r where r.k=c.k),0)))
   order by futbeat_private.season_rank(c.k) desc nulls last,c.last_start desc nulls last,c.is_entity desc
   limit 1;
   return coalesce(best,entity_key);
@@ -263,6 +284,102 @@ begin
     'unmapped',v_unmapped,'reopened',v_reopened);
 end $$;
 
+-- Body of 20261001140000 plus the team-set fallback. Applied by its trigger on
+-- the next write of each table (no backfill, no provider call).
+create or replace function futbeat_private.standings_current_group(
+  p_competition_id text,
+  p_table jsonb,
+  p_at timestamptz
+) returns text
+language plpgsql
+stable
+set search_path=''
+as $$
+declare
+  labels text[];
+  has_unlabelled boolean;
+  picks text[];
+  pick text;
+begin
+  if p_competition_id is null or p_at is null
+     or jsonb_typeof(p_table) <> 'object'
+     or jsonb_typeof(p_table->'rows') <> 'array' then
+    return null;
+  end if;
+
+  select
+    coalesce(array_agg(distinct btrim(r->>'group'))
+      filter (where nullif(btrim(r->>'group'), '') is not null), '{}'::text[]),
+    bool_or(nullif(btrim(r->>'group'), '') is null)
+  into labels, has_unlabelled
+  from jsonb_array_elements(p_table->'rows') r;
+
+  -- Only a table with several groups needs a current one.
+  if (cardinality(labels) + coalesce(has_unlabelled, false)::integer) < 2 then
+    return null;
+  end if;
+
+  with recent as (
+    select distinct futbeat_private.standings_label_tokens(c.payload->>'stageName') tokens
+    from futbeat_private.entities e
+    join futbeat_private.match_detail_cache c on c.match_id = e.id
+    where e.kind = 'match'
+      and e.payload->>'competitionId' = p_competition_id
+      and nullif(btrim(c.payload->>'stageName'), '') is not null
+      and e.payload->>'startTime' ~ '^\d{4}-\d{2}-\d{2}T'
+      and (e.payload->>'startTime')::timestamptz <= p_at
+      and (e.payload->>'startTime')::timestamptz > p_at - interval '21 days'
+  ), named as (
+    -- The labels each distinct recent stage names.
+    select r.tokens,
+      array_agg(distinct l) filter (
+        where cardinality(futbeat_private.standings_label_tokens(l)) > 0
+          and futbeat_private.standings_label_tokens(l) <@ r.tokens
+      ) matched
+    from recent r
+    cross join unnest(labels) l
+    group by r.tokens
+  )
+  -- '' for a stage that names no label or several: it disagrees.
+  select array_agg(distinct
+    case when cardinality(matched) = 1 then matched[1] else '' end)
+  into picks
+  from named;
+
+  -- Every recent stage names the same single label.
+  if cardinality(picks) = 1 and picks[1] <> '' then
+    return picks[1];
+  end if;
+  if coalesce(has_unlabelled, false) then
+    return null;
+  end if;
+
+  -- No stage decides: the one group whose teams all played recently.
+  with played as (
+    select distinct t.team
+    from futbeat_private.entities e
+    cross join lateral (values
+      (e.payload->>'homeTeamId'), (e.payload->>'awayTeamId')) t(team)
+    where e.kind = 'match'
+      and e.payload->>'competitionId' = p_competition_id
+      and e.payload->>'startTime' ~ '^\d{4}-\d{2}-\d{2}T'
+      and (e.payload->>'startTime')::timestamptz <= p_at
+      and (e.payload->>'startTime')::timestamptz > p_at - interval '21 days'
+      and t.team is not null
+  ), active as (
+    select btrim(r->>'group') label
+    from jsonb_array_elements(p_table->'rows') r
+    group by 1
+    having count(distinct r->>'teamId') >= 4
+      and bool_and(r->>'teamId' in (select p.team from played p))
+  )
+  select case when count(*) = 1 then min(a.label) end into pick from active a;
+  return pick;
+exception when others then
+  return null;
+end
+$$;
+
 revoke all on function
   futbeat_private.season_rank(text),
   futbeat_private.competition_season_key(text),
@@ -270,6 +387,7 @@ revoke all on function
   futbeat_private.match_standings_state(text),
   futbeat_private.reconcile_standings_demands()
 from public,anon,authenticated,service_role;
+revoke all on function futbeat_private.standings_current_group(text,jsonb,timestamptz) from public,anon,authenticated;
 revoke all on function public.futbeat_request_match_standings(text) from public,anon,authenticated;
 grant execute on function public.futbeat_request_match_standings(text) to service_role;
 

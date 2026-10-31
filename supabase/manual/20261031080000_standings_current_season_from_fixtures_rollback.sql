@@ -1,6 +1,7 @@
 -- Rollback of 20261031080000_standings_current_season_from_fixtures (BE-205).
 -- Restores the previous bodies verbatim:
 --   competition_season_key  <- 20260923180000_standings_season_identity.sql:58-62
+--   standings_current_group <- 20261001140000_standings_current_group.sql
 --   match_standings_state, futbeat_request_match_standings,
 --   reconcile_standings_demands <- 20260925030000_standings_demand_lifecycle.sql:85-211
 -- then drops the two BE-205 helpers. No table or row is touched: demands
@@ -142,6 +143,74 @@ begin
   if v_closed>0 then perform futbeat_private.bump_metric('standings_demands_season_closed',v_closed); end if;
   return jsonb_build_object('satisfied',v_satisfied,'closed',v_closed,'remapped',v_remapped,'unmapped',v_unmapped);
 end $$;
+
+create or replace function futbeat_private.standings_current_group(
+  p_competition_id text,
+  p_table jsonb,
+  p_at timestamptz
+) returns text
+language plpgsql
+stable
+set search_path=''
+as $$
+declare
+  labels text[];
+  has_unlabelled boolean;
+  picks text[];
+begin
+  if p_competition_id is null or p_at is null
+     or jsonb_typeof(p_table) <> 'object'
+     or jsonb_typeof(p_table->'rows') <> 'array' then
+    return null;
+  end if;
+
+  select
+    coalesce(array_agg(distinct btrim(r->>'group'))
+      filter (where nullif(btrim(r->>'group'), '') is not null), '{}'::text[]),
+    bool_or(nullif(btrim(r->>'group'), '') is null)
+  into labels, has_unlabelled
+  from jsonb_array_elements(p_table->'rows') r;
+
+  -- Only a table with several groups needs a current one.
+  if (cardinality(labels) + coalesce(has_unlabelled, false)::integer) < 2 then
+    return null;
+  end if;
+
+  with recent as (
+    select distinct futbeat_private.standings_label_tokens(c.payload->>'stageName') tokens
+    from futbeat_private.entities e
+    join futbeat_private.match_detail_cache c on c.match_id = e.id
+    where e.kind = 'match'
+      and e.payload->>'competitionId' = p_competition_id
+      and nullif(btrim(c.payload->>'stageName'), '') is not null
+      and e.payload->>'startTime' ~ '^\d{4}-\d{2}-\d{2}T'
+      and (e.payload->>'startTime')::timestamptz <= p_at
+      and (e.payload->>'startTime')::timestamptz > p_at - interval '21 days'
+  ), named as (
+    -- The labels each distinct recent stage names.
+    select r.tokens,
+      array_agg(distinct l) filter (
+        where cardinality(futbeat_private.standings_label_tokens(l)) > 0
+          and futbeat_private.standings_label_tokens(l) <@ r.tokens
+      ) matched
+    from recent r
+    cross join unnest(labels) l
+    group by r.tokens
+  )
+  -- '' for a stage that names no label or several: it disagrees.
+  select array_agg(distinct
+    case when cardinality(matched) = 1 then matched[1] else '' end)
+  into picks
+  from named;
+
+  -- Every recent stage names the same single label.
+  return case
+    when cardinality(picks) = 1 and picks[1] <> '' then picks[1]
+  end;
+exception when others then
+  return null;
+end
+$$;
 
 drop function if exists futbeat_private.competition_season_active(text,text);
 drop function if exists futbeat_private.season_rank(text);
