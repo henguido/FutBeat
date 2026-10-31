@@ -1,4 +1,4 @@
--- Rollback of 20261030110000_standings_current_season_from_fixtures (BE-205).
+-- Rollback of 20261031070000_standings_current_season_from_fixtures (BE-205).
 -- Restores the previous bodies verbatim:
 --   competition_season_key  <- 20260923180000_standings_season_identity.sql:58-62
 --   match_standings_state, futbeat_request_match_standings,

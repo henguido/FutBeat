@@ -193,3 +193,172 @@ test('a fixture labelled with a season that starts after it was played never bec
   await played(db, comp, String(year + 4), [-100]);
   assert.equal(await seasonKey(db, comp), '2026');
 }));
+
+// Night 230: gaps around the reopened demand. A reopen happens at most once
+// per closure, every later outcome carries another last_error, so quota stays
+// bounded. standingsCalls counts the ledger, goalCalls the provider.
+const complete = (db, id, ok, status) => db.query('select public.futbeat_complete_standings_call($1,$2,$3,null) v', [id, ok, status]).then((r) => r.rows[0].v);
+const setRemaining = (db, value) => db.query(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,reserved_at,completed_at,status,provider_remaining)
+  values('goal_api','global-ingest','test',now(),now(),'SUCCEEDED',$1)`, [value]);
+const notFound = () => new Response(JSON.stringify({ success: false, error: { code: 'STANDINGS_NOT_FOUND' } }),
+  { status: 404, headers: { 'x-ratelimit-remaining': '700', 'content-type': 'application/json' } });
+const staleCup = async (db) => {
+  const comp = await competition(db, { season: '2025/2026' });
+  await played(db, comp, '2026/2027', [-300, -50]);
+  const m = await match(db, comp, { season: '2026/2027', offsetHours: 30 });
+  await closedByStaleSeason(db, comp, '2026-2027');
+  return { comp, m };
+};
+
+test('cup without a table: a reopened demand answered 404 stays empty, no error, one call, no second reopen', () => withDb(async (db) => {
+  const { comp, m } = await staleCup(db);
+  const w = worker(db, notFound);
+  await w.run();
+  await w.run();
+  await w.run();
+  assert.equal(w.goalCalls().length, 1);
+  const d = await demand(db, comp, '2026-2027');
+  assert.equal(d.status, 'NO_DATA');
+  assert.notEqual(d.last_error, 'season is no longer current');
+  assert.equal((await reserve(db)).reconciled.reopened, 0);
+  assert.deepEqual([(await request(db, m)).standings, (await request(db, m)).standingsPending], ['unavailable', false]);
+  const ctx = await context(db, m);
+  assert.deepEqual([ctx.standings, ctx.coverage.standings], [[], 'unavailable']);
+}));
+
+test('a provider table of another season after a reopen: negative cache, never filed under the demanded season', () => withDb(async (db) => {
+  const { comp, m } = await staleCup(db);
+  const w = worker(db, () => goalOk(rows('old', [9, 6], '2025/2026')));
+  assert.equal((await w.run()).standings.demand, 'NO_DATA');
+  await w.run();
+  assert.equal(w.goalCalls().length, 1);
+  assert.deepEqual((await context(db, m)).standings, []);
+  assert.equal((await reserve(db)).reconciled.reopened, 0);
+}));
+
+test('transient failures after a reopen honour standingsMaxAutoRetries and are not reopened', () => withDb(async (db) => {
+  await db.query(`update futbeat_private.provider_quota_policy
+    set freshness=freshness||'{"standingsMaxAutoRetries":2}' where provider='goal_api'`);
+  const { comp } = await staleCup(db);
+  for (const expected of ['QUEUED', 'FETCH_FAILED']) {
+    const r = await reserve(db);
+    assert.equal(r.allowed, true);
+    assert.equal((await complete(db, r.reservationId, false, 500)).status, expected);
+    await db.query("update futbeat_private.standings_demands set next_retry_at=now()-interval '1 second' where status='QUEUED'");
+  }
+  const after = await reserve(db);
+  assert.deepEqual([after.allowed, after.reconciled.reopened], [false, 0]);
+  assert.equal((await demand(db, comp, '2026-2027')).status, 'FETCH_FAILED');
+  assert.equal(await standingsCalls(db), 2);
+}));
+
+test('a reopen spends no quota by itself: without quota the demand waits and nothing is reserved', () => withDb(async (db) => {
+  const { comp } = await staleCup(db);
+  await setRemaining(db, 0);
+  const r = await reserve(db);
+  assert.deepEqual([r.allowed, r.reconciled.reopened], [false, 1]);
+  assert.equal(await standingsCalls(db), 0);
+  assert.equal((await demand(db, comp, '2026-2027')).status, 'QUEUED');
+}));
+
+test('season roll-over: the old table stays with its season, the new one needs its own table', () => withDb(async (db) => {
+  const comp = await competition(db, { season: '2025/2026' });
+  await played(db, comp, '2025/2026', [-2000, -1900]);
+  const old = await match(db, comp, { season: '2025/2026', status: 'VERIFIED', offsetHours: -1800 });
+  const next = await match(db, comp, { season: '2026/2027', offsetHours: 48 });
+  // Opener not played: the new season is not fetchable yet.
+  assert.deepEqual([await seasonKey(db, comp), (await request(db, next)).standings], ['2025-2026', 'missing']);
+  await db.query(`insert into futbeat_private.standings_snapshots(competition_id,season_key,season,table_payload,fetched_at)
+    values($1,'2025-2026','2025/2026','{"rows":[{"teamId":"x","points":80}]}',now())`, [comp.id]);
+  await played(db, comp, '2026/2027', [-1]);
+  assert.equal(await seasonKey(db, comp), '2026-2027');
+  assert.equal((await request(db, next)).standings, 'pending');
+  // GOAL still serves last season's final table: not the new season's.
+  const final = worker(db, () => goalOk(rows('fin', [90, 70], '2025/2026')));
+  assert.equal((await final.run()).standings.demand, 'NO_DATA');
+  assert.deepEqual((await context(db, next)).standings, []);
+  assert.equal((await context(db, old)).standings.length, 1);
+  // After the negative cache the new table arrives; both seasons coexist.
+  await db.query("update futbeat_private.standings_demands set next_retry_at=now()-interval '1 second'");
+  assert.equal((await request(db, next)).standings, 'pending');
+  const fresh = worker(db, () => goalOk(rows('new', [3, 1], '2026/2027')));
+  assert.equal((await fresh.run()).standings.demand, 'AVAILABLE');
+  assert.deepEqual(points(await context(db, next)), [[3, 1]]);
+  assert.deepEqual(points(await context(db, old)), [[90, 70]]);
+}));
+
+test('future-start season: an unlabelled table is never filed before the opener, one call, stays empty', () => withDb(async (db) => {
+  const comp = await competition(db, { season: '2026/2027' });
+  await played(db, comp, '2025/2026', [-2000]);
+  const m = await match(db, comp, { season: '2026/2027', offsetHours: 100 });
+  assert.equal((await request(db, m)).standings, 'pending');
+  const w = worker(db, () => goalOk(rows('fut', [9, 6])));
+  assert.equal((await w.run()).standings.demand, 'NO_DATA');
+  await w.run();
+  assert.equal(w.goalCalls().length, 1);
+  assert.deepEqual((await context(db, m)).standings, []);
+}));
+
+test('group stage with a stale entity: every group stays in the exact season, no other season sees them', () => withDb(async (db) => {
+  const comp = await competition(db, { season: '2025/2026' });
+  await played(db, comp, '2026/2027', [-100, -20]);
+  const m = await match(db, comp, { season: '2026/2027', offsetHours: 20 });
+  const old = await match(db, comp, { season: '2025/2026', status: 'VERIFIED', offsetHours: -3000 });
+  const row = (group, points) => ({ teamId: `${group}-1`, position: 1, group, played: 3, won: 1, drawn: 0, lost: 2, gf: 2, ga: 2, points });
+  await db.query(`insert into futbeat_private.standings_cache(competition_id,provider,external_league_id,season,table_payload,fetched_at)
+    values($1,'goal_api',$2,'2026/2027',$3,now())`, [comp.id, comp.ext, JSON.stringify({
+    competitionId: comp.id, season: '2026/2027', grouped: true, groupsResolved: true, rows: [row('A', 7), row('B', 5)] })]);
+  const ctx = await context(db, m);
+  assert.deepEqual(ctx.standings[0].rows.map((r) => [r.group, r.points]), [['A', 7], ['B', 5]]);
+  assert.deepEqual((await context(db, old)).standings, []);
+}));
+
+test('friendlies without a provider league: empty, no demand, no call, whatever the fixture labels say', () => withDb(async (db) => {
+  const comp = await competition(db, { season: '2025', mapped: false });
+  await played(db, comp, '2025', [-3000]);
+  await played(db, comp, '2026/2027', [-100]);
+  const m = await match(db, comp, { season: '2026/2027', offsetHours: 10 });
+  assert.equal(await seasonKey(db, comp), '2026-2027');
+  assert.deepEqual([(await request(db, m)).standings, (await request(db, m)).standingsPending], ['missing', false]);
+  assert.equal(await demand(db, comp, '2026-2027'), undefined);
+  assert.deepEqual((await context(db, m)).standings, []);
+  assert.equal(await standingsCalls(db), 0);
+}));
+
+test('a postponed Apertura game played after the Clausura opener does not close the Clausura demand', () => withDb(async (db) => {
+  const comp = await competition(db, { season: 'Apertura 2026' });
+  await played(db, comp, 'Apertura 2026', [-2000]);
+  await played(db, comp, 'Clausura 2026', [-100]);
+  await match(db, comp, { season: 'Clausura 2026', offsetHours: 48 });
+  assert.equal(await seasonKey(db, comp), 'clausura 2026');
+  await db.query(`insert into futbeat_private.standings_demands(competition_id,season_key,external_league_id,queued_at)
+    values($1,'clausura 2026',$2,now())`, [comp.id, comp.ext]);
+  await played(db, comp, 'Apertura 2026', [-5]);
+  assert.equal(await seasonKey(db, comp), 'apertura 2026');
+  const held = await reserve(db);
+  assert.deepEqual([held.allowed, held.reconciled.closed], [false, 0]);
+  assert.equal(await standingsCalls(db), 0);
+  assert.equal((await demand(db, comp, 'clausura 2026')).status, 'QUEUED');
+  await played(db, comp, 'Clausura 2026', [-1]);
+  const served = await reserve(db);
+  assert.deepEqual([served.allowed, served.seasonKey], [true, 'clausura 2026']);
+}));
+
+test('same flip with no Clausura fixture stored ahead: closed without a call, reopened at the next game', () => withDb(async (db) => {
+  const comp = await competition(db, { season: 'Apertura 2026' });
+  await played(db, comp, 'Clausura 2026', [-100]);
+  await db.query(`insert into futbeat_private.standings_demands(competition_id,season_key,external_league_id,queued_at)
+    values($1,'clausura 2026',$2,now())`, [comp.id, comp.ext]);
+  await played(db, comp, 'Apertura 2026', [-5]);
+  assert.equal((await reserve(db)).reconciled.closed, 1);
+  await played(db, comp, 'Clausura 2026', [-1]);
+  const again = await reserve(db);
+  assert.deepEqual([again.reconciled.reopened, again.allowed, again.seasonKey], [1, true, 'clausura 2026']);
+  assert.equal(await standingsCalls(db), 1);
+}));
+
+test('public shape: opening a match returns exactly the same keys', () => withDb(async (db) => {
+  const { m } = await staleCup(db);
+  assert.deepEqual(Object.keys(await request(db, m)).sort(),
+    ['competitionId', 'demandRetryAt', 'seasonKey', 'standings', 'standingsPending', 'standingsStale']);
+}));

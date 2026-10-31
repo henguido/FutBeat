@@ -50,7 +50,7 @@
 --     it stays closed. Self-healing: no data migration.
 -- Public response shapes are unchanged (reconcile's internal summary gains a
 -- "reopened" counter).
--- Rollback: supabase/manual/20261030110000_standings_current_season_from_fixtures_rollback.sql
+-- Rollback: supabase/manual/20261031070000_standings_current_season_from_fixtures_rollback.sql
 -- (previous bodies of the three functions + drop of the two helpers).
 
 -- Order of a normalized season key: end year * 10000 + start year.
