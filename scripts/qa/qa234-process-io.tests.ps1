@@ -60,7 +60,15 @@ try {
  if($failure-notmatch'adb_process_timeout' -or $clock.ElapsedMilliseconds-gt1800){throw 'Process timeout not bounded'};$passed++
 }finally{
  if(Test-Path $ledger){$parts=(Get-Content $ledger -Raw).Split('|');$child=Get-Process -Id ([int]$parts[0]) -ErrorAction SilentlyContinue;if($child -and $child.Path-ceq$adb -and $child.StartTime.ToUniversalTime().Ticks-eq[long]$parts[1]){Stop-Process -Id $child.Id;$null=$child.WaitForExit(1000)}}
- foreach($f in Get-ChildItem -LiteralPath $root -File){Remove-Item -LiteralPath $f.FullName}
+ # Windows may briefly retain the image mapping after the verified child
+ # exits. Retry only cleanup of this test's exact files, never skip checks.
+ foreach($f in Get-ChildItem -LiteralPath $root -File){
+  $cleanupClock=[Diagnostics.Stopwatch]::StartNew()
+  while($true){
+   try{Remove-Item -LiteralPath $f.FullName -ErrorAction Stop;break}
+   catch{if($cleanupClock.ElapsedMilliseconds-ge2000){throw};Start-Sleep -Milliseconds 100}
+  }
+ }
  Remove-Item -LiteralPath $root
 }
 "MOBILE234 actual process wrapper: $passed PASS; no ADB/task operations"
