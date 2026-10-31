@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -44,6 +45,7 @@ class QaStoredReadInterceptor extends Interceptor {
     this.sessionLimit = 60,
     this.minuteLimit = 12,
     this.concurrentLimit = 2,
+    this.sessionDuration = const Duration(hours: 3),
   }) : clock = clock ?? DateTime.now {
     if (origin.scheme != 'https' ||
         origin.host.isEmpty ||
@@ -53,13 +55,19 @@ class QaStoredReadInterceptor extends Interceptor {
         minuteLimit < 1 ||
         minuteLimit > 12 ||
         concurrentLimit < 1 ||
-        concurrentLimit > 2) {
+        concurrentLimit > 2 ||
+        sessionDuration <= Duration.zero ||
+        sessionDuration > const Duration(hours: 3)) {
       throw ArgumentError('Invalid QA stored-read policy');
     }
+    _expiresAt = this.clock().add(sessionDuration);
   }
 
   final Uri origin;
   final DateTime Function() clock;
+  final Duration sessionDuration;
+  late final DateTime _expiresAt;
+  Timer? _expiryTimer;
   final int sessionLimit, minuteLimit, concurrentLimit;
   int _used = 0, _active = 0, _blocked = 0;
   bool _closed = false;
@@ -77,6 +85,8 @@ class QaStoredReadInterceptor extends Interceptor {
   };
   void close() {
     _closed = true;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
     final pending = _owned.toList();
     _owned.clear();
     _active = 0;
@@ -89,11 +99,13 @@ class QaStoredReadInterceptor extends Interceptor {
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     final uri = options.uri;
     final now = clock();
+    if (!now.isBefore(_expiresAt)) close();
     _recent.removeWhere(
       (at) => now.difference(at) >= const Duration(minutes: 1),
     );
     final allowed =
         !_closed &&
+        now.isBefore(_expiresAt) &&
         options.method == 'GET' &&
         _routes.contains(options.path) &&
         uri.scheme == origin.scheme &&
@@ -123,18 +135,24 @@ class QaStoredReadInterceptor extends Interceptor {
     _active++;
     _recent.add(now);
     _owned.add(options);
+    _expiryTimer ??= Timer(_expiresAt.difference(now), close);
     handler.next(options);
   }
 
   void _settle(RequestOptions options) {
     if (_owned.remove(options)) _active--;
+    if (_active == 0) {
+      _expiryTimer?.cancel();
+      _expiryTimer = null;
+    }
   }
 
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) {
     _settle(response.requestOptions);
-    if (response.headers.value('x-futbeat-qa-stored') != 'v1') {
-      _closed = true;
+    if (!clock().isBefore(_expiresAt) ||
+        response.headers.value('x-futbeat-qa-stored') != 'v1') {
+      close();
       handler.reject(
         DioException(
           requestOptions: response.requestOptions,
