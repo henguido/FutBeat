@@ -149,10 +149,26 @@ List<StandingsGroup>? standingsGroups(
   final matchStageTokens = standingsLabelTokens(stage);
   bool matchesMatchStage(StandingsGroup group) {
     final groupStageTokens = standingsLabelTokens(group.stage);
+    // Some stored tables put Apertura/Clausura in `group`, not `stage`.
+    // A sole/common group is no stronger evidence than several groups:
+    // explicit conflicting phases must still fail closed. Generic labels
+    // such as "Grupo A" or "Regular season" do not establish a phase.
+    if (groupStageTokens.isEmpty) {
+      const phases = {'apertura', 'clausura'};
+      final matchPhases = matchStageTokens.intersection(phases);
+      final tablePhases = standingsLabelTokens(group.group)
+          .intersection(phases);
+      if (matchPhases.isNotEmpty && tablePhases.isNotEmpty) {
+        return matchPhases.length == 1 &&
+            tablePhases.length == 1 &&
+            matchPhases.containsAll(tablePhases);
+      }
+    }
     return matchStageTokens.isEmpty ||
         groupStageTokens.isEmpty ||
         matchStageTokens.containsAll(groupStageTokens);
   }
+
   if (focusTeamIds.isEmpty) {
     return [for (final group in all) labelled(group)];
   }
