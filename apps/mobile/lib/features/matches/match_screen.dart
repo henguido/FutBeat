@@ -2803,6 +2803,26 @@ class _HeaderScorers extends StatelessWidget {
   );
 }
 
+/// Timeline taps reuse a known lineup row and the same local panel as pitch
+/// and bench. Only explicit canonical IDs qualify; homonyms never participate.
+Future<void> _openTimelinePlayer(BuildContext context, String canonicalId) async {
+  final scope = MatchPlayerScope.maybeOf(context);
+  if (scope != null) {
+    final matches = <({Json player, String side})>[
+      for (final player in [...scope.detail.homeStarters, ...scope.detail.homeSubstitutes])
+        if (player['canonicalId'] == canonicalId) (player: player, side: 'home'),
+      for (final player in [...scope.detail.awayStarters, ...scope.detail.awaySubstitutes])
+        if (player['canonicalId'] == canonicalId) (player: player, side: 'away'),
+    ];
+    if (matches.length == 1) {
+      await showMatchPlayerSheet(context, matches.single.player, matches.single.side);
+      return;
+    }
+  }
+  // Older/partial contexts retain their verified canonical profile navigation.
+  await context.push<void>('/player/$canonicalId');
+}
+
 class MatchTimeline extends StatelessWidget {
   const MatchTimeline(this.data, this.match, this.detail, {super.key});
 
@@ -2814,6 +2834,12 @@ class MatchTimeline extends StatelessWidget {
   Widget build(BuildContext context) {
     final timeline = mergedMatchTimeline(match, detail);
     if (timeline.isEmpty) {
+      if (detail.offlineUnavailable) {
+        return const _EmptySection(
+          Icons.wifi_off_rounded,
+          'No se pudo conectar. Eventos no disponibles.',
+        );
+      }
       if (detail.pending) return const _PendingSection('Cargando eventos…');
       return const _EmptySection(Icons.timeline_rounded, 'Sin eventos');
     }
@@ -3001,7 +3027,7 @@ class _TimelineRow extends StatelessWidget {
         child: InkWell(
           onTap: player == null
               ? null
-              : () => context.push('/player/$playerId'),
+              : () => _openTimelinePlayer(context, playerId!),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             child: row,
@@ -3194,7 +3220,7 @@ class _TimelinePerson extends StatelessWidget {
           )
         : null;
     return InkWell(
-      onTap: id == null ? null : () => context.push('/player/$id'),
+      onTap: id == null ? null : () => _openTimelinePlayer(context, id!),
       borderRadius: BorderRadius.circular(4),
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 24),
