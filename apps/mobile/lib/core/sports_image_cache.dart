@@ -22,8 +22,15 @@ class SportsImageDiskCache {
     this.maxBytes = 32 * 1024 * 1024,
     this.maxEntries = 400,
     this.maxImageBytes = 2 * 1024 * 1024,
-  }) : fetch = fetch ?? _fetchImage,
-       clock = clock ?? DateTime.now;
+    Duration downloadTimeout = const Duration(seconds: 15),
+  }) : fetch = fetch ?? ((uri) => _fetchImage(uri, downloadTimeout)),
+       clock = clock ?? DateTime.now {
+    // Tests may shorten the owned HTTP deadline; callers cannot expand it.
+    if (downloadTimeout <= Duration.zero ||
+        downloadTimeout > const Duration(seconds: 15)) {
+      throw ArgumentError.value(downloadTimeout, 'downloadTimeout');
+    }
+  }
 
   final Directory directory;
   final SportsImageFetch fetch;
@@ -176,9 +183,9 @@ class SportsImageDiskCache {
     }
   }
 
-  static Future<Uint8List> _fetchImage(Uri uri) async {
+  static Future<Uint8List> _fetchImage(Uri uri, Duration deadline) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-    try {
+    Future<Uint8List> download() async {
       var target = uri;
       for (var redirect = 0; redirect <= 3; redirect++) {
         final request = await client.getUrl(target);
@@ -218,6 +225,12 @@ class SportsImageDiskCache {
         return builder.takeBytes();
       }
       throw const HttpException('Too many image redirects');
+    }
+
+    try {
+      // An idle timeout alone lets a slow-drip body (or redirects) keep the
+      // canonical in-flight slot forever. Bound the complete HTTP operation.
+      return await download().timeout(deadline);
     } finally {
       client.close(force: true);
     }

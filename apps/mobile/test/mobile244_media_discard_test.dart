@@ -186,4 +186,77 @@ void main() {
       expect(client.closed, isTrue);
     },
   );
+  test('complete HTTP deadline stops a valid slow-drip body and frees identity', () async {
+    final stalled = _FixtureResponse(
+      statusCode: 200,
+      headers: _FixtureHeaders(contentType: ContentType('image', 'png')),
+    );
+    final client = _FixtureClient([stalled]);
+    final failures = <Object>[];
+    final cache = SportsImageDiskCache(
+      directory: directory,
+      downloadTimeout: const Duration(milliseconds: 50),
+      onError: failures.add,
+    );
+    // Keep sending below the old 8-second idle timeout. This body never ends;
+    // its progress must not reset the aggregate HTTP deadline.
+    stalled.body.add([1]);
+    final drip = Timer.periodic(const Duration(milliseconds: 2), (_) {
+      if (!stalled.body.isClosed) stalled.body.add([1]);
+    });
+    addTearDown(() async {
+      drip.cancel();
+      await stalled.body.close();
+    });
+    final file = await HttpOverrides.runZoned(
+      () => cache.resolve(
+        canonicalId: 'fb_player_deadline244',
+        url: 'https://media.example.test/drip.png',
+      ),
+      createHttpClient: (_) => client,
+    ).timeout(const Duration(seconds: 5));
+    drip.cancel();
+    // End the fake transport too, like the real HttpClient.close(force: true).
+    await stalled.body.close();
+    expect(file, isNull);
+    expect(failures.single, isA<TimeoutException>());
+    expect(client.closed, isTrue);
+    expect(directory.listSync(), isEmpty);
+
+    final image = _FixtureResponse(
+      statusCode: 200,
+      headers: _FixtureHeaders(contentType: ContentType('image', 'png')),
+    );
+    final bytes = Uint8List.fromList([1, 2, 3]);
+    image.body.add(bytes);
+    unawaited(image.body.close());
+    final retryClient = _FixtureClient([image]);
+    final retried = await HttpOverrides.runZoned(
+      () => cache.resolve(
+        canonicalId: 'fb_player_deadline244',
+        url: 'https://media.example.test/drip.png',
+      ),
+      createHttpClient: (_) => retryClient,
+    ).timeout(const Duration(seconds: 5));
+    expect(retried, isNotNull);
+    expect(await retried!.readAsBytes(), bytes);
+    expect(retryClient.requests, hasLength(1));
+    expect(retryClient.closed, isTrue);
+  });
+
+  test('image deadline cannot be disabled or expanded', () {
+    for (final timeout in [
+      Duration.zero,
+      const Duration(seconds: -1),
+      const Duration(seconds: 16),
+    ]) {
+      expect(
+        () => SportsImageDiskCache(
+          directory: directory,
+          downloadTimeout: timeout,
+        ),
+        throwsArgumentError,
+      );
+    }
+  });
 }
