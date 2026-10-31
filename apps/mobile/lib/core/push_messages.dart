@@ -12,17 +12,39 @@ import 'theme.dart';
 
 /// A push as the app sees it, independent of Firebase.
 class PushMessage {
-  const PushMessage({this.title, this.body, this.data = const {}});
+  const PushMessage({
+    this.title,
+    this.body,
+    this.data = const {},
+    this.deliveryId,
+  });
 
   factory PushMessage.fromRemote(RemoteMessage message) => PushMessage(
     title: message.notification?.title ?? message.data['title']?.toString(),
     body: message.notification?.body ?? message.data['body']?.toString(),
     data: Map<String, dynamic>.from(message.data),
+    deliveryId: message.messageId,
   );
 
   final String? title;
   final String? body;
   final Map<String, dynamic> data;
+  final String? deliveryId;
+
+  /// Server outbox identity wins over a transport retry's new FCM message ID.
+  /// Never infer identity from text, player names or the match alone: a goal
+  /// correction and a new goal must remain separate notifications.
+  String? get deduplicationId {
+    for (final raw in [data['notificationId'], deliveryId]) {
+      if (raw is! String) continue;
+      final value = raw.trim();
+      if (value.isNotEmpty &&
+          value.length <= 200 &&
+          !RegExp(r'[\x00-\x1f\x7f]').hasMatch(value))
+        return value;
+    }
+    return null;
+  }
 
   /// Screen this push opens, or null when it has no target.
   String? get route => pushRouteFor(data);
@@ -140,6 +162,18 @@ class PushMessageRouter {
   String? _pending;
   bool _started = false;
   bool _disposed = false;
+  final Set<String> _shown = {};
+  final Set<String> _opened = {};
+
+  // Bounded per router lifetime. Separate channels let a banner be tapped
+  // once, even though that delivery has already been shown in the foreground.
+  bool _remember(PushMessage message, Set<String> seen) {
+    final id = message.deduplicationId;
+    if (id == null) return true; // Legacy messages have no provable identity.
+    if (!seen.add(id)) return false;
+    if (seen.length > 128) seen.remove(seen.first);
+    return true;
+  }
 
   /// Routes before the app shell (startup gate, onboarding) would replace a
   /// pushed screen, so a tap waits until the user reaches the shell.
@@ -166,6 +200,7 @@ class PushMessageRouter {
     if (_disposed) return;
     final route = message.route;
     if (route == null) return;
+    if (!_remember(message, _opened)) return;
     _pending = route;
     _flush();
   }
@@ -187,6 +222,7 @@ class PushMessageRouter {
     final title = message.title?.trim() ?? '';
     final body = message.body?.trim() ?? '';
     if (state == null || (title.isEmpty && body.isEmpty)) return;
+    if (!_remember(message, _shown)) return;
     final route = message.route;
     state
       ..hideCurrentSnackBar()
@@ -249,6 +285,8 @@ class PushMessageRouter {
       unawaited(subscription.cancel());
     }
     _subscriptions.clear();
+    _shown.clear();
+    _opened.clear();
   }
 }
 
