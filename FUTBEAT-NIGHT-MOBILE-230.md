@@ -93,3 +93,54 @@ Restauración final PASS a las 08:07:43 UTC, revalidada después: tarea Running/
 |QA conectada|NO EJECUTADA, contrato pasivo sin activar|
 
 GO para revisión local de código y artefactos. NO-GO para nueva QA física hasta resolver el arranque intermitente del controlador/watchdog; no se prueba su causa con la evidencia actual. QA conectada requiere además aprobar la API pasiva. Referencias visuales siguen pendientes de autorización expresa. No se promete ejecución durante las horas restantes ni se deja un proceso de desarrollo esperando al backend.
+
+## Actualización QA234 — 31-10-2026
+
+### Código y regresión final
+
+- Base comprobada: 2d31938, rama codex/night-mobile-230. Sin cambios Flutter, APK, Supabase ni referencias visuales adicionales.
+- 92cfd58: el registro anterior conserva una excepción real File.Move/Access denied. La regresión usa el publicador histórico real y un lector Windows sin FileShare.Delete: falla antes; el publicador corregido pasa. Reintento atómico máximo500ms, solo errores de acceso/compartición, sin borrar el registro anterior, extender autorizaciones o cambiar ACL. El lector/archivo concreto que mantuvo el handle en aquel intento histórico no quedó registrado.
+- da8e4c0: tras observar timeouts ADB de1500ms y cierre principal no confirmado, se separó el presupuesto: lecturas individuales3000ms, ronda total5000ms (una lectura en vuelo puede terminar hasta3000ms después), cierre5000ms por comando. STOP, heartbeat, SHA, sesión, nonce, radio y caducidad siguen siendo obligatorios. No se convirtió UNKNOWN en autorización.
+- El guardián de restauración ya considera pérdida de protección un launcher DISARMED, otra ventana, otro PID o sesión vencida, aunque la tarea figure Running. Tras10s de pérdida aplica su cierre/restauración existente. No se registraron tareas nuevas.
+- 90 regresiones PowerShell PASS: publicación4, presupuesto3, propiedad activa8, política42, READY13, failsafe con ADB falso4, reloj7 y propiedad/restauración9. Sintaxis y diff-check PASS.
+- Suite Flutter completa, dos invocaciones disjuntas: **1.412 PASS + 6 visuales generales PASS = 1.418 PASS,0 FAIL**. No se omitió visual_test.dart en el resultado consolidado. Analyze PASS,8,3s. Logs: artifacts/qa234-attempt1/full-mobile.log, visual-general.log, analyze.log y controller-regressions.log.
+- La APK offline sigue siendo A383EA04037F1A32B19CA181668584DFCFF101E9EF2FA4CE0F54A6F153DC7DC7, versionCode34, firma debug6533b820f58ee837e6bbedb29f09b26a8384760ee3de13c5cb6185ad114c0362. Origen d3ea1ab. Se comprobó diff vacío en lib/Android/assets/pubspec respecto a ese origen. No se generó ni reinstaló ninguna APK.
+
+### Evidencia física real
+
+Dispositivo RF8R32GQWGL, SM-A325M. Wi-Fi/datos desactivados y sin red activa antes de abrir; variante con bloqueo HttpOverrides. Watchdog READY real, PID34380 en primer ensayo y30984 en segundo; archivos vinculados a sesión/nonce actuales. Ningún gate productivo utilizado.
+
+|Componente|Resultado|Evidencia|
+|---|---|---|
+|Feed desde SQLite|PASS|qa234-attempt1/physical/01-feed.png|
+|Calendario y selección29octubre|PASS|qa234-attempt1/physical/02-calendar.png y04-oct29-feed.png|
+|Everton–Newcastle, marcador3–1 y goleadores|PASS|qa234-attempt2/physical/10-cold-match-route.png|
+|Alineaciones, dorsales, eventos, fotos y placeholders offline|PASS en tramos observados|11-lineups-top.png,12-lineups-middle.png,13-lineups-bench.png,14-away-bench.png|
+|Panel local de Joelinton, foto, entrada46 y amarilla89|PASS|15-player-panel.png; no se abrió Ver perfil|
+|Suplentes con fuente1,3|PASS sin overflow observado|16-bench-font130.png; escala original1,1 restaurada y registrada|
+|Estadísticas guardadas|PASS|18-statistics.png: posesión43/57,tiros11/28,a puerta5/9|
+|Tabla con posiciones|NOT VERIFIED|19-table.png muestra Sin tabla disponible; no se inventan posiciones|
+|Cronología inicial y marcadores1–0/2–0, tarjetas y sustituciones visibles|PASS parcial|20-live-timeline.png; fotos y asistencias visibles|
+|Final de cronología, suspensión/reanudación y ciclo completo de reapertura|NOT VERIFIED|Se interrumpió antes de abrir esos casos; no se afirma PASS|
+|Videos reales y LIVE actualizado|NOT VERIFIED|Partido finalizado y ausencia de videos verificados; sin conexiones|
+
+Los nombres de capturas de alineaciones/panel/estadísticas/tabla/cronología de la tabla pertenecen a artifacts/qa234-attempt2/physical. No se recorrieron ni contaron las40imágenes individualmente; no se reitera el conteo18/22 como medición nueva.
+
+Métricas observadas: arranque frío feed8228ms; arranque frío directo al encuentro mediante extra Android route6150ms. Feed SQLite170ms y202ms; detalle SQLite1724ms en esa apertura fría, seguido de memoryHit. No equivalen a una mejora comparativa controlada. Se observaron22 clientes HTTP bloqueados en el primer proceso y6 en el segundo; son intentos de crear cliente, NO solicitudes transmitidas. Logs sin httpStart/httpComplete; sin red y excepción anterior al socket. No se afirma una captura de paquetes. No hubo llamadas directas GOAL ni consultas Supabase.
+
+### Fallos operativos conservados, no ocultados
+
+1. Primer ensayo: READY sí obtenido; durante scroll instrumentado ADB agotó1500ms. Watchdog/launcher no confirmaron cierre; el PID seguía activo. Cierre manual confirmado en1035ms. Resultado automático: FAIL. Se conservan evidencia y logs, no se reclasifica como PASS.
+2. Segundo: READY sí obtenido y pantallas anteriores verificadas. ADB volvió a agotar3000ms y cierre principal5000ms; los registros declaran CLOSED_NOT_VERIFIED. El guardián detectó pérdida de propiedad a14:22:32 y comenzó restauración14:22:45; a14:22:47 el PID ya estaba ausente sin cierre manual en esa comprobación. El respaldo funcionó, pero no se declara estable el mecanismo principal.
+3. Recuperación USB: adb reconnect perdió temporalmente el transporte. Se recuperó el servidor ADB existente tras comprobar ausencia de otros dispositivos; el usuario también reconectó/desbloqueó el A32. La restauración del segundo ensayo se verificó PASS a14:28:38.
+4. Tercer intento: no apareció latido nuevo del candidato en el límite de preparación; NO se abrió FutBeat. Restauración iniciada14:32:22. La demora anterior al primer log/heartbeat no tiene causa raíz demostrada; no se atribuye sin prueba a Flutter, al ejecutable PowerShell o a permisos.
+
+**Decisión: NO-GO para dar QA234 por cerrada o autorizar ejecución desatendida.** La candidata+34 y sus pantallas observadas no muestran una regresión Flutter nueva; queda una inestabilidad concreta de ADB/controlador y casos físicos sin observar. No se justifica otra APK. No habrá nuevos intentos en este bloque.
+
+### Estado final QA234,14:34:58 UTC
+
+Restauración **PASS**, confirmada dos veces: tarea original Running/DISARMED, heartbeat de su proceso actual válido, mismos archivos/ACL/XML, sin PID de com.futbeat.futbeat.qa. Guardián finalizó14:34:13. Wifi1/datos0/avión0 y fuente1,1 restaurados. No quedan aprobación, estado de desarrollo, ventana activa ni READY temporales en el directorio operativo. Teléfono en HOME. La app oficial no se modificó.
+
+Quedan imágenes físicas de15pantallas/estados entre qa234-attempt1/physical y qa234-attempt2/physical; el directorio final qa234/physical está vacío porque no hubo apertura en el tercer intento. No se presentan imágenes de pruebas como nuevas capturas del A32.
+
+La función del producto observada queda validada parcialmente. El cierre completo de QA234 sigue **NO-GO** por los casos no observados y el arranque/transporte intermitente; no hay autorización nueva ni ensayo pendiente. Las correcciones del controlador están en la rama local como candidato probado, NO sustituyen permanentemente los scripts originales restaurados. No se generó nueva APK ni se alteró+34.
