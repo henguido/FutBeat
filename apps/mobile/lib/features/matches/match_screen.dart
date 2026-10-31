@@ -619,7 +619,6 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ]),
       _MatchTabId.live: _MatchTabList('live', [
         if (data.demo) const DemoNotice(),
-        LiveFreshnessNotice(match),
         if (match.isLive)
           LiveFieldCard(
             home: home,
@@ -682,6 +681,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ),
       body: NestedScrollView(
         headerSliverBuilder: (context, _) => [
+          SliverToBoxAdapter(child: LiveFreshnessNotice(match)),
           SliverToBoxAdapter(
             child: MatchHero(
               data: data,

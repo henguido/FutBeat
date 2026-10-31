@@ -246,6 +246,8 @@ void main() {
         context: (_) => raw,
       );
       final container = await _open(tester, server);
+    expect(find.textContaining('Último marcador conocido'), findsOneWidget,
+        reason: 'freshness warning is visible on the initial facts tab');
       await _elapse(tester, const Duration(minutes: 2));
       expect(
         server.contextReads,
