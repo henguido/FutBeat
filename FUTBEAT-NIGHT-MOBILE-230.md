@@ -144,3 +144,42 @@ Restauración **PASS**, confirmada dos veces: tarea original Running/DISARMED, h
 Quedan imágenes físicas de15pantallas/estados entre qa234-attempt1/physical y qa234-attempt2/physical; el directorio final qa234/physical está vacío porque no hubo apertura en el tercer intento. No se presentan imágenes de pruebas como nuevas capturas del A32.
 
 La función del producto observada queda validada parcialmente. El cierre completo de QA234 sigue **NO-GO** por los casos no observados y el arranque/transporte intermitente; no hay autorización nueva ni ensayo pendiente. Las correcciones del controlador están en la rama local como candidato probado, NO sustituyen permanentemente los scripts originales restaurados. No se generó nueva APK ni se alteró+34.
+
+## MOBILE234 — continuación cerrada,31-10-2026
+
+Esta sección actualiza el NO-GO histórico de QA234 para los tres casos offline pendientes. No habilita QA conectada ni reemplaza permanentemente QA123.
+
+### Corrección nueva: 7224670
+
+El timeout anterior solo limitaba WaitForExit; después esperaba stdout/stderr con GetResult sin plazo. Reproducción con el wrapper generado real y un ejecutable temporal propio: el padre sale, un descendiente mantiene sus pipes abiertos6s; con timeout2000ms el wrapper anterior devolvió éxito tras6179ms. No se afirma que todos los fallos USB históricos tuvieran esa misma causa; sí se demuestra el bloqueo posible en este código y su capacidad de detener el heartbeat.
+
+Ahora Invoke-QaBoundedAdb comparte un único reloj entre inicio, salida y drenaje de ambos canales. Salida parcial nunca autoriza: timeout de proceso o de streams rechaza la consulta. Solo termina el cliente que posee; no mata su árbol y, por tanto, no elimina un servidor ADB compartido iniciado como descendiente. El guardián de restauración usa el mismo runner. El generador comprueba el hash de la función original antes de sustituirla, para no descartar futuros controles ajenos.
+
+96 pruebas locales PASS:6 del wrapper real con ejecutable ficticio (normal,ausencia legítima,exit inválido,pipes heredados,descendiente conservado,proceso lento) más90 regresiones anteriores de READY,heartbeat,reloj,STOP,presupuestos y propiedad. El test heredado conserva timeout2000ms y exige rechazo en menos3000ms. Antes falla; después pasa. Log: artifacts/mobile234/controller-regressions.log. No hubo operaciones de dispositivo en estas pruebas.
+
+Sin cambios en apps/mobile respecto a1f44251; no se repitió innecesariamente la suite Flutter1.418PASS/analyze ya aprobados. No se generó ni instaló otra APK. Sigue+34 offline,A383EA04037F1A32B19CA181668584DFCFF101E9EF2FA4CE0F54A6F153DC7DC7, origen d3ea1ab, datos conservados.
+
+### Sesión física única y resultados
+
+Galaxy A32 RF8R32GQWGL. Ventana local QADEV-QA234-20261031T145513Z-NORMAL, de08:55 a09:00 aproximadamente (Costa Rica); caducidad fija09:15:13,no renovada. Launcher46640,watchdog48676. READY real antes de abrir; misma sesión para todas las pantallas, segundo plano y reapertura. Sin nuevo gate por pantalla. Radio bloqueada y APK cache_only durante todo el recorrido.
+
+|Caso|Resultado|Prueba física|
+|---|---|---|
+|Detalle desde SQLite tras abrir el proceso|PASS|30-reopened-match.png;3–1 y goleadores|
+|Cronología hasta Final|PASS|31 a34:1–0,2–0,3–0,3–1,tarjetas,sustituciones,Inicio/Medio tiempo/Final|
+|Suspensión/reanudación|PASS|PID28635 conservado tras8,424s en HOME; retorno HOT136ms,Final sigue visible en35-resumed-final.png|
+|Cierre y reapertura fría|PASS|force-stop confirmado,PID ausente y luego28635→30548;36-cold-reopen.png y37-reopened-lineups.png|
+|Fotos persistentes en el proceso nuevo|PASS en filas observadas|37-reopened-lineups.png, sin Internet|
+|Pérdida real del launcher/heartbeat|PASS|Se terminó solo el candidato identificado; watchdog48676 cerró QA sin ayuda manual en9226ms por PID|
+
+Las capturas30–37 están en artifacts/qa234/physical. Entrada al encuentro mediante la ruta existente de Flutter Activity; no se declara una nueva prueba de navegación desde una tarjeta del feed. Tabla con posiciones y actualizaciones LIVE reales continúan NOT VERIFIED; no formaban parte de estos tres casos pendientes.
+
+Métricas observadas: apertura fría6157ms,reapertura fría5421ms; SQLite1784ms y1429ms, seguidas por memoryHit. Son muestras de este A32, no una comparación controlada ni una mejora atribuida al controlador. No aparecen RenderFlex/OVERFLOW/FATAL en los diagnósticos filtrados de estos procesos. Se registran intentos HTTP bloqueados antes del socket, no conexiones productivas; sin captura de paquetes ni consultas Supabase/GOAL.
+
+### Prueba independiente de cierre
+
+Launcher terminado08:59:52,390 (Costa Rica), appPID30548. Ausencia de PID y ADB=device confirmadas09:00:01,617:9226ms,sin cierre manual. El propio watchdog guardó FORCE_STOP_CONFIRMED a09:00:01,699 con reason heartbeat_stale. El guardián comenzó restauración después,a09:00:02,104. Por tanto, el cierre observado corresponde al watchdog independiente, antes de la restauración de respaldo. Evidencias: heartbeat-fault-start.json,heartbeat-fault-result.json y final-qa227-failsafe-evidence.json en artifacts/qa234.
+
+Restauración final PASS a09:00:08 (Costa Rica), revalidada posteriormente: tarea original Running/DISARMED,heartbeat del proceso actual,XML/hash/ACL originales y QA sin PID. Red original Wifi1/datos0/avión0; fuente1,1. Autorizaciones,estado,ventana y READY temporales ausentes. Guardián terminó. Teléfono en HOME; paquete oficial intacto.
+
+**GO para reutilizar el candidato corregido en QA offline supervisada y acotada.** Los tres casos pendientes quedan observados. No es una garantía de todos los futuros estados del cable/driver ni una autorización de ejecución conectada o desatendida. El parche está local; QA123 original quedó restaurado. Los ensayos históricos fallidos se conservan en qa234-attempt1/2/3 y no se reclasifican como PASS.
