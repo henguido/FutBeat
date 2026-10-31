@@ -13,6 +13,16 @@ import '../core/sports_image_cache.dart';
 import '../core/relevance.dart';
 import '../core/theme.dart';
 
+/// Existing verified entity-media identity, used only as a disk-cache key.
+/// A canonical entity keeps precedence over a contradictory alias field.
+String entityImageCacheId(Entity entity) {
+  final raw = entity.json['canonicalId'];
+  final canonical = raw is String ? raw.trim() : '';
+  return !entity.id.startsWith('fb_') && canonical.startsWith('fb_player_')
+      ? canonical
+      : entity.id;
+}
+
 class EntityAvatar extends StatelessWidget {
   const EntityAvatar(this.entity, {super.key, this.size = 42, this.cache});
   final Entity entity;
@@ -28,12 +38,7 @@ class EntityAvatar extends StatelessWidget {
     // Legacy squad rows can already resolve a verified canonical person's
     // photo through entityImageOf. Keep that same identity as the disk key
     // instead of falling back to an uncached network image for the alias.
-    final rawCanonicalId = entity.json['canonicalId'];
-    final canonicalId = rawCanonicalId is String ? rawCanonicalId.trim() : '';
-    final imageId =
-        !entity.id.startsWith('fb_') && canonicalId.startsWith('fb_player_')
-        ? canonicalId
-        : entity.id;
+    final imageId = entityImageCacheId(entity);
     final fallback = Container(
       width: size,
       height: size,
@@ -64,6 +69,11 @@ class EntityAvatar extends StatelessWidget {
               cache: cache,
               width: size,
               height: size,
+              cacheWidth:
+                  (size * (MediaQuery.maybeDevicePixelRatioOf(context) ?? 1))
+                      .ceil()
+                      .clamp(1, 1024)
+                      .toInt(),
               fit: BoxFit.contain,
               fallback: fallback,
             )
