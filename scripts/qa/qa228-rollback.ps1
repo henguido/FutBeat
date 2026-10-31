@@ -61,6 +61,10 @@ function Restore {
         foreach($f in $m.files){if($f.existed -and ((Get-FileHash (Join-Path $backup $f.name) -Algorithm SHA256).Hash -cne $f.hash)){throw 'Backup hash mismatch'}}
         $stop=Adb @('-s','RF8R32GQWGL','shell','am','force-stop','com.futbeat.futbeat.qa');$app=Adb @('-s','RF8R32GQWGL','shell','pidof','com.futbeat.futbeat.qa');$device=Adb @('-s','RF8R32GQWGL','get-state')
         if($stop.code -ne 0 -or $app.code -ne 1 -or $app.output -or $device.code -ne 0 -or $device.output -ne 'device'){Log 'CLOSE_NOT_CONFIRMED: leaving safety scripts in place';return $false}
+        $baseline=Verify
+        # An already-restored invocation may still be warming up. Do not
+        # restart it on each retry and prevent it from ever becoming ready.
+        if(-not ($baseline.files_same -and $baseline.task_xml_same -and $baseline.task_state -eq $m.task_state)){
         Stop-ScheduledTask -TaskName $taskName
         for($i=0;$i -lt 15 -and (Get-ScheduledTask -TaskName $taskName).State -eq 'Running';$i++){Start-Sleep 1}
         if((Get-ScheduledTask -TaskName $taskName).State -eq 'Running'){throw 'Task did not stop'}
@@ -77,7 +81,8 @@ function Restore {
             }else{throw "Foreign operational state preserved: $name"}
         }
         if($m.task_state -eq 'Running'){Start-ScheduledTask -TaskName $taskName}
-        for($i=0;$i -lt 180;$i++){Start-Sleep 1;$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw | ConvertFrom-Json;$owner=Get-Process -Id ([int]$hb.launcher_pid) -ErrorAction SilentlyContinue;$taskStarted=[datetimeoffset](Get-ScheduledTaskInfo -TaskName $taskName).LastRunTime.ToUniversalTime();if(Test-QaTrialLauncherHeartbeat -Heartbeat $hb -Process $owner -TaskStarted $taskStarted -Now ([datetimeoffset]::UtcNow)){break}}
+        }
+        for($i=0;$i -lt 180;$i++){[IO.File]::WriteAllText((Join-Path $runRoot 'guard-heartbeat.txt'),[datetimeoffset]::UtcNow.ToString('o'));Start-Sleep 1;$hb=Get-Content (Join-Path $q 'qa123-launcher-heartbeat.json') -Raw | ConvertFrom-Json;$owner=Get-Process -Id ([int]$hb.launcher_pid) -ErrorAction SilentlyContinue;$taskStarted=[datetimeoffset](Get-ScheduledTaskInfo -TaskName $taskName).LastRunTime.ToUniversalTime();if(Test-QaTrialLauncherHeartbeat -Heartbeat $hb -Process $owner -TaskStarted $taskStarted -Now ([datetimeoffset]::UtcNow)){break}}
         # Network restoration is after app closure, never while QA is active.
         $airplane=if($m.airplane -eq '1'){'enable'}else{'disable'}
         Adb @('-s','RF8R32GQWGL','shell','cmd','connectivity','airplane-mode',$airplane) | Out-Null
