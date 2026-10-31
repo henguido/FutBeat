@@ -48,6 +48,14 @@ try {
     }
     $r=Get-QaDevelopmentDecision -StateRoot $root -GateDirectory $gates -Now $now -Probe $probe -IndependentWatchdogVerified $true
     if(-not $r.allowed){throw "file cycle refused: $($r.reason)"};$passed++
+    $ledgerPath=Join-Path $root 'qa123-active-window.json'
+    @{window_id=$approval.session_id;serial=$approval.serial;package=$approval.package} | ConvertTo-Json | Set-Content $ledgerPath
+    $r=Get-QaDevelopmentDecision -StateRoot $root -GateDirectory $gates -Now $now -Probe $probe -IndependentWatchdogVerified $true
+    if(-not $r.allowed){throw "own controller ledger refused: $($r.reason)"};$passed++
+    @{window_id='QADEV-OTHER-SESSION-001';serial=$approval.serial;package=$approval.package} | ConvertTo-Json | Set-Content $ledgerPath
+    $r=Get-QaDevelopmentDecision -StateRoot $root -GateDirectory $gates -Now $now -Probe $probe -IndependentWatchdogVerified $true
+    if($r.allowed -or $r.reason -ne 'other_window_active'){throw 'foreign controller ledger accepted'};$passed++
+    Remove-Item -LiteralPath $ledgerPath
     @{status='GO';expires_utc='2026-10-31T03:15:00Z'} | ConvertTo-Json | Set-Content (Join-Path $gates 'OTHER-GATE-STATUS.json')
     $r=Get-QaDevelopmentDecision -StateRoot $root -GateDirectory $gates -Now $now -Probe $probe -IndependentWatchdogVerified $true
     if($r.allowed -or $r.reason -ne 'other_window_active'){throw 'concurrent file gate accepted'};$passed++

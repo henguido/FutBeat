@@ -23,7 +23,12 @@ function Get-QaDevelopmentDecision {
         # Initial integration is CACHE ONLY. Connected policy cannot be enabled
         # by editing an approval file: it needs a separately reviewed adapter.
         if ($a.mode -cne 'cache_only') { throw 'connected_mode_not_activated' }
-        $other = Test-Path -LiteralPath (Join-Path $StateRoot 'qa123-active-window.json')
+        $other = $false
+        $ledgerPath=Join-Path $StateRoot 'qa123-active-window.json'
+        if (Test-Path -LiteralPath $ledgerPath) {
+            $ledger=Get-Content -LiteralPath $ledgerPath -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+            $other=$ledger.window_id -cne $a.session_id -or $ledger.serial -cne $a.serial -or $ledger.package -cne $a.package
+        }
         foreach ($file in Get-ChildItem -LiteralPath $GateDirectory -Filter '*GATE-STATUS.json' -File -ErrorAction Stop) {
             $g = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
             if ($g.status -cnotin @('GO','PENDING','STOP','CLOSED','EXPIRED','RESTORE_FAILED')) { throw 'other_window_state_unknown' }

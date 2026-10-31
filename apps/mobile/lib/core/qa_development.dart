@@ -7,9 +7,15 @@ import 'package:flutter/foundation.dart';
 const qaLocalCacheOnly = bool.fromEnvironment('FUTBEAT_QA_LOCAL_CACHE_ONLY');
 
 class QaOfflineHttpOverrides extends HttpOverrides {
+  static int blockedClients = 0;
   @override
-  HttpClient createHttpClient(SecurityContext? context) =>
-      throw const SocketException('QA local cache mode: network disabled');
+  HttpClient createHttpClient(SecurityContext? context) {
+    blockedClients++;
+    if (qaLocalCacheOnly) {
+      debugPrint('FB_QA_OFFLINE blocked_http_client=$blockedClients');
+    }
+    throw const SocketException('QA local cache mode: network disabled');
+  }
 }
 
 void installQaLocalCachePolicy() {

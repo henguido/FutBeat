@@ -43,7 +43,9 @@ void main() {
     'all Dart HTTP is rejected before a socket in local-cache mode',
     () async {
       await HttpOverrides.runWithHttpOverrides(() async {
+        final before = QaOfflineHttpOverrides.blockedClients;
         expect(() => HttpClient(), throwsA(isA<SocketException>()));
+        expect(QaOfflineHttpOverrides.blockedClients, before + 1);
       }, QaOfflineHttpOverrides());
     },
   );
