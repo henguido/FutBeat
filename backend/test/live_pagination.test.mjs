@@ -110,3 +110,103 @@ test('low quota stays on the first page, without rotating or proving absence', (
   await w.run('live');
   assert.equal((await lastPoll(db)).startOffset, 0);
 }));
+
+// BE-240: the cases a real peak can produce, through the real sweep bookkeeping.
+const mapped = async (db, ext) => {
+  await db.query('insert into futbeat_private.entities values($1,$2,$3)', [`fb_match_${ext}`, 'match', JSON.stringify({ id: `fb_match_${ext}`,
+    competitionId: 'fb_comp_p', homeTeamId: `fb_team_${ext}h`, awayTeamId: `fb_team_${ext}a`, status: 'SCHEDULED', startTime: start(), events: [], statistics: [] })]);
+  await db.query("insert into futbeat_private.provider_entities values('goal_api','match',$1,$2)", [ext, `fb_match_${ext}`]);
+  return ext;
+};
+const liveRow = (ext, minute = 30) => ({ ...rows(0, 1)[0], apiId: ext, matchElapsed: minute });
+const shownStatus = (db, ext) => db.query("select futbeat_private.match_read_model(payload)->>'status' s from futbeat_private.entities where id=$1", [`fb_match_${ext}`]).then((r) => r.rows[0].s);
+const units = (db) => db.query("select coalesce(sum(futbeat_private.provider_call_units(metadata)),0)::int n from futbeat_private.provider_call_ledger where call_kind='live-goal'").then((r) => r.rows[0].n);
+const observed = (db) => db.query('select count(*)::int n,count(distinct external_match_id)::int d from futbeat_private.provider_observations').then((r) => r.rows[0]);
+// One shared GOAL: remaining falls per request, across polls.
+const sharedGoal = (feed, remaining) => {
+  const counter = { remaining, calls: 0 };
+  counter.goal = (url) => {
+    if (url.pathname !== '/v1/fixtures/live') return new Response(JSON.stringify({ success: true, data: [] }), { status: 200 });
+    counter.remaining -= 1;
+    counter.calls += 1;
+    return new Response(JSON.stringify({ success: true, ...feed(Number(url.searchParams.get('offset') ?? 0)) }),
+      { status: 200, headers: { 'x-ratelimit-remaining': String(counter.remaining), 'content-type': 'application/json' } });
+  };
+  return counter;
+};
+
+test('a feed that shifts between pages loses nothing and stores no match twice', () => withDb(async (db) => {
+  const w = worker(db, goal((o) => ({ data: o === 0 ? rows(0, 100) : rows(50, 100) })));
+  await w.run('live');
+  const m = await lastPoll(db);
+  assert.equal(m.liveMatches, 150);
+  const seen = await observed(db);
+  assert.equal(seen.n, seen.d);
+  assert.equal(seen.d, 150);
+}));
+
+test('the third page repeating the second stops there, proven by nothing', () => withDb(async (db) => {
+  const w = worker(db, goal((o) => ({ data: o === 0 ? rows(0, 100) : rows(100, 100) })));
+  await w.run('live');
+  const m = await lastPoll(db);
+  assert.equal(liveCalls(w).length, 3);
+  assert.equal(m.liveMatches, 200);
+  assert.equal(m.stopReason, 'offset_ignored');
+  assert.equal(m.reachedEnd, false);
+}));
+
+test('quota: ledger units equal real calls and paging stops at the margin across polls', () => withDb(async (db) => {
+  const { rows: [{ f }] } = await db.query("select (class_floors->>'live')::int f from futbeat_private.provider_quota_policy where provider='goal_api'");
+  const sim = sharedGoal((o) => ({ data: rows(o, 100) }), f + 104);
+  for (let poll = 0; poll < 4; poll += 1) {
+    await worker(db, sim.goal).run('live');
+    await nextPoll(db);
+  }
+  assert.equal(await units(db), sim.calls);
+  // +104: 3 pages leave +101, then one more page crosses the margin; 1 page per poll after.
+  assert.equal(sim.calls, 3 + 2 + 1 + 1);
+  assert.ok(sim.remaining - f >= 96);
+  assert.equal((await lastPoll(db)).stopReason, 'quota_margin');
+}));
+
+test('resume: a match on a later page goes LIVE and the first page stays LIVE meanwhile', () => withDb(async (db) => {
+  const early = await mapped(db, 'early');
+  const late = await mapped(db, 'late');
+  const feed = (o) => ({ data: o === 0 ? [liveRow(early), ...rows(1, 99)] : o === 300 ? [liveRow(late), ...rows(301, 20)] : rows(o, 100) });
+  await worker(db, goal(feed)).run('live');
+  assert.equal(await shownStatus(db, early), 'LIVE');
+  assert.notEqual(await shownStatus(db, late), 'LIVE');
+  await nextPoll(db);
+  await worker(db, goal(feed)).run('live');
+  const m = await lastPoll(db);
+  assert.equal(m.startOffset, 300);
+  assert.equal(m.reachedEnd, true);
+  assert.equal(await shownStatus(db, late), 'LIVE');
+  assert.equal(await shownStatus(db, early), 'LIVE');
+  assert.equal(await absent(db), 0, 'both pages of the sweep count as seen');
+}));
+
+test('absence: only a whole sweep proves it, a truncated one never does', () => withDb(async (db) => {
+  const gone = await mapped(db, 'gone');
+  await worker(db, goal(() => ({ data: [liveRow(gone)] }))).run('live');
+  const feed = (o) => ({ data: rows(o, o < 300 ? 100 : 10) });
+  await nextPoll(db);
+  await worker(db, goal(feed)).run('live');
+  assert.equal(await absent(db), 0, 'three of four pages read');
+  await nextPoll(db);
+  await worker(db, goal(feed)).run('live');
+  assert.equal((await lastPoll(db)).reachedEnd, true);
+  assert.equal(await absent(db), 1, 'the sweep finished without it');
+}));
+
+test('a sweep older than its window proves no absence', () => withDb(async (db) => {
+  const gone = await mapped(db, 'gone');
+  await worker(db, goal(() => ({ data: [liveRow(gone)] }))).run('live');
+  const feed = (o) => ({ data: rows(o, o < 300 ? 100 : 10) });
+  await nextPoll(db);
+  await worker(db, goal(feed)).run('live');
+  await db.query("update futbeat_private.live_poll_sweep set started_at=now()-interval '2 hours'");
+  await nextPoll(db);
+  await worker(db, goal(feed)).run('live');
+  assert.equal(await absent(db), 0);
+}));
