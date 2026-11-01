@@ -5,7 +5,9 @@ Measured inputs (read-only JSON from production, path in argv[1]): rem.json, rem
 day.json, fixtures by date; runs200.tsv, real start of each scheduled run.
 Assumed, and stated: future dates are as large as past ones of the same weekday (GOAL may
 publish fewer far ahead, so this errs on the slow side); a day repeats a past day; one page per
-100 fixtures; no ingest fails; days are independent.
+100 fixtures; days are independent. Failures follow the single real run of 11-01 (00:06 UTC):
+--stall is the chance that a date of 800+ fixtures ends the run, and a run that stalled there
+stored nothing more that day. It is one observation, not a rate.
 """
 import collections, datetime as dt, json, math, os, random, statistics as st, sys
 
@@ -49,7 +51,7 @@ def stale_age(policy, offset):
     return 1 if offset <= 3 else 3 if offset <= 14 else 7 if offset <= 45 else 21
 
 
-def simulate(rng, days, policy='new', budget=90, near_budget=45, near_to=14, extra=0.0, relief=0.0):
+def simulate(rng, days, policy='new', budget=90, near_budget=45, near_to=14, extra=0.0, relief=0.0, stall=0.0, keep_paid=True):
     start = dt.date(2026, 11, 1)
     size = {}
     size_of = lambda d: size.setdefault(d, rng.choice(sizes[d.isoweekday()]))
@@ -88,6 +90,11 @@ def simulate(rng, days, policy='new', budget=90, near_budget=45, near_to=14, ext
                 remaining -= cost
                 day_spent += cost
                 day_ingests += 1
+                if size_of(d) >= 800 and rng.random() < stall:
+                    # Paid and stored by the next run without GOAL, or lost as on 11-01.
+                    if keep_paid:
+                        fetched[d] = now
+                    break
                 fetched[d] = now
         spent.append(day_spent)
         for span in done:
@@ -100,11 +107,14 @@ def simulate(rng, days, policy='new', budget=90, near_budget=45, near_to=14, ext
 
 
 CASES = (
-    ('actual (plan de hoy, near +7)', dict(policy='now', near_to=7, near_budget=90)),
-    ('propuesta (migración + workflow)', dict()),
-    ('propuesta, presupuesto 150', dict(budget=150)),
-    ('propuesta, +50% ejecuciones tempranas', dict(extra=0.5)),
-    ('propuesta, BE-205 reduce a la mitad el gasto 00-06 h', dict(relief=0.5)),
+    ('main hoy, como 11-01: cada sabado/domingo corta', dict(policy='now', near_to=7, near_budget=90, stall=1.0, keep_paid=False)),
+    ('main hoy, sin fallos (cota)', dict(policy='now', near_to=7, near_budget=90)),
+    ('propuesta, corta 100% de fechas grandes', dict(stall=1.0)),
+    ('propuesta, corta 30%', dict(stall=0.3)),
+    ('propuesta, sin fallos', dict()),
+    ('propuesta, corta 30%, presupuesto 150', dict(stall=0.3, budget=150)),
+    ('propuesta, corta 30%, +50% ejecuciones tempranas', dict(stall=0.3, extra=0.5)),
+    ('propuesta, corta 30%, gasto 00-06 h a la mitad', dict(stall=0.3, relief=0.5)),
 )
 
 if __name__ == '__main__':
@@ -112,7 +122,7 @@ if __name__ == '__main__':
     print(f'dias cuota {QUOTA_DAYS[0]}..{QUOTA_DAYS[-1]} ({len(QUOTA_DAYS)}), dias corrida {len(RUN_DAYS)}, primera corrida antes de 02:00 UTC {early:.0%}')
     print('paginas por semana', sum(pages(st.median(sizes[w])) for w in range(1, 8)), {w: st.median(sizes[w]) for w in range(1, 8)})
     for name, kw in CASES:
-        res = [simulate(random.Random(s), 45, **kw) for s in range(200)]
+        res = [simulate(random.Random(s), 60, **kw) for s in range(200)]
         out = []
         for span in (14, 45, 90):
             vals = sorted(r[0][span] for r in res if r[0][span])
