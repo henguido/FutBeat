@@ -43,7 +43,7 @@ jobs:
             return $token
           }
 
-          function Invoke-FutBeatGlobalEndpoint([object]$payload) {
+          function Invoke-FutBeatGlobalEndpoint([object]$payload, [int]$timeoutSec = 90) {
             $token = Get-GitHubOidcToken
             $body = $payload | ConvertTo-Json -Depth 100 -Compress
             return Invoke-RestMethod -Uri "https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-global-ingest" `
@@ -51,14 +51,18 @@ jobs:
               -Headers @{ Authorization = "Bearer $token" } `
               -ContentType "application/json" `
               -Body $body `
-              -TimeoutSec 90
+              -TimeoutSec $timeoutSec
           }
 
-          function Get-GoalApiDate([string]$date) {
+          # $stopAtRemaining: a date is ingested whole or not at all (the store removes
+          # what its snapshot lacks), so a long date stops here instead of crossing the
+          # reserve. Partial = true, nothing to ingest, the date stays in the plan.
+          function Get-GoalApiDate([string]$date, [int]$stopAtRemaining = 0) {
             $items = New-Object System.Collections.Generic.List[object]
             $offset = 0
             $remaining = $null
             $requests = 0
+            $partial = $false
 
             do {
               $uri = "https://api.goal-api.com/v1/fixtures/date/${date}?limit=100&offset=$offset"
@@ -94,6 +98,10 @@ jobs:
                 }
               }
               $offset += $pageLimit
+              if ($hasMore -and $null -ne $remaining -and $remaining -le $stopAtRemaining) {
+                $partial = $true
+                break
+              }
             } while ($hasMore)
 
             return [pscustomobject]@{
@@ -102,6 +110,7 @@ jobs:
               Count = $items.Count
               Remaining = $remaining
               Requests = $requests
+              Partial = $partial
             }
           }
 
@@ -232,9 +241,9 @@ jobs:
           $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "calendar-plan"
             fromDate = $nearToday.AddDays(2).ToString("yyyy-MM-dd")
-            toDate = $nearToday.AddDays(7).ToString("yyyy-MM-dd")
+            toDate = $nearToday.AddDays(14).ToString("yyyy-MM-dd")
             requestedOnly = $false
-            limit = 6
+            limit = 13
           })
           $planDates = @($planDates + @($plan.dates) | Select-Object -Unique)
 
@@ -258,6 +267,8 @@ jobs:
 
           $quotaReserve = 350
           $calendarRequestBudget = 90
+          # Without fresh quota only the near dates run, on a smaller budget.
+          if (-not $shouldExpand) { $calendarRequestBudget = 45 }
           $calendarFailureLimit = 2
           $largeDateCalls = 15
           $largeDateFixtures = 800
@@ -266,6 +277,9 @@ jobs:
           $consecutiveFailures = 0
           # One date per ingest call: a large date is stored in sub-batches
           # (futbeat-global-ingest v39) and takes ~40-50 s of the 90 s call.
+          # Up to 140 s for a date of 3,000 fixtures; Edge stops at 150 s.
+          $calendarCallSeconds = 140
+          $calendarDeadline = [DateTime]::UtcNow.AddMinutes(11)
           $batchSize = 1
           $batchDates = New-Object System.Collections.Generic.List[string]
           $batchEvents = New-Object System.Collections.Generic.List[object]
@@ -287,14 +301,24 @@ jobs:
               Write-Output "CALENDAR_EXPAND_STOP reason=request_budget budget=$calendarRequestBudget"
               break
             }
+            # The job ends at 15 minutes; dates not reached stay in the plan.
+            if ([DateTime]::UtcNow -ge $calendarDeadline) {
+              Write-Output "CALENDAR_EXPAND_STOP reason=run_deadline"
+              break
+            }
 
-            $page = Get-GoalApiDate ([string]$date)
+            $page = Get-GoalApiDate ([string]$date) $quotaReserve
             $calendarRequestsUsed += [int]$page.Requests
             if ($null -ne $page.Remaining) {
               $batchRemaining = [int]$page.Remaining
               $lastRemaining = [int]$page.Remaining
             }
             Write-Output "CALENDAR_FETCH date=$date fixtures=$($page.Count) remaining=$($page.Remaining) requests=$($page.Requests) used=$calendarRequestsUsed"
+            if ($page.Partial) {
+              $stopForQuota = $true
+              Write-Output "CALENDAR_DATE_PARTIAL date=$date fixtures=$($page.Count)"
+              break
+            }
 
             foreach ($fixture in @($page.Items)) {
               $externalId = [string]$fixture.apiId
@@ -325,15 +349,27 @@ jobs:
             if ($batchDates.Count -ge $batchSize -or $stopForQuota) {
               # A date that fails must not stop the dates after it (BE-229: one
               # September date timed out on every run). It stays missing in the plan.
+              # 57014 gets one more call with the same fixtures: no GOAL page is paid
+              # again and the entity chunks already stored are found unchanged.
+              $calendarPayload = [ordered]@{
+                source = "GOAL API"
+                mode = "calendar"
+                dates = $batchDates.ToArray()
+                coverage = $batchCoverage.ToArray()
+                providerRemaining = $batchRemaining
+                events = $batchEvents.ToArray()
+              }
               try {
-                $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-                  source = "GOAL API"
-                  mode = "calendar"
-                  dates = $batchDates.ToArray()
-                  coverage = $batchCoverage.ToArray()
-                  providerRemaining = $batchRemaining
-                  events = $batchEvents.ToArray()
-                })
+                try {
+                  $calendarResult = Invoke-FutBeatGlobalEndpoint $calendarPayload $calendarCallSeconds
+                } catch {
+                  if ("$($_.Exception.Message) $($_.ErrorDetails.Message)" -notmatch "57014") {
+                    throw
+                  }
+                  Write-Output "CALENDAR_INGEST_RETRY date=$($batchDates -join ',') reason=57014"
+                  Start-Sleep -Seconds 5
+                  $calendarResult = Invoke-FutBeatGlobalEndpoint $calendarPayload $calendarCallSeconds
+                }
                 # v44 answers 200 skipped past 64 ingests a day: nothing was stored
                 # and every later date would spend GOAL the same way.
                 if ($calendarResult.status -eq "skipped") {
@@ -372,18 +408,6 @@ jobs:
                 break
               }
             }
-          }
-
-          if ($batchDates.Count -gt 0) {
-            $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-              source = "GOAL API"
-              mode = "calendar"
-              dates = $batchDates.ToArray()
-              coverage = $batchCoverage.ToArray()
-              providerRemaining = $batchRemaining
-              events = $batchEvents.ToArray()
-            })
-            Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
           }
 
           Write-Output "CALENDAR_EXPAND_OK planned=$($planDates.Count) fetched=$expandedDates requests=$calendarRequestsUsed"
