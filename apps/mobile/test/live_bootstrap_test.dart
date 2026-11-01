@@ -745,6 +745,10 @@ void main() {
         for (var i = 0; i < 1200; i++)
           liveRow(id(i), home: i % 3, updatedAt: now),
       ]);
+      final releaseFirst = Completer<void>();
+      server.beforeAnswerAsync = (index) async {
+        if (index == 0) await releaseFirst.future;
+      };
       await server.start();
       final dio = Dio();
       final client = LiveRealtimeClient(
@@ -757,12 +761,40 @@ void main() {
         ),
       );
       var latest = <String, LiveMatchUpdate>{};
-      final subscription = client.watch().listen((value) => latest = value);
+      var emissions = 0;
+      final subscription = client.watch().listen((value) {
+        latest = value;
+        emissions++;
+      });
       try {
-        await until(() => latest.length == 1200 && server.sockets.isNotEmpty);
-        // Joined: ticks every 50 ms must not keep reading REST.
-        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await until(
+          () => server.joins.isNotEmpty && server.restRequests.isNotEmpty,
+        );
+        // The fake server sends phx_reply before this marker on the same
+        // ordered socket. Observing it proves ACK processing, not just socket
+        // creation. Hold REST so the subscribe-gap bootstrap is deterministic.
+        final joinedMarker = liveRow(
+          id(0),
+          revision: 2,
+          home: 4,
+          updatedAt: now,
+        );
+        server.rows[id(0)] = joinedMarker;
+        server.sockets.last.add(
+          jsonEncode({
+            'event': 'postgres_changes',
+            'payload': {
+              'data': {'type': 'UPDATE', 'record': joinedMarker},
+            },
+          }),
+        );
+        await until(() => latest[id(0)]?.revision == 2);
+        releaseFirst.complete();
+        // Marker, initial full read, then one coalesced subscribe-gap read.
+        await until(() => latest.length == 1200 && emissions >= 3);
         final settled = server.restRequests.length;
+        expect(settled, 10, reason: 'five initial pages plus five gap pages');
+        // Joined and settled: ticks every50ms must not keep reading REST.
         await Future<void>.delayed(const Duration(milliseconds: 300));
         expect(server.restRequests.length, settled);
 
@@ -780,6 +812,7 @@ void main() {
         );
         expect(latest.length, 1200, reason: 'nothing lost during the 503');
       } finally {
+        if (!releaseFirst.isCompleted) releaseFirst.complete();
         await subscription.cancel();
         dio.close(force: true);
         await server.stop();
