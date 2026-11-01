@@ -348,6 +348,9 @@ test('H. idempotency: two absences make one row without resetting attempts; EXHA
   assert.equal(rows.length, 1, 'idempotent: one row for the same absence noted twice');
   assert.equal(rows[0].attempts, 0, 'noting the absence again is not an attempt');
 
+  // Production caps absent rows at 2 detail calls (20261031240000 carries that body);
+  // raised here so this test still reaches the general attempt cap.
+  await db.query(`update futbeat_private.provider_quota_policy set freshness=freshness||'{"terminalRecoveryAbsentDetailAttempts":6}' where provider='goal_api'`);
   // Drive it to EXHAUSTED: repeatedly make it due and answer with SUSPENDED
   // (never terminal) until the attempt cap (6) is spent.
   for (let i = 0; i < 6; i++) {
