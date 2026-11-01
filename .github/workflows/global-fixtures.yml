@@ -21,7 +21,7 @@ jobs:
       GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
       CALENDAR_PENDING_DIR: ${{ github.workspace }}/calendar-pending
     steps:
-      # Dates already paid to GOAL that failed to store (11-01: 27 pages lost, and the
+      # Dates already paid to GOAL that failed to store (11-01: 28 pages lost, and the
       # next three runs were below the reserve). Newest cache wins; see Resume-PendingDates.
       - name: Restore paid calendar dates
         uses: actions/cache/restore@v4
