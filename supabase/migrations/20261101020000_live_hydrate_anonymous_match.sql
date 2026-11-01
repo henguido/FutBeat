@@ -1,15 +1,18 @@
 -- BE-239: a mapped match with an empty payload joins the feed with its teams.
 --
--- 7,311 match entities hold only id and empty names: the global resolver maps
--- the provider id first, so an ingest that fails later leaves the mapping behind
--- an entity nobody fills. The linker counted them as linked and stopped, so such a
+-- 7,311 match entities hold only id and empty names. Global ingest commits the
+-- identity (entity + mapping) in resolve-matches and stores the fixture later in
+-- one RPC: 7,298 of the 7,299 GOAL ones were born inside a run that failed with
+-- 57014 at stage store. The linker counted them as linked and stopped, so such a
 -- match showed no teams and had no calendar row (GOAL 835432, 2026-10-31).
 --
 -- Same strong identity as discover_goal_live_match: both teams and the competition
--- mapped by provider id, never by name. A real match of the same teams within
--- 3 hours keeps the entity empty: merging twins is not decided here.
+-- mapped by provider id, never by name. A team cannot play twice within 3 hours:
+-- a real match sharing either team in that window is a twin or a homonym wrongly
+-- merged into one team (79 teams hold several GOAL ids), and the entity stays
+-- empty. Merging is not decided here.
 
-create or replace function futbeat_private.hydrate_goal_anonymous_match(p_fixture jsonb, p_match text)
+create or replace function futbeat_private.hydrate_goal_anonymous_match(p_fixture jsonb, p_match text, p_via text default 'live-feed')
 returns text
 language plpgsql
 security definer
@@ -21,7 +24,7 @@ declare
   v_away_ext text:=nullif(coalesce(p_fixture#>>'{awayTeam,id}',p_fixture->>'awayTeamId'),'');
   v_comp_ext text:=nullif(coalesce(p_fixture#>>'{league,id}',p_fixture->>'leagueId'),'');
   v_kickoff timestamptz:=futbeat_private.try_timestamptz(p_fixture->>'kickoffUtc');
-  v_home text; v_away text; v_comp text;
+  v_home text; v_away text; v_comp text; v_same boolean; v_busy boolean;
 begin
   if not exists(select 1 from futbeat_private.entities e
       where e.id=p_match and e.kind='match' and coalesce(e.payload->>'homeTeamId','')='') then
@@ -38,12 +41,15 @@ begin
   if v_kickoff is null then return 'no_kickoff'; end if;
 
   perform futbeat_private.goal_match_identity_lock(v_ext);
-  if exists(select 1 from futbeat_private.calendar_matches c
-      join futbeat_private.entities x on x.id=c.match_id
-      where c.start_time between v_kickoff-interval '3 hours' and v_kickoff+interval '3 hours'
-        and x.id<>p_match and x.payload->>'homeTeamId'=v_home and x.payload->>'awayTeamId'=v_away) then
-    return 'twin_exists';
-  end if;
+  select coalesce(bool_or(t.h=v_home and t.a=v_away),false),count(*)>0 into v_same,v_busy
+  from futbeat_private.calendar_matches c
+  join futbeat_private.entities x on x.id=c.match_id
+  cross join lateral (select futbeat_private.futbeat_resolve_entity_id('team',x.payload->>'homeTeamId') h,
+    futbeat_private.futbeat_resolve_entity_id('team',x.payload->>'awayTeamId') a) t
+  where c.start_time between v_kickoff-interval '3 hours' and v_kickoff+interval '3 hours'
+    and x.id<>p_match and (t.h in (v_home,v_away) or t.a in (v_home,v_away));
+  if v_same then return 'twin_exists'; end if;
+  if v_busy then return 'team_busy'; end if;
 
   update futbeat_private.entities e set payload=(e.payload-'name'-'country'-'shortName')||jsonb_strip_nulls(jsonb_build_object(
       'competitionId',v_comp,'homeTeamId',v_home,'awayTeamId',v_away,
@@ -52,8 +58,14 @@ begin
       'status','SCHEDULED','events','[]'::jsonb,'statistics','[]'::jsonb,
       'season',nullif(p_fixture->>'leagueYear',''),
       'provenance',jsonb_build_object('source','GOAL API','externalId',v_ext,'receivedAt',now(),
-        'verificationStatus','PROVISIONAL','discoveredVia','live-feed')))
+        'verificationStatus','PROVISIONAL','discoveredVia',p_via)))
     where e.id=p_match and e.kind='match' and coalesce(e.payload->>'homeTeamId','')='';
+  update futbeat_private.live_match_state set canonical_match_id=p_match
+    where provider='goal_api' and external_match_id=v_ext and canonical_match_id is null;
+  update futbeat_private.provider_observations set canonical_match_id=p_match
+    where provider='goal_api' and external_match_id=v_ext and canonical_match_id is null;
+  update futbeat_private.live_events set canonical_match_id=p_match
+    where provider='goal_api' and external_match_id=v_ext and canonical_match_id is null;
   if exists(select 1 from futbeat_private.live_match_state
       where provider='goal_api' and external_match_id=v_ext and canonical_match_id=p_match) then
     perform public.futbeat_publish_live_state('goal_api',v_ext);
@@ -61,7 +73,7 @@ begin
   return 'hydrated';
 end $function$;
 
-revoke all on function futbeat_private.hydrate_goal_anonymous_match(jsonb,text) from public,anon,authenticated;
+revoke all on function futbeat_private.hydrate_goal_anonymous_match(jsonb,text,text) from public,anon,authenticated;
 
 CREATE OR REPLACE FUNCTION futbeat_private.futbeat_link_goal_live_matches(p_fixtures jsonb)
  RETURNS jsonb
@@ -237,13 +249,15 @@ begin
     on conflict(provider,kind,external_id)
     do update set canonical_id=excluded.canonical_id;
 
+    -- A match found by name never moves a team id already mapped: two clubs
+    -- can share a name, and the provider id is the only team identity.
     if v_home_external is not null and v_home_canonical is not null then
       insert into futbeat_private.provider_entities(
         provider,kind,external_id,canonical_id
       )
       values('goal_api','team',v_home_external,v_home_canonical)
       on conflict(provider,kind,external_id)
-      do update set canonical_id=excluded.canonical_id;
+      do nothing;
     end if;
 
     if v_away_external is not null and v_away_canonical is not null then
@@ -252,7 +266,7 @@ begin
       )
       values('goal_api','team',v_away_external,v_away_canonical)
       on conflict(provider,kind,external_id)
-      do update set canonical_id=excluded.canonical_id;
+      do nothing;
     end if;
 
     update futbeat_private.live_match_state
