@@ -1323,7 +1323,12 @@ class ApiRepository implements FootballRepository {
     // The API may still request lineup-photo hydration on any detail read.
     if (_detailRequested.contains(id)) {
       final cached = await readMatchDetail(id, cancelToken: cancelToken);
-      if (!cached.hydrationNeeded) return cached;
+      // The opt-in stored-only adapter cannot register hydration work. A
+      // second demand-shaped GET would be rewritten to the same passive read.
+      final storedReadsOnly = dio.interceptors.any(
+        (interceptor) => interceptor is QaStoredReadInterceptor,
+      );
+      if (!cached.hydrationNeeded || storedReadsOnly) return cached;
     }
     if (_detailRequestInFlight.containsKey(id)) {
       diagnostics?.record('/v1/match-detail', 'sharedFlight');
