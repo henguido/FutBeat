@@ -5,8 +5,9 @@
 -- so the nearest dates ate the budget and the far ones never came up. Refresh by distance:
 --   +2..+3 1 day, +4..+14 3 days, +15..+45 7 days, beyond +45 21 days. Order unchanged: nearest first.
 --
--- A date whose ingest failed twice in 24 h rests for 24 h: a large date costs up to 16 pages per
--- attempt and a persistent failure repeated them on every run. It comes back alone.
+-- A date whose ingest failed twice in 20 h rests until then: a large date costs up to 16 pages per
+-- attempt and a persistent failure repeated them on every run. It comes back alone, in time for
+-- the first run of the next day (the only one with quota, 11-01: 05:57, 13:16, 19:37 skipped).
 --
 -- Past 64 ingests a day v44 answers 200 skipped after the workflow paid the pages. The plan now
 -- stops offering dates when no slot is left, with the same count as futbeat_reserve_provider_call.
@@ -29,7 +30,7 @@ as $function$
   select (metadata->>'failedDate')::date
   from futbeat_private.provider_call_ledger
   where provider='goal_api' and call_kind='calendar-ingest' and status='FAILED'
-    and reserved_at>=now()-interval '24 hours'
+    and reserved_at>=now()-interval '20 hours'
     and coalesce(metadata->>'failedDate','')~'^\d{4}-\d{2}-\d{2}$'
   group by 1 having count(*)>=2
 $function$;

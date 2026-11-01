@@ -110,14 +110,14 @@ test('nearest first: a date never covered comes before a far one', () => withDb(
   assert.deepEqual(dates, [await dateAt(db, 2), await dateAt(db, 3), await dateAt(db, 4)]);
 }));
 
-test('two failures in 24 h rest the date; one does not, and it comes back alone', () => withDb(async (db) => {
+test('two failures in 20 h rest the date; one does not, and it comes back alone', () => withDb(async (db) => {
   const date = await dateAt(db, 5);
   await ledger(db, 'FAILED', { failedDate: date });
   assert.ok((await missing(db, 5, 5)).includes(date), 'one failure keeps it');
   await ledger(db, 'FAILED', { failedDate: date });
   assert.deepEqual(await missing(db, 5, 5), [], 'rests');
-  await db.query(`update futbeat_private.provider_call_ledger set reserved_at=now()-interval '25 hours' where call_kind='calendar-ingest'`);
-  assert.deepEqual(await missing(db, 5, 5), [date], 'back after 24 h');
+  await db.query(`update futbeat_private.provider_call_ledger set reserved_at=now()-interval '21 hours' where call_kind='calendar-ingest'`);
+  assert.deepEqual(await missing(db, 5, 5), [date], 'back after 20 h');
 }));
 
 test('a failure without a date rests nothing', () => withDb(async (db) => {
