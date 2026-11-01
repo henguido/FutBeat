@@ -44,11 +44,12 @@ class _CalendarWire implements HttpClientAdapter {
     Future<void>? cancelled,
   ) async {
     requests.add(options);
-    if (cancel)
+    if (cancel) {
       throw DioException(
         requestOptions: options,
         type: DioExceptionType.cancel,
       );
+    }
     final status =
         statuses[(requests.length - 1).clamp(0, statuses.length - 1)];
     return ResponseBody.fromString(
