@@ -710,7 +710,10 @@ class ApiRepository implements FootballRepository {
         lastStack = stack;
         failures++;
         if (cached != null) yield cached.asStale();
-        if (failures >= calendarPolicy.maxAttempts) break;
+        // Authentication, known absence, invalid payloads and cancellation
+        // cannot recover through immediate repetition. Keep cached data, but
+        // reserve the bounded retry budget for transient transport/server errors.
+        if (!_retryable(error) || failures >= calendarPolicy.maxAttempts) break;
         if (!await wait(retryDelay * failures)) {
           if (cancelToken?.isCancelled == true) return;
           break;
