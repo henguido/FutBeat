@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { openDatabase } from '../storage/database.mjs';
 import * as matchDetail from '../../supabase/functions/_shared/match_detail.ts';
 import * as calendarCache from '../../supabase/functions/_shared/calendar_cache.ts';
+import * as qaStoredReads from '../../supabase/functions/_shared/qa_stored_reads.ts';
 
 // #158 Tabla v2 "Forma": last results per team of one competition + season,
 // from stored canonical finals only. Synthetic ids/names; DB-only.
@@ -215,7 +216,7 @@ async function api(db) {
   const context = vm.createContext({
     Request, Response, URL, JSON, setTimeout, clearTimeout, console: { warn: () => {}, error: () => {}, log: () => {} },
     withSupabase: (_opts, handler) => (request) => handler(request, ctx),
-    ...matchDetail, ...calendarCache,
+    ...matchDetail, ...calendarCache, ...qaStoredReads,
   });
   const code = stripTypeScriptTypes(source.replace(/^import\s[\s\S]*?;\r?\n/gm, ''))
     .replace('export default {', 'globalThis.__api = {');

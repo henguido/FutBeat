@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { openDatabase } from '../storage/database.mjs';
 import * as matchDetail from '../../supabase/functions/_shared/match_detail.ts';
 import * as calendarCache from '../../supabase/functions/_shared/calendar_cache.ts';
+import * as qaStoredReads from '../../supabase/functions/_shared/qa_stored_reads.ts';
 
 // Team profile first paint: /v1/entity answers in the time of its slowest RPC
 // (demands and the stored read run concurrently) and the stored read never
@@ -37,7 +38,7 @@ async function concurrentApi(expected, answers) {
   const context = vm.createContext({
     Request, Response, URL, JSON, setTimeout, clearTimeout, Promise, console: { warn: () => {}, error: () => {}, log: () => {} },
     withSupabase: (_opts, handler) => (request) => handler(request, ctx),
-    ...matchDetail, ...calendarCache,
+    ...matchDetail, ...calendarCache, ...qaStoredReads,
   });
   vm.runInContext(stripTypeScriptTypes(source.replace(/^import\s[\s\S]*?;\r?\n/gm, ''))
     .replace('export default {', 'globalThis.__api = {'), context);
