@@ -2,6 +2,15 @@ name: Probe GOAL API global catalog
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: catalog (default) or results-pagination (BE-247, exactly 2 GOAL calls)
+        required: false
+        default: catalog
+      date:
+        description: results-pagination only, UTC date with more than 500 results
+        required: false
+        default: '2026-11-01'
 
 permissions:
   contents: read
@@ -13,7 +22,33 @@ jobs:
     env:
       GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
     steps:
+      - name: Probe results pagination
+        if: inputs.mode == 'results-pagination'
+        shell: pwsh
+        env:
+          PROBE_DATE: ${{ inputs.date }}
+        run: |
+          # BE-247: /results/date stops at 500 with pagination_stalled. Two calls only:
+          # page 1 and page 6 at limit 100. Prints ids and the provider pagination, never the key.
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:GOAL_API_KEY)) { throw "missing GOAL_API_KEY" }
+          Write-Output "::add-mask::$env:GOAL_API_KEY"
+          if ($env:PROBE_DATE -notmatch '^\d{4}-\d{2}-\d{2}$') { throw "bad date" }
+          $pages = @{}
+          foreach ($offset in @(0, 500)) {
+            $uri = "https://api.goal-api.com/v1/results/date/$($env:PROBE_DATE)?limit=100&offset=$offset"
+            $h = $null
+            $r = Invoke-RestMethod -Uri $uri -Headers @{ Authorization = "Bearer $env:GOAL_API_KEY"; Accept = "application/json" } -ResponseHeadersVariable h -TimeoutSec 30
+            $ids = @($r.data | ForEach-Object { if ($_.apiId) { [string]$_.apiId } else { [string]$_.id } })
+            $pages[$offset] = $ids
+            Write-Output "PROBE_PAGE offset=$offset rows=$($ids.Count) remaining=$(@($h['X-RateLimit-Remaining'])[0]) pagination=$($r.pagination | ConvertTo-Json -Compress)"
+            Write-Output "PROBE_IDS offset=$offset $($ids -join ',')"
+          }
+          $overlap = @($pages[500] | Where-Object { $pages[0] -contains $_ }).Count
+          Write-Output "PROBE_RESULT page6_rows=$($pages[500].Count) overlap_with_page1=$overlap"
+
       - name: Probe global fixture catalog
+        if: inputs.mode != 'results-pagination'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
