@@ -100,7 +100,7 @@ Cada fila permanece abierta hasta reunir su aceptación concreta. Las referencia
 | R03 | Configuración release congelada | P0 | IN PROGRESS | Guardas nativas5/5PASS(E13), grafo release validado con dry-run y plantilla pública preparada; origen/token/firma aún pendientes | Propietario + Codex | R10/A08/N10 | Defines explícitos; no DEMO/loopback/diag QA; OAuth/Ads/Push según decisión verificada | e703864a | INTERNAL |
 | R04 | AAB existente o siguiente release trazable | P0 | BLOCKED | +6 histórico preservado, no revalidado ni sustituido; no contiene esta línea | Propietario + Codex | R01/R02/R03/R09 | Fuente/hash/firma/manifest/ELF/16KB aceptados del AAB exacto; build solo autorizado | Internal+6 histórico | INTERNAL |
 | R05 | Privacidad, permisos y borrado | P0 | BLOCKED | E9 histórica; no evidencia actual sobre nuevo binario | Propietario + Codex + Claude | R03/R04 | Manifest fusionado y SDKs coinciden con declaraciones; enlaces/borrado verificados | PLAY-130-PREPARATION.md | INTERNAL |
-| R06 | Dependencias y secretos release | P0 | IN PROGRESS | E13:configuración inválida rechazada; secretos del binario release aún sin inspección | Codex | R04 | Lockfile sin cambio inadvertido; ningún secreto privado; endpoints/diagnóstico correctos | build.gradle.kts | INTERNAL |
+| R06 | Dependencias y secretos release | P0 | IN PROGRESS | E15:c280ffdc rechaza claves privadas/sesión en campos públicos; binario final pendiente | Codex | R04 | Lockfile sin cambio inadvertido; ningún secreto privado; endpoints/diagnóstico correctos | build.gradle.kts | INTERNAL |
 | R07 | Compatibilidad Android y nativas | P0 | IN PROGRESS | E6 QA:SDK24/36,4ELF requeridos; no equivale a AAB16KB | Codex | R04 | Inspección binario release y arranque A32 sin crash/R8 | dabdeea6 | INTERNAL |
 | R08 | QA física candidata exacta | P0 | BLOCKED | E6 ADB sin ACK; no teléfono en continuaciones | Codex + propietario | ADB/READY/autorización | Instalación/actualización sin pérdida, recorrido observado y cierre PID; QA123 restaurado | physical-precheck.json | INTERNAL |
 | R09 | Suite y CI del SHA de release | P0 | BLOCKED | E14:1580PASS local/analyze; CI remoto sigue sin validar, último#235 con11goldens | Codex + propietario | permiso push/CI posterior | Suite/analyze correctos, CI de SHA exacto sin ocultar diferencias | #234/#235 | INTERNAL |
@@ -172,7 +172,7 @@ Falta apps/mobile/android/key.properties en este worktree: no se leen/buscan con
 | M02: equipos/ligas/jugadores favoritos | PASS:IDs conservados, agregar/quitar,3filas únicas; ordenmanual/pins no se sobrescriben al cambiar país | Feed físico y sincronización de cuenta real |
 | A03/A07: país invitado->cuenta | PASS con auth/RPC simulados; la elección local gana conforme al contrato existente | No login real ni cambios de cuenta productiva |
 | A08/A09/A10: Google/correo/Facebook/reset/sesión/logout | Suite localPASS, incluye doblesPKCE/Auth y persistencia local de sesión | OAuth/correo/recovery con proveedor y certificado reales siguenNOT VERIFIED; no cambiar flags automáticamente |
-| R03/R06: configuración release | Guardas nativas previas5/5PASS; plantilla pública aún no activada | Origen/token aprobados, inspección de binario y rechazo de secretos sintéticos por verificar |
+| R03/R06: configuración release | Guardas nativas8/8PASS(E15); plantilla pública aún no activada | Origen/token aprobados e inspección de binario pendientes; rechazo sintético PASS |
 | R01/R02/R04/R07: paquete/firma/versión/APK/AAB | Fuente definecom.futbeat.futbeat; guardas fail-closed conservadas | Falta key.properties en este worktree, certificadoupload/versionCode dePlay y build firmado autorizado; ninguna APK nueva |
 | R05: permisos/dependencias/secretos | Sin cambio a manifest/pubspec/lockfile; sin claves reales añadidas | Revisar manifest fusionado/SDKs/declaraciones sobre el AAB final |
 | R08/R10: físico/conectado | No ejecutado; QA123 y A32 intactos | Contrato/health/GO, dispositivoREADY y autorización específica |
@@ -181,16 +181,22 @@ Estos cierres son de recorrido **local real de Flutter y SQLite**, no DONE de ac
 
 ## Hitos y próxima tarea
 
-- **H0 — alcanzado como preparación local**: línea246 conservada, cinco correcciones funcionales integradas, cuentas/preferencias203tests localesPASS, dos continuaciones programadas completadas. No confundir hito local con DONE de producto.
+- **H0 — alcanzado como preparación local**: línea246 conservada, cinco correcciones funcionales integradas, cuentas/preferencias203tests localesPASS, cuatro continuaciones programadas completadas. No confundir hito local con DONE de producto.
 - **H1 — siguiente hito de lanzamiento**: contrato conectado vigente aprobado + A32READY + evidencia física del recorrido crítico sobre SHA congelado. En paralelo resolver CI conocido y alcance Google/Push/Facebook, sin esperar inactivo.
 - **H2**: un único AAB oficial trazable tras permisos de firma/configuración, revisión de Console y autorización separada de subida. Después smoke desde Internal y enlace real de testers. No publicar enProducción.
 
-Próximo bloque seguro: **R06**, comprobar con claves exclusivamente sintéticas si el campo destinado al token público permite empaquetar un valor con formato privado/service_role. Reutilizar la guarda/validador existentes; primero reproducir el rechazo ausente y corregir solo si hay evidencia. No leer secretos reales ni crear credenciales, usar red o generar binarios. R03 tiene cinco regresiones nativasPASS; origen/configuración aprobados y firma siguen pendientes. No volver a optimizaciones abiertas de UI/cache.
+Próximo bloque de lanzamiento: **R08/R09/R10**, evidencia física autorizada, CI del SHA final y contrato conectado vigente. Estas continuaciones no tienen permiso para teléfono, publicación/CI remoto o producción. Si no aparece un defecto P0/P1 local reproducible o nueva evidencia autorizada, registrar bloqueo externo sin inventar trabajo ni repetir suites. R06 conserva pendiente la inspección del artefacto final y aprobación de configuración/firma.
 
 ## Continuaciones MOBILE245
 
-Misma automatización futbeat-mobile245-12-continuaciones-locales,ACTIVE,12invocaciones totales autorizadas;3programadas completadas acreditadas,9restantes como máximo. Esta revisión manual no consume una programada. Instrucciones actualizadas mediante herramienta de la app; creación/horario/límite conservados. No se creó otro proceso/tarea/controlador.
+Misma automatización futbeat-mobile245-12-continuaciones-locales,ACTIVE,12invocaciones totales autorizadas;4programadas completadas acreditadas,8restantes como máximo. Esta revisión manual no consume una programada. Instrucciones actualizadas mediante herramienta de la app; creación/horario/límite conservados. No se creó otro proceso/tarea/controlador.
 
 Usar active-target.json y el bloqueo atómico existente antes de editar. Si existe otro dueño, registrar BLOCKED_BUSY y no tocar archivos compartidos. Cada ejecución escoge ID de esta tabla, reproduce/corrige/prueba/commit local, actualiza evidencia/estado y checkpoint, registra ledger y libera solo su bloqueo. No marcar DONE por mocks ni fabricar horas efectivas. No resetear el contador al cambiar instrucciones. Si no hay tarea segura, registrar bloqueo sin falsa implementación.
 
 Límites automáticos intactos: solo código/pruebas/commits locales; sin teléfono/ADB,producción,Supabase,GOAL,servicios,instalación de dependencias,buildAPK/AAB,push/PR/merge,rebase/cherry-pick o cambios deQA123/ramas ajenas. Las automatizaciones no garantizan trabajo con equipo apagado/app cerrada; ver [documentación oficial](https://learn.chatgpt.com/docs/automations?surface=app).
+
+## E15 — continuación programada 04, R06
+
+Commit c280ffdc: la guarda aceptaba valores sintéticos sb_secret y JWT service_role/authenticated en los dos campos públicos. Dos reproducciones fallaron antes; no se usaron claves reales. La corrección conserva claves publishable y JWT legacy anon, rechaza formatos privados/sesión/malformados y omite sus valores del error. Es una protección contra inclusión accidental, no autenticación de JWT ni validación de firma/proyecto.
+
+Ocho casos Gradle nativos PASS/0FAIL, incluido bundleRelease --dry-run estricto;2 pruebas de hardening Android PASS. Evidencia artifacts/mobile246/hourly04-before-runtime/ y artifacts/mobile250/runtime-config/. Metadatos tamaño/mtime de APK existentes sin cambios; no empaquetado, firma, APK/AAB nuevos, teléfono o producción. La suite Flutter1580PASS y analyzePASS de E14 son históricos, no repetidos: este cambio no altera fuentes Flutter. R06 sigue IN PROGRESS hasta revisión de configuración y binario finales.
