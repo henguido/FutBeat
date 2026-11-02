@@ -43,64 +43,77 @@ Rutas relativas a este worktree, salvo indicación explícita. Los logs en artif
 
 - **E11**: continuación02, artifacts/mobile246/hourly02-before.log: dos regresiones fallan3vs1; hourly02-after.log:53PASS/0FAIL (MatchCenter,enriquecimiento ordinario,detalle,contratos/STOP/loopback); hourly02-analyze.log:PASS12,1s. Pausa/reanudación pasiva no repite consulta; se conserva jugador canónico y placeholder. Prueba local, no fotos físicas nuevas ni DONE de producto. Commit c903ccc5; +38 no lo contiene.
 
+- **E12 — MOBILE250**: artifacts/mobile246/mobile250-full-suite.log: **1577PASS/0FAIL**,155s, suite completa incluida visual_test y goldens, sin exclusiones ni referencias nuevas. Flutter sobre fuente412f9ca4; los nuevos cambios son guardas Android de build y preparación release. mobile250-analyze.log:PASS142,5s. mobile250-android-hardening-final.log:2PASS/0FAIL; guardas de firma fail-closed e iconos. No son CI remoto ni prueba A32.
+
 ## Backlog de aceptación
 
 Cada fila permanece abierta hasta reunir su aceptación concreta. Las referencias de tests son evidencias locales, no datos reales. Cambios e703864a y anteriores están integrados solo en esta línea local; no implican main ni Play.
 
-| ID | Funcionalidad | Prioridad | Estado | Evidencia | Responsable | Dependencias | Prueba de aceptación | Commit/PR |
-|---|---|---|---|---|---|---|---|---|
-| S01 | Calendario con fechas y partidos recuperados | P0 | BLOCKED | E3/E7; calendario local probado, cobertura actual desconocida | Claude + Codex | R10 | Mostrar hoy/ayer/día siguiente con IDs y zona CR del backend autorizado | ec16b80d,abc3b671 |
-| S02 | Marcadores LIVE recientes | P0 | BLOCKED | E1/E7; pruebas LIVE locales, sin observación vigente | Claude + Codex | R10 | Observar timestamp reciente y llegada real en A32 | 57b9851b,dabdeea6 |
-| S03 | Actualización de marcador | P0 | IN PROGRESS | E1; correcciones y revisiones probadas localmente | Codex | S02 | Un cambio real llega sin recarga ni duplicación | 57b9851b |
-| S04 | Final termina LIVE | P0 | IN PROGRESS | E1; estados terminales locales | Codex + Claude | S02 | Final canónico cancela seguimiento y persiste tras reabrir | 57b9851b |
-| S05 | Correcciones de goles | P1 | IN PROGRESS | E1; fixtures de revisiones y marcador | Codex | S02 | Anulación y corrección convergen al estado canónico sin sumar doble | 57b9851b |
-| S06 | Feed sin partidos duplicados | P0 | IN PROGRESS | E1; feed/identidad local | Codex | S01 | Mismo ID aparece una vez por grupo; favorito también permanece en liga | abc3b671 |
-| S07 | Datos antiguos identificados | P0 | IN PROGRESS | E1; avisos frescura y LIVE sin timestamp | Codex | S01/S02 | Offline/stale no se presenta como observación actual | 57b9851b |
-| S08 | Error temporal sin crash | P0 | IN PROGRESS | E1/E2; errores terminales y503, caché preservada | Codex | R08 | Corte y503 mantienen pantalla recuperable y datos guardados | ec16b80d |
-| S09 | Cobertura Costa Rica validada | P0 | BLOCKED | E7 fechado; no es health actual | Claude | R10 | IDs de competiciones/fechas CR y cobertura parcial explicitados | handoff244 |
-| S10 | Cobertura internacional principal | P1 | BLOCKED | E7; sin verificación actual de datos | Claude | R10 | Muestra acordada con fixtures almacenados, sin exigir datos inexistentes | handoff244 |
-| M01 | Feed y navegación por fechas | P0 | IN PROGRESS | E1; carrera de fecha corregida | Codex | S01/R08 | Cambiar ida/vuelta sin respuesta obsoleta ni precarga de fecha anterior | abc3b671 |
-| M02 | Favoritos agrupados y persistentes | P0 | IN PROGRESS | E4; persistencia local probada hoy | Codex | A07/R08 | Seleccionar/quitar, reiniciar y conservar un grupo; no perder demás partidos | 57b9851b; pruebas153 existentes |
-| M03 | Match Center cache-first | P0 | IN PROGRESS | E1/E2/E11; reapertura pasiva3->2lecturas en dos visitas, enriquecimiento3->1 | Codex | R08/R10 | Primera lectura, reapertura SQLite y actualización segura en partido real | bee70aca,c903ccc5 |
-| M04 | Cronología completa y compacta | P1 | IN PROGRESS | E1; regresiones locales IDs/eventos | Codex + Claude | M03 | Comparar IDs API/SQLite/UI; explicar eventos filtrados sin inventarlos | 57b9851b |
-| M05 | Previa y estados sin datos | P1 | IN PROGRESS | E1; contratos locales; ruta no pasiva por defecto | Codex + Claude | R10 | Previa disponible o ausencia explícita; no red fuera del alcance | 57b9851b |
-| M06 | Estadísticas | P1 | IN PROGRESS | E1/E2; datos tardíos y recuperación local | Codex | M03/R08 | Valores reales coinciden con payload y permanecen offline cuando guardados | e703864a |
-| M07 | Alineaciones y fotografías | P0 | IN PROGRESS | E8 histórica/E11 local;3->1lecturas pasivas, sin prueba física del nuevo SHA | Codex | R08 | Titulares/banca legibles sin overflow y fotos correctas sin red tras reinicio | 75f60b8 heredado;c903ccc5 |
-| M08 | Tabla de fase/grupo/temporada | P1 | IN PROGRESS | E2; ordinario6lecturas, pasivo6->1; filas conservadas | Codex + Claude | R10 | Apertura/Clausura/grupo exactos; sin datos legítimos no son tabla inventada | e703864a |
-| M09 | Perfil por identidad canónica | P1 | IN PROGRESS | E1; alias/homónimos/identidad local | Codex + Claude | R10 | Plantilla/alineación abren mismo ID; homónimos separados | 57b9851b |
-| M10 | Caché de fotos persistente y acotada | P1 | IN PROGRESS | E8 histórica y E1 regresiones; no prueba actual del dispositivo | Codex | R08 | Descarga autorizada, cierre de proceso, offline, placeholder y evicción | 75f60b8 heredado |
-| A01 | Invitado | P0 | IN PROGRESS | E4; invitado sin sesión ni permiso Push | Codex | R08 | Entrar sin cuenta y navegar feed/MC sin login forzado | e703864a base probada |
-| A02 | Configuración rápida | P1 | IN PROGRESS | E4; onboarding local | Codex | R08 | Completar u omitir sin bucle y editar desde Perfil | e703864a base probada |
-| A03 | País sugerido y modificable | P1 | IN PROGRESS | E4; sugerencia/manual/reentrada | Codex | R08 | País manual persiste y no borra favoritos; distinguir zona/país | e703864a base probada |
-| A04 | Seguir equipos | P0 | IN PROGRESS | E4; multiselección y eliminación | Codex | A07 | Agregar/quitar por ID y conservar al reiniciar | e703864a base probada |
-| A05 | Seguir competiciones | P1 | IN PROGRESS | E4; personalización | Codex | A07 | Selección persistente y feed coherente | e703864a base probada |
-| A06 | Seguir jugadores existentes | P1 | IN PROGRESS | E4; catálogo/fallback sin inventar | Codex | A07/R10 | Buscar ID canónico existente; ausencias no crean jugadores | e703864a base probada |
-| A07 | Preferencias y guest->cuenta | P0 | IN PROGRESS | E4; errores de red y carrera de sincronización | Codex | A09/R08 | Reinicio offline y login no pierden ni duplican favoritos | 57b9851b |
-| A08 | Google | P1 | BLOCKED | E9; bandera por proveedor, no login release actual | Propietario + Codex | R02/R03 | Validar callback con certificado distribuido o aplazar explícitamente ocultándolo | OAuth availability doc |
-| A09 | Correo, confirmación, reset y salida | P0 | IN PROGRESS | E4; formularios locales; login histórico no valida nueva release | Propietario + Codex + Claude | R10/R08 | Cuenta autorizada: login/confirmación/reset/logout sin exponer contraseña | auth_flows_test.dart |
-| A10 | Facebook si está configurado | P2 | BLOCKED | E9; no configuración real verificada | Propietario | R02 | Mantener flag false y botón ausente; habilitar solo tras QA Meta/callback | OAuth availability doc |
-| N01 | Notificación de gol | P1 | BLOCKED | E5; contrato local no entrega FCM | Claude + Codex | R10/permiso específico | Entrega controlada real o exclusión explícita sin promesa en UI | 57b9851b |
-| N02 | Notificación de inicio | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | Evento correcto una sola vez en dispositivo autorizado | 57b9851b |
-| N03 | Notificación de final | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | Final canónico entregado una sola vez | 57b9851b |
-| N04 | Notificación tarjeta roja | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | Destinatario y evento correctos sin duplicación | 57b9851b |
-| N05 | Notificación titular | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | Jugador canónico y preferencia correctos | 57b9851b |
-| N06 | Notificación banca | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | No confundir suplente con titular ni inventar alineación | 57b9851b |
-| N07 | Correcciones de notificaciones | P1 | IN PROGRESS | E5; contrato/revisiones locales | Claude + Codex | N01 | Corrección no repite gol obsoleto ni altera identidad | 57b9851b |
-| N08 | Preferencias de alertas | P1 | IN PROGRESS | E4/E5; preferencias sin pedir permiso al abrir | Codex | A07 | Cambios persistentes y coherentes con feature desactivada | 57b9851b |
-| N09 | Tap abre partido correcto | P1 | IN PROGRESS | E5; navegación local | Codex | N01 | Tap real cold/warm abre ID del mensaje, sin externo | 57b9851b |
-| N10 | Deduplicación y autorización FCM | P0 | BLOCKED | E5; solo pruebas locales; no estado remoto inferido | Claude + propietario | permiso separado | Mantener dry_run; decisión explícita: FCM apagado en1.0 o prueba aprobada | 57b9851b |
-| R01 | Paquete oficial y versionCode disponible | P0 | BLOCKED | E6/E9; QA38 no es com.futbeat.futbeat release | Propietario + Codex | Console lectura autorizada | Paquete oficial; siguiente código libre en todos los tracks | build.gradle.kts |
-| R02 | Firma upload activa correcta | P0 | BLOCKED | E9 histórica; Console no revisada hoy | Propietario | R01 | Certificado público de upload actual coincide con firma del AAB; sin claves en logs | android-signing.md |
-| R03 | Configuración release congelada | P0 | NOT STARTED | E6 solo offline; no configuración productiva de esta línea | Propietario + Codex | R10/A08/N10 | Defines explícitos; no DEMO/loopback/diag QA; OAuth/Ads/Push según decisión verificada | e703864a |
-| R04 | AAB existente o siguiente release trazable | P0 | BLOCKED | +6 histórico preservado, no revalidado ni sustituido; no contiene esta línea | Propietario + Codex | R01/R02/R03/R09 | Fuente/hash/firma/manifest/ELF/16KB aceptados del AAB exacto; build solo autorizado | Internal+6 histórico |
-| R05 | Privacidad, permisos y borrado | P0 | BLOCKED | E9 histórica; no evidencia actual sobre nuevo binario | Propietario + Codex + Claude | R03/R04 | Manifest fusionado y SDKs coinciden con declaraciones; enlaces/borrado verificados | PLAY-130-PREPARATION.md |
-| R06 | Dependencias y secretos release | P0 | IN PROGRESS | E6 guardas QA; release aún sin inspección | Codex | R04 | Lockfile sin cambio inadvertido; ningún secreto privado; endpoints/diagnóstico correctos | build.gradle.kts |
-| R07 | Compatibilidad Android y nativas | P0 | IN PROGRESS | E6 QA:SDK24/36,4ELF requeridos; no equivale a AAB16KB | Codex | R04 | Inspección binario release y arranque A32 sin crash/R8 | dabdeea6 |
-| R08 | QA física candidata exacta | P0 | BLOCKED | E6 ADB sin ACK; no teléfono en continuaciones | Codex + propietario | ADB/READY/autorización | Instalación/actualización sin pérdida, recorrido observado y cierre PID; QA123 restaurado | physical-precheck.json |
-| R09 | Suite y CI del SHA de release | P0 | BLOCKED | E1/E2; último CI conocido #235 con11goldens, no verde | Codex + propietario | permiso push/CI posterior | Suite/analyze correctos, CI de SHA exacto sin ocultar diferencias | #234/#235 |
-| R10 | Contrato desplegado y salud operativa | P0 | BLOCKED | E7 es handoff fechado, no producción actual | Claude + propietario | aprobación específica | Rutas/ACK/demandas/health/STOP comprobados, cero fallback no autorizado | PR#240 candidato |
-| R11 | Checklist Play, testers y acceso revisor | P0 | BLOCKED | E9 y mensajes históricos; no lectura Console hoy | Propietario | R02/R04/R05 | Conservar testers/ficha; revisar estado real; contraseña solo formulario seguro | PLAY-130 docs históricos |
-| R12 | Internal Testing y smoke desde Play | P0 | NOT STARTED | Ninguna subida de esta candidata autorizada | Propietario + Codex | R01..R11 | Autorización de subida distinta; enlace de participación e instalación de track probados | Sin PR release nuevo |
+| ID | Funcionalidad | Prioridad | Estado | Evidencia | Responsable | Dependencias | Prueba de aceptación | Commit/PR | Entrega |
+|---|---|---|---|---|---|---|---|---|---|
+| S01 | Calendario con fechas y partidos recuperados | P0 | BLOCKED | E3/E7; calendario local probado, cobertura actual desconocida | Claude + Codex | R10 | Mostrar hoy/ayer/día siguiente con IDs y zona CR del backend autorizado | ec16b80d,abc3b671 | INTERNAL |
+| S02 | Marcadores LIVE recientes | P0 | BLOCKED | E1/E7; pruebas LIVE locales, sin observación vigente | Claude + Codex | R10 | Observar timestamp reciente y llegada real en A32 | 57b9851b,dabdeea6 | INTERNAL |
+| S03 | Actualización de marcador | P0 | IN PROGRESS | E1; correcciones y revisiones probadas localmente | Codex | S02 | Un cambio real llega sin recarga ni duplicación | 57b9851b | INTERNAL |
+| S04 | Final termina LIVE | P0 | IN PROGRESS | E1; estados terminales locales | Codex + Claude | S02 | Final canónico cancela seguimiento y persiste tras reabrir | 57b9851b | INTERNAL |
+| S05 | Correcciones de goles | P1 | IN PROGRESS | E1; fixtures de revisiones y marcador | Codex | S02 | Anulación y corrección convergen al estado canónico sin sumar doble | 57b9851b | INTERNAL |
+| S06 | Feed sin partidos duplicados | P0 | IN PROGRESS | E1; feed/identidad local | Codex | S01 | Mismo ID aparece una vez por grupo; favorito también permanece en liga | abc3b671 | INTERNAL |
+| S07 | Datos antiguos identificados | P0 | IN PROGRESS | E1; avisos frescura y LIVE sin timestamp | Codex | S01/S02 | Offline/stale no se presenta como observación actual | 57b9851b | INTERNAL |
+| S08 | Error temporal sin crash | P0 | IN PROGRESS | E1/E2; errores terminales y503, caché preservada | Codex | R08 | Corte y503 mantienen pantalla recuperable y datos guardados | ec16b80d | INTERNAL |
+| S09 | Cobertura Costa Rica validada | P0 | BLOCKED | E7 fechado; no es health actual | Claude | R10 | IDs de competiciones/fechas CR y cobertura parcial explicitados | handoff244 | INTERNAL |
+| S10 | Cobertura internacional principal | P1 | BLOCKED | E7; sin verificación actual de datos | Claude | R10 | Muestra acordada con fixtures almacenados, sin exigir datos inexistentes | handoff244 | PUBLIC |
+| M01 | Feed y navegación por fechas | P0 | IN PROGRESS | E1; carrera de fecha corregida | Codex | S01/R08 | Cambiar ida/vuelta sin respuesta obsoleta ni precarga de fecha anterior | abc3b671 | INTERNAL |
+| M02 | Favoritos agrupados y persistentes | P0 | IN PROGRESS | E4; persistencia local probada hoy | Codex | A07/R08 | Seleccionar/quitar, reiniciar y conservar un grupo; no perder demás partidos | 57b9851b; pruebas153 existentes | INTERNAL |
+| M03 | Match Center cache-first | P0 | IN PROGRESS | E1/E2/E11; reapertura pasiva3->2lecturas en dos visitas, enriquecimiento3->1 | Codex | R08/R10 | Primera lectura, reapertura SQLite y actualización segura en partido real | bee70aca,c903ccc5 | INTERNAL |
+| M04 | Cronología completa y compacta | P1 | IN PROGRESS | E1; regresiones locales IDs/eventos | Codex + Claude | M03 | Comparar IDs API/SQLite/UI; explicar eventos filtrados sin inventarlos | 57b9851b | INTERNAL |
+| M05 | Previa y estados sin datos | P1 | IN PROGRESS | E1; contratos locales; ruta no pasiva por defecto | Codex + Claude | R10 | Previa disponible o ausencia explícita; no red fuera del alcance | 57b9851b | INTERNAL |
+| M06 | Estadísticas | P1 | IN PROGRESS | E1/E2; datos tardíos y recuperación local | Codex | M03/R08 | Valores reales coinciden con payload y permanecen offline cuando guardados | e703864a | INTERNAL |
+| M07 | Alineaciones y fotografías | P0 | IN PROGRESS | E8 histórica/E11 local;3->1lecturas pasivas, sin prueba física del nuevo SHA | Codex | R08 | Titulares/banca legibles sin overflow y fotos correctas sin red tras reinicio | 75f60b8 heredado;c903ccc5 | INTERNAL |
+| M08 | Tabla de fase/grupo/temporada | P1 | IN PROGRESS | E2; ordinario6lecturas, pasivo6->1; filas conservadas | Codex + Claude | R10 | Apertura/Clausura/grupo exactos; sin datos legítimos no son tabla inventada | e703864a | INTERNAL |
+| M09 | Perfil por identidad canónica | P1 | IN PROGRESS | E1; alias/homónimos/identidad local | Codex + Claude | R10 | Plantilla/alineación abren mismo ID; homónimos separados | 57b9851b | PUBLIC |
+| M10 | Caché de fotos persistente y acotada | P1 | IN PROGRESS | E8 histórica y E1 regresiones; no prueba actual del dispositivo | Codex | R08 | Descarga autorizada, cierre de proceso, offline, placeholder y evicción | 75f60b8 heredado | INTERNAL |
+| A01 | Invitado | P0 | IN PROGRESS | E4; invitado sin sesión ni permiso Push | Codex | R08 | Entrar sin cuenta y navegar feed/MC sin login forzado | e703864a base probada | INTERNAL |
+| A02 | Configuración rápida | P1 | IN PROGRESS | E4; onboarding local | Codex | R08 | Completar u omitir sin bucle y editar desde Perfil | e703864a base probada | INTERNAL |
+| A03 | País sugerido y modificable | P1 | IN PROGRESS | E4; sugerencia/manual/reentrada | Codex | R08 | País manual persiste y no borra favoritos; distinguir zona/país | e703864a base probada | INTERNAL |
+| A04 | Seguir equipos | P0 | IN PROGRESS | E4; multiselección y eliminación | Codex | A07 | Agregar/quitar por ID y conservar al reiniciar | e703864a base probada | INTERNAL |
+| A05 | Seguir competiciones | P1 | IN PROGRESS | E4; personalización | Codex | A07 | Selección persistente y feed coherente | e703864a base probada | INTERNAL |
+| A06 | Seguir jugadores existentes | P1 | IN PROGRESS | E4; catálogo/fallback sin inventar | Codex | A07/R10 | Buscar ID canónico existente; ausencias no crean jugadores | e703864a base probada | INTERNAL |
+| A07 | Preferencias y guest->cuenta | P0 | IN PROGRESS | E4; errores de red y carrera de sincronización | Codex | A09/R08 | Reinicio offline y login no pierden ni duplican favoritos | 57b9851b | INTERNAL |
+| A08 | Google | P1 | BLOCKED | E9; bandera por proveedor, no login release actual | Propietario + Codex | R02/R03 | Validar callback con certificado distribuido o aplazar explícitamente ocultándolo | OAuth availability doc | PUBLIC |
+| A09 | Correo, confirmación, reset y salida | P0 | IN PROGRESS | E4; formularios locales; login histórico no valida nueva release | Propietario + Codex + Claude | R10/R08 | Cuenta autorizada: login/confirmación/reset/logout sin exponer contraseña | auth_flows_test.dart | INTERNAL |
+| A10 | Facebook si está configurado | P2 | BLOCKED | E9; no configuración real verificada | Propietario | R02 | Mantener flag false y botón ausente; habilitar solo tras QA Meta/callback | OAuth availability doc | POSTERIOR |
+| N01 | Notificación de gol | P1 | BLOCKED | E5; contrato local no entrega FCM | Claude + Codex | R10/permiso específico | Entrega controlada real o exclusión explícita sin promesa en UI | 57b9851b | PUBLIC |
+| N02 | Notificación de inicio | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | Evento correcto una sola vez en dispositivo autorizado | 57b9851b | PUBLIC |
+| N03 | Notificación de final | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | Final canónico entregado una sola vez | 57b9851b | PUBLIC |
+| N04 | Notificación tarjeta roja | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | Destinatario y evento correctos sin duplicación | 57b9851b | PUBLIC |
+| N05 | Notificación titular | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | Jugador canónico y preferencia correctos | 57b9851b | PUBLIC |
+| N06 | Notificación banca | P1 | BLOCKED | E5; sin entrega real | Claude + Codex | N01 | No confundir suplente con titular ni inventar alineación | 57b9851b | PUBLIC |
+| N07 | Correcciones de notificaciones | P1 | IN PROGRESS | E5; contrato/revisiones locales | Claude + Codex | N01 | Corrección no repite gol obsoleto ni altera identidad | 57b9851b | PUBLIC |
+| N08 | Preferencias de alertas | P1 | IN PROGRESS | E4/E5; preferencias sin pedir permiso al abrir | Codex | A07 | Cambios persistentes y coherentes con feature desactivada | 57b9851b | PUBLIC |
+| N09 | Tap abre partido correcto | P1 | IN PROGRESS | E5; navegación local | Codex | N01 | Tap real cold/warm abre ID del mensaje, sin externo | 57b9851b | PUBLIC |
+| N10 | Deduplicación y autorización FCM | P0 | BLOCKED | E5; solo pruebas locales; no estado remoto inferido | Claude + propietario | permiso separado | Mantener dry_run; decisión explícita: FCM apagado en1.0 o prueba aprobada | 57b9851b | INTERNAL |
+| R01 | Paquete oficial y versionCode disponible | P0 | BLOCKED | E6/E9; QA38 no es com.futbeat.futbeat release | Propietario + Codex | Console lectura autorizada | Paquete oficial; siguiente código libre en todos los tracks | build.gradle.kts | INTERNAL |
+| R02 | Firma upload activa correcta | P0 | BLOCKED | E9 histórica; Console no revisada hoy | Propietario | R01 | Certificado público de upload actual coincide con firma del AAB; sin claves en logs | android-signing.md | INTERNAL |
+| R03 | Configuración release congelada | P0 | NOT STARTED | E6 solo offline; no configuración productiva de esta línea | Propietario + Codex | R10/A08/N10 | Defines explícitos; no DEMO/loopback/diag QA; OAuth/Ads/Push según decisión verificada | e703864a | INTERNAL |
+| R04 | AAB existente o siguiente release trazable | P0 | BLOCKED | +6 histórico preservado, no revalidado ni sustituido; no contiene esta línea | Propietario + Codex | R01/R02/R03/R09 | Fuente/hash/firma/manifest/ELF/16KB aceptados del AAB exacto; build solo autorizado | Internal+6 histórico | INTERNAL |
+| R05 | Privacidad, permisos y borrado | P0 | BLOCKED | E9 histórica; no evidencia actual sobre nuevo binario | Propietario + Codex + Claude | R03/R04 | Manifest fusionado y SDKs coinciden con declaraciones; enlaces/borrado verificados | PLAY-130-PREPARATION.md | INTERNAL |
+| R06 | Dependencias y secretos release | P0 | IN PROGRESS | E6 guardas QA; release aún sin inspección | Codex | R04 | Lockfile sin cambio inadvertido; ningún secreto privado; endpoints/diagnóstico correctos | build.gradle.kts | INTERNAL |
+| R07 | Compatibilidad Android y nativas | P0 | IN PROGRESS | E6 QA:SDK24/36,4ELF requeridos; no equivale a AAB16KB | Codex | R04 | Inspección binario release y arranque A32 sin crash/R8 | dabdeea6 | INTERNAL |
+| R08 | QA física candidata exacta | P0 | BLOCKED | E6 ADB sin ACK; no teléfono en continuaciones | Codex + propietario | ADB/READY/autorización | Instalación/actualización sin pérdida, recorrido observado y cierre PID; QA123 restaurado | physical-precheck.json | INTERNAL |
+| R09 | Suite y CI del SHA de release | P0 | BLOCKED | E12:1577PASS local/analyze; CI remoto sigue sin validar, último#235 con11goldens | Codex + propietario | permiso push/CI posterior | Suite/analyze correctos, CI de SHA exacto sin ocultar diferencias | #234/#235 | INTERNAL |
+| R10 | Contrato desplegado y salud operativa | P0 | BLOCKED | E7 es handoff fechado, no producción actual | Claude + propietario | aprobación específica | Rutas/ACK/demandas/health/STOP comprobados, cero fallback no autorizado | PR#240 candidato | INTERNAL |
+| R11 | Checklist Play, testers y acceso revisor | P0 | BLOCKED | E9 y mensajes históricos; no lectura Console hoy | Propietario | R02/R04/R05 | Conservar testers/ficha; revisar estado real; contraseña solo formulario seguro | PLAY-130 docs históricos | INTERNAL |
+| R12 | Internal Testing y smoke desde Play | P0 | NOT STARTED | Ninguna subida de esta candidata autorizada | Propietario + Codex | R01..R11 | Autorización de subida distinta; enlace de participación e instalación de track probados | Sin PR release nuevo | INTERNAL |
+
+## Alcance de salida MOBILE250
+
+Clasificación técnica para detener iteraciones abiertas: **39 requisitos INTERNAL**, **12 PUBLIC**, **1 POSTERIOR**. INTERNAL es imprescindible para la primera prueba interna; PUBLIC debe cerrarse antes de distribución pública; POSTERIOR puede aplazarse. La clasificación no activa servicios ni aprueba automáticamente la configuración de release.
+
+- INTERNAL: lectura deportiva básica sincrónica/cache, estados sin datos, onboarding/invitado/correo, favoritos, navegación crítica y controles de build/seguridad/QA/Play. LIVE real exige evidencia vigente; el propietario informa recuperación L237, pero no se convierte en health actual ni en prueba móvil.
+- PUBLIC: cobertura internacional amplia, perfil enriquecido, Google y entrega real de alertas. Para Internal pueden permanecer apagados/limitados SOLO si la UI lo representa y la configuración se aprueba explícitamente. Correo e invitado no se posponen.
+- POSTERIOR: Facebook hasta configuración y aceptación real verificadas. No mostrar un botón operativo si la integración está deshabilitada.
+- La entrega FCM real no es condición de un Internal que lo mantiene apagado/dry_run; sí lo son deduplicación/preferencias locales y no prometer entregas inexistentes. Ningún test local prueba entrega FCM.
+
+Porcentajes de aceptación final: INTERNAL0/39, PUBLIC0/12, POSTERIOR0/1. La validación local consolidada se registra separada; no se añade una nueva funcionalidad ni se baja silenciosamente un P0.
 
 ## Cinco bloqueos P0 para liberar
 
@@ -134,6 +147,18 @@ Preparación local disponible; **no autorizada ni ejecutada**. Una sola sesión 
 5. STOP ante salud no verificable/degradada,ACK ausente,ruta fuera de contrato,ADB perdido,presupuesto vencido,datos/pantalla inesperados. Cierre,PID confirmado,red original yQA123 restaurados; Claude aporta health final. Lo no observado es NOT VERIFIED.
 
 Esta sesión reduce bloqueos M/S; auth/login/borrado y notificaciones reales necesitan su aceptación específica. Las continuaciones automáticas nunca pueden ejecutar este plan físico.
+
+## Cierre funcional local MOBILE250
+
+**Consolidado localmente:** Feed/calendario/Favoritos, MatchCenter/Previa/cronología/panel de jugador, estadísticas/alineaciones/tablas, imágenes/SQLite, cambios de estado LIVE/correcciones/reconexión, onboarding/país/equipos/competiciones/jugadores/alertas y persistencia. La suite completa1577PASS incluye las regresiones de Auth/reset/cierre de sesión, ciclo de vida, identidad y contratos; el detalle por caso queda en E12. Son aceptaciones locales con datos controlados: login Google/correo real, FCM real, coberturaCR y frescura LIVE productiva siguen abiertos hasta observación autorizada.
+
+**Integración:** e703864a y c903ccc5 son ancestros del HEAD412f9ca4; no hay que copiarlos ni fusionarlos. Desde57b9851 solo cambiaron tres fuentes Flutter y sus regresiones, antes de preparar estas guardas Android. No se tocaron worktrees ajenos, backend o datos del dispositivo.
+
+**Preparación de candidata oficial:** scripts/release/android-1.0-candidate.public.example.json contiene únicamente decisiones públicas conservadoras y campos vacíos. Es una plantilla, **NO una configuración aprobada ni utilizable todavía**: API vacía debe rechazarse, token público y origen deben venir de la configuración aprobada. Ads/Google/Facebook/Push apagados son propuesta para reducir alcance Internal, no activación/cambio de servicios. Mantener FCM dry_run es instrucción del propietario; su estado remoto no se consultó.
+
+Falta apps/mobile/android/key.properties en este worktree: no se leen/buscan contraseñas ni se fabrica una firma alternativa. Firmar exige la upload key existente, coincidencia con certificado activo dePlay, versión libre y autorización. La APK+38 no se convierte en release ni contiene cambios posteriores. Conservar+36/+37/+38 y AAB+6; no generar otra numeración para esta preparación.
+
+**GuardasR03/R06:** validar modos de ejecución antes de producir release: DEMO,modoQAoffline y diagnósticosQA deben estar apagados; si se proporciona API explícita debe serHTTPS,no loopback, sin credenciales/query/fragment. Se añadieron validación Gradle y regresión offline reproducible en scripts/release/verify-runtime-config-local.py. Resultado nativo verificado:2/2casosPASS; flagsQA+HTTP local rechazados (exit1 esperado), casoHTTPS válido aceptado (exit0),38,27s/24,61s. Logs en artifacts/mobile250/runtime-config/. La primera compilación del script Kotlin falló por referencia a URI; se corrigió import explícito y se conservaron logs iniciales. Ningún fallo de compilación se contabilizó como rechazo correcto. Firma/anuncios conservan sus controles previos.
 
 ## Hitos y próxima tarea
 
