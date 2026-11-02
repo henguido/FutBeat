@@ -138,6 +138,13 @@ class ApiRepository implements FootballRepository {
   ]);
   final QaDiagnostics? diagnostics;
   final Dio dio;
+
+  /// Only the explicit stored-read adapter disables demand-related refreshes.
+  /// Optional response metadata is not an authorization signal.
+  bool get storedReadsOnly => dio.interceptors.any(
+    (interceptor) => interceptor is QaStoredReadInterceptor,
+  );
+
   final AppDatabase? database;
   final CalendarCachePolicy calendarPolicy;
 
@@ -1328,9 +1335,6 @@ class ApiRepository implements FootballRepository {
       final cached = await readMatchDetail(id, cancelToken: cancelToken);
       // The opt-in stored-only adapter cannot register hydration work. A
       // second demand-shaped GET would be rewritten to the same passive read.
-      final storedReadsOnly = dio.interceptors.any(
-        (interceptor) => interceptor is QaStoredReadInterceptor,
-      );
       if (!cached.hydrationNeeded || storedReadsOnly) return cached;
     }
     if (_detailRequestInFlight.containsKey(id)) {

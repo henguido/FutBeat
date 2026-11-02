@@ -155,8 +155,14 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     );
   }
 
+  bool get _storedReadsOnly {
+    final repository = ref.read(repositoryProvider);
+    return repository is ApiRepository && repository.storedReadsOnly;
+  }
+
   void _scheduleStandingsRefresh() {
-    if (!_sportsActive ||
+    if (_storedReadsOnly ||
+        !_sportsActive ||
         _standingsRetry != null ||
         _standingsAttempts >= _standingsSchedule.length) {
       return;
@@ -280,8 +286,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     if (watchesContext) {
       ref.listen(matchContextSnapshotProvider(widget.id), (_, next) {
         if (next.isLoading || next.value == null) return;
-        _standingsPending = next.value!.standingsPending;
-        if (next.value!.standingsPending) {
+        _standingsPending = next.value!.standingsPending && !_storedReadsOnly;
+        if (_standingsPending) {
           _scheduleStandingsRefresh();
         } else {
           // Answered (or settled server-side): no further revalidation.
@@ -464,6 +470,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     // stable state (no endless spinner).
     final standingsRefreshing =
         data.standingsPending &&
+        !_storedReadsOnly &&
         _standingsAttempts < standingsRetryDelays.length;
     final refreshing =
         (detail.pending && !_detailRefreshIndicatorExpired) ||

@@ -53,3 +53,9 @@ La app registró6297,933s(1h44m58s) para244/245 y71,470s para la aprobación/reg
 Siguiente tarea segura:PENDING_NOT_IMPLEMENTED,reproducir MatchScreen con ACK pasivo y standingsPending=true; el código mantiene temporizadores de refresco de Tabla, pero el contrato pasivo no promete hidratación. Mantener la prueba ordinaria de seis lecturas y no activar rutas/whitelist. Reproducir antes de corregir. LIVE paginado/duplicados/correcciones ya está cubierto; no repetir una auditoría general.
 
 Sin consultas a producción,GOAL,migraciones,despliegues,push,PR ni cambios en ramas ajenas. La QA conectada permanece desactivada; el último handoff local de Claude es candidato no autorizado y no prueba estado productivo actual.
+
+## Primera continuación horaria — Tabla pasiva
+
+Regresión reproducida con ACK real del interceptor y servidor simulado: standingsPending provocaba6lecturas de contexto incluso sin hidratación posible. Corregido:1lectura automática, sin indicador de carga engañoso; conserva tabla guardada o estado pendiente asentado. Pausa/reanudación no genera relectura por ese flag. Reintentar explícito conserva1lectura por toque y no inicia polling. Las rutas ordinarias mantienen sus6lecturas acotadas y llegada de tablas en segundo plano.
+
+Pruebas de esta continuación:30PASS (Match Center y reapertura de detalle),20PASS (contratos/STOP/loopback),analyzePASS21,6s,diff-checkPASS. Dos regresiones nuevas fallaron antes (6frente a1) y pasaron después. No se repitió la suite completa:1573PASS es la validación anterior, no un resultado de este nuevo HEAD. No se generó APK; +38 conserva origen dabdeea6 y no contiene esta corrección posterior. Sin teléfono,ADB,producción ni publicación.
