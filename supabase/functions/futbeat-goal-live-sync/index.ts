@@ -175,28 +175,88 @@ async function normalizeLiveFixture(
 // independent fixtures (one row per provider id), share one receivedAt, and
 // what a failed run already stored is kept: the retry only pays for the rest.
 const RECORD_CHUNK_SIZE = 25;
+// BE-245: 11-02 three live polls lost their batch to 57014 in record while the
+// global run held the database. A chunk is idempotent by payload hash, so a live
+// poll repeats it inside the budget and still tries the chunks after it. The
+// cron gives a poll 55 s.
+const LIVE_RECORD_PAUSES_MS = [2000, 5000];
+const LIVE_RECORD_BUDGET_MS = 40000;
+
+async function recordChunk(
+  receivedAt: string,
+  chunk: unknown[],
+  deadline: number | null,
+  progress: { retries?: number },
+) {
+  for (let attempt = 0;; attempt += 1) {
+    try {
+      return await rpc("futbeat_record_live_batch", {
+        p_provider: "goal_api",
+        p_received_at: receivedAt,
+        p_observations: chunk,
+      }, 30000);
+    } catch (error) {
+      const pause = LIVE_RECORD_PAUSES_MS[attempt];
+      const timedOut = error instanceof Error && error.message.includes("57014");
+      if (
+        deadline == null || pause == null || !timedOut ||
+        Date.now() + pause >= deadline
+      ) throw error;
+      progress.retries = (progress.retries ?? 0) + 1;
+      await new Promise((resolve) => setTimeout(resolve, pause));
+    }
+  }
+}
+
 async function recordObservationsInChunks(
   receivedAt: string,
   observations: unknown[],
-  progress: { chunks: number; recorded: number } = { chunks: 0, recorded: 0 },
+  progress: { chunks: number; recorded: number; retries?: number } = {
+    chunks: 0,
+    recorded: 0,
+  },
+  deadline: number | null = null,
 ) {
   let insertedObservations = 0;
   let duplicates = 0;
   let start = 0;
+  let firstFailure: unknown = null;
   do {
     const chunk = observations.slice(start, start + RECORD_CHUNK_SIZE);
-    const result = await rpc("futbeat_record_live_batch", {
-      p_provider: "goal_api",
-      p_received_at: receivedAt,
-      p_observations: chunk,
-    }, 30000);
-    insertedObservations += Number(result?.insertedObservations ?? 0) || 0;
-    duplicates += Number(result?.duplicates ?? 0) || 0;
-    progress.chunks += 1;
-    progress.recorded += chunk.length;
     start += RECORD_CHUNK_SIZE;
+    try {
+      const result = await recordChunk(receivedAt, chunk, deadline, progress);
+      insertedObservations += Number(result?.insertedObservations ?? 0) || 0;
+      duplicates += Number(result?.duplicates ?? 0) || 0;
+      progress.chunks += 1;
+      progress.recorded += chunk.length;
+    } catch (error) {
+      if (deadline == null) throw error;
+      firstFailure ??= error;
+    }
   } while (start < observations.length);
+  // The poll still ends FAILED: absence must not be read from a partial batch.
+  if (firstFailure != null) throw firstFailure;
   return { insertedObservations, duplicates, chunks: progress.chunks };
+}
+
+// BE-237: the batch is already paid for. Observations of unlinked fixtures
+// link on a later poll; losing all of them froze every live match.
+async function linkFixtures(fixtures: Record<string, unknown>[]) {
+  try {
+    const linkResult: Record<string, unknown> | null = await rpc(
+      "futbeat_link_goal_live_matches",
+      { p_fixtures: fixtures },
+      30000,
+    );
+    return { linkResult, linkFailure: null };
+  } catch (error) {
+    const linkFailure = error instanceof Error
+      ? error.message.slice(0, 200)
+      : "unknown";
+    console.warn("live link unavailable", linkFailure);
+    return { linkResult: null, linkFailure };
+  }
 }
 
 async function readGoalKey() {
@@ -504,9 +564,7 @@ async function syncLive() {
       }
     }
 
-    const linkResult = await rpc("futbeat_link_goal_live_matches", {
-      p_fixtures: fixtures,
-    }, 30000);
+    const { linkResult, linkFailure } = await linkFixtures(fixtures);
 
     const observations = await Promise.all(
       fixtures.map((fixture) =>
@@ -517,9 +575,12 @@ async function syncLive() {
     // silently maps to SCHEDULED (never inferred as live or final).
     const unmappedStatuses = unmappedGoalStatuses(fixtures);
 
+    const recordProgress = { chunks: 0, recorded: 0, retries: 0 };
     const persistence = await recordObservationsInChunks(
       new Date().toISOString(),
       observations,
+      recordProgress,
+      Date.now() + LIVE_RECORD_BUDGET_MS,
     );
 
     // #120: absence from the feed is evidence only once a whole sweep (offset
@@ -551,6 +612,8 @@ async function syncLive() {
       p_metadata: {
         mode: "live",
         ...(unmappedStatuses.length ? { unmappedStatuses } : {}),
+        ...(linkFailure ? { linkFailure } : {}),
+        ...(recordProgress.retries ? { recordRetries: recordProgress.retries } : {}),
         fromStart,
         reachedEnd,
         recovery,
@@ -716,9 +779,7 @@ async function syncOneResultsDate() {
     }
 
     stage = "link";
-    const linkResult = await rpc("futbeat_link_goal_live_matches", {
-      p_fixtures: fixtures,
-    }, 30000);
+    const { linkResult, linkFailure } = await linkFixtures(fixtures);
     stage = "normalize";
     const observations = await Promise.all(
       fixtures.map((fixture) =>
@@ -740,10 +801,15 @@ async function syncOneResultsDate() {
       p_received_at: receivedAt,
     }, 30000);
     stage = "complete_attempt";
-    const unmatchedCount = Number(linkResult?.unmappedCount ?? 0);
+    // Without a link nothing proves the date complete: PARTIAL keeps it retried.
+    const unmatchedCount = linkFailure
+      ? fixtures.length
+      : Number(linkResult?.unmappedCount ?? 0);
     await rpc("futbeat_complete_results_date_attempt", {
       p_provider_date: providerDate,
-      p_outcome: finalized?.resultsComplete === true ? "SUCCEEDED" : "PARTIAL",
+      p_outcome: finalized?.resultsComplete === true && !linkFailure
+        ? "SUCCEEDED"
+        : "PARTIAL",
       p_result_count: observations.length,
       p_unmatched_count: Number.isFinite(unmatchedCount) ? unmatchedCount : 0,
     });
@@ -769,6 +835,7 @@ async function syncOneResultsDate() {
         recordChunks: persistence.chunks,
         resultsComplete: finalized?.resultsComplete ?? false,
         unresolved: finalized?.unresolved ?? null,
+        ...(linkFailure ? { linkFailure } : {}),
         ...(truncatedBy ? { truncatedBy } : {}),
         transport: "supabase-cron",
         provider: "GOAL API",
