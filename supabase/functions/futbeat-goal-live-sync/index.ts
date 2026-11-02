@@ -1,5 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { nextResultsOffset } from "../_shared/results_pagination.ts";
+import {
+  liveFeedFreshness,
+  nextLivePage,
+  nextResultsOffset,
+} from "../_shared/results_pagination.ts";
 import {
   GOAL_PLAYER_ENDPOINTS,
   normalizeGoalPlayerProfile,
@@ -175,6 +179,20 @@ async function normalizeLiveFixture(
 // independent fixtures (one row per provider id), share one receivedAt, and
 // what a failed run already stored is kept: the retry only pays for the rest.
 const RECORD_CHUNK_SIZE = 25;
+// BE-239: one full sweep of a peak Saturday (445 matches) spans two polls.
+const LIVE_PAGE_SIZE = 100;
+const LIVE_PAGE_CAP = 3;
+// Calls left above the LIVE floor before pages beyond the first are read.
+const LIVE_EXTRA_PAGE_MARGIN = 100;
+// note_live_poll grows with the ids it receives: one call per page's worth.
+const LIVE_NOTE_CHUNK_SIZE = 100;
+const IN_PLAY_STATUSES = new Set([
+  "LIVE",
+  "HALFTIME",
+  "EXTRA_TIME",
+  "PENALTIES",
+]);
+
 async function recordObservationsInChunks(
   receivedAt: string,
   observations: unknown[],
@@ -197,6 +215,59 @@ async function recordObservationsInChunks(
     start += RECORD_CHUNK_SIZE;
   } while (start < observations.length);
   return { insertedObservations, duplicates, chunks: progress.chunks };
+}
+
+// BE-237: the batch is already paid for. Observations of unlinked fixtures
+// link on a later poll; losing all of them froze every live match.
+async function linkFixtures(fixtures: Record<string, unknown>[]) {
+  try {
+    const linkResult: Record<string, unknown> | null = await rpc(
+      "futbeat_link_goal_live_matches",
+      { p_fixtures: fixtures },
+      30000,
+    );
+    return { linkResult, linkFailure: null };
+  } catch (error) {
+    const linkFailure = error instanceof Error
+      ? error.message.slice(0, 200)
+      : "unknown";
+    console.warn("live link unavailable", linkFailure);
+    return { linkResult: null, linkFailure };
+  }
+}
+
+// A failed chunk stops the rest: reachedEnd goes last, so a sweep with a gap is
+// never closed here, and the caller drops the resume so the next poll starts over.
+async function noteLivePoll(
+  seen: string[],
+  fromStart: boolean,
+  reachedEnd: boolean,
+) {
+  const recovery = { complete: false, absent: 0, overdue: 0, reappeared: 0 };
+  try {
+    let start = 0;
+    do {
+      const next = start + LIVE_NOTE_CHUNK_SIZE;
+      const note = await rpc("futbeat_note_live_poll", {
+        p_provider: "goal_api",
+        p_seen: seen.slice(start, next),
+        p_from_start: fromStart && start === 0,
+        p_reached_end: reachedEnd && next >= seen.length,
+      });
+      recovery.complete = note?.complete === true;
+      recovery.absent += Number(note?.absent ?? 0) || 0;
+      recovery.overdue += Number(note?.overdue ?? 0) || 0;
+      recovery.reappeared += Number(note?.reappeared ?? 0) || 0;
+      start = next;
+    } while (start < seen.length);
+    return { recovery, noteFailed: false };
+  } catch (error) {
+    console.warn(
+      "terminal recovery note unavailable",
+      error instanceof Error ? error.message : "unknown",
+    );
+    return { recovery, noteFailed: true };
+  }
 }
 
 async function readGoalKey() {
@@ -431,10 +502,22 @@ async function syncLive() {
   const fixtures: Record<string, unknown>[] = [];
   const seen = new Set<string>();
   // Page budget from the central reservation (never through the protected
-  // LIVE reserve nor past the live-goal cap); 10 is the historical hard max.
-  const pageBudget = Math.min(Math.max(nonNegativeInteger(plan.pageBudget) ?? 10, 1), 10);
+  // LIVE reserve nor past the live-goal cap). Unread pages resume on the next
+  // poll, inside the liveSweepMaxMinutes window.
+  const pageBudget = Math.min(
+    Math.max(nonNegativeInteger(plan.pageBudget) ?? LIVE_PAGE_CAP, 1),
+    LIVE_PAGE_CAP,
+  );
   const floor = nonNegativeInteger(plan.reserve);
-  const startOffset = nonNegativeInteger(plan.startOffset) ?? 0;
+  const quotaLow = (left: number | null) =>
+    floor != null && left != null && left - floor < LIVE_EXTRA_PAGE_MARGIN;
+  // A low-quota poll keeps the first page fresh: resuming would rotate through
+  // the tail one page at a time and leave the first page unread for polls.
+  const plannedOffset = nonNegativeInteger(plan.startOffset) ?? 0;
+  const startOffset =
+    pageBudget === 1 || quotaLow(nonNegativeInteger(plan.providerRemaining))
+      ? 0
+      : plannedOffset;
   let offset = startOffset;
   let restarted = false;
   // Every attempted request counts (a failed page still spent a request).
@@ -443,6 +526,10 @@ async function syncLive() {
   let remaining: number | null = null;
   let paginationTruncated = false;
   let resumeOffset: number | null = null;
+  let stopReason: string | null = null;
+  // What the provider said on the first page: settles whether it paginates.
+  let paginationSeen: unknown = null;
+  let pageFailure: unknown = null;
 
   try {
     const goalKey = await readGoalKey();
@@ -452,12 +539,16 @@ async function syncLive() {
       try {
         response = await fetchGoal(
           goalKey,
-          `/fixtures/live?limit=100&offset=${offset}`,
+          `/fixtures/live?limit=${LIVE_PAGE_SIZE}&offset=${offset}`,
         );
       } catch (error) {
         const errorRemaining = (error as { remaining?: unknown })?.remaining;
         if (typeof errorRemaining === "number") remaining = errorRemaining;
-        throw error;
+        if (!fixtures.length) throw error;
+        // Pages already read are paid for: store them, then fail the poll.
+        pageFailure = error;
+        paginationTruncated = true;
+        break;
       }
       remaining = response.remaining ?? remaining;
 
@@ -465,13 +556,15 @@ async function syncLive() {
       if (!Array.isArray(data)) {
         throw new Error("GOAL live payload data must be an array");
       }
-      // A resumed offset past the (shrunk) live list: start over once.
-      if (data.length === 0 && offset > 0 && !restarted) {
+      // A resumed offset past the (shrunk) live list: start over once. An
+      // empty page later in the poll is the end of the list, not a restart.
+      if (data.length === 0 && offset > 0 && !restarted && page === 0) {
         restarted = true;
         offset = 0;
         continue;
       }
 
+      const before = fixtures.length;
       for (const item of data) {
         if (!item || typeof item !== "object" || Array.isArray(item)) continue;
         const fixture = item as Record<string, unknown>;
@@ -482,31 +575,45 @@ async function syncLive() {
       }
 
       const pagination = response.payload.pagination;
+      paginationSeen ??= pagination ?? null;
       const paginationRow = pagination && typeof pagination === "object" &&
           !Array.isArray(pagination)
         ? pagination as Record<string, unknown>
         : null;
       const total = nonNegativeInteger(paginationRow?.total);
       if (total != null) providerTotal = total;
-      const hasMore = paginationRow?.hasMore === true;
-      if (!hasMore) break;
-
-      const pageLimit = nonNegativeInteger(paginationRow?.limit) ?? 100;
-      offset += Math.max(pageLimit, 1);
-      // Stop at the page budget or when the provider reports the protected
-      // reserve: a partial batch is recorded as partial and the next poll
-      // resumes here. Unread pages are never treated as evidence.
-      const atFloor = floor != null && remaining != null && remaining <= floor;
-      if (page + 1 >= pageBudget || atFloor) {
+      const { next, stalled } = nextLivePage({
+        pagination: paginationRow,
+        rowCount: data.length,
+        added: fixtures.length - before,
+        currentOffset: offset,
+        requestedLimit: LIVE_PAGE_SIZE,
+      });
+      if (stalled) {
+        paginationTruncated = true;
+        stopReason = "offset_ignored";
+        break;
+      }
+      if (next == null) break;
+      offset = next;
+      // Low quota, the protected reserve included: no resume, so the next poll
+      // reads the first page and the sweep stays unproven.
+      if (quotaLow(remaining)) {
+        paginationTruncated = true;
+        stopReason = remaining! <= floor! ? "quota_floor" : "quota_margin";
+        break;
+      }
+      // The page budget: a partial batch is recorded as partial and the next
+      // poll resumes here. Unread pages are never treated as evidence.
+      if (page + 1 >= pageBudget) {
         paginationTruncated = true;
         resumeOffset = offset;
+        stopReason = "page_budget";
         break;
       }
     }
 
-    const linkResult = await rpc("futbeat_link_goal_live_matches", {
-      p_fixtures: fixtures,
-    }, 30000);
+    const { linkResult, linkFailure } = await linkFixtures(fixtures);
 
     const observations = await Promise.all(
       fixtures.map((fixture) =>
@@ -517,30 +624,37 @@ async function syncLive() {
     // silently maps to SCHEDULED (never inferred as live or final).
     const unmappedStatuses = unmappedGoalStatuses(fixtures);
 
+    const receivedAt = new Date();
     const persistence = await recordObservationsInChunks(
-      new Date().toISOString(),
+      receivedAt.toISOString(),
       observations,
     );
+    const feed = {
+      ...liveFeedFreshness(
+        observations.flatMap((observation, index) =>
+          IN_PLAY_STATUSES.has(observation.status)
+            ? [fixtures[index].clockUpdatedAt ?? fixtures[index].updatedAt]
+            : []
+        ),
+        receivedAt.getTime(),
+      ),
+      // Nothing new for any match. One poll proves little: read it as a streak.
+      unchanged: observations.length > 0 &&
+        persistence.insertedObservations === 0,
+    };
 
     // #120: absence from the feed is evidence only once a whole sweep (offset
     // 0 to the last page, possibly across resumed polls) was read; it only
     // queues a bounded provider re-check, never a final.
     const fromStart = startOffset === 0 || restarted;
     const reachedEnd = !paginationTruncated;
-    let recovery: unknown = null;
-    try {
-      recovery = await rpc("futbeat_note_live_poll", {
-        p_provider: "goal_api",
-        p_seen: observations.map((observation) => observation.externalMatchId),
-        p_from_start: fromStart,
-        p_reached_end: reachedEnd,
-      });
-    } catch (error) {
-      console.warn(
-        "terminal recovery note unavailable",
-        error instanceof Error ? error.message : "unknown",
-      );
-    }
+    const { recovery, noteFailed } = await noteLivePoll(
+      observations.map((observation) => observation.externalMatchId),
+      fromStart,
+      reachedEnd,
+    );
+    if (noteFailed) resumeOffset = null;
+    if (pageFailure) throw pageFailure;
 
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservationId,
@@ -551,6 +665,11 @@ async function syncLive() {
       p_metadata: {
         mode: "live",
         ...(unmappedStatuses.length ? { unmappedStatuses } : {}),
+        ...(linkFailure ? { linkFailure } : {}),
+        ...(noteFailed ? { noteFailed } : {}),
+        ...(plannedOffset !== startOffset
+          ? { abandonedOffset: plannedOffset }
+          : {}),
         fromStart,
         reachedEnd,
         recovery,
@@ -559,11 +678,25 @@ async function syncLive() {
         startOffset,
         paginationTruncated,
         resumeOffset,
+        ...(stopReason ? { stopReason } : {}),
+        paginationSeen,
         liveMatches: observations.length,
         linkedMatches: linkResult?.linked ?? 0,
         alreadyLinkedMatches: linkResult?.alreadyLinked ?? 0,
         unmappedMatches: linkResult?.unmappedCount ?? 0,
-        providerTotal: providerTotal ?? observations.length,
+        providerTotal,
+        // Seen against what the database expects to be in play. Expected only
+        // knows mapped matches, so it can sit below seen.
+        coverage: {
+          seen: observations.length,
+          mappedSeen: linkResult
+            ? (Number(linkResult.linked) || 0) +
+              (Number(linkResult.alreadyLinked) || 0)
+            : null,
+          expectedActive: nonNegativeInteger(plan.activeMatches),
+          expectedLive: nonNegativeInteger(plan.liveMatches),
+        },
+        feed,
         insertedObservations: persistence?.insertedObservations ?? 0,
         duplicates: persistence?.duplicates ?? 0,
         transport: "supabase-cron",
@@ -591,6 +724,7 @@ async function syncLive() {
         providerRequests: Math.max(providerRequests, 1),
         pageBudget,
         startOffset,
+        matchesFetched: fixtures.length,
         detail: error instanceof Error ? error.message.slice(0, 300) : "unknown",
       },
       remaining,
@@ -716,9 +850,7 @@ async function syncOneResultsDate() {
     }
 
     stage = "link";
-    const linkResult = await rpc("futbeat_link_goal_live_matches", {
-      p_fixtures: fixtures,
-    }, 30000);
+    const { linkResult, linkFailure } = await linkFixtures(fixtures);
     stage = "normalize";
     const observations = await Promise.all(
       fixtures.map((fixture) =>
@@ -740,10 +872,15 @@ async function syncOneResultsDate() {
       p_received_at: receivedAt,
     }, 30000);
     stage = "complete_attempt";
-    const unmatchedCount = Number(linkResult?.unmappedCount ?? 0);
+    // Without a link nothing proves the date complete: PARTIAL keeps it retried.
+    const unmatchedCount = linkFailure
+      ? fixtures.length
+      : Number(linkResult?.unmappedCount ?? 0);
     await rpc("futbeat_complete_results_date_attempt", {
       p_provider_date: providerDate,
-      p_outcome: finalized?.resultsComplete === true ? "SUCCEEDED" : "PARTIAL",
+      p_outcome: finalized?.resultsComplete === true && !linkFailure
+        ? "SUCCEEDED"
+        : "PARTIAL",
       p_result_count: observations.length,
       p_unmatched_count: Number.isFinite(unmatchedCount) ? unmatchedCount : 0,
     });
@@ -769,6 +906,7 @@ async function syncOneResultsDate() {
         recordChunks: persistence.chunks,
         resultsComplete: finalized?.resultsComplete ?? false,
         unresolved: finalized?.unresolved ?? null,
+        ...(linkFailure ? { linkFailure } : {}),
         ...(truncatedBy ? { truncatedBy } : {}),
         transport: "supabase-cron",
         provider: "GOAL API",

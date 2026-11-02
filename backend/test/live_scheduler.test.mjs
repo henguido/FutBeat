@@ -80,8 +80,8 @@ test('Supabase GOAL LIVE worker paginates beyond the first 100 fixtures and keep
   new URL('../../supabase/functions/futbeat-goal-live-sync/index.ts',import.meta.url),
   'utf8',
  );
- assert.match(worker,/fixtures\/live\?limit=100&offset=\$\{offset\}/);
- assert.match(worker,/paginationRow\?\.hasMore/);
+ assert.match(worker,/fixtures\/live\?limit=\$\{LIVE_PAGE_SIZE\}&offset=\$\{offset\}/);
+ assert.match(worker,/nextLivePage\(/);
  assert.match(worker,/providerRequests/);
  assert.match(worker,/futbeat_reserve_match_detail_call/);
  assert.match(worker,/futbeat_store_match_detail/);
