@@ -48,7 +48,7 @@ export function worker(db, goal) {
   };
   let handler;
   const context = vm.createContext({
-    Request, Response, Headers, URL, AbortSignal, TextEncoder, crypto, performance, Error, fetch,
+    Request, Response, Headers, URL, AbortSignal, TextEncoder, crypto, performance, Error, fetch, Date, setTimeout,
     console: { error: (...a) => logs.push(a), warn: (...a) => logs.push(a), log: (...a) => logs.push(a) },
     Deno: { env: { get: (n) => ({ SUPABASE_URL: 'https://supabase.test', SUPABASE_SERVICE_ROLE_KEY: 'svc' })[n] },
       serve: (fn) => { handler = fn; } },
