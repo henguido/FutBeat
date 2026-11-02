@@ -16,10 +16,20 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     env:
       GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
+      CALENDAR_PENDING_DIR: ${{ github.workspace }}/calendar-pending
     steps:
+      # Dates already paid to GOAL that failed to store (11-01: 28 pages lost, and the
+      # next three runs were below the reserve). Newest cache wins; see Resume-PendingDates.
+      - name: Restore paid calendar dates
+        uses: actions/cache/restore@v4
+        with:
+          path: calendar-pending
+          key: calendar-pending-${{ github.run_id }}
+          restore-keys: calendar-pending-
+
       - name: Collect and ingest global football calendar
         shell: pwsh
         run: |
@@ -43,7 +53,28 @@ jobs:
             return $token
           }
 
-          function Invoke-FutBeatGlobalEndpoint([object]$payload) {
+          # BE-245: 11-02 00:45 a run under way cost three live polls their batch.
+          # LIVE polls on the 5 minute mark and records in its first seconds, and an
+          # ingest call lasts up to 90 s, so no call starts where it would reach the
+          # next poll. Only the start is held: paid pages are never dropped for this.
+          function Get-LiveSlotWait([int]$cycleSecond) {
+            $opens = 30
+            $closes = 200
+            if ($cycleSecond -lt $opens) { return $opens - $cycleSecond }
+            if ($cycleSecond -gt $closes) { return 300 - $cycleSecond + $opens }
+            return 0
+          }
+
+          function Wait-LiveSlot {
+            $now = [DateTimeOffset]::UtcNow
+            $wait = Get-LiveSlotWait (($now.Minute % 5) * 60 + $now.Second)
+            if ($wait -gt 0) {
+              Write-Output "LIVE_SLOT_WAIT seconds=$wait"
+              Start-Sleep -Seconds $wait
+            }
+          }
+
+          function Invoke-FutBeatGlobalEndpoint([object]$payload, [int]$timeoutSec = 90) {
             $token = Get-GitHubOidcToken
             $body = $payload | ConvertTo-Json -Depth 100 -Compress
             return Invoke-RestMethod -Uri "https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-global-ingest" `
@@ -51,14 +82,18 @@ jobs:
               -Headers @{ Authorization = "Bearer $token" } `
               -ContentType "application/json" `
               -Body $body `
-              -TimeoutSec 90
+              -TimeoutSec $timeoutSec
           }
 
-          function Get-GoalApiDate([string]$date) {
+          # $stopAtRemaining: a date is ingested whole or not at all (the store removes
+          # what its snapshot lacks), so a long date stops here instead of crossing the
+          # reserve. Partial = true, nothing to ingest, the date stays in the plan.
+          function Get-GoalApiDate([string]$date, [int]$stopAtRemaining = 0) {
             $items = New-Object System.Collections.Generic.List[object]
             $offset = 0
             $remaining = $null
             $requests = 0
+            $partial = $false
 
             do {
               $uri = "https://api.goal-api.com/v1/fixtures/date/${date}?limit=100&offset=$offset"
@@ -94,6 +129,10 @@ jobs:
                 }
               }
               $offset += $pageLimit
+              if ($hasMore -and $null -ne $remaining -and $remaining -le $stopAtRemaining) {
+                $partial = $true
+                break
+              }
             } while ($hasMore)
 
             return [pscustomobject]@{
@@ -102,10 +141,67 @@ jobs:
               Count = $items.Count
               Remaining = $remaining
               Requests = $requests
+              Partial = $partial
             }
           }
 
+          # A date is kept only while it is worth storing: older data would go in as
+          # fetched now. Files stay until stored or expired.
+          $pendingDir = if ($env:CALENDAR_PENDING_DIR) { $env:CALENDAR_PENDING_DIR } else { Join-Path ([IO.Path]::GetTempPath()) "calendar-pending-$PID" }
+          $pendingMaxHours = 30
+          $pendingPerRun = 3
+          [void](New-Item -ItemType Directory -Force -Path $pendingDir)
+          Set-Content -Path (Join-Path $pendingDir ".keep") -Value "keep"
+          $calendarCallSeconds = 140
+          $hotFailed = $false
+          $calendarFailures = 0
+
+          function Get-PendingPath([string]$date) {
+            return Join-Path $pendingDir "$date.json"
+          }
+
+          function Save-PendingDate([object]$payload) {
+            $date = @($payload.dates)[0]
+            $file = [ordered]@{ savedAt = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); payload = $payload }
+            Set-Content -Path (Get-PendingPath $date) -Value ($file | ConvertTo-Json -Depth 100 -Compress)
+            Write-Output "CALENDAR_PENDING_SAVED date=$date"
+          }
+
+          # Costs no GOAL page, so it runs below the reserve too. The first failure
+          # ends it: the database is not ready for the next one either.
+          function Resume-PendingDates {
+            $resumed = 0
+            foreach ($item in @(Get-ChildItem -Path $pendingDir -Filter "*.json" | Sort-Object Name)) {
+              $file = Get-Content -Path $item.FullName -Raw | ConvertFrom-Json -Depth 100
+              $ageHours = ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$file.savedAt) / 3600
+              if ($ageHours -ge $pendingMaxHours) {
+                Remove-Item -Path $item.FullName
+                Write-Output "CALENDAR_RESUME_EXPIRED date=$($item.BaseName)"
+                continue
+              }
+              if ($resumed -ge $pendingPerRun) { break }
+              $resumed += 1
+              try {
+                Wait-LiveSlot
+                $result = Invoke-FutBeatGlobalEndpoint $file.payload $calendarCallSeconds
+              } catch {
+                $script:calendarFailures += 1
+                Write-Output "CALENDAR_RESUME_FAILED date=$($item.BaseName) error=$($_.Exception.Message)"
+                break
+              }
+              if ($result.status -eq "skipped") {
+                Write-Output "CALENDAR_RESUME_STOP reason=ingest_skipped detail=$($result.reason)"
+                break
+              }
+              Remove-Item -Path $item.FullName
+              Write-Output "CALENDAR_RESUME_OK date=$($item.BaseName) accepted=$($result.accepted)"
+            }
+          }
+
+          Resume-PendingDates
+
           $globalReserve = 350
+          $expandFreshQuota = 650
           $globalQuota = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "global-quota-plan"
             reserve = $globalReserve
@@ -115,6 +211,7 @@ jobs:
             exit 0
           }
 
+          function Invoke-HotWindow {
           # Hot window: yesterday / today / tomorrow in Costa Rica.
           $crNow = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(-6))
           $dates = @(-1, 0, 1) | ForEach-Object {
@@ -168,9 +265,8 @@ jobs:
           # the window store hit 57014 and the run stopped before the expansion, so
           # the missing dates never ran). The calendar ingests per date with its own
           # stores; the run still fails at the end so the hot failure stays visible.
-          $hotFailed = $false
-          $calendarFailures = 0
           try {
+            Wait-LiveSlot
             $hotResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
               source = "GOAL API"
               mode = "hot"
@@ -180,14 +276,24 @@ jobs:
             })
             Write-Output "GLOBAL_INGEST_OK provider=GOAL_API accepted=$($hotResult.accepted)"
           } catch {
-            $hotFailed = $true
+            $script:hotFailed = $true
             Write-Output "GLOBAL_INGEST_FAILED provider=GOAL_API error=$($_.Exception.Message)"
             if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
               Write-Output "GLOBAL_INGEST_FAILED_DETAIL $($_.ErrorDetails.Message)"
             }
           }
 
+          }
+
+          # On fresh quota the calendar goes first. 11-01 00:06: the hot store ran 80 s,
+          # ended in 57014 and the database stayed slow for every date after it; the
+          # first run of the day is the only one with quota for the calendar.
+          $hotPending = $null -ne $globalQuota.plan.providerRemaining -and
+            [int]$globalQuota.plan.providerRemaining -ge $expandFreshQuota
+          if (-not $hotPending) { Invoke-HotWindow }
+
           function Complete-GlobalRun {
+            if ($hotPending) { Invoke-HotWindow }
             if ($hotFailed -or $calendarFailures -gt 0) {
               Write-Output "GLOBAL_RUN_FAILED stage=hot"
               exit 1
@@ -202,7 +308,6 @@ jobs:
           # first run after the 00:00 UTC reset expands. Bounded as before by the
           # request budget and the reserve; the plan returns only missing dates.
           $utcHour = [DateTime]::UtcNow.Hour
-          $expandFreshQuota = 650
 
           $postHotQuota = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "global-quota-plan"
@@ -232,9 +337,9 @@ jobs:
           $plan = Invoke-FutBeatGlobalEndpoint ([ordered]@{
             action = "calendar-plan"
             fromDate = $nearToday.AddDays(2).ToString("yyyy-MM-dd")
-            toDate = $nearToday.AddDays(7).ToString("yyyy-MM-dd")
+            toDate = $nearToday.AddDays(14).ToString("yyyy-MM-dd")
             requestedOnly = $false
-            limit = 6
+            limit = 13
           })
           $planDates = @($planDates + @($plan.dates) | Select-Object -Unique)
 
@@ -250,6 +355,9 @@ jobs:
             $planDates = @($planDates + @($plan.dates) | Select-Object -Unique)
           }
 
+          # Held as paid: stored by Resume-PendingDates, never paid twice.
+          $planDates = @($planDates | Where-Object { -not (Test-Path (Get-PendingPath ([string]$_))) })
+
           if ($planDates.Count -eq 0) {
             $reason = if ($shouldExpand) { "coverage_fresh" } else { "no_requested_dates" }
             Write-Output "CALENDAR_EXPAND_OK dates=0 reason=$reason"
@@ -258,14 +366,20 @@ jobs:
 
           $quotaReserve = 350
           $calendarRequestBudget = 90
+          # Without fresh quota only the near dates run, on a smaller budget.
+          if (-not $shouldExpand) { $calendarRequestBudget = 45 }
           $calendarFailureLimit = 2
           $largeDateCalls = 15
           $largeDateFixtures = 800
+          $retryPauseSeconds = 30
+          $largeDatePauseSeconds = 20
           $lastRemaining = $postHotRemaining
           $calendarRequestsUsed = 0
           $consecutiveFailures = 0
           # One date per ingest call: a large date is stored in sub-batches
           # (futbeat-global-ingest v39) and takes ~40-50 s of the 90 s call.
+          # A call may take 140 s (see $calendarCallSeconds): Edge stops at 150 s.
+          $calendarDeadline = [DateTime]::UtcNow.AddMinutes(11)
           $batchSize = 1
           $batchDates = New-Object System.Collections.Generic.List[string]
           $batchEvents = New-Object System.Collections.Generic.List[object]
@@ -287,14 +401,24 @@ jobs:
               Write-Output "CALENDAR_EXPAND_STOP reason=request_budget budget=$calendarRequestBudget"
               break
             }
+            # The job ends at 15 minutes; dates not reached stay in the plan.
+            if ([DateTime]::UtcNow -ge $calendarDeadline) {
+              Write-Output "CALENDAR_EXPAND_STOP reason=run_deadline"
+              break
+            }
 
-            $page = Get-GoalApiDate ([string]$date)
+            $page = Get-GoalApiDate ([string]$date) $quotaReserve
             $calendarRequestsUsed += [int]$page.Requests
             if ($null -ne $page.Remaining) {
               $batchRemaining = [int]$page.Remaining
               $lastRemaining = [int]$page.Remaining
             }
             Write-Output "CALENDAR_FETCH date=$date fixtures=$($page.Count) remaining=$($page.Remaining) requests=$($page.Requests) used=$calendarRequestsUsed"
+            if ($page.Partial) {
+              $stopForQuota = $true
+              Write-Output "CALENDAR_DATE_PARTIAL date=$date fixtures=$($page.Count)"
+              break
+            }
 
             foreach ($fixture in @($page.Items)) {
               $externalId = [string]$fixture.apiId
@@ -325,15 +449,30 @@ jobs:
             if ($batchDates.Count -ge $batchSize -or $stopForQuota) {
               # A date that fails must not stop the dates after it (BE-229: one
               # September date timed out on every run). It stays missing in the plan.
+              # 57014 gets one more call with the same fixtures after a pause: no GOAL
+              # page is paid again and the entity chunks stored are found unchanged.
+              # 11-01 it hit dates of 59 and 88 fixtures too, so size does not decide.
+              $calendarPayload = [ordered]@{
+                source = "GOAL API"
+                mode = "calendar"
+                dates = $batchDates.ToArray()
+                coverage = $batchCoverage.ToArray()
+                providerRemaining = $batchRemaining
+                events = $batchEvents.ToArray()
+              }
               try {
-                $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-                  source = "GOAL API"
-                  mode = "calendar"
-                  dates = $batchDates.ToArray()
-                  coverage = $batchCoverage.ToArray()
-                  providerRemaining = $batchRemaining
-                  events = $batchEvents.ToArray()
-                })
+                try {
+                  Wait-LiveSlot
+                  $calendarResult = Invoke-FutBeatGlobalEndpoint $calendarPayload $calendarCallSeconds
+                } catch {
+                  if ("$($_.Exception.Message) $($_.ErrorDetails.Message)" -notmatch "57014") {
+                    throw
+                  }
+                  Write-Output "CALENDAR_INGEST_RETRY date=$($batchDates -join ',') reason=57014"
+                  Start-Sleep -Seconds $retryPauseSeconds
+                  Wait-LiveSlot
+                  $calendarResult = Invoke-FutBeatGlobalEndpoint $calendarPayload $calendarCallSeconds
+                }
                 # v44 answers 200 skipped past 64 ingests a day: nothing was stored
                 # and every later date would spend GOAL the same way.
                 if ($calendarResult.status -eq "skipped") {
@@ -348,10 +487,9 @@ jobs:
                 }
               } catch {
                 $calendarFailures += 1
-                if ($page.Count -lt $largeDateFixtures) {
-                  $consecutiveFailures += 1
-                }
+                $consecutiveFailures += 1
                 Write-Output "CALENDAR_INGEST_FAILED date=$($batchDates -join ',') error=$($_.Exception.Message)"
+                Save-PendingDate $calendarPayload
               }
 
               $batchDates = New-Object System.Collections.Generic.List[string]
@@ -364,26 +502,17 @@ jobs:
                 Write-Output "CALENDAR_EXPAND_STOP reason=quota_reserve reserve=$quotaReserve"
                 break
               }
-              # Two small dates in a row point at the store. A large date can time
-              # out alone, and the budget bounds those: stored dates leave the plan,
-              # so failing Saturdays end up adjacent and must not freeze it (BE-231).
+              # Two dates in a row point at the database, whatever their size: no more
+              # pages are paid. Failing Saturdays cannot freeze the plan any more: a
+              # date that failed twice rests and the next run moves past it.
               if ($consecutiveFailures -ge $calendarFailureLimit) {
                 Write-Output "CALENDAR_EXPAND_STOP reason=ingest_failures failures=$calendarFailures"
                 break
               }
+              if ($page.Count -ge $largeDateFixtures) {
+                Start-Sleep -Seconds $largeDatePauseSeconds
+              }
             }
-          }
-
-          if ($batchDates.Count -gt 0) {
-            $calendarResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
-              source = "GOAL API"
-              mode = "calendar"
-              dates = $batchDates.ToArray()
-              coverage = $batchCoverage.ToArray()
-              providerRemaining = $batchRemaining
-              events = $batchEvents.ToArray()
-            })
-            Write-Output "CALENDAR_INGEST_OK dates=$($batchDates.Count) accepted=$($calendarResult.accepted)"
           }
 
           Write-Output "CALENDAR_EXPAND_OK planned=$($planDates.Count) fetched=$expandedDates requests=$calendarRequestsUsed"
@@ -392,3 +521,11 @@ jobs:
             Write-Output "CALENDAR_EXPAND_COMPLETE reason=quota_guard"
           }
           Complete-GlobalRun
+
+      - name: Save paid calendar dates
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: calendar-pending
+          key: calendar-pending-${{ github.run_id }}
