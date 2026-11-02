@@ -18,6 +18,7 @@ def artifact_snapshot(android):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java', help='Existing JDK executable; never downloads a JDK')
+    parser.add_argument('--case', action='append', choices=['unsafe', 'safe', 'empty-api', 'credential-api', 'release-graph', 'secret-token', 'privileged-jwt', 'anon-keys'])
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     java = args.java
@@ -32,6 +33,11 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     qa_messages = [flag + ' is QA-only' for flag in ['FUTBEAT_USE_DEMO', 'FUTBEAT_QA_LOCAL_CACHE_ONLY', 'FUTBEAT_QA_DIAGNOSTICS']]
     url_message = 'non-loopback HTTPS'
+    def fixture_jwt(role):
+        payload = base64.urlsafe_b64encode(json.dumps({'role': role}).encode()).decode().rstrip('=')
+        return 'fixture-header.' + payload + '.fixture-signature'
+
+    token_error = 'must be a publishable or legacy anon key'
     cases = [
         ('unsafe', ['FUTBEAT_USE_DEMO=true', 'FUTBEAT_QA_LOCAL_CACHE_ONLY=true', 'FUTBEAT_QA_DIAGNOSTICS=true', 'FUTBEAT_API_URL=http://127.0.0.1:9'], ['validateReleaseRuntimeConfig'], qa_messages + [url_message]),
         ('safe', ['FUTBEAT_USE_DEMO=false', 'FUTBEAT_QA_LOCAL_CACHE_ONLY=false', 'FUTBEAT_QA_DIAGNOSTICS=false', 'FUTBEAT_API_URL=https://api.example.test/v1'], ['validateReleaseRuntimeConfig'], []),
@@ -40,6 +46,13 @@ def main():
         # Strict dry-run: validates the real release graph, never its actions.
         ('release-graph', ['FUTBEAT_USE_DEMO=true', 'FUTBEAT_ADS_DISABLED=true'], [':app:bundleRelease', '--dry-run'], ['Release runtime configuration:', 'FUTBEAT_USE_DEMO is QA-only']),
     ]
+    cases.extend([
+        ('secret-token', ['FUTBEAT_API_PUBLIC_TOKEN=sb_secret_fixture_only', 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY=sb_secret_fixture_alias'], ['validateReleaseRuntimeConfig'], ['FUTBEAT_API_PUBLIC_TOKEN ' + token_error, 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY ' + token_error]),
+        ('privileged-jwt', ['FUTBEAT_API_PUBLIC_TOKEN=' + fixture_jwt('service_role'), 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY=' + fixture_jwt('authenticated')], ['validateReleaseRuntimeConfig'], ['FUTBEAT_API_PUBLIC_TOKEN ' + token_error, 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY ' + token_error]),
+        ('anon-keys', ['FUTBEAT_API_PUBLIC_TOKEN=' + fixture_jwt('anon'), 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture_only'], ['validateReleaseRuntimeConfig'], []),
+    ])
+    if args.case:
+        cases = [case for case in cases if case[0] in args.case]
     before = artifact_snapshot(android)
     results = []
     for name, defines, tasks, messages in cases:
@@ -50,6 +63,10 @@ def main():
             result = subprocess.run(command, cwd=android, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf8', errors='replace', timeout=180)
             log = result.stdout
             passed = (result.returncode == 0 and 'Release runtime configuration OK' in log and 'BUILD SUCCESSFUL' in log) if not messages else (result.returncode != 0 and 'BUILD FAILED' in log and all(message in log for message in messages))
+            if name in {'secret-token', 'privileged-jwt'}:
+                # Synthetic values only. Even rejected credentials must never
+                # be echoed by the validation error.
+                passed = passed and all(value.split('=', 1)[1] not in log for value in defines)
             entry = {'case': name, 'exit': result.returncode, 'pass': passed}
         except subprocess.TimeoutExpired:
             log = 'Validation timed out; no PASS inferred. Inspect owned Gradle invocation before repeating.'

@@ -1,6 +1,7 @@
 import java.net.URI
 import java.util.Base64
 import java.util.Properties
+import groovy.json.JsonSlurper
 
 plugins {
     id("com.android.application")
@@ -41,9 +42,33 @@ fun dartDefines(): Map<String, String> {
     return result
 }
 
+// This is an accidental-credential-exposure check, not JWT authentication.
+// A key's project, signature and permissions still need operational approval.
+fun isPublicClientKey(value: String): Boolean {
+    val token = value.trim()
+    if (token.isEmpty()) return true // Existing optional/default configuration.
+    if (token.startsWith("sb_secret_")) return false
+    if (token.startsWith("sb_publishable_") && token.length > "sb_publishable_".length) {
+        return true
+    }
+    val parts = token.split('.')
+    if (parts.size != 3) return false
+    return runCatching {
+        val payload = String(Base64.getUrlDecoder().decode(parts[1]), Charsets.UTF_8)
+        val claims = JsonSlurper().parseText(payload) as? Map<*, *>
+        claims?.get("role") == "anon"
+    }.getOrDefault(false)
+}
+
 // Release must never ship fixture data or a QA-only network blocker.
 fun releaseRuntimeProblems(defines: Map<String, String> = dartDefines()): List<String> {
     val problems = mutableListOf<String>()
+    for (key in listOf("FUTBEAT_API_PUBLIC_TOKEN", "FUTBEAT_SUPABASE_PUBLISHABLE_KEY")) {
+        if (!isPublicClientKey(defines[key].orEmpty())) {
+            // Never include the rejected value, its payload or part of it.
+            problems += "$key must be a publishable or legacy anon key"
+        }
+    }
     for (flag in listOf("FUTBEAT_USE_DEMO", "FUTBEAT_QA_LOCAL_CACHE_ONLY", "FUTBEAT_QA_DIAGNOSTICS")) {
         if (defines[flag]?.trim()?.lowercase() == "true") {
             problems += "$flag is QA-only and must be false in a release"
