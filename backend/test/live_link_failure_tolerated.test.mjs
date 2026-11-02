@@ -79,3 +79,46 @@ test('an unmapped fixture waits unlinked and the next good link claims its evide
   const twin = await db.query("select count(*)::int n from futbeat_private.entities where kind='match' and id like 'fb_match_%' and payload->>'homeTeamId'=$1", ['fb_team_t3h']);
   assert.equal(twin.rows[0].n, 1);
 }));
+
+// BE-245: 57014 in record while the global run holds the database.
+const recordFails = (db, failures, message = 'code 57014 statement timeout') => {
+  const state = { calls: 0, left: failures };
+  return { state, query: (sql, values) => {
+    if (sql.includes('futbeat_record_live_batch')) {
+      state.calls += 1;
+      if (state.left > 0) { state.left -= 1; return Promise.reject(new Error(message)); }
+    }
+    return db.query(sql, values);
+  } };
+};
+
+test('a record 57014 repeats the chunk and the poll keeps its batch', () => withDb(async (db) => {
+  const m = await seed(db, 'r1');
+  await map(db, m);
+  const flaky = recordFails(db, 1);
+  await worker(flaky, goal([fixture(m)])).run('live');
+  const call = await lastCall(db);
+  assert.equal(call.status, 'SUCCEEDED');
+  assert.equal(call.metadata.recordRetries, 1);
+  assert.equal(flaky.state.calls, 2);
+  assert.equal((await observations(db, m.ext)).length, 1);
+}));
+
+test('another record failure is not repeated', () => withDb(async (db) => {
+  const m = await seed(db, 'r2');
+  await map(db, m);
+  const flaky = recordFails(db, 1, 'invalid payloadHash');
+  await worker(flaky, goal([fixture(m)])).run('live').catch(() => {});
+  assert.equal((await lastCall(db)).status, 'FAILED');
+  assert.equal(flaky.state.calls, 1);
+}));
+
+test('a chunk that stays down costs the poll, not the chunks after it', () => withDb(async (db) => {
+  const ms = [];
+  for (let i = 0; i < 26; i += 1) { const m = await seed(db, `c${i}`); await map(db, m); ms.push(m); }
+  const flaky = recordFails(db, 3);
+  await worker(flaky, goal(ms.map((m) => fixture(m)))).run('live').catch(() => {});
+  assert.equal((await lastCall(db)).status, 'FAILED');
+  assert.equal(flaky.state.calls, 4, 'three tries of the first chunk, one of the second');
+  assert.equal((await observations(db, ms[25].ext)).length, 1);
+}));

@@ -175,27 +175,68 @@ async function normalizeLiveFixture(
 // independent fixtures (one row per provider id), share one receivedAt, and
 // what a failed run already stored is kept: the retry only pays for the rest.
 const RECORD_CHUNK_SIZE = 25;
+// BE-245: 11-02 three live polls lost their batch to 57014 in record while the
+// global run held the database. A chunk is idempotent by payload hash, so a live
+// poll repeats it inside the budget and still tries the chunks after it. The
+// cron gives a poll 55 s.
+const LIVE_RECORD_PAUSES_MS = [2000, 5000];
+const LIVE_RECORD_BUDGET_MS = 40000;
+
+async function recordChunk(
+  receivedAt: string,
+  chunk: unknown[],
+  deadline: number | null,
+  progress: { retries?: number },
+) {
+  for (let attempt = 0;; attempt += 1) {
+    try {
+      return await rpc("futbeat_record_live_batch", {
+        p_provider: "goal_api",
+        p_received_at: receivedAt,
+        p_observations: chunk,
+      }, 30000);
+    } catch (error) {
+      const pause = LIVE_RECORD_PAUSES_MS[attempt];
+      const timedOut = error instanceof Error && error.message.includes("57014");
+      if (
+        deadline == null || pause == null || !timedOut ||
+        Date.now() + pause >= deadline
+      ) throw error;
+      progress.retries = (progress.retries ?? 0) + 1;
+      await new Promise((resolve) => setTimeout(resolve, pause));
+    }
+  }
+}
+
 async function recordObservationsInChunks(
   receivedAt: string,
   observations: unknown[],
-  progress: { chunks: number; recorded: number } = { chunks: 0, recorded: 0 },
+  progress: { chunks: number; recorded: number; retries?: number } = {
+    chunks: 0,
+    recorded: 0,
+  },
+  deadline: number | null = null,
 ) {
   let insertedObservations = 0;
   let duplicates = 0;
   let start = 0;
+  let firstFailure: unknown = null;
   do {
     const chunk = observations.slice(start, start + RECORD_CHUNK_SIZE);
-    const result = await rpc("futbeat_record_live_batch", {
-      p_provider: "goal_api",
-      p_received_at: receivedAt,
-      p_observations: chunk,
-    }, 30000);
-    insertedObservations += Number(result?.insertedObservations ?? 0) || 0;
-    duplicates += Number(result?.duplicates ?? 0) || 0;
-    progress.chunks += 1;
-    progress.recorded += chunk.length;
     start += RECORD_CHUNK_SIZE;
+    try {
+      const result = await recordChunk(receivedAt, chunk, deadline, progress);
+      insertedObservations += Number(result?.insertedObservations ?? 0) || 0;
+      duplicates += Number(result?.duplicates ?? 0) || 0;
+      progress.chunks += 1;
+      progress.recorded += chunk.length;
+    } catch (error) {
+      if (deadline == null) throw error;
+      firstFailure ??= error;
+    }
   } while (start < observations.length);
+  // The poll still ends FAILED: absence must not be read from a partial batch.
+  if (firstFailure != null) throw firstFailure;
   return { insertedObservations, duplicates, chunks: progress.chunks };
 }
 
@@ -534,9 +575,12 @@ async function syncLive() {
     // silently maps to SCHEDULED (never inferred as live or final).
     const unmappedStatuses = unmappedGoalStatuses(fixtures);
 
+    const recordProgress = { chunks: 0, recorded: 0, retries: 0 };
     const persistence = await recordObservationsInChunks(
       new Date().toISOString(),
       observations,
+      recordProgress,
+      Date.now() + LIVE_RECORD_BUDGET_MS,
     );
 
     // #120: absence from the feed is evidence only once a whole sweep (offset
@@ -569,6 +613,7 @@ async function syncLive() {
         mode: "live",
         ...(unmappedStatuses.length ? { unmappedStatuses } : {}),
         ...(linkFailure ? { linkFailure } : {}),
+        ...(recordProgress.retries ? { recordRetries: recordProgress.retries } : {}),
         fromStart,
         reachedEnd,
         recovery,
