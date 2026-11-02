@@ -16,7 +16,7 @@ Corte: 2026-11-01, America/Costa_Rica (registros técnicos UTC pueden indicar 02
 
 ## Línea vigente y avances conservados
 
-Destino: codex/mobile-246, F:/FutBeat/FutBeat/.codex-worktrees/mobile-246. Fuente funcional actual e703864a1cde37469b7574cfea444668143cd0fd. Ascendencia3977bc7 (M244) ->57b9851b (M245) ->e703864a comprobada en la reconciliación inmediatamente anterior. Sin merges, cherry-picks o copia de implementaciones. Archivos rastreados limpios antes de este documento; artifacts/ no rastreados se conservan. No se modifican otros worktrees.
+Destino: codex/mobile-246, F:/FutBeat/FutBeat/.codex-worktrees/mobile-246. Fuente funcional actual c903ccc590a1492c0a002a69f61abd53969660a9. Ascendencia3977bc7 (M244) ->57b9851b (M245) ->e703864a comprobada en la reconciliación inmediatamente anterior. Sin merges, cherry-picks o copia de implementaciones. Archivos rastreados limpios antes de este documento; artifacts/ no rastreados se conservan. No se modifican otros worktrees.
 
 | Corrección integrada | Evidencia local | Commit | Requisito |
 |---|---|---|---|
@@ -24,6 +24,7 @@ Destino: codex/mobile-246, F:/FutBeat/FutBeat/.codex-worktrees/mobile-246. Fuent
 | No reintentar errores definitivos/calendario cancelado |400/401/403/404/422/429:3->1;503 transitorio mantiene recuperación | ec16b80d | S08/M01 |
 | Cancelar precarga de fecha obsoleta | Regresión bidireccional; solo fecha elegida,HTTP0 | abc3b671 | M01/S06 |
 | Tabla pasiva no promete hidratación |6->1lecturas; sin spinner ficticio, resume sin demanda, retry manual1lectura; ordinario6 permanece | e703864a | M08 |
+| Fotos: enriquecimiento pasivo no promete trabajo remoto |3->1lecturas; tras pausa/resume sigue1; placeholder preservado, ordinario conserva sus relecturas | c903ccc5 | M07/M03 |
 
 ### Registro de evidencia
 
@@ -39,6 +40,8 @@ Rutas relativas a este worktree, salvo indicación explícita. Los logs en artif
 - **E8**: QA225-C PASS informado por el usuario: fotos18/40,22placeholders, persistencia offline y sin overflow en+32. Evidencia histórica conservada en línea anterior; no sustituye QA física de+38 ni del AAB futuro.
 - **E9**: docs/release/OAUTH-PROVIDER-AVAILABILITY.md, android-signing.md, PLAY-130-PREPARATION.md y declaraciones previas del usuario. Documentos históricos, no estado actual de Play. Gradle actual permite release sin anuncios mediante FUTBEAT_ADS_DISABLED=true y sigue exigiendo firma; decisiones externas requieren confirmación, no copiar valores de documentos antiguos.
 - **E10**: CI último conocido de#235/run41247542032:1537PASS/11FAIL de goldens heredados; atribución36PNG idénticos a base exacta, no equivale a CI verde. contractsSUCCESS con suites omitidas por ausencia de cambios backend. Intento de refrescar GitHub en ROADMAP250: plugin no disponible; gh no conecta a api.github.com. Estado remoto actualUNKNOWN. Ningún push/PR/run nuevo ejecutado.
+
+- **E11**: continuación02, artifacts/mobile246/hourly02-before.log: dos regresiones fallan3vs1; hourly02-after.log:53PASS/0FAIL (MatchCenter,enriquecimiento ordinario,detalle,contratos/STOP/loopback); hourly02-analyze.log:PASS12,1s. Pausa/reanudación pasiva no repite consulta; se conserva jugador canónico y placeholder. Prueba local, no fotos físicas nuevas ni DONE de producto. Commit c903ccc5; +38 no lo contiene.
 
 ## Backlog de aceptación
 
@@ -58,11 +61,11 @@ Cada fila permanece abierta hasta reunir su aceptación concreta. Las referencia
 | S10 | Cobertura internacional principal | P1 | BLOCKED | E7; sin verificación actual de datos | Claude | R10 | Muestra acordada con fixtures almacenados, sin exigir datos inexistentes | handoff244 |
 | M01 | Feed y navegación por fechas | P0 | IN PROGRESS | E1; carrera de fecha corregida | Codex | S01/R08 | Cambiar ida/vuelta sin respuesta obsoleta ni precarga de fecha anterior | abc3b671 |
 | M02 | Favoritos agrupados y persistentes | P0 | IN PROGRESS | E4; persistencia local probada hoy | Codex | A07/R08 | Seleccionar/quitar, reiniciar y conservar un grupo; no perder demás partidos | 57b9851b; pruebas153 existentes |
-| M03 | Match Center cache-first | P0 | IN PROGRESS | E1/E2; reapertura pasiva3->2lecturas en dos visitas | Codex | R08/R10 | Primera lectura, reapertura SQLite y actualización segura en partido real | bee70aca |
+| M03 | Match Center cache-first | P0 | IN PROGRESS | E1/E2/E11; reapertura pasiva3->2lecturas en dos visitas, enriquecimiento3->1 | Codex | R08/R10 | Primera lectura, reapertura SQLite y actualización segura en partido real | bee70aca,c903ccc5 |
 | M04 | Cronología completa y compacta | P1 | IN PROGRESS | E1; regresiones locales IDs/eventos | Codex + Claude | M03 | Comparar IDs API/SQLite/UI; explicar eventos filtrados sin inventarlos | 57b9851b |
 | M05 | Previa y estados sin datos | P1 | IN PROGRESS | E1; contratos locales; ruta no pasiva por defecto | Codex + Claude | R10 | Previa disponible o ausencia explícita; no red fuera del alcance | 57b9851b |
 | M06 | Estadísticas | P1 | IN PROGRESS | E1/E2; datos tardíos y recuperación local | Codex | M03/R08 | Valores reales coinciden con payload y permanecen offline cuando guardados | e703864a |
-| M07 | Alineaciones y fotografías | P0 | IN PROGRESS | E8; QA225-C histórica; no prueba del nuevo SHA | Codex | R08 | Titulares/banca legibles sin overflow y fotos correctas sin red tras reinicio | 75f60b8 heredado |
+| M07 | Alineaciones y fotografías | P0 | IN PROGRESS | E8 histórica/E11 local;3->1lecturas pasivas, sin prueba física del nuevo SHA | Codex | R08 | Titulares/banca legibles sin overflow y fotos correctas sin red tras reinicio | 75f60b8 heredado;c903ccc5 |
 | M08 | Tabla de fase/grupo/temporada | P1 | IN PROGRESS | E2; ordinario6lecturas, pasivo6->1; filas conservadas | Codex + Claude | R10 | Apertura/Clausura/grupo exactos; sin datos legítimos no son tabla inventada | e703864a |
 | M09 | Perfil por identidad canónica | P1 | IN PROGRESS | E1; alias/homónimos/identidad local | Codex + Claude | R10 | Plantilla/alineación abren mismo ID; homónimos separados | 57b9851b |
 | M10 | Caché de fotos persistente y acotada | P1 | IN PROGRESS | E8 histórica y E1 regresiones; no prueba actual del dispositivo | Codex | R08 | Descarga autorizada, cierre de proceso, offline, placeholder y evicción | 75f60b8 heredado |
@@ -134,15 +137,15 @@ Esta sesión reduce bloqueos M/S; auth/login/borrado y notificaciones reales nec
 
 ## Hitos y próxima tarea
 
-- **H0 — alcanzado como preparación local**: línea246 conservada, cuatro correcciones funcionales integradas, cuentas/preferencias203tests localesPASS, una continuación programada completada. No confundir hito local con DONE de producto.
+- **H0 — alcanzado como preparación local**: línea246 conservada, cinco correcciones funcionales integradas, cuentas/preferencias203tests localesPASS, dos continuaciones programadas completadas. No confundir hito local con DONE de producto.
 - **H1 — siguiente hito de lanzamiento**: contrato conectado vigente aprobado + A32READY + evidencia física del recorrido crítico sobre SHA congelado. En paralelo resolver CI conocido y alcance Google/Push/Facebook, sin esperar inactivo.
 - **H2**: un único AAB oficial trazable tras permisos de firma/configuración, revisión de Console y autorización separada de subida. Después smoke desde Internal y enlace real de testers. No publicar enProducción.
 
-Próximo trabajo local seguro: **M07/M03**, reproducir lineupEnrichmentPending con adaptador pasivoACK y comprobar si sus dos temporizadores reconsultan sin hidratación posible. Solo corregir si la regresión falla; conservar enriquecimiento ordinario y límites. Después revisar requisito P0/P1 aún abierto que pueda cerrarse localmente; no ampliar arquitectura o cosmética.
+Próximo trabajo local seguro: **S08/M03**, revisar primero las regresiones existentes de match-context con respuesta terminal y SQLite disponible. Reproducir si un404ACK/503 puede ocultar contexto guardado al reabrir, sin inferir un bug por ausencia legítima de datos. Solo corregir si falla una nueva aceptación; conservar fail-closed y no activar rutas. La tarea M07 de enriquecimiento pasivo quedó corregida localmente en c903ccc5; aceptación física sigue pendiente.
 
 ## Continuaciones MOBILE245
 
-Misma automatización futbeat-mobile245-12-continuaciones-locales,ACTIVE,12invocaciones totales autorizadas;1programada completada acreditada,11restantes como máximo. Esta revisión manual no consume una programada. Instrucciones actualizadas mediante herramienta de la app; creación/horario/límite conservados. No se creó otro proceso/tarea/controlador.
+Misma automatización futbeat-mobile245-12-continuaciones-locales,ACTIVE,12invocaciones totales autorizadas;2programadas completadas acreditadas,10restantes como máximo. Esta revisión manual no consume una programada. Instrucciones actualizadas mediante herramienta de la app; creación/horario/límite conservados. No se creó otro proceso/tarea/controlador.
 
 Usar active-target.json y el bloqueo atómico existente antes de editar. Si existe otro dueño, registrar BLOCKED_BUSY y no tocar archivos compartidos. Cada ejecución escoge ID de esta tabla, reproduce/corrige/prueba/commit local, actualiza evidencia/estado y checkpoint, registra ledger y libera solo su bloqueo. No marcar DONE por mocks ni fabricar horas efectivas. No resetear el contador al cambiar instrucciones. Si no hay tarea segura, registrar bloqueo sin falsa implementación.
 
