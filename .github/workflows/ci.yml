@@ -2,7 +2,7 @@ name: FutBeat checks
 
 on:
   pull_request:
-    branches: [main, codex/mobile-243, codex/autonomous-mobile-244]
+    branches: [main, codex/mobile-243, codex/autonomous-mobile-244, codex/mobile-245]
 
 concurrency:
   group: futbeat-ci-${{ github.event.pull_request.number || github.ref }}
@@ -14,7 +14,7 @@ permissions:
 jobs:
   contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
