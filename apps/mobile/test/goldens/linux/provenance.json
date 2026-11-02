@@ -1,0 +1,101 @@
+{
+  "flutter": "3.47.4",
+  "platform": "linux",
+  "source_head": "5d3e6df7f8ed650ffa7ff7c01c2d2727fb98ed47",
+  "source_run": 41484558676,
+  "parent_run": 41247542032,
+  "comparison": "36/36 render/reference PNG byte-identical to parent failures; Windows references unchanged",
+  "tolerance": 0,
+  "entries": [
+    {
+      "name": "favorites_hub_competitions.png",
+      "linux_sha256": "63eaa84357a9c5eb1ceaf81a108e9a30aa736298b6de68183a227ebbb975d133",
+      "original_sha256": "a6cd9c1c36a8ceb0d0c9e5042e9374c49c672dbc89dbc1053e42fef19303b969"
+    },
+    {
+      "name": "favorites_hub_empty.png",
+      "linux_sha256": "93b955a9c8e09a6ba0fb09f142fc2f1c6ea075e2343b63d5248d586353ee7330",
+      "original_sha256": "f085a44b13ef79411d878dfd041687048eacfd6115b7329a32f0357d45377e1f"
+    },
+    {
+      "name": "favorites_hub_mixed.png",
+      "linux_sha256": "4700348e987f7205adb915477876a72cc10ab386c84310d48b50aa2b14855ead",
+      "original_sha256": "035159f56735e18d133c7235a595385f9af8a015f3e07dc094cbcd51c055f646"
+    },
+    {
+      "name": "favorites_hub_players.png",
+      "linux_sha256": "6113417351cb95c86235d0dcc80bbb046bc1cff662153cf268ad59bf242cac6c",
+      "original_sha256": "ec8334d13d810df0402658499b87bd119ebd80bdf8259bb9e7c3a5a9434da920"
+    },
+    {
+      "name": "favorites_hub_teams.png",
+      "linux_sha256": "4700348e987f7205adb915477876a72cc10ab386c84310d48b50aa2b14855ead",
+      "original_sha256": "035159f56735e18d133c7235a595385f9af8a015f3e07dc094cbcd51c055f646"
+    },
+    {
+      "name": "lineups_match_center_away.png",
+      "linux_sha256": "1ca1ff4932f5cd61423f971d82a77edc07edcc9417a6d362caa86bc3b7cc9422",
+      "original_sha256": "147dab4153d79502642a9c1b875ed9cd491b2163036172fe95894987b1048b9f"
+    },
+    {
+      "name": "lineups_match_center_home.png",
+      "linux_sha256": "cb6c2cabbb3ede53255a114931d758f497e86975979d8ef46783951342584d3b",
+      "original_sha256": "51e1cb6f590b33550bd705802f4b0c9f5bd5902f3db6fe072a11c4d1ecb68789"
+    },
+    {
+      "name": "lineups_match_center_top.png",
+      "linux_sha256": "e48315bf88d3883f5dbdb2f19a8b080938ccb0f81aa9b26da69fa338f7ba4b02",
+      "original_sha256": "3b073edb44483f39a7908968deb8e7df399871e9b74f4c4f374cefda618dd661"
+    },
+    {
+      "name": "lineups_polish_away_viewport.png",
+      "linux_sha256": "da20095dad357355fb4edd2b95269e02ea51183bb27466dd9730645b62afbf4c",
+      "original_sha256": "35904d8023f079c79d1bad2d381a02e7007b2d2c1e30e839f40854bfcd08f75d"
+    },
+    {
+      "name": "lineups_polish_home_viewport.png",
+      "linux_sha256": "caf60343241ac79699b454d841eca61b130a5ba000653285e3f0fa3b7cf682a0",
+      "original_sha256": "50e4b1c5049fec96022f7ed80a46b6d54323f95a8ffd380541577a908ab00072"
+    },
+    {
+      "name": "lineups_polish_synthetic.png",
+      "linux_sha256": "3e5366181399a1c27b54e866e471c0deb9cdc0936ca9bfa9d343ad9cd2c9bad2",
+      "original_sha256": "bbcbfe567122f78ddd159575c222dd6cb1c0c0940d9a5aab61f778f568305e66"
+    },
+    {
+      "name": "standings_match_context.png",
+      "linux_sha256": "67b9ca6820a7673d57c2779997a2baf07a992e3958ac60a4f662a4ce7d44a126",
+      "original_sha256": "f60b140e801121259bb6f4c1f967579ad68fa1d44e22a59b2d478dc1e558dbb1"
+    },
+    {
+      "name": "timeline_v2_cards_substitution.png",
+      "linux_sha256": "d7b46ec7c405e48808e11bfaf5de3d08198b1e166fdd927425d2f815327aab23",
+      "original_sha256": "a0de73f6c09b4492777abf2eba0ee98f8d0f20a738d65fa86b5c468d649fb7e7"
+    },
+    {
+      "name": "timeline_v2_complete.png",
+      "linux_sha256": "82c8baa44be7fe721f6a68886efb799abbab4bdb571739a4a11ec0d23632121d",
+      "original_sha256": "0551ceb0aafdad677ba8bf88d9fec1918df684680c4eaa7dab25ccc8faa5c6ae"
+    },
+    {
+      "name": "timeline_v2_empty.png",
+      "linux_sha256": "b9326e440c4ea30b306ffe8c603df5e1aaf1220b4bfa5d2f139b2fa8bddd70fb",
+      "original_sha256": "82467969ce83b025e9950b24ec02c3c7253f20e5730eeb1746194f55865da6d5"
+    },
+    {
+      "name": "timeline_v2_goal_assist.png",
+      "linux_sha256": "b11ddec36af2255004e0366c9aa15a1d869c19368a13eb3b369393e00a81158a",
+      "original_sha256": "2ba0d10749500a90ab2abedbfafd02732785818ba43433170bcb35f12754181d"
+    },
+    {
+      "name": "timeline_v2_live.png",
+      "linux_sha256": "82c8baa44be7fe721f6a68886efb799abbab4bdb571739a4a11ec0d23632121d",
+      "original_sha256": "0551ceb0aafdad677ba8bf88d9fec1918df684680c4eaa7dab25ccc8faa5c6ae"
+    },
+    {
+      "name": "timeline_v2_own_goal.png",
+      "linux_sha256": "71e20afdef1766fe556fd4608f93366069c7fe3f7bda0272ee1c1e84a94519ae",
+      "original_sha256": "6b60931e6b97bf1fd088ddfecea625202421fe0e79b476bf5b9717e2477ec948"
+    }
+  ]
+}

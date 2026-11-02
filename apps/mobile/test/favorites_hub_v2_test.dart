@@ -12,6 +12,8 @@ import 'package:futbeat/features/favorites/favorites_screen.dart';
 import 'package:futbeat/features/matches/matches_screen.dart';
 import 'package:go_router/go_router.dart';
 
+import 'support/platform_goldens.dart';
+
 Map<String, dynamic> _payload({bool aliases = false}) => {
   'schemaVersion': 1,
   'demo': false,
@@ -308,21 +310,21 @@ void main() {
     await _pump(tester);
     await expectLater(
       find.byType(FavoritesScreen),
-      matchesGoldenFile('goldens/favorites_hub_mixed.png'),
+      matchesPlatformGolden('goldens/favorites_hub_mixed.png'),
     );
     await expectLater(
       find.byType(FavoritesScreen),
-      matchesGoldenFile('goldens/favorites_hub_teams.png'),
+      matchesPlatformGolden('goldens/favorites_hub_teams.png'),
     );
     await _tab(tester, 'Jugadores');
     await expectLater(
       find.byType(FavoritesScreen),
-      matchesGoldenFile('goldens/favorites_hub_players.png'),
+      matchesPlatformGolden('goldens/favorites_hub_players.png'),
     );
     await _tab(tester, 'Competiciones');
     await expectLater(
       find.byType(FavoritesScreen),
-      matchesGoldenFile('goldens/favorites_hub_competitions.png'),
+      matchesPlatformGolden('goldens/favorites_hub_competitions.png'),
     );
   }, tags: 'golden');
 
@@ -330,7 +332,7 @@ void main() {
     await _pump(tester, follows: const {});
     await expectLater(
       find.byType(FavoritesScreen),
-      matchesGoldenFile('goldens/favorites_hub_empty.png'),
+      matchesPlatformGolden('goldens/favorites_hub_empty.png'),
     );
   }, tags: 'golden');
 
