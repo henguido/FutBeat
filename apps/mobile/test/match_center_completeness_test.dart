@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/qa_development.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 
 // Generic Match Center completeness on the phone: data that arrives after
@@ -88,16 +92,20 @@ Map<String, dynamic> _detail({
   bool lineup = false,
   bool stats = false,
   bool pending = false,
+  bool enrichmentPending = false,
+  bool hydrationNeeded = false,
 }) => {
   'matchId': _match,
   'available': true,
   'pending': pending,
+  'hydrationNeeded': hydrationNeeded,
   'detailLevel': 'full',
   'coverage': {
     'detail': 'available',
     'lineup': lineup ? 'available' : (pending ? 'pending' : 'missing'),
     'statistics': stats ? 'available' : (pending ? 'pending' : 'missing'),
     'stale': false,
+    'lineupEnrichmentPending': enrichmentPending,
   },
   'home': lineup
       ? {
@@ -170,10 +178,38 @@ class _Server {
     );
 }
 
+class _StoredWire implements HttpClientAdapter {
+  _StoredWire(this.server);
+  final _Server server;
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? body,
+    Future<void>? cancellation,
+  ) async {
+    final context = options.path == '/v1/qa-stored/match-context';
+    final data = context
+        ? server.context(server.contextReads++)
+        : server.detail(server.detailReads++);
+    return ResponseBody.fromString(
+      jsonEncode(data),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+        'x-futbeat-qa-stored': ['v1'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
 Future<ProviderContainer> _open(
   WidgetTester tester,
   _Server server, {
   double width = 360,
+  bool storedOnly = false,
 }) async {
   tester.view.physicalSize = Size(width, 780);
   tester.view.devicePixelRatio = 1;
@@ -182,10 +218,23 @@ Future<ProviderContainer> _open(
   final db = AppDatabase(NativeDatabase.memory());
   await tester.runAsync(() => db.customSelect('select 1').get());
   addTearDown(() => tester.runAsync(db.close));
+  final dio = storedOnly
+      ? (Dio(BaseOptions(baseUrl: 'https://127.0.0.1:9'))
+          ..httpClientAdapter = _StoredWire(server))
+      : server.dio();
+  QaStoredReadInterceptor? policy;
+  if (storedOnly) {
+    policy = QaStoredReadInterceptor(origin: Uri.parse('https://127.0.0.1:9'));
+    dio.interceptors.add(policy);
+  }
+  addTearDown(() {
+    policy?.close();
+    dio.close(force: true);
+  });
   final container = ProviderContainer(
     overrides: [
       databaseProvider.overrideWithValue(db),
-      repositoryProvider.overrideWithValue(ApiRepository(server.dio())),
+      repositoryProvider.overrideWithValue(ApiRepository(dio)),
       followsProvider.overrideWith((ref) => Stream.value({})),
       liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
     ],
@@ -236,6 +285,107 @@ String _selectedTab(WidgetTester tester) {
 }
 
 void main() {
+  for (final hydrationNeeded in [false, true]) {
+    testWidgets(
+      'stored lineup enrichment does not refresh or resume hydration=$hydrationNeeded',
+      (tester) async {
+        final server = _Server(
+          context: (_) => _context(),
+          detail: (_) => _detail(
+            lineup: true,
+            stats: true,
+            enrichmentPending: true,
+            hydrationNeeded: hydrationNeeded,
+          ),
+        );
+        final container = await _open(tester, server, storedOnly: true);
+        await _tab(tester, 'Alineación');
+        await _elapse(tester, const Duration(minutes: 2));
+        expect(
+          server.detailReads,
+          1,
+          reason: 'passive enrichment cannot start hydration',
+        );
+        expect(
+          find.byKey(const ValueKey('lineup-photo-fallback-fb_player_mc1')),
+          findsWidgets,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump(const Duration(seconds: 30));
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await _elapse(tester, const Duration(seconds: 30));
+        expect(
+          server.detailReads,
+          1,
+          reason: 'resume is not a passive enrichment demand',
+        );
+        expect(server.contextReads, 1);
+        await _close(tester, container);
+      },
+    );
+  }
+
+  for (final hasRows in [false, true]) {
+    testWidgets(
+      'stored pending standings stays settled without polling rows=$hasRows',
+      (tester) async {
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (_) => _context(standings: hasRows, standingsPending: true),
+        );
+        final container = await _open(tester, server, storedOnly: true);
+        await _tab(tester, 'Tabla');
+        final initiallyLoading = find
+            .text('Cargando tabla…')
+            .evaluate()
+            .isNotEmpty;
+        final initiallyRefreshing = find
+            .byKey(const ValueKey('match-refreshing'))
+            .evaluate()
+            .isNotEmpty;
+        await _elapse(tester, const Duration(minutes: 10));
+        expect(server.contextReads, 1);
+        expect(initiallyLoading, isFalse);
+        expect(initiallyRefreshing, isFalse);
+        expect(
+          find.text(hasRows ? 'Clasificación' : 'Tabla aún no disponible'),
+          findsOneWidget,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await _elapse(tester, const Duration(seconds: 2));
+        expect(
+          server.contextReads,
+          1,
+          reason: 'pending passive data is not a resume demand',
+        );
+        if (!hasRows) {
+          final retry = find.byKey(const ValueKey('standings-retry'));
+          await tester.ensureVisible(retry);
+          await tester.tap(retry);
+          await _elapse(tester, const Duration(seconds: 2));
+          expect(
+            server.contextReads,
+            2,
+            reason: 'an explicit retry still reads once',
+          );
+          await _elapse(tester, const Duration(minutes: 10));
+          expect(
+            server.contextReads,
+            2,
+            reason: 'manual read cannot start automatic polling',
+          );
+        }
+        await _close(tester, container);
+      },
+    );
+  }
+
   testWidgets(
     'unknown LIVE observation is labelled without adding context polling',
     (tester) async {
@@ -246,8 +396,11 @@ void main() {
         context: (_) => raw,
       );
       final container = await _open(tester, server);
-    expect(find.textContaining('Último marcador conocido'), findsOneWidget,
-        reason: 'freshness warning is visible on the initial facts tab');
+      expect(
+        find.textContaining('Último marcador conocido'),
+        findsOneWidget,
+        reason: 'freshness warning is visible on the initial facts tab',
+      );
       await _elapse(tester, const Duration(minutes: 2));
       expect(
         server.contextReads,

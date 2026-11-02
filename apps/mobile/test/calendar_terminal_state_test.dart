@@ -112,7 +112,17 @@ void main() {
       final net = scriptedDio(
         (call, _) => call < 3 ? pendingPayload() : calendarPayload(score: true),
       );
-      final repo = ApiRepository(net.dio, null, fastPolicy);
+      // This success path asserts exactly3requests and a cache hit. The
+      // separate negative test still enforces the400ms deadline. Give this
+      // positive sequence headroom for parallel-isolate scheduling delays.
+      const successPolicy = CalendarCachePolicy(
+        visibleDeadline: Duration(seconds: 2),
+        pendingPollMin: Duration(milliseconds: 20),
+        pendingPollMax: Duration(milliseconds: 40),
+        revalidateEvery: Duration(milliseconds: 60),
+        revalidateMax: Duration(milliseconds: 400),
+      );
+      final repo = ApiRepository(net.dio, null, successPolicy);
       final values = await repo.watchDate(DateTime(2026, 8, 20)).toList();
       expect(values.first.calendarPending, true);
       expect(values.last.calendarPending, false);

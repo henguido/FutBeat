@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { openDatabase } from '../storage/database.mjs';
 import * as matchDetail from '../../supabase/functions/_shared/match_detail.ts';
 import * as calendarCache from '../../supabase/functions/_shared/calendar_cache.ts';
+import * as qaStoredReads from '../../supabase/functions/_shared/qa_stored_reads.ts';
 
 // #155 review: a mapped team whose initial window was confirmed EMPTY
 // (NO_DATA, no covered range) can still ask for older history, explicitly,
@@ -227,7 +228,7 @@ test('7. quota/planner: central team-fixtures lane only; reads and extend make z
     } catch (error) { return { data: null, error: { message: error.message } }; }
   } } };
   const context = vm.createContext({ Request, Response, URL, JSON, setTimeout, clearTimeout, console: { warn() {}, error() {}, log() {} },
-    withSupabase: (_o, h) => (req) => h(req, ctx), ...matchDetail, ...calendarCache });
+    withSupabase: (_o, h) => (req) => h(req, ctx), ...matchDetail, ...calendarCache, ...qaStoredReads });
   vm.runInContext(stripTypeScriptTypes(source.replace(/^import\s[\s\S]*?;\r?\n/gm, '')).replace('export default {', 'globalThis.__api = {'), context);
   const res = await context.__api.fetch(new Request(`https://api.test/functions/v1/futbeat-api/v1/match-h2h?id=${target}&extend=1`));
   assert.equal(res.status, 200);

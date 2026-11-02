@@ -138,6 +138,13 @@ class ApiRepository implements FootballRepository {
   ]);
   final QaDiagnostics? diagnostics;
   final Dio dio;
+
+  /// Only the explicit stored-read adapter disables demand-related refreshes.
+  /// Optional response metadata is not an authorization signal.
+  bool get storedReadsOnly => dio.interceptors.any(
+    (interceptor) => interceptor is QaStoredReadInterceptor,
+  );
+
   final AppDatabase? database;
   final CalendarCachePolicy calendarPolicy;
 
@@ -710,7 +717,10 @@ class ApiRepository implements FootballRepository {
         lastStack = stack;
         failures++;
         if (cached != null) yield cached.asStale();
-        if (failures >= calendarPolicy.maxAttempts) break;
+        // Authentication, known absence, invalid payloads and cancellation
+        // cannot recover through immediate repetition. Keep cached data, but
+        // reserve the bounded retry budget for transient transport/server errors.
+        if (!_retryable(error) || failures >= calendarPolicy.maxAttempts) break;
         if (!await wait(retryDelay * failures)) {
           if (cancelToken?.isCancelled == true) return;
           break;
@@ -1323,7 +1333,9 @@ class ApiRepository implements FootballRepository {
     // The API may still request lineup-photo hydration on any detail read.
     if (_detailRequested.contains(id)) {
       final cached = await readMatchDetail(id, cancelToken: cancelToken);
-      if (!cached.hydrationNeeded) return cached;
+      // The opt-in stored-only adapter cannot register hydration work. A
+      // second demand-shaped GET would be rewritten to the same passive read.
+      if (!cached.hydrationNeeded || storedReadsOnly) return cached;
     }
     if (_detailRequestInFlight.containsKey(id)) {
       diagnostics?.record('/v1/match-detail', 'sharedFlight');

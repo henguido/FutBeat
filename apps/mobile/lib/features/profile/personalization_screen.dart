@@ -20,26 +20,27 @@ class PersonalizationScreen extends ConsumerWidget {
     WidgetRef ref,
     CountryPreference current,
   ) async {
+    // Capture provider-owned objects before awaiting the modal/save: the
+    // screen can be dismissed while the local preference is being written.
+    final database = ref.read(databaseProvider);
+    final service = ref.read(pushServiceProvider);
     final code = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       builder: (_) => CountryPickerSheet(current: current.selectedCountry),
     );
-    if (code == null || code == current.selectedCountry) return;
-    await ref
-        .read(databaseProvider)
-        .savePreference(
-          detectedCountry: current.detectedCountry,
-          selectedCountry: code,
-          bootstrapDismissed: current.bootstrapDismissed,
-          competitionOrderMode: current.competitionOrderMode,
-          competitionOrderPreference: current.competitionOrderPreference,
-          pinnedCompetitionIds: current.pinnedCompetitionIds,
-        );
-    final service = ref.read(pushServiceProvider);
+    if (code == null) return;
+    // Do not replay the snapshot captured when the modal opened: order,
+    // pinned competitions or the detected region may have changed since.
+    await database.saveSelectedCountry(code);
+    await service.markSelectedCountryDirty();
     if (service.authenticated) {
       try {
-        await service.syncCountries(current.detectedCountry, code);
+        await service.syncCountries(
+          current.detectedCountry,
+          code,
+          updateDetected: false,
+        );
       } catch (_) {}
     }
   }
@@ -183,6 +184,7 @@ class PersonalizationScreen extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: DropdownButtonFormField<String>(
                     key: const ValueKey('hour-format'),
+                    isExpanded: true,
                     initialValue: settings.hourFormat,
                     decoration: const InputDecoration(
                       border: InputBorder.none,

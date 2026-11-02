@@ -340,10 +340,17 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       maxMatches: 8,
     ).excluding(_prefetchAttempted);
     if (plan.matchIds.isEmpty) return;
+    final queuedGeneration = _prefetchGeneration;
     _prefetchQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _prefetchQueued = false;
       if (!mounted || !_sportsActive || _prefetchRunning) return;
+      if (queuedGeneration != _prefetchGeneration) {
+        // A date/lifecycle change invalidated this plan before it started.
+        // Rebuild once so the newest date can queue its own plan.
+        setState(() {});
+        return;
+      }
       final repository = ref.read(repositoryProvider);
       if (repository is! ApiRepository) return;
       final memory = ref.read(matchDetailMemoryProvider);

@@ -5,6 +5,8 @@ import 'package:futbeat/features/matches/match_screen.dart';
 
 import 'support/visual_test_fonts.dart';
 
+import 'support/platform_goldens.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -132,14 +134,14 @@ void main() {
 
     await expectLater(
       find.byType(Scaffold),
-      matchesGoldenFile('goldens/lineups_polish_synthetic.png'),
+      matchesPlatformGolden('goldens/lineups_polish_synthetic.png'),
     );
 
     tester.view.physicalSize = const Size(390, 844);
     await tester.pump();
     await expectLater(
       find.byType(Scaffold),
-      matchesGoldenFile('goldens/lineups_polish_home_viewport.png'),
+      matchesPlatformGolden('goldens/lineups_polish_home_viewport.png'),
     );
 
     await tester.drag(
@@ -149,7 +151,7 @@ void main() {
     await tester.pumpAndSettle();
     await expectLater(
       find.byType(Scaffold),
-      matchesGoldenFile('goldens/lineups_polish_away_viewport.png'),
+      matchesPlatformGolden('goldens/lineups_polish_away_viewport.png'),
     );
     expect(tester.takeException(), isNull);
   }, tags: 'golden');

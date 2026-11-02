@@ -10,6 +10,8 @@ import 'package:futbeat/features/matches/match_screen.dart';
 
 import 'support/visual_test_fonts.dart';
 
+import 'support/platform_goldens.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -173,19 +175,19 @@ void main() {
     expect(tester.getRect(localCoach).bottom, lessThan(740));
     await expectLater(
       find.byType(Scaffold).first,
-      matchesGoldenFile('goldens/lineups_match_center_top.png'),
+      matchesPlatformGolden('goldens/lineups_match_center_top.png'),
     );
     await tester.drag(scroll, const Offset(0, -520));
     await tester.pumpAndSettle();
     await expectLater(
       find.byType(Scaffold).first,
-      matchesGoldenFile('goldens/lineups_match_center_home.png'),
+      matchesPlatformGolden('goldens/lineups_match_center_home.png'),
     );
     await tester.drag(scroll, const Offset(0, -620));
     await tester.pumpAndSettle();
     await expectLater(
       find.byType(Scaffold).first,
-      matchesGoldenFile('goldens/lineups_match_center_away.png'),
+      matchesPlatformGolden('goldens/lineups_match_center_away.png'),
     );
     await tester.dragUntilVisible(
       find.byKey(const ValueKey('lineup-Visitante-coach')),

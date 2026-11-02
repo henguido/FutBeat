@@ -17,6 +17,9 @@ test('News v1 stores source-attributed articles on the requested entity',async()
    team,JSON.stringify({id:team,name:'News V1 FC',country:'Costa Rica',competitionId:competition,aliases:[]}),
   ]);
 
+  // Use the isolated database clock: the reader intentionally filters expired news.
+  const receivedAt=new Date((await db.query('select now() value')).rows[0].value);
+  const publishedAt=new Date(receivedAt.getTime()-2*60*60*1000).toISOString();
   const articles=[{
    id:'news-v1-a1',
    title:'News V1 FC prepara su próximo partido',
@@ -24,13 +27,13 @@ test('News v1 stores source-attributed articles on the requested entity',async()
    url:'https://example.com/news-v1-a1',
    sourceName:'Medio Ejemplo',
    sourceUrl:'https://example.com',
-   publishedAt:'2026-09-19T02:00:00Z',
+   publishedAt,
    language:'spanish',
   }];
 
   const stored=(await db.query(
    'select public.futbeat_store_news_batch($1,$2,$3,$4,$5) value',
-   ['team',team,'2026-09-19T04:00:00Z','News V1 FC',JSON.stringify(articles)],
+   ['team',team,receivedAt.toISOString(),'News V1 FC',JSON.stringify(articles)],
   )).rows[0].value;
   assert.equal(stored.articles,1);
 

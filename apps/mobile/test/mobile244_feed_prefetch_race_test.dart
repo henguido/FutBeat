@@ -43,88 +43,102 @@ Snapshot _day(DateTime date) => Snapshot({
         date.day,
         18,
       ).toIso8601String(),
-      'status': 'SCHEDULED',
+      // Explicit finished evidence keeps both fixture dates eligible even
+      // after their scheduled kickoff has passed on the host clock.
+      'status': 'VERIFIED',
+      'score': {'home': 1, 'away': 0},
     },
   ],
 });
 
 void main() {
-  testWidgets('date change before queued warming never reads the old day', (
-    tester,
-  ) async {
-    final now = DateTime(2026, 10, 31, 12);
-    final dio = Dio();
-    var http = 0;
-    dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) {
-          http++;
-          handler.reject(DioException(requestOptions: options));
-        },
-      ),
-    );
-    final repository = _ObservedStoredRepository(dio);
-    final container = ProviderContainer(
-      overrides: [
-        repositoryProvider.overrideWithValue(repository),
-        calendarSnapshotProvider.overrideWith(
-          (ref, date) => Stream.value(_day(date)),
-        ),
-        followsProvider.overrideWith(
-          (ref) => Stream.value({'team:fb_team_home'}),
-        ),
-        preferenceProvider.overrideWith(
-          (ref) => Stream.value(
-            const CountryPreference(
-              selectedCountry: null,
-              detectedCountry: null,
-              bootstrapDismissed: true,
-            ),
+  for (final backwards in [false, true]) {
+    testWidgets(
+      'date change before queued warming never reads the old day (backwards=$backwards)',
+      (tester) async {
+        final now = DateTime(2026, 10, 31, 12);
+        expect(_day(now).matches.single.isFinished, isTrue);
+        expect(
+          _day(now.add(const Duration(days: 1))).matches.single.isFinished,
+          isTrue,
+        );
+        final dio = Dio();
+        var http = 0;
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              http++;
+              handler.reject(DioException(requestOptions: options));
+            },
           ),
-        ),
-        liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
-      ],
-    );
-    addTearDown(() async {
-      await tester.pumpWidget(const SizedBox());
-      container.dispose();
-      dio.close(force: true);
-    });
-    var changed = false;
-    // This callback is queued before the loaded feed schedules its own warm
-    // callback. Simulate a date gesture in that exact post-frame interval.
-    void changeBeforeWarm(Duration _) {
-      if (find
-          .byKey(const ValueKey('match-row-fb_match_day31'))
-          .evaluate()
-          .isEmpty) {
-        WidgetsBinding.instance.addPostFrameCallback(changeBeforeWarm);
-        return;
-      }
-      changed = true;
-      final swipe = tester.widget<GestureDetector>(
-        find.byKey(const ValueKey('matches-date-swipe')),
-      );
-      swipe.onHorizontalDragEnd!(
-        DragEndDetails(
-          primaryVelocity: -600,
-          velocity: const Velocity(pixelsPerSecond: Offset(-600, 0)),
-        ),
-      );
-    }
+        );
+        final repository = _ObservedStoredRepository(dio);
+        final container = ProviderContainer(
+          overrides: [
+            repositoryProvider.overrideWithValue(repository),
+            calendarSnapshotProvider.overrideWith(
+              (ref, date) => Stream.value(_day(date)),
+            ),
+            followsProvider.overrideWith(
+              (ref) => Stream.value({'team:fb_team_home'}),
+            ),
+            preferenceProvider.overrideWith(
+              (ref) => Stream.value(
+                const CountryPreference(
+                  selectedCountry: null,
+                  detectedCountry: null,
+                  bootstrapDismissed: true,
+                ),
+              ),
+            ),
+            liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
+          ],
+        );
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox());
+          container.dispose();
+          dio.close(force: true);
+        });
+        var changed = false;
+        // This callback is queued before the loaded feed schedules its own warm
+        // callback. Simulate a date gesture in that exact post-frame interval.
+        void changeBeforeWarm(Duration _) {
+          if (find
+              .byKey(const ValueKey('match-row-fb_match_day31'))
+              .evaluate()
+              .isEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback(changeBeforeWarm);
+            return;
+          }
+          changed = true;
+          final swipe = tester.widget<GestureDetector>(
+            find.byKey(const ValueKey('matches-date-swipe')),
+          );
+          swipe.onHorizontalDragEnd!(
+            DragEndDetails(
+              primaryVelocity: backwards ? 600 : -600,
+              velocity: Velocity(
+                pixelsPerSecond: Offset(backwards ? 600 : -600, 0),
+              ),
+            ),
+          );
+        }
 
-    WidgetsBinding.instance.addPostFrameCallback(changeBeforeWarm);
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp(home: MatchesScreen(now: () => now)),
-      ),
+        WidgetsBinding.instance.addPostFrameCallback(changeBeforeWarm);
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(home: MatchesScreen(now: () => now)),
+          ),
+        );
+        await tester.pump();
+        await tester.pumpAndSettle();
+        expect(changed, isTrue);
+        expect(repository.reads, isNot(contains('fb_match_day31')));
+        final targetDay = now.add(Duration(days: backwards ? -1 : 1)).day;
+        expect(repository.reads, ['fb_match_day$targetDay']);
+        expect(http, 0);
+      },
     );
-    await tester.pump();
-    await tester.pumpAndSettle();
-    expect(changed, isTrue);
-    expect(repository.reads, isNot(contains('fb_match_day31')));
-    expect(repository.reads, ['fb_match_day1']);
-    expect(http, 0);
-  });
+  }
 }

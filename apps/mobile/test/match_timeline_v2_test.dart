@@ -6,6 +6,8 @@ import 'package:futbeat/shared/widgets.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:go_router/go_router.dart';
 
+import 'support/platform_goldens.dart';
+
 const _home = 'team_home';
 const _away = 'team_away';
 
@@ -475,7 +477,7 @@ void main() {
     );
     await expectLater(
       find.byType(MatchTimeline),
-      matchesGoldenFile('goldens/timeline_v2_complete.png'),
+      matchesPlatformGolden('goldens/timeline_v2_complete.png'),
     );
   }, tags: 'golden');
 
@@ -488,7 +490,7 @@ void main() {
     );
     await expectLater(
       find.byType(MatchTimeline),
-      matchesGoldenFile('goldens/timeline_v2_live.png'),
+      matchesPlatformGolden('goldens/timeline_v2_live.png'),
     );
   }, tags: 'golden');
 
@@ -502,7 +504,7 @@ void main() {
       await _pumpTimeline(tester, events: state.value);
       await expectLater(
         find.byType(MatchTimeline),
-        matchesGoldenFile('goldens/timeline_v2_${state.key}.png'),
+        matchesPlatformGolden('goldens/timeline_v2_${state.key}.png'),
       );
     }, tags: 'golden');
   }

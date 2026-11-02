@@ -6,6 +6,8 @@ import 'package:futbeat/features/entities/standings.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:go_router/go_router.dart';
 
+import 'support/platform_goldens.dart';
+
 const _competition = 'fb_comp_ux2';
 
 Map<String, dynamic> _row(
@@ -255,7 +257,7 @@ void main() {
     expect(tester.takeException(), isNull);
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/standings_match_context.png'),
+      matchesPlatformGolden('goldens/standings_match_context.png'),
     );
 
     await tester.tap(find.byKey(const ValueKey('standings-show-full')));

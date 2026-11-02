@@ -137,7 +137,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   }
 
   void _scheduleLineupEnrichmentRefresh() {
-    if (!_sportsActive ||
+    if (_storedReadsOnly ||
+        !_sportsActive ||
         _lineupEnrichmentRetry != null ||
         _lineupEnrichmentAttempts >= _lineupEnrichmentRetryDelays.length) {
       return;
@@ -155,8 +156,14 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     );
   }
 
+  bool get _storedReadsOnly {
+    final repository = ref.read(repositoryProvider);
+    return repository is ApiRepository && repository.storedReadsOnly;
+  }
+
   void _scheduleStandingsRefresh() {
-    if (!_sportsActive ||
+    if (_storedReadsOnly ||
+        !_sportsActive ||
         _standingsRetry != null ||
         _standingsAttempts >= _standingsSchedule.length) {
       return;
@@ -266,11 +273,11 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         : <String, LiveMatchUpdate>{widget.id: ownUpdate};
     ref.listen(matchDetailProvider(widget.id), (_, next) {
       if (!next.isLoading) {
-        _lineupPending = next.asData?.value.lineupEnrichmentPending == true;
+        _lineupPending =
+            next.asData?.value.lineupEnrichmentPending == true && !_storedReadsOnly;
       }
       // Ignore the refresh-in-progress state (it still carries old data).
-      if (!next.isLoading &&
-          next.asData?.value.lineupEnrichmentPending == true) {
+      if (!next.isLoading && _lineupPending) {
         _scheduleLineupEnrichmentRefresh();
       }
     });
@@ -280,8 +287,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     if (watchesContext) {
       ref.listen(matchContextSnapshotProvider(widget.id), (_, next) {
         if (next.isLoading || next.value == null) return;
-        _standingsPending = next.value!.standingsPending;
-        if (next.value!.standingsPending) {
+        _standingsPending = next.value!.standingsPending && !_storedReadsOnly;
+        if (_standingsPending) {
           _scheduleStandingsRefresh();
         } else {
           // Answered (or settled server-side): no further revalidation.
@@ -464,6 +471,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     // stable state (no endless spinner).
     final standingsRefreshing =
         data.standingsPending &&
+        !_storedReadsOnly &&
         _standingsAttempts < standingsRetryDelays.length;
     final refreshing =
         (detail.pending && !_detailRefreshIndicatorExpired) ||
