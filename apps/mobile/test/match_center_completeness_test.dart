@@ -92,16 +92,20 @@ Map<String, dynamic> _detail({
   bool lineup = false,
   bool stats = false,
   bool pending = false,
+  bool enrichmentPending = false,
+  bool hydrationNeeded = false,
 }) => {
   'matchId': _match,
   'available': true,
   'pending': pending,
+  'hydrationNeeded': hydrationNeeded,
   'detailLevel': 'full',
   'coverage': {
     'detail': 'available',
     'lineup': lineup ? 'available' : (pending ? 'pending' : 'missing'),
     'statistics': stats ? 'available' : (pending ? 'pending' : 'missing'),
     'stale': false,
+    'lineupEnrichmentPending': enrichmentPending,
   },
   'home': lineup
       ? {
@@ -281,6 +285,48 @@ String _selectedTab(WidgetTester tester) {
 }
 
 void main() {
+  for (final hydrationNeeded in [false, true]) {
+    testWidgets(
+      'stored lineup enrichment does not refresh or resume hydration=$hydrationNeeded',
+      (tester) async {
+        final server = _Server(
+          context: (_) => _context(),
+          detail: (_) => _detail(
+            lineup: true,
+            stats: true,
+            enrichmentPending: true,
+            hydrationNeeded: hydrationNeeded,
+          ),
+        );
+        final container = await _open(tester, server, storedOnly: true);
+        await _tab(tester, 'Alineación');
+        await _elapse(tester, const Duration(minutes: 2));
+        expect(
+          server.detailReads,
+          1,
+          reason: 'passive enrichment cannot start hydration',
+        );
+        expect(
+          find.byKey(const ValueKey('lineup-photo-fallback-fb_player_mc1')),
+          findsWidgets,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump(const Duration(seconds: 30));
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await _elapse(tester, const Duration(seconds: 30));
+        expect(
+          server.detailReads,
+          1,
+          reason: 'resume is not a passive enrichment demand',
+        );
+        expect(server.contextReads, 1);
+        await _close(tester, container);
+      },
+    );
+  }
+
   for (final hasRows in [false, true]) {
     testWidgets(
       'stored pending standings stays settled without polling rows=$hasRows',

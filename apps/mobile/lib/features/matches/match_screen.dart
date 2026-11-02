@@ -137,7 +137,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   }
 
   void _scheduleLineupEnrichmentRefresh() {
-    if (!_sportsActive ||
+    if (_storedReadsOnly ||
+        !_sportsActive ||
         _lineupEnrichmentRetry != null ||
         _lineupEnrichmentAttempts >= _lineupEnrichmentRetryDelays.length) {
       return;
@@ -272,11 +273,11 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         : <String, LiveMatchUpdate>{widget.id: ownUpdate};
     ref.listen(matchDetailProvider(widget.id), (_, next) {
       if (!next.isLoading) {
-        _lineupPending = next.asData?.value.lineupEnrichmentPending == true;
+        _lineupPending =
+            next.asData?.value.lineupEnrichmentPending == true && !_storedReadsOnly;
       }
       // Ignore the refresh-in-progress state (it still carries old data).
-      if (!next.isLoading &&
-          next.asData?.value.lineupEnrichmentPending == true) {
+      if (!next.isLoading && _lineupPending) {
         _scheduleLineupEnrichmentRefresh();
       }
     });
