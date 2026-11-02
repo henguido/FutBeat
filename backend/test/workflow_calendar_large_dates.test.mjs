@@ -266,3 +266,14 @@ test('a large date leaves a pause before the next one is paid', { skip }, async 
   assert.deepEqual(r.stored, ['2027-03-07', '2027-03-08']);
   assert.ok(r.out.indexOf('MOCK_SLEEP 20') < r.out.lastIndexOf('fixtures/date/2027-03-08'));
 });
+
+test('BE-245: no ingest call starts where it would reach a live poll', { skip }, () => {
+  const body = workflow.match(/function Get-LiveSlotWait[\s\S]*?\r?\n {10}\}\r?\n/)[0];
+  const cases = { 0: 30, 29: 1, 30: 0, 200: 0, 201: 129, 299: 31 };
+  const script = `${body}\n${Object.keys(cases).map((s) => `Write-Output "${s}=$(Get-LiveSlotWait ${s})"`).join('\n')}`;
+  const r = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8' });
+  for (const [second, wait] of Object.entries(cases)) assert.match(r.stdout, new RegExp(`^${second}=${wait}\\s*$`, 'm'));
+  // 200 s + a 90 s call ends before the next mark.
+  assert.ok(200 + 90 < 300);
+  assert.equal(workflow.match(/Wait-LiveSlot\r?\n/g).length, 4, 'every ingest start waits');
+});

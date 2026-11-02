@@ -16,7 +16,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     env:
       GOAL_API_KEY: ${{ secrets.GOAL_API_KEY }}
       CALENDAR_PENDING_DIR: ${{ github.workspace }}/calendar-pending
@@ -51,6 +51,27 @@ jobs:
             }
             Write-Host "::add-mask::$token"
             return $token
+          }
+
+          # BE-245: 11-02 00:45 a run under way cost three live polls their batch.
+          # LIVE polls on the 5 minute mark and records in its first seconds, and an
+          # ingest call lasts up to 90 s, so no call starts where it would reach the
+          # next poll. Only the start is held: paid pages are never dropped for this.
+          function Get-LiveSlotWait([int]$cycleSecond) {
+            $opens = 30
+            $closes = 200
+            if ($cycleSecond -lt $opens) { return $opens - $cycleSecond }
+            if ($cycleSecond -gt $closes) { return 300 - $cycleSecond + $opens }
+            return 0
+          }
+
+          function Wait-LiveSlot {
+            $now = [DateTimeOffset]::UtcNow
+            $wait = Get-LiveSlotWait (($now.Minute % 5) * 60 + $now.Second)
+            if ($wait -gt 0) {
+              Write-Output "LIVE_SLOT_WAIT seconds=$wait"
+              Start-Sleep -Seconds $wait
+            }
           }
 
           function Invoke-FutBeatGlobalEndpoint([object]$payload, [int]$timeoutSec = 90) {
@@ -161,6 +182,7 @@ jobs:
               if ($resumed -ge $pendingPerRun) { break }
               $resumed += 1
               try {
+                Wait-LiveSlot
                 $result = Invoke-FutBeatGlobalEndpoint $file.payload $calendarCallSeconds
               } catch {
                 $script:calendarFailures += 1
@@ -244,6 +266,7 @@ jobs:
           # the missing dates never ran). The calendar ingests per date with its own
           # stores; the run still fails at the end so the hot failure stays visible.
           try {
+            Wait-LiveSlot
             $hotResult = Invoke-FutBeatGlobalEndpoint ([ordered]@{
               source = "GOAL API"
               mode = "hot"
@@ -439,6 +462,7 @@ jobs:
               }
               try {
                 try {
+                  Wait-LiveSlot
                   $calendarResult = Invoke-FutBeatGlobalEndpoint $calendarPayload $calendarCallSeconds
                 } catch {
                   if ("$($_.Exception.Message) $($_.ErrorDetails.Message)" -notmatch "57014") {
@@ -446,6 +470,7 @@ jobs:
                   }
                   Write-Output "CALENDAR_INGEST_RETRY date=$($batchDates -join ',') reason=57014"
                   Start-Sleep -Seconds $retryPauseSeconds
+                  Wait-LiveSlot
                   $calendarResult = Invoke-FutBeatGlobalEndpoint $calendarPayload $calendarCallSeconds
                 }
                 # v44 answers 200 skipped past 64 ingests a day: nothing was stored
