@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,7 +14,7 @@ Json detail(String? fetchedAt, {required bool cancelled}) => {
   'available': true,
   'pending': false,
   'detailLevel': 'full',
-  if (fetchedAt != null) 'fetchedAt': fetchedAt,
+  'fetchedAt': ?fetchedAt,
   'home': <String, dynamic>{},
   'away': <String, dynamic>{},
   'statistics': [
@@ -80,13 +82,18 @@ void main() {
       );
       addTearDown(container.dispose);
       container.read(matchDetailMemoryProvider)[matchId] = current;
+      final revalidated = Completer<void>();
+      var observations = 0;
       final subscription = container.listen(
         matchDetailProvider(matchId),
-        (_, _) {},
+        (_, next) {
+          if (next.asData != null && ++observations == 2) {
+            revalidated.complete();
+          }
+        },
       );
       addTearDown(subscription.close);
-      await container.read(matchDetailProvider(matchId).future);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await revalidated.future.timeout(const Duration(seconds: 2));
       final rendered = container
           .read(matchDetailProvider(matchId))
           .asData!

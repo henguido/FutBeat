@@ -55,8 +55,9 @@ class _Pages extends ApiRepository {
     String? season,
   }) async {
     calls.add('$id:$bucket');
-    if (holdFirst && id == 'fb_team_a' && bucket == 'results')
+    if (holdFirst && id == 'fb_team_a' && bucket == 'results') {
       return oldAnswer.future;
+    }
     return TeamMatchesPage(page(id, results: bucket == 'results'));
   }
 }
