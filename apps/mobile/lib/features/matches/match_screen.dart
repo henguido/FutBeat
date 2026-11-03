@@ -1734,6 +1734,32 @@ class MatchStandingsTab extends StatelessWidget {
   /// Manual refresh offered once a pending table settled.
   final VoidCallback? onRetry;
 
+  void _openFullTable(BuildContext context) {
+    // The competition overview defaults to its current season. Keep this
+    // match's exact cached table/phase instead, with no extra context read.
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Tabla completa')),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              MatchStandingsTab(
+                data,
+                competitionId,
+                homeTeamId: homeTeamId,
+                awayTeamId: awayTeamId,
+                stage: stage,
+                season: season,
+                refreshing: false,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final selectedTable = standingsTableFor(
@@ -1783,7 +1809,7 @@ class MatchStandingsTab extends StatelessWidget {
               alignment: Alignment.centerRight,
               child: TextButton.icon(
                 key: const ValueKey('standings-show-full'),
-                onPressed: () => context.push('/competition/$competitionId'),
+                onPressed: () => _openFullTable(context),
                 icon: const Icon(Icons.open_in_new_rounded, size: 17),
                 label: const Text('Ver tabla completa'),
               ),
