@@ -59,13 +59,20 @@ bool _isPlayedOrPlaying(FootballMatch match) =>
 /// no evidence; a later scheduled game can be a real second game). Two
 /// finished matches with different final scores, and matches of different
 /// competitions, are never merged.
-bool _sameFixture(FootballMatch a, FootballMatch b) {
-  if (a.competitionId.isEmpty ||
-      a.competitionId != b.competitionId ||
-      a.homeId.isEmpty ||
-      a.homeId == a.awayId ||
-      a.homeId != b.homeId ||
-      a.awayId != b.awayId) {
+bool _sameFixture(
+  FootballMatch a,
+  FootballMatch b,
+  String Function(String) resolve,
+) {
+  final competition = resolve(a.competitionId);
+  final home = resolve(a.homeId);
+  final away = resolve(a.awayId);
+  if (competition.isEmpty ||
+      competition != resolve(b.competitionId) ||
+      home.isEmpty ||
+      home == away ||
+      home != resolve(b.homeId) ||
+      away != resolve(b.awayId)) {
     return false;
   }
   if (a.isFinished &&
@@ -95,7 +102,11 @@ bool _sameFixture(FootballMatch a, FootballMatch b) {
 /// match id, or two match entities of one fixture (see [_sameFixture]). The
 /// best twin stays: finished > live > played evidence > scheduled > called
 /// off, then the lower id. The order of the surviving matches is preserved.
-List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
+List<FootballMatch> dedupeFixtures(
+  Iterable<FootballMatch> matches, {
+  String Function(String)? resolve,
+}) {
+  final resolveId = resolve ?? (String id) => id;
   // A snapshot may contain several revisions of the same canonical id. Keep
   // its strongest evidence; for equal evidence, use the last row just as
   // Snapshot.match(id) does, so a corrected score cannot differ by screen.
@@ -112,10 +123,14 @@ List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
   // while replacements preserve the original visible position.
   final candidates = <(String, String, String), List<int>>{};
   for (final match in byId.values) {
-    final key = (match.competitionId, match.homeId, match.awayId);
+    final key = (
+      resolveId(match.competitionId),
+      resolveId(match.homeId),
+      resolveId(match.awayId),
+    );
     final indexes = candidates.putIfAbsent(key, () => <int>[]);
     final twin = indexes
-        .where((index) => _sameFixture(match, kept[index]))
+        .where((index) => _sameFixture(match, kept[index], resolveId))
         .firstOrNull;
     if (twin == null) {
       indexes.add(kept.length);
@@ -544,7 +559,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
-          final allGames = dedupeFixtures(data.onDate(selected, 'Todos'));
+          final allGames = dedupeFixtures(
+            data.onDate(selected, 'Todos'),
+            resolve: data.resolveEntityId,
+          );
           _warmRelevantMatches(
             data,
             allGames,
