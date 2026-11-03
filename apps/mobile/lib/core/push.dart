@@ -683,6 +683,7 @@ class PushService {
   Future<void> pending = Future.value();
   Future<void> countryPending = Future.value();
   Future<void> _sessionStoragePending = Future.value();
+  Future<void> _profileStoragePending = Future.value();
   Future<void>? _restoreFuture;
 
   /// Bumped on every sign-in, sign-out and local session drop. Any network
@@ -1568,7 +1569,7 @@ class PushService {
   Future<void> _writeLocalProfile(
     UserProfileSettings settings, {
     required bool dirty,
-  }) async {
+  }) => _queueProfileStorage(() async {
     await storage.write(
       key: 'futbeat.profile.settings',
       value: jsonEncode(settings.toJson()),
@@ -1578,6 +1579,17 @@ class PushService {
       value: dirty ? 'true' : 'false',
     );
     if (!_profileChanges.isClosed) _profileChanges.add(null);
+  });
+
+  /// Platform writes may finish out of order. Profile data and its dirty
+  /// acknowledgement share one queue, so a late save/ACK cannot overwrite
+  /// or mark clean a newer local edit. Network work stays outside this queue.
+  Future<void> _queueProfileStorage(Future<void> Function() work) {
+    final operation = _profileStoragePending
+        .catchError((_) {})
+        .then((_) => work());
+    _profileStoragePending = operation.catchError((_) {});
+    return operation;
   }
 
   /// A storage flag; an unreadable one counts as unset.
@@ -1629,12 +1641,14 @@ class PushService {
     if (_stale(generation)) return;
     // An older acknowledgement cannot mark a newer, failed/local-only edit
     // as synced. It also belongs only to the account generation that sent it.
-    final current = await loadProfileSettings();
-    if (_stale(generation) ||
-        jsonEncode(current.toJson()) != jsonEncode(settings.toJson())) {
-      return;
-    }
-    await storage.write(key: 'futbeat.profile.dirty', value: 'false');
+    await _queueProfileStorage(() async {
+      final current = await loadProfileSettings();
+      if (_stale(generation) ||
+          jsonEncode(current.toJson()) != jsonEncode(settings.toJson())) {
+        return;
+      }
+      await storage.write(key: 'futbeat.profile.dirty', value: 'false');
+    });
   }
 
   /// `p_profile` of `futbeat_sync_user_profile_v3`: every profile field

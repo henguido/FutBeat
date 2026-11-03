@@ -1,0 +1,166 @@
+import 'dart:async';
+
+import 'package:dio/dio.dart';
+import 'package:drift/native.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/live_realtime.dart';
+import 'package:futbeat/core/push.dart';
+
+class _Tokens implements PushTokenSource {
+  @override
+  Future<String?> currentToken() async => null;
+  @override
+  Future<String?> requestToken() async => null;
+  @override
+  Stream<String> get rotations => const Stream.empty();
+}
+
+class _Storage extends FlutterSecureStorage {
+  _Storage({this.holdAck = false, this.failFirst = false});
+  final bool holdAck;
+  final bool failFirst;
+  final captured = Completer<void>();
+  final release = Completer<void>();
+  final secondWritten = Completer<void>();
+  int settingsWrites = 0;
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final index = key == 'futbeat.profile.settings' ? ++settingsWrites : 0;
+    final held = holdAck
+        ? key == 'futbeat.profile.dirty' && value == 'false'
+        : index == 1;
+    if (held && !captured.isCompleted) {
+      captured.complete();
+      await release.future;
+      if (failFirst) throw StateError('synthetic write failure');
+    }
+    await super.write(
+      key: key,
+      value: value,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+    if (index == 2 && !secondWritten.isCompleted) secondWritten.complete();
+  }
+}
+
+class _Service extends PushService {
+  _Service(AppDatabase database, Dio dio, this.testStorage)
+    : super(
+        const LiveRealtimeConfig(
+          supabaseUrl: 'https://fixture.invalid',
+          publicKey: 'synthetic-public',
+        ),
+        database,
+        _Tokens(),
+        dio: dio,
+        pushConfigured: false,
+      );
+  final FlutterSecureStorage testStorage;
+  @override
+  FlutterSecureStorage get storage => testStorage;
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  for (final fails in [false, true]) {
+    test(
+      'latest guest preference survives delayed ${fails ? 'failed' : 'successful'} prior write',
+      () async {
+        final db = AppDatabase(NativeDatabase.memory());
+        final dio = Dio();
+        final storage = _Storage(failFirst: fails);
+        final service = _Service(db, dio, storage);
+        addTearDown(() async {
+          service.dispose();
+          await db.close();
+        });
+        final first = service
+            .saveProfileSettings(const UserProfileSettings(hourFormat: '12h'))
+            .then((_) => true, onError: (_) => false);
+        await storage.captured.future;
+        final latest = service.saveProfileSettings(
+          const UserProfileSettings(hourFormat: '24h'),
+        );
+        await Future.any([
+          storage.secondWritten.future,
+          Future<void>.delayed(Duration.zero),
+        ]);
+        storage.release.complete();
+        expect(await first, !fails);
+        await latest;
+        expect((await service.loadProfileSettings()).hourFormat, '24h');
+        expect(await storage.read(key: 'futbeat.profile.dirty'), 'true');
+      },
+    );
+  }
+  test('old acknowledgement cannot clear dirty while a newer edit is queued', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final dio = Dio();
+    final storage = _Storage(holdAck: true);
+    final service = _Service(db, dio, storage)
+      ..session = {
+        'access_token': 'synthetic-access',
+        'refresh_token': 'synthetic-refresh',
+        'user': {'id': 'synthetic-user'},
+      };
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+    });
+    var calls = 0;
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (request, handler) {
+          if (++calls == 1) {
+            handler.resolve(
+              Response(requestOptions: request, data: <String, dynamic>{}),
+            );
+          } else {
+            handler.reject(
+              DioException(
+                requestOptions: request,
+                type: DioExceptionType.connectionError,
+              ),
+            );
+          }
+        },
+      ),
+    );
+    final old = service.saveProfileSettings(
+      const UserProfileSettings(hourFormat: '12h'),
+    );
+    await storage.captured.future;
+    final latest = service
+        .saveProfileSettings(const UserProfileSettings(hourFormat: '24h'))
+        .then((_) => true, onError: (_) => false);
+    await Future.any([
+      storage.secondWritten.future,
+      Future<void>.delayed(Duration.zero),
+    ]);
+    // Let an unqueued dirty=true write complete too, before releasing old ACK.
+    await Future<void>.delayed(Duration.zero);
+    storage.release.complete();
+    await old;
+    expect(await latest, isFalse);
+    expect((await service.loadProfileSettings()).hourFormat, '24h');
+    expect(await storage.read(key: 'futbeat.profile.dirty'), 'true');
+    expect(calls, 2);
+  });
+}
