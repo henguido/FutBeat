@@ -103,7 +103,7 @@ Cada fila permanece abierta hasta reunir su aceptación concreta. Las referencia
 | R06 | Dependencias y secretos release | P0 | IN PROGRESS | E15:c280ffdc rechaza claves privadas/sesión en campos públicos; binario final pendiente | Codex | R04 | Lockfile sin cambio inadvertido; ningún secreto privado; endpoints/diagnóstico correctos | build.gradle.kts | INTERNAL |
 | R07 | Compatibilidad Android y nativas | P0 | IN PROGRESS | E6 QA:SDK24/36,4ELF requeridos; no equivale a AAB16KB | Codex | R04 | Inspección binario release y arranque A32 sin crash/R8 | dabdeea6 | INTERNAL |
 | R08 | QA física candidata exacta | P0 | BLOCKED | E16:ADB/identidad/PID verificados; modo avión=0; no READY físico | Codex + propietario | ADB/READY/autorización | Instalación/actualización sin pérdida, recorrido observado y cierre PID; QA123 restaurado | physical-precheck.json | INTERNAL |
-| R09 | Suite y CI del SHA de release | P0 | BLOCKED | E16:1580PASS/analyze frescos; #234/#235 mobileFAIL; CI dependiente preparado, sin publicar | Codex + propietario | permiso push/CI posterior | Suite/analyze correctos, CI de SHA exacto sin ocultar diferencias | #234/#235 | INTERNAL |
+| R09 | Suite y CI del SHA de release | P0 | BLOCKED | MOBILE259:1643PASS/goldens y analyze limpios; CI Linux PR243 PASS solo para07a54b25 | Codex + propietario | permiso push/CI posterior | Suite/analyze correctos y CI Linux del nuevo HEAD, sin ocultar diferencias | codex/mobile-259-integration | INTERNAL |
 | R10 | Contrato desplegado y salud operativa | P0 | BLOCKED | E7 es handoff fechado, no producción actual | Claude + propietario | aprobación específica | Rutas/ACK/demandas/health/STOP comprobados, cero fallback no autorizado | PR#240 candidato | INTERNAL |
 | R11 | Checklist Play, testers y acceso revisor | P0 | BLOCKED | E9 y mensajes históricos; no lectura Console hoy | Propietario | R02/R04/R05 | Conservar testers/ficha; revisar estado real; contraseña solo formulario seguro | PLAY-130 docs históricos | INTERNAL |
 | R12 | Internal Testing y smoke desde Play | P0 | NOT STARTED | Ninguna subida de esta candidata autorizada | Propietario + Codex | R01..R11 | Autorización de subida distinta; enlace de participación e instalación de track probados | Sin PR release nuevo | INTERNAL |
@@ -229,3 +229,18 @@ Rama aislada `codex/mobile-258-integration`, base exacta `07a54b2566d90d978c80c9
 Esto es evidencia de código y pruebas locales, **no aceptación física ni DONE** de los requisitos. No se usó teléfono, Supabase, proveedores ni credenciales de producción. RC sigue NO-GO por certificado upload/configuración y aceptación del artefacto exacto pendientes. El versionCode5 continúa como propuesta sin aplicar.
 
 Validación final MOBILE258: **1625/1625PASS**, suite completa con goldens103s; analyze limpio12,8s. Evidencia: `artifacts/mobile258/flutter-full-final.log`, `analyze-final.log` y `FUTBEAT-MOBILE-258-FINAL.md`. CI remoto del nuevo HEAD y aceptación física siguen pendientes.
+
+
+## MOBILE259 — cierre sistemático del backlog local
+
+Base455c9094 en `codex/mobile-259-integration`. Matriz única de defectos e issues: `docs/release/FUTBEAT-DEFECT-MATRIX.md` (43issues/20abiertos;52requisitos y27 referencias históricas). No se modificó GitHub ni se cerraron issues por pruebas simuladas.
+
+- S03/S05/M03:14e65806 rechaza detalle con fetchedAt anterior tanto en memoria como SQLite; no revive gol anulado ni estadísticas antiguas. Stamps iguales/ausentes/inválidos mantienen el contrato previo: no se promete orden universal sin evidencia temporal.
+- M09/#157/#222:1eccf119 limpia las páginas de equipo al cambiar identidad e invalida respuestas anteriores. No fusiona equipos por nombres ni resuelve la cobertura de datos productivos del issue222.
+- S02/S03:ed2fb338 conserva actualización reciente frente a DELETE Realtime atrasado con revisión/timestamp probados. DELETE vigente o solo PK conservan semántica anterior.
+- M04:afe48906 reconoce expulsión por segunda amarilla en panel/minutos/icono; aaceb4bc conserva eventos de jugadores con IDs canónicos explícitos sin mezclarlos por nombre o colisión de proveedor.
+- A03/A07:fc3f96e0/d3c6f6b5 permiten terminar guardado tras salir y recuperan selector/mensaje ante error local o de sincronización. No cambia la configuración del usuario productivo.
+
+Evidencia focal local:85regresiones raíz,61Match Center,55LIVE y12preferencias PASS (bloques solapados, no sumarlos como suite única). Suite final/analyze se registran en `FUTBEAT-MOBILE-259-CLOSURE.md`. No se acredita aceptación física, OAuth real, entregaFCM, contrato desplegado ni binario RC. FCM no se activó; firma/versión/configuración oficiales siguen pendientes de verificación y aprobación.
+
+Validación MOBILE259 final:1643PASS/goldens113s; analyze limpio;8regresiones raíz PASS tras ajustes solo de tests. ReferenciasPNG intactas. Informe: `FUTBEAT-MOBILE-259-CLOSURE.md`. No CI remoto/QA física ni nuevos builds.
