@@ -325,16 +325,20 @@ class AppDatabase extends _$AppDatabase {
   )..where((row) => row.calendarDate.equals(date))).getSingleOrNull())?.payload;
 
   Future<void> saveCalendarSnapshot(String date, String payload) async {
-    await into(calendarSnapshots).insertOnConflictUpdate(
+    await into(calendarSnapshots).insert(
       CalendarSnapshotsCompanion.insert(
         calendarDate: date,
         payload: payload,
         savedAt: DateTime.now().toUtc(),
       ),
+      mode: InsertMode.insertOrReplace,
     );
     final old =
         await (select(calendarSnapshots)
-              ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
+              ..orderBy([
+                (row) => OrderingTerm.desc(row.savedAt),
+                (row) => OrderingTerm.desc(row.rowId),
+              ])
               ..limit(100, offset: 64))
             .get();
     if (old.isNotEmpty) {
@@ -352,17 +356,21 @@ class AppDatabase extends _$AppDatabase {
   )..where((row) => row.cacheKey.equals(key))).getSingleOrNull();
 
   Future<void> saveCatalogSnapshot(String key, String payload) async {
-    await into(catalogSnapshots).insertOnConflictUpdate(
+    await into(catalogSnapshots).insert(
       CatalogSnapshotsCompanion.insert(
         cacheKey: key,
         payload: payload,
         savedAt: DateTime.now().toUtc(),
       ),
+      mode: InsertMode.insertOrReplace,
     );
     final old =
         await (select(catalogSnapshots)
               ..where((row) => row.cacheKey.like('public:%').not())
-              ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
+              ..orderBy([
+                (row) => OrderingTerm.desc(row.savedAt),
+                (row) => OrderingTerm.desc(row.rowId),
+              ])
               ..limit(100, offset: maxCatalogSnapshots))
             .get();
     if (old.isNotEmpty) {
@@ -381,17 +389,21 @@ class AppDatabase extends _$AppDatabase {
       return;
     }
     await _pruneExpiredPublicSnapshots();
-    await into(catalogSnapshots).insertOnConflictUpdate(
+    await into(catalogSnapshots).insert(
       CatalogSnapshotsCompanion.insert(
         cacheKey: key,
         payload: payload,
         savedAt: DateTime.now().toUtc(),
       ),
+      mode: InsertMode.insertOrReplace,
     );
     final old =
         await (select(catalogSnapshots)
               ..where((row) => row.cacheKey.like('public:%'))
-              ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
+              ..orderBy([
+                (row) => OrderingTerm.desc(row.savedAt),
+                (row) => OrderingTerm.desc(row.rowId),
+              ])
               ..limit(100, offset: maxPublicSnapshots))
             .get();
     if (old.isNotEmpty) {
