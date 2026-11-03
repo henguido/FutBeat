@@ -400,7 +400,12 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
         );
       } finally {
         _prefetchRunning = false;
-        if (mounted && _sportsActive && generation != _prefetchGeneration) {
+        // Continue the next bounded disk batch while this visible session
+        // still has budget. No unrelated rebuild should be required to warm
+        // the remaining favorite fixtures. A changed generation replans first.
+        if (mounted &&
+            _sportsActive &&
+            (generation != _prefetchGeneration || _prefetchRemaining > 0)) {
           setState(() {});
         }
       }
