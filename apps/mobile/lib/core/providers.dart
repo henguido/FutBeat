@@ -392,6 +392,20 @@ class ApiRepository implements FootballRepository {
         queryParameters: queryParameters,
         cancelToken: cancelToken,
       );
+      final requestedId = queryParameters?['id'];
+      final contextMatches = raw['matches'];
+      if (requestedId is String &&
+          requestedId.startsWith('fb_') &&
+          key == 'match-context:$requestedId' &&
+          contextMatches is List &&
+          contextMatches.isNotEmpty &&
+          !contextMatches.whereType<Map>().any(
+            (match) => match['id'] == requestedId,
+          )) {
+        // Reject a foreign context before it can update redirects, media or
+        // the requested cache key. Empty/no-data contexts remain legitimate.
+        throw const FormatException('Match context identity mismatch');
+      }
       final previous = _snapshotCache[key];
       if (previous != null &&
           (key.startsWith('match-context:') || key.startsWith('entity:'))) {
