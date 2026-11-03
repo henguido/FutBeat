@@ -300,10 +300,14 @@ List<(FootballMatch, Json, bool)> playerRecentEvents(
     for (final event in match.events) {
       if (_profileEventBelongsToPlayer(data, event, playerId)) {
         result.add((match, event, false));
-      } else if (_profileEventBelongsToPlayer(data, event, playerId, assist: true) &&
-          event['type'] == 'GOAL' &&
-          event['ownGoal'] != true) {
-        result.add((match, event, true));
+      } else if (_profileEventBelongsToPlayer(data, event, playerId, assist: true)) {
+        // Canonical substitutions use the secondary player field for the
+        // incoming player. It is participation, never a goal assist.
+        if (event['type'] == 'SUBSTITUTION') {
+          result.add((match, event, false));
+        } else if (event['type'] == 'GOAL' && event['ownGoal'] != true) {
+          result.add((match, event, true));
+        }
       }
     }
   }
@@ -340,8 +344,8 @@ List<FootballMatch> playerProfileMatches(Snapshot data, Entity player) {
         teamIds.contains(data.resolveEntityId(match.awayId));
     final explicitActivity = match.events.any((event) {
       return _profileEventBelongsToPlayer(data, event, playerId) ||
-          (event['type'] == 'GOAL' &&
-              event['ownGoal'] != true &&
+          ((event['type'] == 'SUBSTITUTION' ||
+              (event['type'] == 'GOAL' && event['ownGoal'] != true)) &&
               _profileEventBelongsToPlayer(data, event, playerId, assist: true));
     });
     if (currentTeamMatch || explicitActivity) {
