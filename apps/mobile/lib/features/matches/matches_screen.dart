@@ -87,7 +87,7 @@ bool _sameFixture(FootballMatch a, FootballMatch b) {
 }
 
 /// Defensive UI-level dedupe (the backend calendar is the authority): the
-/// daily feed renders one canonical fixture exactly once: the same canonical
+/// daily feed groups each canonical fixture once per section: the same canonical
 /// match id, or two match entities of one fixture (see [_sameFixture]). The
 /// best twin stays: finished > live > played evidence > scheduled > called
 /// off, then the lower id. The order of the surviving matches is preserved.
@@ -562,12 +562,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                   .where((match) => isFollowedTeamMatch(match, follows))
                   .toList()
                 ..sort(compareFeedKickoffs);
-          // Each canonical fixture has one visible owner: favorites first,
-          // then its league for the remaining games (MOBILE239).
-          final favoriteIds = followedGames.map((match) => match.id).toSet();
-          final regularGames =
-              games.where((match) => !favoriteIds.contains(match.id)).toList()
-                ..sort(compareFeedKickoffs);
+          // Favorites highlight canonical fixtures without removing them from
+          // their leagues. The day fixtures were deduplicated before grouping.
+          final regularGames = [...games]..sort(compareFeedKickoffs);
 
           final regularByCompetition = <String, List<FootballMatch>>{};
           for (final match in regularGames) {
@@ -834,7 +831,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             }
           }
 
-          // The remaining matches stay visible in their competition.
+          // All matches, including favorites, stay visible in their competition.
           for (final (index, competition) in visibleCompetitions.indexed) {
             final ordinal = index + 1;
             addCompetition(competition, ordinal);
