@@ -426,21 +426,32 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             // A match-detail HTTP read can register provider work even with
             // request=0. Warm only previously persisted data here; the user
             // opening Match Center owns the explicit remote demand.
-            final detail = await repository.readStoredMatchDetail(id);
-            repository.diagnostics?.record(
-              '/v1/match-detail',
-              detail?.available == true
-                  ? 'prefetchDiskHit'
-                  : 'prefetchDiskMiss',
-            );
-            if (detail?.available == true &&
-                mounted &&
-                _sportsActive &&
-                generation == _prefetchGeneration &&
-                memory[id] == null) {
-              memory[id] = detail!;
-              while (memory.length > matchDetailMemoryLimit) {
-                memory.remove(memory.keys.first);
+            try {
+              final detail = await repository.readStoredMatchDetail(id);
+              repository.diagnostics?.record(
+                '/v1/match-detail',
+                detail?.available == true
+                    ? 'prefetchDiskHit'
+                    : 'prefetchDiskMiss',
+              );
+              if (detail?.available == true &&
+                  mounted &&
+                  _sportsActive &&
+                  generation == _prefetchGeneration &&
+                  memory[id] == null) {
+                memory[id] = detail!;
+                while (memory.length > matchDetailMemoryLimit) {
+                  memory.remove(memory.keys.first);
+                }
+              }
+            } finally {
+              if ((!mounted ||
+                      !_sportsActive ||
+                      generation != _prefetchGeneration) &&
+                  memory[id]?.available != true) {
+                // Cancellation did not warm this ID. Let the next active
+                // plan retry it within the remaining session read budget.
+                _prefetchAttempted.remove(id);
               }
             }
           },
