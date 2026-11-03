@@ -257,11 +257,21 @@ List<Entity> orderMatchCompetitions({
   List<String> pinnedCompetitionIds = const <String>[],
 }) {
   final visibleCompetitionIds = matches
-      .map((match) => match.competitionId)
+      .map((match) => data.resolveEntityId(match.competitionId))
       .toSet();
-  final visible = data.competitions
-      .where((competition) => visibleCompetitionIds.contains(competition.id))
-      .toList();
+  final visibleById = <String, Entity>{};
+  for (final competition in data.competitions) {
+    final id = data.resolveEntityId(competition.id);
+    if (!visibleCompetitionIds.contains(id)) continue;
+    final canonical = data.competition(competition.id) ?? competition;
+    visibleById.putIfAbsent(
+      id,
+      () => canonical.id == id
+          ? canonical
+          : Entity({...canonical.json, 'id': id}),
+    );
+  }
+  final visible = visibleById.values.toList();
 
   final userCountry = selectedCountry ?? detectedCountry;
   final custom = orderMode == CompetitionOrderMode.personalized;
@@ -616,7 +626,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           final regularByCompetition = <String, List<FootballMatch>>{};
           for (final match in regularGames) {
             regularByCompetition
-                .putIfAbsent(match.competitionId, () => <FootballMatch>[])
+                .putIfAbsent(
+                  data.resolveEntityId(match.competitionId),
+                  () => <FootballMatch>[],
+                )
                 .add(match);
           }
 
@@ -639,6 +652,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           // Resolve every regular block and its ad cadence before creating
           // any section. Cadence decides which section owns an ad; the
           // section owns the group/ad/next-section layout.
+          final competitionById = {
+            for (final competition in orderedCompetitions)
+              competition.id: competition,
+          };
           final visibleCompetitions = orderedCompetitions
               .where(
                 (competition) =>
@@ -845,14 +862,17 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             final favoriteGroups = <String, List<FootballMatch>>{};
             for (final match in followedGames) {
               favoriteGroups
-                  .putIfAbsent(match.competitionId, () => <FootballMatch>[])
+                  .putIfAbsent(
+                    data.resolveEntityId(match.competitionId),
+                    () => <FootballMatch>[],
+                  )
                   .add(match);
             }
             final favoriteEntries = favoriteGroups.entries
-                .where((entry) => data.competition(entry.key) != null)
+                .where((entry) => competitionById.containsKey(entry.key))
                 .toList();
             for (final (index, entry) in favoriteEntries.indexed) {
-              final competition = data.competition(entry.key);
+              final competition = competitionById[entry.key];
               if (competition == null) continue;
               final collapseKey = 'favorite:${competition.id}';
               final collapsed =

@@ -598,7 +598,7 @@ void main() {
     ];
 
     expect(
-      urlsWithin(const ValueKey('competition-logo-fb_comp_cr')),
+      urlsWithin(const ValueKey('competition-logo-fb_comp_cr_canonical')),
       contains(_competitionLogo),
     );
     expect(
@@ -617,8 +617,8 @@ void main() {
     await _pump(tester, data: _costaRicaMediaSnapshot(verifiedMedia: false));
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey('competition-logo-fb_comp_cr')),
-        matching: find.text('CL'),
+        of: find.byKey(const ValueKey('competition-logo-fb_comp_cr_canonical')),
+        matching: find.text('PD'),
       ),
       findsOneWidget,
     );
