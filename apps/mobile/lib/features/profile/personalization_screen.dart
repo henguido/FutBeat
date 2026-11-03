@@ -205,7 +205,9 @@ class PersonalizationScreen extends ConsumerWidget {
                           .saveProfileSettings(
                             settings.copyWith(hourFormat: value),
                           );
-                      ref.invalidate(profileSettingsProvider);
+                      if (context.mounted) {
+                        ref.invalidate(profileSettingsProvider);
+                      }
                     },
                   ),
                 ),
