@@ -154,7 +154,7 @@ const liveBootstrapColumns =
 
 /// One bootstrap read: the rows, whether every page was read, whether it
 /// stopped at [LiveBootstrapPolicy.maxPages] (partial, but not worth an
-/// immediate retry), and the server time of the first answer (HTTP `Date`).
+/// immediate retry), and the server time of the last answer (HTTP `Date`).
 typedef LiveBootstrapRead = ({
   List<Json> rows,
   bool complete,
@@ -196,15 +196,19 @@ Future<LiveBootstrapRead> fetchLiveBootstrap(
       );
     } catch (_) {
       if (page == 0) rethrow;
+      // The earlier page's Date is not paired with this later completion.
+      // Without a current clock, partial rows use conservative stale age.
+      serverNow = null;
       return partial();
     }
-    if (serverNow == null) {
-      try {
-        final date = response.headers.value('date');
-        if (date != null) serverNow = HttpDate.parse(date);
-      } catch (_) {
-        serverNow = null; // Conservative fallback: row timestamps.
-      }
+    // Reconciliation samples device time after all pages. Pair it with the
+    // final response clock, or paging latency would refresh old LIVE rows.
+    serverNow = null;
+    try {
+      final date = response.headers.value('date');
+      if (date != null) serverNow = HttpDate.parse(date);
+    } catch (_) {
+      serverNow = null; // Missing/invalid current clock is already stale.
     }
     final data = response.data;
     if (data is! List) {
