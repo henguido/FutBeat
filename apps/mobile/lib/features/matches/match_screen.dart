@@ -121,6 +121,13 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     // Stable structure: Tabla always exists (its content reports the state),
     // so tabs never appear/disappear while data arrives.
     _tabs = TabController(length: 6, vsync: this);
+    _startDetailRefreshIndicator();
+    Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
+  }
+
+  void _startDetailRefreshIndicator() {
+    _detailRefreshIndicatorTimer?.cancel();
+    _detailRefreshIndicatorExpired = false;
     _detailRefreshIndicatorTimer = Timer(
       matchDetailRefreshIndicatorDuration,
       () {
@@ -128,7 +135,34 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         setState(() => _detailRefreshIndicatorExpired = true);
       },
     );
-    Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
+  }
+
+  @override
+  void didUpdateWidget(MatchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.id == widget.id) return;
+    // GoRouter may retain this State while /match/:id changes. A previous
+    // match's timers and exhausted budgets must never refresh (or suppress
+    // recovery for) the new match.
+    _lineupEnrichmentRetry?.cancel();
+    _lineupEnrichmentRetry = null;
+    _lineupEnrichmentAttempts = 0;
+    _standingsRetry?.cancel();
+    _standingsRetry = null;
+    _standingsAttempts = 0;
+    _standingsManualRetry = false;
+    _staleLiveRefresh?.cancel();
+    _staleLiveRefresh = null;
+    _staleLiveAttempts = 0;
+    _lineupPending = false;
+    _standingsPending = false;
+    _liveStale = false;
+    _recordedTeamInterests.clear();
+    _liveClient?.clearScope(_liveScope);
+    _tabs.index = 0;
+    _startDetailRefreshIndicator();
+    final id = widget.id;
+    Future.microtask(() => recordTemporaryInterest(ref, 'match', id));
   }
 
   void _selectTab(_MatchTabId id) {
