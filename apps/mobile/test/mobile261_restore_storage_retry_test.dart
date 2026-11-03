@@ -35,7 +35,6 @@ class _ReadFailure extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     if (key == 'futbeat.push.session' && failDelete) {
-      failDelete = false;
       throw PlatformException(code: 'synthetic-session-delete-locked');
     }
     return super.delete(

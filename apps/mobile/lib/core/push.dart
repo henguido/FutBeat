@@ -512,6 +512,13 @@ Future<String> _customTabBrowser(Uri url, String callbackScheme) async {
   }
 }
 
+typedef _LocalSignOutContext = ({
+  String? userId,
+  Future<Set<String>> follows,
+  Options? headers,
+  String? deviceToken,
+});
+
 class PushService {
   PushService(
     this.config,
@@ -725,6 +732,13 @@ class PushService {
 
   /// Best-effort server cleanup started by the last [signOut] (tests).
   Future<void> signOutCleanup = Future.value();
+  _LocalSignOutContext? _localSignOutContext;
+  Future<void>? _localSignOutPending;
+  bool _localSignOutFailed = false;
+
+  /// A failed local close is not a confirmed logout, even when runtime is
+  /// already guest. Its retry keeps the original account/follows context.
+  bool get hasUnconfirmedSignOut => _localSignOutContext != null;
 
   /// Legacy key from 7ab628c; only deleted now.
   static const lastUserKey = 'futbeat.account.lastUser';
@@ -979,9 +993,16 @@ class PushService {
 
   /// A late sign-out request (device unregistration) must not land after
   /// the next sign-in or push enable. Bounded by [signOutCleanupTimeout].
-  Future<void> _awaitSignOutCleanup() => signOutCleanup
-      .timeout(signOutCleanupTimeout, onTimeout: () {})
-      .catchError((_) {});
+  Future<void> _awaitSignOutCleanup() async {
+    // Local identity separation is critical. A timeout/error must block new
+    // authentication, rather than treating an unknown cleanup as success.
+    final local = _localSignOutPending;
+    if (local != null) await local.timeout(signOutCleanupTimeout);
+    // Remote logout remains best effort and bounded, including offline use.
+    await signOutCleanup
+        .timeout(signOutCleanupTimeout, onTimeout: () {})
+        .catchError((_) {});
+  }
 
   /// Runs [work] on the account chain, after any tick/resume in flight.
   Future<void> _queued(Future<void> Function() work) {
@@ -1264,11 +1285,53 @@ class PushService {
 
   /// Drops the local session, its merge base and account timers. Never
   /// touches Drift, so guest follows and preferences survive sign-out.
-  Future<void> _clearLocalSession() async {
-    final uid = userId;
+  Future<void> _clearLocalSession() {
+    final active = _localSignOutPending;
+    if (active != null && !_localSignOutFailed) return active;
+    var context = _localSignOutContext;
+    if (context == null) {
+      final uid = userId;
+      final snapshot = uid == null
+          ? Future<Set<String>>.value(const {})
+          : database.watchFollows().first.then(Set<String>.unmodifiable);
+      // Observe failures immediately while retaining the original failed
+      // future: an unreadable snapshot never becomes invented empty data.
+      unawaited(
+        snapshot.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+      );
+      context = (
+        userId: uid,
+        follows: snapshot,
+        headers: authenticated ? authHeaders : null,
+        deviceToken: enabled ? token : null,
+      );
+      _localSignOutContext = context;
+    }
+    _localSignOutFailed = false;
+    late final Future<void> operation;
+    operation = _performLocalSignOut(context).then<void>(
+      (_) {
+        if (identical(_localSignOutPending, operation)) {
+          _localSignOutPending = null;
+          _localSignOutContext = null;
+        }
+      },
+      onError: (Object error, StackTrace stack) {
+        if (identical(_localSignOutPending, operation)) {
+          _localSignOutFailed = true;
+        }
+        Error.throwWithStackTrace(error, stack);
+      },
+    );
+    _localSignOutPending = operation;
+    return operation;
+  }
+
+  Future<void> _performLocalSignOut(_LocalSignOutContext context) async {
+    final uid = context.userId;
     cancelPasswordRecovery();
     _authenticationAttempt++;
-    _generation++;
+    final generation = ++_generation;
     // A previous failed startup read is no longer an authorization to restore
     // this account. Even if disk deletion fails, this service stays a guest
     // until a new explicit sign-in; the storage failure remains visible.
@@ -1286,25 +1349,46 @@ class PushService {
     _mergedGeneration = -1;
     _lastPushed = null;
     _lastReconcile = null;
-    final clearing = _deletePersistedSession();
-    await oldFollows?.cancel();
-    await oldRotation?.cancel();
-    await clearing;
+    // Queue opt-out at the same intent, not after a new account might opt in.
+    // Its failure remains visible, but cannot prevent credential deletion
+    // once the original account ownership is safely recorded.
+    final disabling = _persistPushEnabled(false);
+    unawaited(disabling.catchError((_) {}));
+    await Future.wait<void>([
+      oldFollows?.cancel() ?? Future<void>.value(),
+      oldRotation?.cancel() ?? Future<void>.value(),
+      context.follows.then<void>((_) {}),
+    ]);
+    if (_stale(generation)) return;
     if (uid != null) {
       // Remember what this account left on the device, so a different
       // account can drop exactly that. Without a merge in this session
       // (no P) an older snapshot is kept as is.
-      if (await _readPushed(uid) != null) {
-        final local = await database.watchFollows().first;
+      final pushed = await _readPushed(uid);
+      if (_stale(generation)) return;
+      if (pushed != null) {
+        final local = await context.follows;
+        if (_stale(generation)) return;
         await storage.write(
           key: leftoverKey,
           value: jsonEncode({'userId': uid, 'follows': local.toList()..sort()}),
         );
+        if (_stale(generation)) return;
       }
+    }
+    // Ownership must be durable before removing the only persistent account
+    // identity. If a read/write above fails, a new process still knows A;
+    // it never mistakes A's remaining follows for anonymous guest choices.
+    await _deletePersistedSession();
+    if (_stale(generation)) return;
+    if (uid != null) {
       // The next sign-in of this user must union, never replace.
       await storage.delete(key: pushedKey(uid));
+      if (_stale(generation)) return;
       await storage.delete(key: linkedFlagKey(uid));
     }
+    if (_stale(generation)) return;
+    await disabling;
   }
 
   /// Retries refresh/reconcile after the app returns to the foreground.
@@ -1326,10 +1410,18 @@ class PushService {
   /// Platform storage can finish writes out of order. Queue token mutations
   /// at their intent, so an old write cannot land after logout or account B.
   Future<void> _writeSessionStorage(String? value) {
-    final operation = _sessionStoragePending.catchError((_) {}).then((_) {
-      return value == null
-          ? storage.delete(key: 'futbeat.push.session')
-          : storage.write(key: 'futbeat.push.session', value: value);
+    final operation = _sessionStoragePending.catchError((_) {}).then((_) async {
+      if (value == null) {
+        try {
+          await storage.delete(key: 'futbeat.push.session');
+        } catch (_) {
+          // One bounded retry remains inside this FIFO operation: it cannot
+          // run later, after a newly accepted account wrote its own session.
+          await storage.delete(key: 'futbeat.push.session');
+        }
+      } else {
+        await storage.write(key: 'futbeat.push.session', value: value);
+      }
     });
     _sessionStoragePending = operation.catchError((_) {});
     return operation;
@@ -2118,18 +2210,21 @@ class PushService {
   /// unregistration and the server logout run in the background with a
   /// short timeout; Drift follows/preferences stay for the guest.
   Future<void> signOut() async {
-    final headers = authenticated ? authHeaders : null;
-    final deviceToken = enabled ? token : null;
-    await _clearLocalSession();
-    await _persistPushEnabled(false);
-    if (headers == null) return;
-    final cancel = CancelToken();
-    final timer = Timer(signOutCleanupTimeout, () => cancel.cancel());
-    signOutCleanup = _serverSignOut(
-      headers,
-      deviceToken,
-      cancel,
-    ).catchError((_) {}).whenComplete(timer.cancel);
+    final active = _localSignOutPending;
+    if (active != null && !_localSignOutFailed) return active;
+    final local = _clearLocalSession();
+    final context = _localSignOutContext!;
+    final headers = context.headers;
+    if (headers != null) {
+      final cancel = CancelToken();
+      final timer = Timer(signOutCleanupTimeout, () => cancel.cancel());
+      signOutCleanup = _serverSignOut(
+        headers,
+        context.deviceToken,
+        cancel,
+      ).catchError((_) {}).whenComplete(timer.cancel);
+    }
+    await local;
   }
 
   /// Revokes only this session (scope=local), never the refresh tokens of

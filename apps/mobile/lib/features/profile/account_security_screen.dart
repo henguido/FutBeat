@@ -142,29 +142,46 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
               title: 'Tu cuenta',
               children: [
                 ListTile(
-                  title: const Text('Sin sesión iniciada'),
-                  subtitle: const Text(
-                    'Inicia sesión para sincronizar tus datos.',
+                  title: Text(
+                    service.hasUnconfirmedSignOut
+                        ? 'Cierre de sesión no confirmado'
+                        : 'Sin sesión iniciada',
+                  ),
+                  subtitle: Text(
+                    service.hasUnconfirmedSignOut
+                        ? 'Intenta cerrar la sesión nuevamente antes de cambiar de cuenta.'
+                        : 'Inicia sesión para sincronizar tus datos.',
                   ),
                 ),
-                ListTile(
-                  key: const ValueKey('account-login'),
-                  title: const Text('Iniciar sesión'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    await showAuthSheet(context, AuthMode.login);
-                    await _load();
-                  },
-                ),
-                ListTile(
-                  key: const ValueKey('account-signup'),
-                  title: const Text('Crear cuenta'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    await showAuthSheet(context, AuthMode.signup);
-                    await _load();
-                  },
-                ),
+                if (service.hasUnconfirmedSignOut)
+                  ListTile(
+                    key: const ValueKey('account-logout'),
+                    title: const Text('Reintentar cierre de sesión'),
+                    trailing: const Icon(Icons.logout),
+                    onTap: busy
+                        ? null
+                        : () => _action(service.signOut, 'Sesión cerrada.'),
+                  )
+                else ...[
+                  ListTile(
+                    key: const ValueKey('account-login'),
+                    title: const Text('Iniciar sesión'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () async {
+                      await showAuthSheet(context, AuthMode.login);
+                      await _load();
+                    },
+                  ),
+                  ListTile(
+                    key: const ValueKey('account-signup'),
+                    title: const Text('Crear cuenta'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () async {
+                      await showAuthSheet(context, AuthMode.signup);
+                      await _load();
+                    },
+                  ),
+                ],
               ],
             )
           else ...[
