@@ -135,7 +135,7 @@ String? teamTableCompetitionId(Snapshot data, Entity team) {
           data.resolveEntityId(row['teamId']?.toString() ?? '') ==
           data.resolveEntityId(team.id))) ==
       true;
-  final main = team.json['competitionId']?.toString() ?? '';
+  final main = data.resolveEntityId(team.json['competitionId']?.toString() ?? '');
   if (main.isNotEmpty && shows(main)) return main;
   final candidates = {
     for (final table in data.standings)
