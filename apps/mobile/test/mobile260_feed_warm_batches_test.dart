@@ -27,7 +27,12 @@ class _StoredOnlyRepository extends ApiRepository {
   }
 }
 
-Snapshot _fixtures(DateTime date, int count) => Snapshot({
+Snapshot _fixtures(
+  DateTime date,
+  int count, {
+  bool redirected = false,
+}) => Snapshot({
+  if (redirected) 'entityRedirects': {'fb_team_alias': 'fb_team_followed'},
   'schemaVersion': 1,
   'demo': false,
   'updatedAt': '2026-11-03T18:00:00Z',
@@ -45,7 +50,8 @@ Snapshot _fixtures(DateTime date, int count) => Snapshot({
       {
         'id': 'fb_match_${date.day}_$i',
         'competitionId': 'fb_comp_fixture',
-        'homeTeamId': 'fb_team_followed', 'awayTeamId': 'fb_team_other',
+        'homeTeamId': redirected ? 'fb_team_alias' : 'fb_team_followed',
+        'awayTeamId': 'fb_team_other',
         'startTime': DateTime.utc(
           date.year,
           date.month,
@@ -59,80 +65,84 @@ Snapshot _fixtures(DateTime date, int count) => Snapshot({
 });
 
 void main() {
-  for (final count in [5, 12]) {
-    testWidgets(
-      'favorite disk warming completes bounded batches for $count fixtures',
-      (tester) async {
-        final now = DateTime(2026, 11, 3, 12);
-        final dio = Dio();
-        var http = 0;
-        dio.interceptors.add(
-          InterceptorsWrapper(
-            onRequest: (options, handler) {
-              http++;
-              handler.reject(DioException(requestOptions: options));
-            },
-          ),
-        );
-        final repository = _StoredOnlyRepository(dio);
-        final container = ProviderContainer(
-          overrides: [
-            repositoryProvider.overrideWithValue(repository),
-            calendarSnapshotProvider.overrideWith(
-              (ref, date) => Stream.value(_fixtures(date, count)),
+  for (final redirected in [false, true]) {
+    for (final count in [5, 12]) {
+      testWidgets(
+        'favorite disk warming completes bounded batches for $count fixtures redirected=$redirected',
+        (tester) async {
+          final now = DateTime(2026, 11, 3, 12);
+          final dio = Dio();
+          var http = 0;
+          dio.interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                http++;
+                handler.reject(DioException(requestOptions: options));
+              },
             ),
-            followsProvider.overrideWith(
-              (ref) => Stream.value({'team:fb_team_followed'}),
-            ),
-            preferenceProvider.overrideWith(
-              (ref) => Stream.value(
-                const CountryPreference(
-                  selectedCountry: null,
-                  detectedCountry: null,
-                  bootstrapDismissed: true,
+          );
+          final repository = _StoredOnlyRepository(dio);
+          final container = ProviderContainer(
+            overrides: [
+              repositoryProvider.overrideWithValue(repository),
+              calendarSnapshotProvider.overrideWith(
+                (ref, date) => Stream.value(
+                  _fixtures(date, count, redirected: redirected),
                 ),
               ),
-            ),
-            liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
-          ],
-        );
-        addTearDown(() async {
-          await tester.pumpWidget(const SizedBox());
-          container.dispose();
-          dio.close(force: true);
-        });
-        await tester.pumpWidget(
-          UncontrolledProviderScope(
-            container: container,
-            child: MaterialApp(home: MatchesScreen(now: () => now)),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(repository.reads.length, count < 8 ? count : 8);
-        expect(repository.reads.toSet().length, repository.reads.length);
-        expect(repository.peak, lessThanOrEqualTo(2));
-        final batches = <Duration, int>{};
-        for (final frame in repository.frames) {
-          batches.update(frame, (count) => count + 1, ifAbsent: () => 1);
-        }
-        expect(batches.values.every((count) => count <= 2), isTrue);
-        // A different day shares the same eight-read session budget.
-        for (var day = 0; day < 2; day++) {
-          final swipe = tester.widget<GestureDetector>(
-            find.byKey(const ValueKey('matches-date-swipe')),
+              followsProvider.overrideWith(
+                (ref) => Stream.value({'team:fb_team_followed'}),
+              ),
+              preferenceProvider.overrideWith(
+                (ref) => Stream.value(
+                  const CountryPreference(
+                    selectedCountry: null,
+                    detectedCountry: null,
+                    bootstrapDismissed: true,
+                  ),
+                ),
+              ),
+              liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
+            ],
           );
-          swipe.onHorizontalDragEnd!(
-            DragEndDetails(
-              velocity: const Velocity(pixelsPerSecond: Offset(-600, 0)),
-              primaryVelocity: -600,
+          addTearDown(() async {
+            await tester.pumpWidget(const SizedBox());
+            container.dispose();
+            dio.close(force: true);
+          });
+          await tester.pumpWidget(
+            UncontrolledProviderScope(
+              container: container,
+              child: MaterialApp(home: MatchesScreen(now: () => now)),
             ),
           );
           await tester.pumpAndSettle();
-          expect(repository.reads, hasLength(8));
-        }
-        expect(http, 0);
-        expect(tester.takeException(), isNull);
-      },
-    );
+          expect(repository.reads.length, count < 8 ? count : 8);
+          expect(repository.reads.toSet().length, repository.reads.length);
+          expect(repository.peak, lessThanOrEqualTo(2));
+          final batches = <Duration, int>{};
+          for (final frame in repository.frames) {
+            batches.update(frame, (count) => count + 1, ifAbsent: () => 1);
+          }
+          expect(batches.values.every((count) => count <= 2), isTrue);
+          // A different day shares the same eight-read session budget.
+          for (var day = 0; day < 2; day++) {
+            final swipe = tester.widget<GestureDetector>(
+              find.byKey(const ValueKey('matches-date-swipe')),
+            );
+            swipe.onHorizontalDragEnd!(
+              DragEndDetails(
+                velocity: const Velocity(pixelsPerSecond: Offset(-600, 0)),
+                primaryVelocity: -600,
+              ),
+            );
+            await tester.pumpAndSettle();
+            expect(repository.reads, hasLength(8));
+          }
+          expect(http, 0);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
   }
 }

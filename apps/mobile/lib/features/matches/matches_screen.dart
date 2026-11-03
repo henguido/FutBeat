@@ -350,12 +350,26 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     final plan = MatchPrefetchPlan.build(
       // A finished fixture can be followed too. Its persisted Match Center
       // detail should paint from disk as promptly as a live fixture.
-      matches: games.where(
-        (match) => match.isUpcoming || match.isLive || match.isFinished,
-      ),
+      matches: games
+          .where(
+            (match) => match.isUpcoming || match.isLive || match.isFinished,
+          )
+          .map(
+            // Only normalize the planning projection: the disk key remains
+            // the canonical match ID and the displayed fixture is untouched.
+            (match) => FootballMatch({
+              ...match.json,
+              'competitionId': data.resolveEntityId(match.competitionId),
+              'homeTeamId': data.resolveEntityId(match.homeId),
+              'awayTeamId': data.resolveEntityId(match.awayId),
+            }),
+          ),
       follows: follows,
       selectedCountry: country,
-      competitions: {for (final entry in data.competitions) entry.id: entry},
+      competitions: {
+        for (final entry in data.competitions)
+          data.resolveEntityId(entry.id): data.competition(entry.id) ?? entry,
+      },
       maxMatches: 8,
     ).excluding(_prefetchAttempted);
     if (plan.matchIds.isEmpty) return;
