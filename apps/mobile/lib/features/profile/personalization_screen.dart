@@ -182,33 +182,9 @@ class PersonalizationScreen extends ConsumerWidget {
               else
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: DropdownButtonFormField<String>(
+                  child: _HourFormatPreference(
                     key: const ValueKey('hour-format'),
-                    isExpanded: true,
-                    initialValue: settings.hourFormat,
-                    decoration: const InputDecoration(
-                      border: InputBorder.none,
-                      labelText: 'Formato de hora',
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'system',
-                        child: Text('Según el dispositivo'),
-                      ),
-                      DropdownMenuItem(value: '12h', child: Text('12 horas')),
-                      DropdownMenuItem(value: '24h', child: Text('24 horas')),
-                    ],
-                    onChanged: (value) async {
-                      if (value == null) return;
-                      await ref
-                          .read(pushServiceProvider)
-                          .saveProfileSettings(
-                            settings.copyWith(hourFormat: value),
-                          );
-                      if (context.mounted) {
-                        ref.invalidate(profileSettingsProvider);
-                      }
-                    },
+                    settings: settings,
                   ),
                 ),
             ],
@@ -229,4 +205,65 @@ class PersonalizationScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+class _HourFormatPreference extends ConsumerStatefulWidget {
+  const _HourFormatPreference({super.key, required this.settings});
+  final UserProfileSettings settings;
+
+  @override
+  ConsumerState<_HourFormatPreference> createState() =>
+      _HourFormatPreferenceState();
+}
+
+class _HourFormatPreferenceState extends ConsumerState<_HourFormatPreference> {
+  final _field = GlobalKey<FormFieldState<String>>();
+  bool _restoring = false;
+
+  Future<void> _save(String? value) async {
+    if (value == null || _restoring) return;
+    final service = ref.read(pushServiceProvider);
+    try {
+      await service.saveProfileSettings(
+        widget.settings.copyWith(hourFormat: value),
+      );
+    } catch (_) {
+      // Account sync may fail after the preference was saved locally.
+      final local = await service.loadProfileSettings();
+      if (!mounted) return;
+      _restoring = true;
+      try {
+        _field.currentState?.didChange(local.hourFormat);
+      } finally {
+        _restoring = false;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            local.hourFormat == value
+                ? 'Guardado en este dispositivo. Se sincronizará cuando haya conexión.'
+                : 'No pudimos guardar este cambio. Inténtalo nuevamente.',
+          ),
+        ),
+      );
+    }
+    if (mounted) ref.invalidate(profileSettingsProvider);
+  }
+
+  @override
+  Widget build(BuildContext context) => DropdownButtonFormField<String>(
+    key: _field,
+    isExpanded: true,
+    initialValue: widget.settings.hourFormat,
+    decoration: const InputDecoration(
+      border: InputBorder.none,
+      labelText: 'Formato de hora',
+    ),
+    items: const [
+      DropdownMenuItem(value: 'system', child: Text('Según el dispositivo')),
+      DropdownMenuItem(value: '12h', child: Text('12 horas')),
+      DropdownMenuItem(value: '24h', child: Text('24 horas')),
+    ],
+    onChanged: _save,
+  );
 }
