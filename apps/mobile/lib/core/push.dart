@@ -684,6 +684,7 @@ class PushService {
   Future<void> countryPending = Future.value();
   Future<void> _sessionStoragePending = Future.value();
   Future<void> _profileStoragePending = Future.value();
+  Future<void> _pushStoragePending = Future.value();
   int _profileWriteVersion = 0;
   int _countryWriteVersion = 0;
   Future<void>? _restoreFuture;
@@ -923,6 +924,7 @@ class PushService {
   /// Stores a fresh GoTrue session and starts account sync. A failed first
   /// reconcile (offline) is retried by the renewal tick; the session stays.
   Future<void> _startSession(Map<String, dynamic> value) async {
+    final previousUser = userId;
     final generation = ++_generation;
     session = value;
     _markAccountKnown();
@@ -930,6 +932,17 @@ class PushService {
     _lastPushed = null;
     _lastReconcile = null;
     pendingConfirmationEmail = null;
+    if (previousUser != userId) {
+      // Device permission is not consent for a different FutBeat account.
+      // Detach the old token listener before any asynchronous reconciliation.
+      final oldRotation = rotation;
+      rotation = null;
+      enabled = false;
+      token = null;
+      await _persistPushEnabled(false);
+      await oldRotation?.cancel();
+      if (_stale(generation)) return;
+    }
     await storage.delete(key: 'futbeat.auth.pendingConfirmationEmail');
     if (_stale(generation)) return;
     await _persistSession();
@@ -1278,6 +1291,17 @@ class PushService {
   Future<void> _persistSession() => _writeSessionStorage(jsonEncode(session));
 
   Future<void> _deletePersistedSession() => _writeSessionStorage(null);
+
+  Future<void> _persistPushEnabled(bool active) {
+    final operation = _pushStoragePending.catchError((_) {}).then((_) {
+      return storage.write(
+        key: 'futbeat.push.enabled',
+        value: active ? 'true' : 'false',
+      );
+    });
+    _pushStoragePending = operation.catchError((_) {});
+    return operation;
+  }
 
   /// Single-flight: concurrent callers share one request, so a rotating
   /// refresh token is never sent twice.
@@ -1959,7 +1983,7 @@ class PushService {
     }
     await register(true);
     enabled = true;
-    await storage.write(key: 'futbeat.push.enabled', value: 'true');
+    await _persistPushEnabled(true);
 
     await rotation?.cancel();
     rotation = tokens.rotations.listen((value) {
@@ -1981,7 +2005,7 @@ class PushService {
     await register(false);
     enabled = false;
     await rotation?.cancel();
-    await storage.write(key: 'futbeat.push.enabled', value: 'false');
+    await _persistPushEnabled(false);
   }
 
   /// Always ends the local session immediately, even offline. Device
@@ -1991,7 +2015,7 @@ class PushService {
     final headers = authenticated ? authHeaders : null;
     final deviceToken = enabled ? token : null;
     await _clearLocalSession();
-    await storage.write(key: 'futbeat.push.enabled', value: 'false');
+    await _persistPushEnabled(false);
     if (headers == null) return;
     final cancel = CancelToken();
     final timer = Timer(signOutCleanupTimeout, () => cancel.cancel());
@@ -2095,7 +2119,9 @@ class PushService {
     _lastReconcile = null;
     pending = Future.value();
     countryPending = Future.value();
-    await _deletePersistedSession();
+    // Queue both clear operations at this intent. A later accepted session
+    // must neither be deleted nor inherit this account's persisted push opt-in.
+    await Future.wait([_deletePersistedSession(), _persistPushEnabled(false)]);
     if (_stale(cleanupGeneration)) return;
     // Leftover follows are guest data now: the next sign-in unions them.
     await storage.delete(key: lastUserKey);
@@ -2108,8 +2134,6 @@ class PushService {
       await storage.delete(key: linkedFlagKey(deletedUser));
       if (_stale(cleanupGeneration)) return;
     }
-    await storage.write(key: 'futbeat.push.enabled', value: 'false');
-    if (_stale(cleanupGeneration)) return;
     await _writeLocalProfile(const UserProfileSettings(), dirty: false);
   }
 
