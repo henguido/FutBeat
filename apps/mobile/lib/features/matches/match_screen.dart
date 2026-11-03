@@ -121,6 +121,13 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     // Stable structure: Tabla always exists (its content reports the state),
     // so tabs never appear/disappear while data arrives.
     _tabs = TabController(length: 6, vsync: this);
+    _startDetailRefreshIndicator();
+    Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
+  }
+
+  void _startDetailRefreshIndicator() {
+    _detailRefreshIndicatorTimer?.cancel();
+    _detailRefreshIndicatorExpired = false;
     _detailRefreshIndicatorTimer = Timer(
       matchDetailRefreshIndicatorDuration,
       () {
@@ -128,7 +135,34 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         setState(() => _detailRefreshIndicatorExpired = true);
       },
     );
-    Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
+  }
+
+  @override
+  void didUpdateWidget(MatchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.id == widget.id) return;
+    // GoRouter may retain this State while /match/:id changes. A previous
+    // match's timers and exhausted budgets must never refresh (or suppress
+    // recovery for) the new match.
+    _lineupEnrichmentRetry?.cancel();
+    _lineupEnrichmentRetry = null;
+    _lineupEnrichmentAttempts = 0;
+    _standingsRetry?.cancel();
+    _standingsRetry = null;
+    _standingsAttempts = 0;
+    _standingsManualRetry = false;
+    _staleLiveRefresh?.cancel();
+    _staleLiveRefresh = null;
+    _staleLiveAttempts = 0;
+    _lineupPending = false;
+    _standingsPending = false;
+    _liveStale = false;
+    _recordedTeamInterests.clear();
+    _liveClient?.clearScope(_liveScope);
+    _tabs.index = 0;
+    _startDetailRefreshIndicator();
+    final id = widget.id;
+    Future.microtask(() => recordTemporaryInterest(ref, 'match', id));
   }
 
   void _selectTab(_MatchTabId id) {
@@ -1700,6 +1734,32 @@ class MatchStandingsTab extends StatelessWidget {
   /// Manual refresh offered once a pending table settled.
   final VoidCallback? onRetry;
 
+  void _openFullTable(BuildContext context) {
+    // The competition overview defaults to its current season. Keep this
+    // match's exact cached table/phase instead, with no extra context read.
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Tabla completa')),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              MatchStandingsTab(
+                data,
+                competitionId,
+                homeTeamId: homeTeamId,
+                awayTeamId: awayTeamId,
+                stage: stage,
+                season: season,
+                refreshing: false,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final selectedTable = standingsTableFor(
@@ -1749,7 +1809,7 @@ class MatchStandingsTab extends StatelessWidget {
               alignment: Alignment.centerRight,
               child: TextButton.icon(
                 key: const ValueKey('standings-show-full'),
-                onPressed: () => context.push('/competition/$competitionId'),
+                onPressed: () => _openFullTable(context),
                 icon: const Icon(Icons.open_in_new_rounded, size: 17),
                 label: const Text('Ver tabla completa'),
               ),
@@ -2674,8 +2734,12 @@ class ScorerLine {
 
 String _heroGoalMinute(Json event) {
   final minute = eventMinuteLabel(event);
-  if (event['ownGoal'] == true) return '$minute (a.g.)';
-  if (event['penalty'] == true) return '$minute (p.)';
+  if (event['ownGoal'] == true || event['type'] == 'OWN_GOAL') {
+    return '$minute (a.g.)';
+  }
+  if (event['penalty'] == true || event['type'] == 'PENALTY_GOAL') {
+    return '$minute (p.)';
+  }
   return minute;
 }
 
@@ -2707,7 +2771,9 @@ String _heroGoalMinute(Json event) {
         event['playerId'].toString(): event['canonicalPlayerId'].toString(),
   };
   for (final event in timeline) {
-    if (event['type'] != 'GOAL') continue;
+    if (!const {'GOAL', 'PENALTY_GOAL', 'OWN_GOAL'}.contains(event['type'])) {
+      continue;
+    }
     final side = timelineSide(event, match, data);
     if (side == null) continue;
     goals[side]!.add(event);
@@ -3713,19 +3779,42 @@ class LineupPlayerEvent {
   final String? role;
 }
 
+bool _matchesLineupPlayerIdentity(
+  Json player,
+  Json evidence,
+  String providerKey, [
+  String? canonicalKey,
+]) {
+  final id = player['id']?.toString().trim() ?? '';
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  final canonical = canonicalKey == null
+      ? ''
+      : evidence[canonicalKey]?.toString().trim() ?? '';
+  // Canonical evidence wins over a colliding provider ID. Names and provider
+  // numbers never establish a canonical relationship.
+  if (canonical.isNotEmpty && canonicalId.isNotEmpty) {
+    return canonical == canonicalId;
+  }
+  return id.isNotEmpty && evidence[providerKey]?.toString() == id;
+}
+
 List<LineupPlayerEvent> lineupEventsForPlayer(
   Json player,
   List<Json> incidents,
   String side,
 ) {
-  final id = player['id']?.toString().trim();
-  if (id == null || id.isEmpty) return const [];
+  final id = player['id']?.toString().trim() ?? '';
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  if (id.isEmpty && canonicalId.isEmpty) return const [];
+  bool matches(Json incident, String providerKey, [String? canonicalKey]) =>
+      _matchesLineupPlayerIdentity(player, incident, providerKey, canonicalKey);
   final result = <LineupPlayerEvent>[];
   for (final incident in incidents) {
     final incidentSide =
         incident['side']?.toString() ?? incident['team']?.toString() ?? '';
     final type = incident['type']?.toString() ?? 'OTHER';
-    final ownGoal = type == 'GOAL' && incident['ownGoal'] == true;
+    final ownGoal = type == 'OWN_GOAL' ||
+        (type == 'GOAL' && incident['ownGoal'] == true);
     // The normalizer credits an own goal to the beneficiary. Its playerId
     // still identifies the scorer, who belongs to the opposite lineup.
     // With no side, the explicit provider playerId still identifies the
@@ -3736,18 +3825,18 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
         : incidentSide;
     if (playerSide.isNotEmpty && playerSide != side) continue;
     final minute = incident['minute'] as int?;
-    if (incident['playerId']?.toString() == id) {
+    if (matches(incident, 'playerId', 'canonicalPlayerId')) {
       result.add(LineupPlayerEvent(ownGoal ? 'OWN_GOAL' : type, minute));
     }
     if (type == 'GOAL' &&
         !ownGoal &&
-        incident['assistPlayerId']?.toString() == id) {
+        matches(incident, 'assistPlayerId', 'canonicalAssistPlayerId')) {
       result.add(LineupPlayerEvent('ASSIST', minute));
     }
-    if (incident['outPlayerId']?.toString() == id) {
+    if (matches(incident, 'outPlayerId')) {
       result.add(LineupPlayerEvent('SUB_OUT', minute, role: 'out'));
     }
-    if (incident['inPlayerId']?.toString() == id) {
+    if (matches(incident, 'inPlayerId')) {
       result.add(LineupPlayerEvent('SUB_IN', minute, role: 'in'));
     }
   }
@@ -4780,10 +4869,12 @@ class _LineupEventIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, color) = switch (event.type) {
-      'GOAL' => (Icons.sports_soccer, Colors.white),
+      'GOAL' || 'PENALTY_GOAL' => (Icons.sports_soccer, Colors.white),
       'OWN_GOAL' => (Icons.sports_soccer, Colors.orangeAccent),
       'ASSIST' => (Icons.assistant_rounded, lime),
       'YELLOW_CARD' => (Icons.square_rounded, Colors.amber),
+      'SECOND_YELLOW_CARD' ||
+      'YELLOW_RED_CARD' => (Icons.square_rounded, Colors.deepOrangeAccent),
       'RED_CARD' => (Icons.square_rounded, Colors.redAccent),
       'SUB_IN' => (Icons.arrow_upward_rounded, lime),
       'SUB_OUT' => (Icons.arrow_downward_rounded, Colors.redAccent),
@@ -4978,11 +5069,15 @@ PlayerMatchSummary playerMatchSummary(
   return PlayerMatchSummary(
     rating: rating is num && rating > 0 ? rating : null,
     minutes: minutes,
-    goals: count('GOAL'),
+    goals: count('GOAL') + count('PENALTY_GOAL'),
     ownGoals: count('OWN_GOAL'),
     assists: count('ASSIST'),
-    yellowCards: count('YELLOW_CARD'),
-    redCards: count('RED_CARD'),
+    yellowCards: count('YELLOW_CARD') +
+        count('SECOND_YELLOW_CARD') +
+        count('YELLOW_RED_CARD'),
+    redCards: count('RED_CARD') +
+        count('SECOND_YELLOW_CARD') +
+        count('YELLOW_RED_CARD'),
   );
 }
 
@@ -4999,9 +5094,10 @@ PlayerMatchSummary playerMatchSummary(
 /// sub-out minutes, exit before entry) also returns null.
 int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
   final id = player['id']?.toString().trim() ?? '';
-  if (id.isEmpty) return null;
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  if (id.isEmpty && canonicalId.isEmpty) return null;
   bool listed(List<Json> players) =>
-      players.any((p) => p['id']?.toString().trim() == id);
+      players.any((p) => _matchesLineupPlayerIdentity(player, p, 'id', 'canonicalId'));
   final starter = listed(
     side == 'home' ? detail.homeStarters : detail.awayStarters,
   );
@@ -5019,9 +5115,15 @@ int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
     if (minute is! int || minute < 0) continue;
     final type = incident['type']?.toString();
     if (type == 'SUBSTITUTION') {
-      if (incident['inPlayerId']?.toString() == id) subIn.add(minute);
-      if (incident['outPlayerId']?.toString() == id) subOut.add(minute);
-    } else if (type == 'RED_CARD' && incident['playerId']?.toString() == id) {
+      if (_matchesLineupPlayerIdentity(player, incident, 'inPlayerId')) {
+        subIn.add(minute);
+      }
+      if (_matchesLineupPlayerIdentity(player, incident, 'outPlayerId')) {
+        subOut.add(minute);
+      }
+    } else if (const {'RED_CARD', 'SECOND_YELLOW_CARD', 'YELLOW_RED_CARD'}
+            .contains(type) &&
+        _matchesLineupPlayerIdentity(player, incident, 'playerId', 'canonicalPlayerId')) {
       red.add(minute);
     }
   }

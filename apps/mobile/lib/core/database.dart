@@ -191,42 +191,62 @@ class AppDatabase extends _$AppDatabase {
     String? competitionOrderPreference,
     List<String>? pinnedCompetitionIds,
   }) async {
-    final old = await (select(
-      preferences,
-    )..where((p) => p.id.equals(1))).getSingleOrNull();
-    await into(preferences).insertOnConflictUpdate(
+    final orderChanged =
+        competitionOrderMode != null ||
+        competitionOrderPreference != null ||
+        pinnedCompetitionIds != null;
+    final now = DateTime.now().toUtc();
+    // One atomic statement: new rows receive defaults and explicit values,
+    // while conflicts update only the requested fields, not a stale row copy.
+    await into(preferences).insert(
       PreferencesCompanion.insert(
         id: const Value(1),
-        detectedCountry: Value(detectedCountry ?? old?.detectedCountry),
-        selectedCountry: Value(
-          identical(selectedCountry, _selectedCountryUnchanged)
-              ? old?.selectedCountry
-              : selectedCountry as String?,
-        ),
-        bootstrapDismissed: Value(
-          bootstrapDismissed ?? old?.bootstrapDismissed ?? false,
-        ),
-        competitionOrderMode: Value(
-          competitionOrderMode ??
-              old?.competitionOrderMode ??
-              CompetitionOrderMode.automatic,
-        ),
-        competitionOrderPreference: Value(
-          competitionOrderPreference ??
-              old?.competitionOrderPreference ??
-              CompetitionOrderPreference.countryFirst,
-        ),
-        pinnedCompetitionIds: Value(
-          pinnedCompetitionIds == null
-              ? old?.pinnedCompetitionIds ?? '[]'
-              : jsonEncode(pinnedCompetitionIds.toSet().toList()),
-        ),
-        competitionOrderUpdatedAt: Value(
-          competitionOrderMode != null ||
-                  competitionOrderPreference != null ||
-                  pinnedCompetitionIds != null
-              ? DateTime.now().toUtc()
-              : old?.competitionOrderUpdatedAt ?? DateTime.now().toUtc(),
+        detectedCountry: detectedCountry == null
+            ? const Value.absent()
+            : Value(detectedCountry),
+        selectedCountry: identical(selectedCountry, _selectedCountryUnchanged)
+            ? const Value.absent()
+            : Value(selectedCountry as String?),
+        bootstrapDismissed: bootstrapDismissed == null
+            ? const Value.absent()
+            : Value(bootstrapDismissed),
+        competitionOrderMode: competitionOrderMode == null
+            ? const Value.absent()
+            : Value(competitionOrderMode),
+        competitionOrderPreference: competitionOrderPreference == null
+            ? const Value.absent()
+            : Value(competitionOrderPreference),
+        pinnedCompetitionIds: pinnedCompetitionIds == null
+            ? const Value.absent()
+            : Value(jsonEncode(pinnedCompetitionIds.toSet().toList())),
+        competitionOrderUpdatedAt: Value(now),
+      ),
+      onConflict: DoUpdate(
+        (_) => PreferencesCompanion.custom(
+          detectedCountry: detectedCountry == null
+              ? null
+              : Variable(detectedCountry),
+          selectedCountry: identical(selectedCountry, _selectedCountryUnchanged)
+              ? null
+              : Variable<String>(selectedCountry as String?),
+          bootstrapDismissed: bootstrapDismissed == null
+              ? null
+              : Variable(bootstrapDismissed),
+          competitionOrderMode: competitionOrderMode == null
+              ? null
+              : Variable(competitionOrderMode),
+          competitionOrderPreference: competitionOrderPreference == null
+              ? null
+              : Variable(competitionOrderPreference),
+          pinnedCompetitionIds: pinnedCompetitionIds == null
+              ? null
+              : Variable(jsonEncode(pinnedCompetitionIds.toSet().toList())),
+          competitionOrderUpdatedAt: orderChanged
+              ? Variable(now)
+              : FunctionCallExpression<DateTime>('COALESCE', [
+                  preferences.competitionOrderUpdatedAt,
+                  Variable(now),
+                ]),
         ),
       ),
     );

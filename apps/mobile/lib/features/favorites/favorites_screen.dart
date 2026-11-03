@@ -62,8 +62,12 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
       _liveClient?.clearScope(_liveScope);
       _liveClient = client;
     }
-    final favoriteMatchIds =
-        snapshot?.matches.map((match) => match.id).toList() ?? const <String>[];
+    // Retain cached presentation for refresh failures, but an empty follow
+    // selection must not keep the old snapshot's matches subscribed to LIVE.
+    final favoriteMatchIds = follows.isEmpty
+        ? const <String>[]
+        : snapshot?.matches.map((match) => match.id).toList() ??
+              const <String>[];
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) client.setScope(_liveScope, favoriteMatchIds);
     });

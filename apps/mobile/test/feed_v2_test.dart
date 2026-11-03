@@ -371,6 +371,33 @@ Finder _rowInGroup(String matchId, String scope, String competitionId) =>
     );
 
 void main() {
+  testWidgets('#220: favorites from two leagues remain once in each league', (
+    tester,
+  ) async {
+    final data = _snapshot();
+    await _pump(tester, data: data, follows: {'team:t_sap', 'team:t_bet'});
+    expect(find.text('FAVORITOS'), findsOneWidget);
+    const favoriteIds = {
+      'm_cr_live',
+      'm_es_1',
+      'm_es_awaiting',
+      'm_es_partial',
+    };
+    for (final match in data.matches) {
+      expect(
+        _rowInGroup(match.id, 'competition', match.competitionId),
+        findsOneWidget,
+        reason: 'Every match remains in its league: ${match.id}',
+      );
+      expect(
+        _rowInGroup(match.id, 'favorite', match.competitionId),
+        favoriteIds.contains(match.id) ? findsOneWidget : findsNothing,
+        reason: 'Only favorite-team matches enter Favoritos: ${match.id}',
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   test('date transition clears only LIVE and never reapplies it', () {
     final today = DateTime(2026, 10, 2);
     final yesterday = today.subtract(const Duration(days: 1));
@@ -571,7 +598,7 @@ void main() {
     ];
 
     expect(
-      urlsWithin(const ValueKey('competition-logo-fb_comp_cr')),
+      urlsWithin(const ValueKey('competition-logo-fb_comp_cr_canonical')),
       contains(_competitionLogo),
     );
     expect(
@@ -590,8 +617,8 @@ void main() {
     await _pump(tester, data: _costaRicaMediaSnapshot(verifiedMedia: false));
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey('competition-logo-fb_comp_cr')),
-        matching: find.text('CL'),
+        of: find.byKey(const ValueKey('competition-logo-fb_comp_cr_canonical')),
+        matching: find.text('PD'),
       ),
       findsOneWidget,
     );
@@ -696,15 +723,15 @@ void main() {
   });
 
   testWidgets(
-    'followed teams appear once in Favoritos; remaining games stay in their league',
+    'followed teams appear once in Favoritos; also remain in their league',
     (tester) async {
       await _pump(tester, follows: {'team:t_bet'});
       expect(find.text('FAVORITOS'), findsOneWidget);
       // Three followed fixtures are highlighted and remain in LaLiga.
-      expect(find.byType(FeedMatchRow), findsNWidgets(6));
+      expect(find.byType(FeedMatchRow), findsNWidgets(9));
       for (final id in ['m_es_1', 'm_es_partial', 'm_es_awaiting']) {
         expect(_rowInGroup(id, 'favorite', 'c_es'), findsOneWidget);
-        expect(_rowInGroup(id, 'competition', 'c_es'), findsNothing);
+        expect(_rowInGroup(id, 'competition', 'c_es'), findsOneWidget);
       }
       // Followed rows sit above the first competition header.
       final followedY = tester
@@ -721,7 +748,7 @@ void main() {
         tester
             .widget<Text>(find.byKey(const ValueKey('competition-count-c_es')))
             .data,
-        '1',
+        '4',
       );
       expect(tester.takeException(), isNull);
     },
@@ -734,11 +761,11 @@ void main() {
     expect(find.text('FAVORITOS'), findsOneWidget);
     expect(_rowInGroup('m_cr_live', 'favorite', 'c_cr'), findsOneWidget);
     expect(_rowInGroup('m_es_1', 'favorite', 'c_es'), findsOneWidget);
-    expect(_rowInGroup('m_cr_live', 'competition', 'c_cr'), findsNothing);
-    expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsNothing);
+    expect(_rowInGroup('m_cr_live', 'competition', 'c_cr'), findsOneWidget);
+    expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsOneWidget);
     expect(_rowInGroup('m_cr_next', 'competition', 'c_cr'), findsOneWidget);
     expect(_rowInGroup('m_es_long', 'competition', 'c_es'), findsOneWidget);
-    expect(find.byType(FeedMatchRow), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(10));
   });
 
   testWidgets('collapse keeps header and count, expand restores rows', (
@@ -919,7 +946,7 @@ void main() {
       tester,
     ) async {
       await _pump(tester, size: Size(width, 3000), follows: {'team:t_long1'});
-      expect(find.byType(FeedMatchRow), findsNWidgets(6));
+      expect(find.byType(FeedMatchRow), findsNWidgets(7));
       expect(tester.takeException(), isNull);
       for (final row in tester.widgetList<FeedMatchRow>(
         find.byType(FeedMatchRow),
@@ -956,11 +983,11 @@ void main() {
   });
 
   testWidgets(
-    'favorite row opens its canonical match without a duplicate league row',
+    'favorite row opens its canonical match and league row retain the canonical match',
     (tester) async {
       final opened = await _pump(tester, follows: {'team:t_bet'});
       expect(_rowInGroup('m_es_1', 'favorite', 'c_es'), findsOneWidget);
-      expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsNothing);
+      expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsOneWidget);
 
       await tester.tap(_rowInGroup('m_es_1', 'favorite', 'c_es'));
       await tester.pumpAndSettle();
@@ -969,8 +996,8 @@ void main() {
       final router = GoRouter.of(tester.element(find.text('detalle')));
       router.pop();
       await tester.pumpAndSettle();
-      expect(_row('m_es_1'), findsOneWidget);
-      expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsNothing);
+      expect(_row('m_es_1'), findsNWidgets(2));
+      expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsOneWidget);
     },
   );
 
@@ -979,8 +1006,8 @@ void main() {
   ) async {
     await _pump(tester, follows: {'team:t_sap', 'team:t_lda'});
     expect(_rowInGroup('m_cr_live', 'favorite', 'c_cr'), findsOneWidget);
-    expect(_rowInGroup('m_cr_live', 'competition', 'c_cr'), findsNothing);
-    expect(find.byType(FeedMatchRow), findsNWidgets(6));
+    expect(_rowInGroup('m_cr_live', 'competition', 'c_cr'), findsOneWidget);
+    expect(find.byType(FeedMatchRow), findsNWidgets(7));
   });
 
   testWidgets('toggle exposes expanded state and rows have full labels', (
@@ -1232,10 +1259,10 @@ void main() {
       final secondHeader = find.byKey(ValueKey('competition-open-$secondId'));
       expect(favourites, lessThan(tester.getTopLeft(firstHeader).dy));
       expect(favourites, lessThan(tester.getTopLeft(secondHeader).dy));
-      expect(find.byType(FeedMatchRow), findsNWidgets(6));
+      expect(find.byType(FeedMatchRow), findsNWidgets(9));
       for (final id in ['m_es_1', 'm_es_awaiting', 'm_es_partial']) {
         expect(_rowInGroup(id, 'favorite', 'c_es'), findsOneWidget);
-        expect(_rowInGroup(id, 'competition', 'c_es'), findsNothing);
+        expect(_rowInGroup(id, 'competition', 'c_es'), findsOneWidget);
         expect(
           tester.getTopLeft(_rowInGroup(id, 'favorite', 'c_es')).dy,
           lessThan(tester.getTopLeft(firstHeader).dy),
@@ -1433,12 +1460,11 @@ void main() {
     final data = _withMatches([oldFinal, correctedFinal]);
     await _pump(tester, data: data, follows: {'team:t_bet'});
 
-    for (final scope in ['favorite']) {
+    for (final scope in ['favorite', 'competition']) {
       final row = _rowInGroup('m_es_1', scope, 'c_es');
       expect(row, findsOneWidget);
       expect(tester.widget<FeedMatchRow>(row).match.score, '1 - 1');
     }
-    expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsNothing);
     expect(data.match('m_es_1')?.score, '1 - 1');
   });
 
@@ -1573,7 +1599,7 @@ void main() {
       expect(find.text('FAVORITOS'), findsOneWidget);
       expect(
         find.byType(FeedMatchRow),
-        findsNWidgets(6),
+        findsNWidgets(9),
         reason: 'nothing hidden',
       );
       // The provider twins resolve to one fixture per section, never two
@@ -1582,7 +1608,7 @@ void main() {
         expect(
           _rowInGroup('m_es_1', scope, 'c_es').evaluate().length +
               _rowInGroup('m_es_1_twin', scope, 'c_es').evaluate().length,
-          scope == 'favorite' ? 1 : 0,
+          1,
         );
       }
       final favouritesY = tester.getTopLeft(find.text('FAVORITOS')).dy;

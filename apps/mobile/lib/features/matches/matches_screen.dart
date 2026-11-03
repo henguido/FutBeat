@@ -18,9 +18,13 @@ import '../../shared/widgets.dart';
 
 /// "Favoritos" is only for matches of a favourite TEAM (never a followed
 /// league, never a single followed match: those only mark the follow).
-bool isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
-    follows.contains('team:${match.homeId}') ||
-    follows.contains('team:${match.awayId}');
+bool isFollowedTeamMatch(
+  FootballMatch match,
+  Set<String> follows, {
+  String Function(String)? resolve,
+}) =>
+    follows.contains('team:${resolve?.call(match.homeId) ?? match.homeId}') ||
+    follows.contains('team:${resolve?.call(match.awayId) ?? match.awayId}');
 
 // Lower is better: finished, live, played evidence, scheduled, called off.
 int _fixtureRank(FootballMatch match) {
@@ -55,13 +59,20 @@ bool _isPlayedOrPlaying(FootballMatch match) =>
 /// no evidence; a later scheduled game can be a real second game). Two
 /// finished matches with different final scores, and matches of different
 /// competitions, are never merged.
-bool _sameFixture(FootballMatch a, FootballMatch b) {
-  if (a.competitionId.isEmpty ||
-      a.competitionId != b.competitionId ||
-      a.homeId.isEmpty ||
-      a.homeId == a.awayId ||
-      a.homeId != b.homeId ||
-      a.awayId != b.awayId) {
+bool _sameFixture(
+  FootballMatch a,
+  FootballMatch b,
+  String Function(String) resolve,
+) {
+  final competition = resolve(a.competitionId);
+  final home = resolve(a.homeId);
+  final away = resolve(a.awayId);
+  if (competition.isEmpty ||
+      competition != resolve(b.competitionId) ||
+      home.isEmpty ||
+      home == away ||
+      home != resolve(b.homeId) ||
+      away != resolve(b.awayId)) {
     return false;
   }
   if (a.isFinished &&
@@ -87,11 +98,15 @@ bool _sameFixture(FootballMatch a, FootballMatch b) {
 }
 
 /// Defensive UI-level dedupe (the backend calendar is the authority): the
-/// daily feed renders one canonical fixture exactly once: the same canonical
+/// daily feed groups each canonical fixture once per section: the same canonical
 /// match id, or two match entities of one fixture (see [_sameFixture]). The
 /// best twin stays: finished > live > played evidence > scheduled > called
 /// off, then the lower id. The order of the surviving matches is preserved.
-List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
+List<FootballMatch> dedupeFixtures(
+  Iterable<FootballMatch> matches, {
+  String Function(String)? resolve,
+}) {
+  final resolveId = resolve ?? (String id) => id;
   // A snapshot may contain several revisions of the same canonical id. Keep
   // its strongest evidence; for equal evidence, use the last row just as
   // Snapshot.match(id) does, so a corrected score cannot differ by screen.
@@ -108,10 +123,14 @@ List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
   // while replacements preserve the original visible position.
   final candidates = <(String, String, String), List<int>>{};
   for (final match in byId.values) {
-    final key = (match.competitionId, match.homeId, match.awayId);
+    final key = (
+      resolveId(match.competitionId),
+      resolveId(match.homeId),
+      resolveId(match.awayId),
+    );
     final indexes = candidates.putIfAbsent(key, () => <int>[]);
     final twin = indexes
-        .where((index) => _sameFixture(match, kept[index]))
+        .where((index) => _sameFixture(match, kept[index], resolveId))
         .firstOrNull;
     if (twin == null) {
       indexes.add(kept.length);
@@ -238,21 +257,35 @@ List<Entity> orderMatchCompetitions({
   List<String> pinnedCompetitionIds = const <String>[],
 }) {
   final visibleCompetitionIds = matches
-      .map((match) => match.competitionId)
+      .map((match) => data.resolveEntityId(match.competitionId))
       .toSet();
-  final visible = data.competitions
-      .where((competition) => visibleCompetitionIds.contains(competition.id))
-      .toList();
+  final visibleById = <String, Entity>{};
+  for (final competition in data.competitions) {
+    final id = data.resolveEntityId(competition.id);
+    if (!visibleCompetitionIds.contains(id)) continue;
+    final canonical = data.competition(competition.id) ?? competition;
+    visibleById.putIfAbsent(
+      id,
+      () => canonical.id == id
+          ? canonical
+          : Entity({...canonical.json, 'id': id}),
+    );
+  }
+  final visible = visibleById.values.toList();
 
   final userCountry = selectedCountry ?? detectedCountry;
   final custom = orderMode == CompetitionOrderMode.personalized;
   // A stale pin (no longer followed) never reorders anything.
-  final pins = {
-    if (custom)
-      for (var i = 0; i < pinnedCompetitionIds.length; i++)
-        if (follows.contains('competition:${pinnedCompetitionIds[i]}'))
-          pinnedCompetitionIds[i]: i,
-  };
+  final pins = <String, int>{};
+  if (custom) {
+    for (var i = 0; i < pinnedCompetitionIds.length; i++) {
+      final id = data.resolveEntityId(pinnedCompetitionIds[i]);
+      if (follows.contains('competition:$id')) {
+        // Keep the first saved position when alias and canonical IDs coexist.
+        pins.putIfAbsent(id, () => i);
+      }
+    }
+  }
   return sortCompetitionsByFeedPriority(
     visible,
     follows: follows,
@@ -331,12 +364,26 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     final plan = MatchPrefetchPlan.build(
       // A finished fixture can be followed too. Its persisted Match Center
       // detail should paint from disk as promptly as a live fixture.
-      matches: games.where(
-        (match) => match.isUpcoming || match.isLive || match.isFinished,
-      ),
+      matches: games
+          .where(
+            (match) => match.isUpcoming || match.isLive || match.isFinished,
+          )
+          .map(
+            // Only normalize the planning projection: the disk key remains
+            // the canonical match ID and the displayed fixture is untouched.
+            (match) => FootballMatch({
+              ...match.json,
+              'competitionId': data.resolveEntityId(match.competitionId),
+              'homeTeamId': data.resolveEntityId(match.homeId),
+              'awayTeamId': data.resolveEntityId(match.awayId),
+            }),
+          ),
       follows: follows,
       selectedCountry: country,
-      competitions: {for (final entry in data.competitions) entry.id: entry},
+      competitions: {
+        for (final entry in data.competitions)
+          data.resolveEntityId(entry.id): data.competition(entry.id) ?? entry,
+      },
       maxMatches: 8,
     ).excluding(_prefetchAttempted);
     if (plan.matchIds.isEmpty) return;
@@ -400,7 +447,12 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
         );
       } finally {
         _prefetchRunning = false;
-        if (mounted && _sportsActive && generation != _prefetchGeneration) {
+        // Continue the next bounded disk batch while this visible session
+        // still has budget. No unrelated rebuild should be required to warm
+        // the remaining favorite fixtures. A changed generation replans first.
+        if (mounted &&
+            _sportsActive &&
+            (generation != _prefetchGeneration || _prefetchRemaining > 0)) {
           setState(() {});
         }
       }
@@ -535,7 +587,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
-          final allGames = dedupeFixtures(data.onDate(selected, 'Todos'));
+          final allGames = dedupeFixtures(
+            data.onDate(selected, 'Todos'),
+            resolve: data.resolveEntityId,
+          );
           _warmRelevantMatches(
             data,
             allGames,
@@ -559,20 +614,26 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
 
           final followedGames =
               games
-                  .where((match) => isFollowedTeamMatch(match, follows))
+                  .where(
+                    (match) => isFollowedTeamMatch(
+                      match,
+                      follows,
+                      resolve: data.resolveEntityId,
+                    ),
+                  )
                   .toList()
                 ..sort(compareFeedKickoffs);
-          // Each canonical fixture has one visible owner: favorites first,
-          // then its league for the remaining games (MOBILE239).
-          final favoriteIds = followedGames.map((match) => match.id).toSet();
-          final regularGames =
-              games.where((match) => !favoriteIds.contains(match.id)).toList()
-                ..sort(compareFeedKickoffs);
+          // Favorites highlight canonical fixtures without removing them from
+          // their leagues. The day fixtures were deduplicated before grouping.
+          final regularGames = [...games]..sort(compareFeedKickoffs);
 
           final regularByCompetition = <String, List<FootballMatch>>{};
           for (final match in regularGames) {
             regularByCompetition
-                .putIfAbsent(match.competitionId, () => <FootballMatch>[])
+                .putIfAbsent(
+                  data.resolveEntityId(match.competitionId),
+                  () => <FootballMatch>[],
+                )
                 .add(match);
           }
 
@@ -595,6 +656,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           // Resolve every regular block and its ad cadence before creating
           // any section. Cadence decides which section owns an ad; the
           // section owns the group/ad/next-section layout.
+          final competitionById = {
+            for (final competition in orderedCompetitions)
+              competition.id: competition,
+          };
           final visibleCompetitions = orderedCompetitions
               .where(
                 (competition) =>
@@ -801,14 +866,17 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             final favoriteGroups = <String, List<FootballMatch>>{};
             for (final match in followedGames) {
               favoriteGroups
-                  .putIfAbsent(match.competitionId, () => <FootballMatch>[])
+                  .putIfAbsent(
+                    data.resolveEntityId(match.competitionId),
+                    () => <FootballMatch>[],
+                  )
                   .add(match);
             }
             final favoriteEntries = favoriteGroups.entries
-                .where((entry) => data.competition(entry.key) != null)
+                .where((entry) => competitionById.containsKey(entry.key))
                 .toList();
             for (final (index, entry) in favoriteEntries.indexed) {
-              final competition = data.competition(entry.key);
+              final competition = competitionById[entry.key];
               if (competition == null) continue;
               final collapseKey = 'favorite:${competition.id}';
               final collapsed =
@@ -834,7 +902,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             }
           }
 
-          // The remaining matches stay visible in their competition.
+          // All matches, including favorites, stay visible in their competition.
           for (final (index, competition) in visibleCompetitions.indexed) {
             final ordinal = index + 1;
             addCompetition(competition, ordinal);

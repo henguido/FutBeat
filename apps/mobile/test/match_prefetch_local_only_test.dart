@@ -129,7 +129,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(
         find.byKey(const ValueKey('match-row-fb_match_local')),
-        findsOneWidget,
+        findsNWidgets(2),
+        reason: '#220 keeps the followed fixture in Favoritos and its league; '
+            'both presentations share the same local warm-up',
       );
       await tester.runAsync(() async {
         for (var i = 0; i < 30; i++) {

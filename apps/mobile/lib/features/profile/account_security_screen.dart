@@ -18,7 +18,8 @@ class AccountSecurityScreen extends ConsumerStatefulWidget {
 
 class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
   final name = TextEditingController();
-  UserProfileSettings settings = const UserProfileSettings();
+  UserProfileSettings? settings;
+  bool loading = true;
   bool busy = false;
   String? message;
 
@@ -35,17 +36,35 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
   }
 
   Future<void> _load() async {
-    final service = ref.read(pushServiceProvider);
-    await service.restore();
-    final value = await service.loadProfileSettings();
     if (!mounted) return;
+    final service = ref.read(pushServiceProvider);
     setState(() {
-      settings = value;
-      name.text = value.displayName ?? '';
+      loading = true;
+      settings = null;
+      message = null;
     });
+    try {
+      await service.restore();
+      if (!mounted) return;
+      final value = await service.loadProfileSettings();
+      if (!mounted) return;
+      setState(() {
+        settings = value;
+        name.text = value.displayName ?? '';
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => message = 'No pudimos cargar tu perfil. Inténtalo nuevamente.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
   }
 
   Future<void> _action(Future<void> Function() work, String success) async {
+    if (busy || !mounted) return;
     setState(() {
       busy = true;
       message = null;
@@ -61,13 +80,16 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
   }
 
   Future<void> _saveName() async {
+    final current = settings;
+    if (current == null || loading || busy) return;
     final text = name.text.trim();
-    final next = settings.copyWith(
+    final next = current.copyWith(
       displayName: text.isEmpty ? null : text,
       clearDisplayName: text.isEmpty,
     );
     await _action(() async {
       await ref.read(pushServiceProvider).saveProfileSettings(next);
+      if (!mounted) return;
       ref.invalidate(profileSettingsProvider);
       settings = next;
     }, 'Perfil actualizado.');
@@ -112,6 +134,9 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          if (loading) const LinearProgressIndicator(),
+          if (!loading && settings == null)
+            TextButton(onPressed: _load, child: const Text('Reintentar')),
           if (!service.authenticated)
             ProfileSection(
               title: 'Tu cuenta',
@@ -164,7 +189,7 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
                       TextField(
                         key: const ValueKey('account-name'),
                         controller: name,
-                        enabled: !busy,
+                        enabled: !busy && !loading && settings != null,
                         maxLength: 80,
                         decoration: const InputDecoration(
                           labelText: 'Nombre',
@@ -176,7 +201,9 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
                         width: double.infinity,
                         child: FilledButton.tonal(
                           key: const ValueKey('account-name-save'),
-                          onPressed: busy ? null : _saveName,
+                          onPressed: busy || loading || settings == null
+                              ? null
+                              : _saveName,
                           child: const Text('Guardar nombre'),
                         ),
                       ),

@@ -145,10 +145,26 @@ class SecureOnboardingProgressStore implements OnboardingProgressStore {
   const SecureOnboardingProgressStore();
   static const _key = 'futbeat.onboarding.step';
   static const _storage = FlutterSecureStorage();
+  // Multiple route instances still write the same secure-storage key. Keep
+  // invocation order so an earlier slow save cannot undo a later step/clear.
+  static Future<void> _pendingMutation = Future<void>.value();
+
+  Future<void> _mutate(Future<void> Function() action) {
+    final next = _pendingMutation.then((_) async {
+      try {
+        await action();
+      } catch (_) {
+        // Progress is best effort; one failed write must not block later ones.
+      }
+    });
+    _pendingMutation = next;
+    return next;
+  }
 
   @override
   Future<int?> read() async {
     try {
+      await _pendingMutation;
       return int.tryParse(await _storage.read(key: _key) ?? '');
     } catch (_) {
       return null;
@@ -156,18 +172,11 @@ class SecureOnboardingProgressStore implements OnboardingProgressStore {
   }
 
   @override
-  Future<void> write(int step) async {
-    try {
-      await _storage.write(key: _key, value: '$step');
-    } catch (_) {}
-  }
+  Future<void> write(int step) =>
+      _mutate(() => _storage.write(key: _key, value: '$step'));
 
   @override
-  Future<void> clear() async {
-    try {
-      await _storage.delete(key: _key);
-    } catch (_) {}
-  }
+  Future<void> clear() => _mutate(() => _storage.delete(key: _key));
 }
 
 final onboardingProgressStoreProvider = Provider<OnboardingProgressStore>(
@@ -556,26 +565,39 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Future<void> _selectCountry(String? value) async {
     if (countryBusy) return;
-    setState(() => countryBusy = true);
+    setState(() {
+      countryBusy = true;
+      message = null;
+    });
     // Capture provider-owned objects before the first await. The route can be
     // dismissed while Drift is saving, after which WidgetRef is no longer safe.
     final database = ref.read(databaseProvider);
     final service = ref.read(pushServiceProvider);
-    await database.saveSelectedCountry(value);
-    final current = await database.watchPreference().first;
-    await service.markSelectedCountryDirty();
-    if (service.authenticated) {
-      try {
-        await service.syncCountries(
-          current.detectedCountry,
-          value,
-          updateDetected: false,
-        );
-      } catch (_) {
-        // Drift remains authoritative offline; the normal reconcile can retry.
+    try {
+      await database.saveSelectedCountry(value);
+      final current = await database.watchPreference().first;
+      await service.markSelectedCountryDirty();
+      if (service.authenticated) {
+        try {
+          await service.syncCountries(
+            current.detectedCountry,
+            value,
+            updateDetected: false,
+          );
+        } catch (_) {
+          // Drift remains authoritative offline; normal reconciliation retries.
+        }
       }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          message =
+              'No pudimos completar el cambio de país. Inténtalo nuevamente.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => countryBusy = false);
     }
-    if (mounted) setState(() => countryBusy = false);
   }
 
   /// Sign in / create the account in place: the onboarding stays on the

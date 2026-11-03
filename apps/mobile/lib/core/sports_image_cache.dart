@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
@@ -41,6 +42,13 @@ class SportsImageDiskCache {
   final int maxEntries;
   final int maxImageBytes;
   final Map<String, Future<File?>> _inFlight = {};
+  final Map<String, ({DateTime modified, int size})> _validatedFiles = {};
+  int _validationCount = 0;
+
+  @visibleForTesting
+  int get validationCount => _validationCount;
+  @visibleForTesting
+  int get validatedEntryCount => _validatedFiles.length;
   Future<void>? _eviction;
   bool _evictionRequested = false;
 
@@ -84,23 +92,53 @@ class SportsImageDiskCache {
     try {
       await directory.create(recursive: true);
       final file = File('${directory.path}${Platform.pathSeparator}$key.img');
-      if (await file.exists()) {
+      // A peer may replace a corrupt file while its decoder is pending.
+      // Retry one changed disk version, never delete or memoize a stale one.
+      for (var read = 0; read < 2 && await file.exists(); read++) {
         final stat = await file.stat();
+        var valid = false;
         if (stat.size > 0 &&
             stat.size <= maxImageBytes &&
             clock().difference(stat.modified) < ttl) {
+          final signature = (modified: stat.modified, size: stat.size);
+          valid =
+              _validatedFiles[file.path] == signature ||
+              await _validImage(await file.readAsBytes());
+        }
+        if (!_sameFileVersion(stat, await file.stat())) {
+          _validatedFiles.remove(file.path);
+          if (read == 0) continue;
+          return null;
+        }
+        if (valid) {
+          _rememberValidation(file.path, (
+            modified: stat.modified,
+            size: stat.size,
+          ));
           return file;
         }
+        _validatedFiles.remove(file.path);
         await file.delete();
+        break;
       }
+      _validatedFiles.remove(file.path);
       final bytes = await fetch(uri);
-      if (bytes.isEmpty || bytes.length > maxImageBytes) return null;
+      if (bytes.isEmpty ||
+          bytes.length > maxImageBytes ||
+          !await _validImage(bytes)) {
+        return null;
+      }
       final temporary = File(
         '${file.path}.${clock().microsecondsSinceEpoch}.part',
       );
       try {
         await temporary.writeAsBytes(bytes, flush: true);
         await temporary.rename(file.path);
+        final stat = await file.stat();
+        _rememberValidation(file.path, (
+          modified: stat.modified,
+          size: stat.size,
+        ));
       } finally {
         if (await temporary.exists()) await temporary.delete();
       }
@@ -111,6 +149,57 @@ class SportsImageDiskCache {
       // show the caller's placeholder without breaking Match Center.
       onError?.call(error);
       return null;
+    }
+  }
+
+  bool _sameFileVersion(FileStat expected, FileStat current) =>
+      expected.type == current.type &&
+      expected.modified == current.modified &&
+      expected.size == current.size;
+
+  void _rememberValidation(
+    String path,
+    ({DateTime modified, int size}) signature,
+  ) {
+    _validatedFiles.remove(path);
+    _validatedFiles[path] = signature;
+    final limit = maxEntries > 0 ? maxEntries : 0;
+    while (_validatedFiles.length > limit) {
+      _validatedFiles.remove(_validatedFiles.keys.first);
+    }
+  }
+
+  Future<bool> _validImage(Uint8List bytes) async {
+    _validationCount++;
+    ui.ImmutableBuffer? buffer;
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    ui.Image? image;
+    try {
+      buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      // Entity photos and crests do not need unbounded source dimensions.
+      if (descriptor.width <= 0 ||
+          descriptor.height <= 0 ||
+          descriptor.width > 8192 ||
+          descriptor.height > 8192 ||
+          descriptor.width * descriptor.height > 16 * 1024 * 1024) {
+        return false;
+      }
+      codec = await descriptor.instantiateCodec(
+        targetWidth: 1,
+        targetHeight: 1,
+      );
+      image = (await codec.getNextFrame()).image;
+      return true;
+    } catch (error) {
+      onError?.call(error);
+      return false;
+    } finally {
+      image?.dispose();
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer?.dispose();
     }
   }
 
@@ -137,7 +226,10 @@ class SportsImageDiskCache {
   }
 
   Future<void> _evict() async {
-    if (!await directory.exists()) return;
+    if (!await directory.exists()) {
+      _validatedFiles.clear();
+      return;
+    }
     final files = <({File file, FileStat stat})>[];
     await for (final entity in directory.list(followLinks: false)) {
       if (entity is! File) continue;
@@ -154,7 +246,8 @@ class SportsImageDiskCache {
       }
       if (clock().difference(stat.modified) >= ttl ||
           stat.size > maxImageBytes) {
-        await entity.delete();
+        _validatedFiles.remove(entity.path);
+        if (_sameFileVersion(stat, await entity.stat())) await entity.delete();
       } else {
         files.add((file: entity, stat: stat));
       }
@@ -164,8 +257,13 @@ class SportsImageDiskCache {
     while (files.length > maxEntries || bytes > maxBytes) {
       final oldest = files.removeAt(0);
       bytes -= oldest.stat.size;
-      if (await oldest.file.exists()) await oldest.file.delete();
+      _validatedFiles.remove(oldest.file.path);
+      if (_sameFileVersion(oldest.stat, await oldest.file.stat())) {
+        await oldest.file.delete();
+      }
     }
+    final retainedPaths = files.map((entry) => entry.file.path).toSet();
+    _validatedFiles.removeWhere((path, _) => !retainedPaths.contains(path));
   }
 
   Future<void> removeAbandonedPartials() async {

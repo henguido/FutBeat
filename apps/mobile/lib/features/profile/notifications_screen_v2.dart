@@ -21,6 +21,7 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
   DeviceNotificationPermission permission =
       DeviceNotificationPermission.unknown;
   bool busy = false;
+  int _saveGeneration = 0;
   String? actionError;
 
   @override
@@ -44,6 +45,7 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
   Future<void> _save(NotificationOption option, bool enabled) async {
     final current = settings;
     if (current == null) return;
+    final generation = ++_saveGeneration;
     final next = option.update(current, enabled);
     setState(() {
       settings = next;
@@ -52,10 +54,12 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
     final service = ref.read(pushServiceProvider);
     try {
       await service.saveProfileSettings(next);
+      if (!mounted || generation != _saveGeneration) return;
       ref.invalidate(profileSettingsProvider);
     } catch (_) {
+      if (!mounted || generation != _saveGeneration) return;
       final local = await service.loadProfileSettings();
-      if (!mounted) return;
+      if (!mounted || generation != _saveGeneration) return;
       final savedLocally = option.value(local) == enabled;
       setState(() {
         settings = savedLocally ? local : current;
