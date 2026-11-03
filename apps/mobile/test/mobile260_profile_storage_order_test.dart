@@ -286,8 +286,9 @@ void main() {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (request, handler) {
-          if (request.path.contains('sync_user_profile'))
+          if (request.path.contains('sync_user_profile')) {
             profileCalls.add(request);
+          }
           handler.resolve(
             Response(requestOptions: request, data: <String, dynamic>{}),
           );
@@ -339,8 +340,9 @@ void main() {
         dio.interceptors.add(
           InterceptorsWrapper(
             onRequest: (request, handler) {
-              if (request.path.contains('sync_user_profile'))
+              if (request.path.contains('sync_user_profile')) {
                 profileCalls.add(request);
+              }
               handler.resolve(
                 Response(
                   requestOptions: request,
