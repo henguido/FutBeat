@@ -3778,8 +3778,20 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
   List<Json> incidents,
   String side,
 ) {
-  final id = player['id']?.toString().trim();
-  if (id == null || id.isEmpty) return const [];
+  final id = player['id']?.toString().trim() ?? '';
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  if (id.isEmpty && canonicalId.isEmpty) return const [];
+  bool matches(Json incident, String providerKey, [String? canonicalKey]) {
+    final canonical = canonicalKey == null
+        ? ''
+        : incident[canonicalKey]?.toString().trim() ?? '';
+    // Explicit canonical evidence takes precedence. Never compare a provider
+    // number/name with a canonical ID, or override a conflicting canonical ID.
+    if (canonical.isNotEmpty && canonicalId.isNotEmpty) {
+      return canonical == canonicalId;
+    }
+    return id.isNotEmpty && incident[providerKey]?.toString() == id;
+  }
   final result = <LineupPlayerEvent>[];
   for (final incident in incidents) {
     final incidentSide =
@@ -3796,18 +3808,18 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
         : incidentSide;
     if (playerSide.isNotEmpty && playerSide != side) continue;
     final minute = incident['minute'] as int?;
-    if (incident['playerId']?.toString() == id) {
+    if (matches(incident, 'playerId', 'canonicalPlayerId')) {
       result.add(LineupPlayerEvent(ownGoal ? 'OWN_GOAL' : type, minute));
     }
     if (type == 'GOAL' &&
         !ownGoal &&
-        incident['assistPlayerId']?.toString() == id) {
+        matches(incident, 'assistPlayerId', 'canonicalAssistPlayerId')) {
       result.add(LineupPlayerEvent('ASSIST', minute));
     }
-    if (incident['outPlayerId']?.toString() == id) {
+    if (matches(incident, 'outPlayerId')) {
       result.add(LineupPlayerEvent('SUB_OUT', minute, role: 'out'));
     }
-    if (incident['inPlayerId']?.toString() == id) {
+    if (matches(incident, 'inPlayerId')) {
       result.add(LineupPlayerEvent('SUB_IN', minute, role: 'in'));
     }
   }
