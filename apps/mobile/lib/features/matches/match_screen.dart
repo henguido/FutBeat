@@ -2734,7 +2734,9 @@ class ScorerLine {
 
 String _heroGoalMinute(Json event) {
   final minute = eventMinuteLabel(event);
-  if (event['ownGoal'] == true) return '$minute (a.g.)';
+  if (event['ownGoal'] == true || event['type'] == 'OWN_GOAL') {
+    return '$minute (a.g.)';
+  }
   if (event['penalty'] == true || event['type'] == 'PENALTY_GOAL') {
     return '$minute (p.)';
   }
@@ -2769,7 +2771,9 @@ String _heroGoalMinute(Json event) {
         event['playerId'].toString(): event['canonicalPlayerId'].toString(),
   };
   for (final event in timeline) {
-    if (event['type'] != 'GOAL' && event['type'] != 'PENALTY_GOAL') continue;
+    if (!const {'GOAL', 'PENALTY_GOAL', 'OWN_GOAL'}.contains(event['type'])) {
+      continue;
+    }
     final side = timelineSide(event, match, data);
     if (side == null) continue;
     goals[side]!.add(event);
@@ -3809,7 +3813,8 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
     final incidentSide =
         incident['side']?.toString() ?? incident['team']?.toString() ?? '';
     final type = incident['type']?.toString() ?? 'OTHER';
-    final ownGoal = type == 'GOAL' && incident['ownGoal'] == true;
+    final ownGoal = type == 'OWN_GOAL' ||
+        (type == 'GOAL' && incident['ownGoal'] == true);
     // The normalizer credits an own goal to the beneficiary. Its playerId
     // still identifies the scorer, who belongs to the opposite lineup.
     // With no side, the explicit provider playerId still identifies the
