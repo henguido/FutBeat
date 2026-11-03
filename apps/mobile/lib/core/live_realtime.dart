@@ -338,8 +338,8 @@ class LiveRealtimeClient {
   final StreamController<void> _scopeChanges = StreamController<void>.broadcast(
     sync: true,
   );
-  Future<void> Function()? _refreshActiveScope;
-  void Function(bool)? _setActiveScope;
+  final Set<Future<void> Function()> _refreshActiveScopes = {};
+  final Set<void Function(bool)> _setActiveScopes = {};
   final Set<void Function()> _closeWatches = {};
   bool _appActive = true;
 
@@ -348,13 +348,21 @@ class LiveRealtimeClient {
   void setAppActive(bool active) {
     if (_appActive == active) return;
     _appActive = active;
-    _setActiveScope?.call(active);
+    for (final setActive in List<void Function(bool)>.of(_setActiveScopes)) {
+      setActive(active);
+    }
   }
 
   /// Closes the gap left by Android suspending the socket in the background.
   /// The existing bootstrap reads only the currently visible match IDs.
-  Future<void> refreshOnResume() =>
-      _refreshActiveScope?.call() ?? Future<void>.value();
+  Future<void> refreshOnResume() async {
+    await Future.wait([
+      for (final refresh in List<Future<void> Function()>.of(
+        _refreshActiveScopes,
+      ))
+        refresh(),
+    ]);
+  }
 
   /// A single socket carries at most 100 canonical match IDs. Open match
   /// scopes outrank the feed; REST remains the safety net for all other rows.
@@ -402,8 +410,8 @@ class LiveRealtimeClient {
       close();
     }
     _closeWatches.clear();
-    _refreshActiveScope = null;
-    _setActiveScope = null;
+    _refreshActiveScopes.clear();
+    _setActiveScopes.clear();
     _scopes.clear();
     _scopeChanges.close();
   }
@@ -429,13 +437,15 @@ class LiveRealtimeClient {
     // Server minus device clock, from the last answer's `Date`.
     var serverOffset = Duration.zero;
     late void Function() closeWatch;
+    Future<void> Function()? refreshScope;
+    void Function(bool)? setScopeActive;
 
     Future<void> stopWatch() async {
       if (disposed) return;
       disposed = true;
       _closeWatches.remove(closeWatch);
-      _refreshActiveScope = null;
-      _setActiveScope = null;
+      _refreshActiveScopes.remove(refreshScope);
+      _setActiveScopes.remove(setScopeActive);
       bootstrapToken?.cancel('LIVE listener closed');
       retry?.cancel();
       scopeDebounce?.cancel();
@@ -716,7 +726,7 @@ class LiveRealtimeClient {
           return;
         }
         _closeWatches.add(closeWatch);
-        _refreshActiveScope = () async {
+        refreshScope = () async {
           if (disposed ||
               !_appActive ||
               (scopedRealtime && realtimeMatchIds.isEmpty)) {
@@ -724,7 +734,8 @@ class LiveRealtimeClient {
           }
           await bootstrap();
         };
-        _setActiveScope = (active) {
+        _refreshActiveScopes.add(refreshScope!);
+        setScopeActive = (active) {
           scopeVersion++;
           bootstrapToken?.cancel('App backgrounded or resumed');
           retry?.cancel();
@@ -741,6 +752,7 @@ class LiveRealtimeClient {
             unawaited(bootstrap());
           }
         };
+        _setActiveScopes.add(setScopeActive!);
         if (!scopedRealtime || realtimeMatchIds.isNotEmpty) {
           unawaited(bootstrap());
         }
