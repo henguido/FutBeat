@@ -145,10 +145,26 @@ class SecureOnboardingProgressStore implements OnboardingProgressStore {
   const SecureOnboardingProgressStore();
   static const _key = 'futbeat.onboarding.step';
   static const _storage = FlutterSecureStorage();
+  // Multiple route instances still write the same secure-storage key. Keep
+  // invocation order so an earlier slow save cannot undo a later step/clear.
+  static Future<void> _pendingMutation = Future<void>.value();
+
+  Future<void> _mutate(Future<void> Function() action) {
+    final next = _pendingMutation.then((_) async {
+      try {
+        await action();
+      } catch (_) {
+        // Progress is best effort; one failed write must not block later ones.
+      }
+    });
+    _pendingMutation = next;
+    return next;
+  }
 
   @override
   Future<int?> read() async {
     try {
+      await _pendingMutation;
       return int.tryParse(await _storage.read(key: _key) ?? '');
     } catch (_) {
       return null;
@@ -156,18 +172,11 @@ class SecureOnboardingProgressStore implements OnboardingProgressStore {
   }
 
   @override
-  Future<void> write(int step) async {
-    try {
-      await _storage.write(key: _key, value: '$step');
-    } catch (_) {}
-  }
+  Future<void> write(int step) =>
+      _mutate(() => _storage.write(key: _key, value: '$step'));
 
   @override
-  Future<void> clear() async {
-    try {
-      await _storage.delete(key: _key);
-    } catch (_) {}
-  }
+  Future<void> clear() => _mutate(() => _storage.delete(key: _key));
 }
 
 final onboardingProgressStoreProvider = Provider<OnboardingProgressStore>(
