@@ -290,13 +290,23 @@ bool _profileEventBelongsToPlayer(
       data.resolveEntityId(id) == data.resolveEntityId(playerId);
 }
 
+List<FootballMatch> _profileMatchRevisions(Snapshot data) {
+  final revisions = <String, List<FootballMatch>>{};
+  for (final match in data.matches) {
+    revisions.putIfAbsent(match.id, () => []).add(match);
+  }
+  // Reuse the feed's revision selection, only within an exact canonical ID.
+  // Distinct fixtures are not joined by team names, dates or provider guesses.
+  return [for (final rows in revisions.values) dedupeFixtures(rows).single];
+}
+
 /// Stored events where this player scored, assisted or was booked/subbed.
 List<(FootballMatch, Json, bool)> playerRecentEvents(
   Snapshot data,
   String playerId,
 ) {
   final result = <(FootballMatch, Json, bool)>[];
-  for (final match in data.matches) {
+  for (final match in _profileMatchRevisions(data)) {
     for (final event in match.events) {
       if (_profileEventBelongsToPlayer(data, event, playerId)) {
         result.add((match, event, false));
@@ -344,7 +354,7 @@ List<FootballMatch> playerProfileMatches(Snapshot data, Entity player) {
   addTeam(player.json['teamId']);
   addTeam(player.json['nationalTeamId']);
   final byId = <String, FootballMatch>{};
-  for (final match in data.matches) {
+  for (final match in _profileMatchRevisions(data)) {
     final currentTeamMatch =
         teamIds.contains(data.resolveEntityId(match.homeId)) ||
         teamIds.contains(data.resolveEntityId(match.awayId));
