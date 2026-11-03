@@ -67,6 +67,36 @@ class _HeldCountryAck extends FlutterSecureStorage {
   }
 }
 
+class _FailsCountryWrite extends FlutterSecureStorage {
+  bool first = true;
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == 'futbeat.country.selected.dirty' && first) {
+      first = false;
+      throw StateError('synthetic storage failure');
+    }
+    await super.write(
+      key: key,
+      value: value,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
@@ -104,6 +134,55 @@ void main() {
       await Future.wait([old, latest]);
       expect((await db.watchPreference().first).selectedCountry, 'CR');
       expect(await storage.read(key: 'futbeat.country.selected.dirty'), 'true');
+      expect(await storage.read(key: 'futbeat.country.dirty'), 'true');
+    },
+  );
+  test('failed country marker write does not prevent a later retry', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final storage = _FailsCountryWrite();
+    final service = _Service(db, Dio(), storage);
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+    });
+    await expectLater(service.markSelectedCountryDirty(), throwsStateError);
+    await service.markSelectedCountryDirty();
+    expect(await storage.read(key: 'futbeat.country.selected.dirty'), 'true');
+    expect(await storage.read(key: 'futbeat.country.dirty'), 'true');
+  });
+  test(
+    'selected country ACK preserves an independent detected-country edit',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final storage = FlutterSecureStorage();
+      final dio = Dio();
+      final service = _Service(db, dio, storage)
+        ..session = {
+          'access_token': 'synthetic-A',
+          'user': {'id': 'synthetic-A'},
+        };
+      addTearDown(() async {
+        service.dispose();
+        dio.close(force: true);
+        await db.close();
+      });
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) {
+            handler.resolve(
+              Response(requestOptions: request, data: <String, dynamic>{}),
+            );
+          },
+        ),
+      );
+      await db.savePreference(detectedCountry: 'CR', selectedCountry: 'MX');
+      await service.markDetectedCountryDirty();
+      await service.syncCountries('CR', 'MX', updateDetected: false);
+      expect(
+        await storage.read(key: 'futbeat.country.selected.dirty'),
+        'false',
+      );
+      expect(await storage.read(key: 'futbeat.country.detected.dirty'), 'true');
       expect(await storage.read(key: 'futbeat.country.dirty'), 'true');
     },
   );
