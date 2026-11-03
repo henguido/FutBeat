@@ -20,8 +20,9 @@ class _HoldEvictionSelection extends QueryInterceptor {
     final result = await executor.runInsert(statement, [
       for (final arg in args) arg is int ? second : arg,
     ]);
-    if (args.isNotEmpty && args.first is String)
+    if (args.isNotEmpty && args.first is String) {
       lastInsertedKey = args.first as String;
+    }
     return result;
   }
 
