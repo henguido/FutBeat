@@ -688,6 +688,25 @@ class LiveRealtimeClient {
                 return;
               }
               if (data['type'] == 'DELETE') {
+                final previous = state[matchId];
+                final deletedAt = row is Map && row['changed_at'] is String
+                    ? DateTime.tryParse(row['changed_at'] as String)
+                    : null;
+                final deletedRevision = row is Map ? row['revision'] : null;
+                // FULL replica identity can carry an older deleted version
+                // after a newer correction/reinsert has already arrived.
+                // PK-only deletes have no ordering evidence and keep their
+                // authoritative removal semantics.
+                if (previous != null &&
+                    ((deletedAt != null &&
+                            deletedAt.isBefore(previous.changedAt)) ||
+                        (row is Map &&
+                            row['provider'] == previous.provider &&
+                            deletedRevision is num &&
+                            deletedRevision < previous.revision))) {
+                  emit();
+                  return;
+                }
                 state.remove(matchId);
                 if (matchId is String) bootstrapDeletes?.add(matchId);
               } else if (data['record'] is Map) {
