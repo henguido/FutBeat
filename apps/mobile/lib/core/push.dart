@@ -1655,14 +1655,20 @@ class PushService {
     // was reading the old profile must not import its cloud snapshot over it.
     _profileWriteVersion++;
     return _queueProfileStorage(() async {
+      // Mark intent before exposing its new value. If this marker fails, do
+      // not leave a new profile under the old clean flag for cloud import.
+      // A failed value write may leave the previous value dirty; that is a
+      // conservative retry, not permission to discard a persisted edit.
+      if (dirty) {
+        await storage.write(key: 'futbeat.profile.dirty', value: 'true');
+      }
       await storage.write(
         key: 'futbeat.profile.settings',
         value: jsonEncode(settings.toJson()),
       );
-      await storage.write(
-        key: 'futbeat.profile.dirty',
-        value: dirty ? 'true' : 'false',
-      );
+      if (!dirty) {
+        await storage.write(key: 'futbeat.profile.dirty', value: 'false');
+      }
       if (!_profileChanges.isClosed) _profileChanges.add(null);
     });
   }
