@@ -1142,18 +1142,26 @@ class PushService {
 
   Future<void> _restore() async {
     if (!accountConfigured || disposed) return;
+    final generation = _generation;
+    final attempt = _authenticationAttempt;
     String? saved;
     try {
-      pendingConfirmationEmail = await storage.read(
+      final confirmation = await storage.read(
         key: 'futbeat.auth.pendingConfirmationEmail',
       );
+      if (_stale(generation) || _authenticationStale(attempt)) return;
+      pendingConfirmationEmail = confirmation;
       saved = await storage.read(key: 'futbeat.push.session');
     } catch (_) {
       return;
     }
-    // A sign-in that finished while storage was read wins.
-    if (saved == null || disposed || authenticated) return;
-    final generation = _generation;
+    // A sign-out or newer sign-in intent during either storage read wins.
+    if (saved == null ||
+        _stale(generation) ||
+        _authenticationStale(attempt) ||
+        authenticated) {
+      return;
+    }
     try {
       final decoded = jsonDecode(saved);
       session = decoded is Map ? Map<String, dynamic>.from(decoded) : null;
