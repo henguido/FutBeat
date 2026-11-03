@@ -1269,6 +1269,11 @@ class PushService {
     cancelPasswordRecovery();
     _authenticationAttempt++;
     _generation++;
+    // A previous failed startup read is no longer an authorization to restore
+    // this account. Even if disk deletion fails, this service stays a guest
+    // until a new explicit sign-in; the storage failure remains visible.
+    _restoreStorageRetryNeeded = false;
+    _restoreFuture = Future<void>.value();
     renewal?.cancel();
     final oldFollows = follows;
     final oldRotation = rotation;

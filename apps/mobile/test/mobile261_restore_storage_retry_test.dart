@@ -23,6 +23,32 @@ class _ReadFailure extends FlutterSecureStorage {
   final String failedKey;
   final reads = <String, int>{};
   bool failed = false;
+  bool failDelete = false;
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == 'futbeat.push.session' && failDelete) {
+      failDelete = false;
+      throw PlatformException(code: 'synthetic-session-delete-locked');
+    }
+    return super.delete(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
+
   @override
   Future<String?> read({
     required String key,
@@ -152,6 +178,28 @@ void main() {
         },
       );
     }
+  }
+  for (final retry in ['restore', 'resume']) {
+    test('explicit failed logout cancels an older storage retry before $retry', () async {
+      prepare('futbeat.push.session');
+      await service.restore();
+      expect(service.authenticated, isFalse);
+      storage.failDelete = true;
+      await expectLater(service.signOut(), throwsA(isA<PlatformException>()));
+      // The disk failure is acknowledged; it must not authorize an automatic
+      // return to this account in the current service after an explicit logout.
+      expect(
+        await const FlutterSecureStorage().read(key: 'futbeat.push.session'),
+        isNotNull,
+      );
+      if (retry == 'restore') {
+        await service.restore();
+      } else {
+        await service.resume();
+      }
+      expect(service.authenticated, isFalse);
+      expect(refreshes, 0);
+    });
   }
   test('a recovered empty store stays guest and successful restore remains memoized', () async {
     prepare('futbeat.auth.pendingConfirmationEmail', signedIn: false);
