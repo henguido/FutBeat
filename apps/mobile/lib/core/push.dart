@@ -1678,14 +1678,10 @@ class PushService {
     return operation;
   }
 
-  /// A storage flag; an unreadable one counts as unset.
-  Future<bool> _flag(String key) async {
-    try {
-      return await storage.read(key: key) == 'true';
-    } catch (_) {
-      return false;
-    }
-  }
+  /// A missing flag is unset. An unreadable flag is unknown, so reconciliation
+  /// must retry rather than importing cloud values over a possible local edit.
+  Future<bool> _flag(String key) async =>
+      await storage.read(key: key) == 'true';
 
   /// Saves the profile and every notification preference. Uses the JSON
   /// RPC `futbeat_sync_user_profile_v3` when the server has it and
