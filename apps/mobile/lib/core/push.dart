@@ -682,6 +682,7 @@ class PushService {
   bool disposed = false;
   Future<void> pending = Future.value();
   Future<void> countryPending = Future.value();
+  Future<void> _sessionStoragePending = Future.value();
   Future<void>? _restoreFuture;
 
   /// Bumped on every sign-in, sign-out and local session drop. Any network
@@ -919,7 +920,7 @@ class PushService {
   /// Stores a fresh GoTrue session and starts account sync. A failed first
   /// reconcile (offline) is retried by the renewal tick; the session stays.
   Future<void> _startSession(Map<String, dynamic> value) async {
-    _generation++;
+    final generation = ++_generation;
     session = value;
     _markAccountKnown();
     _mergedGeneration = -1;
@@ -927,8 +928,9 @@ class PushService {
     _lastReconcile = null;
     pendingConfirmationEmail = null;
     await storage.delete(key: 'futbeat.auth.pendingConfirmationEmail');
+    if (_stale(generation)) return;
     await _persistSession();
-    final generation = _generation;
+    if (_stale(generation)) return;
     try {
       await _queued(() => _reconcileIfDue(generation));
     } catch (error) {
@@ -1224,9 +1226,10 @@ class PushService {
     _mergedGeneration = -1;
     _lastPushed = null;
     _lastReconcile = null;
+    final clearing = _deletePersistedSession();
     await oldFollows?.cancel();
     await oldRotation?.cancel();
-    await storage.delete(key: 'futbeat.push.session');
+    await clearing;
     if (uid != null) {
       // Remember what this account left on the device, so a different
       // account can drop exactly that. Without a merge in this session
@@ -1257,8 +1260,21 @@ class PushService {
     return operation;
   }
 
-  Future<void> _persistSession() =>
-      storage.write(key: 'futbeat.push.session', value: jsonEncode(session));
+  /// Platform storage can finish writes out of order. Queue token mutations
+  /// at their intent, so an old write cannot land after logout or account B.
+  Future<void> _writeSessionStorage(String? value) {
+    final operation = _sessionStoragePending.catchError((_) {}).then((_) {
+      return value == null
+          ? storage.delete(key: 'futbeat.push.session')
+          : storage.write(key: 'futbeat.push.session', value: value);
+    });
+    _sessionStoragePending = operation.catchError((_) {});
+    return operation;
+  }
+
+  Future<void> _persistSession() => _writeSessionStorage(jsonEncode(session));
+
+  Future<void> _deletePersistedSession() => _writeSessionStorage(null);
 
   /// Single-flight: concurrent callers share one request, so a rotating
   /// refresh token is never sent twice.
@@ -1290,9 +1306,6 @@ class PushService {
     next['user'] ??= session?['user'];
     session = next;
     await _persistSession();
-    if (_stale(generation) && !authenticated) {
-      await storage.delete(key: 'futbeat.push.session');
-    }
   }
 
   Future<String> installation() async {
@@ -2035,7 +2048,7 @@ class PushService {
     _lastReconcile = null;
     pending = Future.value();
     countryPending = Future.value();
-    await storage.delete(key: 'futbeat.push.session');
+    await _deletePersistedSession();
     // Leftover follows are guest data now: the next sign-in unions them.
     await storage.delete(key: lastUserKey);
     await storage.delete(key: leftoverKey);

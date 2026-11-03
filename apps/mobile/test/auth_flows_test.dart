@@ -316,6 +316,46 @@ class _HeldSessionRead extends FlutterSecureStorage {
   }
 }
 
+class _HeldSessionWrite extends FlutterSecureStorage {
+  _HeldSessionWrite({this.hold = true, this.failHeldWrite = false});
+
+  bool hold;
+  bool failHeldWrite;
+  final captured = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == 'futbeat.push.session' && hold && !captured.isCompleted) {
+      captured.complete();
+      await release.future;
+      if (failHeldWrite) {
+        failHeldWrite = false;
+        throw StateError('synthetic storage failure');
+      }
+    }
+    await super.write(
+      key: key,
+      value: value,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
+}
+
 /// A service whose storage already holds a valid session for user-a.
 Future<({PushService service, AppDatabase db, _Http http})> _stored({
   Set<String> local = const {},
@@ -676,6 +716,78 @@ void main() {
   });
 
   group('authentication intent lifecycle', () {
+    test('a delayed session write cannot survive a later sign out', () async {
+      final storage = _HeldSessionWrite();
+      final value = await _service(secureStorage: storage);
+      final signingIn = value.service.signIn(
+        'user@example.com',
+        'password-test',
+      );
+      await storage.captured.future;
+      final signingOut = value.service.signOut();
+      expect(value.service.authenticated, isFalse);
+      await Future<void>.delayed(Duration.zero);
+      storage.release.complete();
+      await Future.wait([signingIn, signingOut]);
+      expect(await _read('futbeat.push.session'), isNull);
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test(
+      'a delayed old session write cannot replace a newer account',
+      () async {
+        final storage = _HeldSessionWrite();
+        final value = await _service(secureStorage: storage);
+        final a = value.service.signIn('user@example.com', 'password-test');
+        await storage.captured.future;
+        final b = value.service.signIn('b@example.com', 'password-test');
+        await value.http.waitFor('grant_type=password', count: 2);
+        await Future<void>.delayed(Duration.zero);
+        storage.release.complete();
+        await Future.wait([a, b]);
+        expect(value.service.userId, 'user-b');
+        expect(
+          jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+          'user-b',
+        );
+      },
+    );
+
+    test('a delayed refresh write cannot replace a newer account', () async {
+      final storage = _HeldSessionWrite(hold: false);
+      final value = await _service(secureStorage: storage);
+      await value.service.signIn('user@example.com', 'password-test');
+      storage.hold = true;
+      final refreshing = value.service.refreshSession();
+      await storage.captured.future;
+      final b = value.service.signIn('b@example.com', 'password-test');
+      await value.http.waitFor('grant_type=password', count: 2);
+      await Future<void>.delayed(Duration.zero);
+      storage.release.complete();
+      await Future.wait([refreshing, b]);
+      expect(value.service.userId, 'user-b');
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
+    test('a failed session write does not poison the next sign-in', () async {
+      final storage = _HeldSessionWrite(failHeldWrite: true);
+      final value = await _service(secureStorage: storage);
+      final a = value.service.signIn('user@example.com', 'password-test');
+      await storage.captured.future;
+      final failed = expectLater(a, throwsStateError);
+      storage.release.complete();
+      await failed;
+      await value.service.signIn('b@example.com', 'password-test');
+      expect(value.service.userId, 'user-b');
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
     test(
       'sign out discards an email sign-in response already in flight',
       () async {
