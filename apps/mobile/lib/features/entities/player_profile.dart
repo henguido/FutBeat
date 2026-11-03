@@ -314,7 +314,13 @@ List<(FootballMatch, Json, bool)> playerRecentEvents(
   result.sort((a, b) {
     final byDate = b.$1.startTime.compareTo(a.$1.startTime);
     if (byDate != 0) return byDate;
-    return (b.$2['minute'] as int? ?? 0).compareTo(a.$2['minute'] as int? ?? 0);
+    final byMinute = (b.$2['minute'] as int? ?? 0).compareTo(
+      a.$2['minute'] as int? ?? 0,
+    );
+    if (byMinute != 0) return byMinute;
+    return (b.$2['extraMinute'] as int? ?? 0).compareTo(
+      a.$2['extraMinute'] as int? ?? 0,
+    );
   });
   return result;
 }
