@@ -324,31 +324,36 @@ class AppDatabase extends _$AppDatabase {
     calendarSnapshots,
   )..where((row) => row.calendarDate.equals(date))).getSingleOrNull())?.payload;
 
+  // Replacement renews rowId as a stable same-second recency tie-breaker.
+  // Write and eviction must commit together: a stale victim selection must
+  // never delete a response refreshed by a concurrent cache write.
   Future<void> saveCalendarSnapshot(String date, String payload) async {
-    await into(calendarSnapshots).insert(
-      CalendarSnapshotsCompanion.insert(
-        calendarDate: date,
-        payload: payload,
-        savedAt: DateTime.now().toUtc(),
-      ),
-      mode: InsertMode.insertOrReplace,
-    );
-    final old =
-        await (select(calendarSnapshots)
-              ..orderBy([
-                (row) => OrderingTerm.desc(row.savedAt),
-                (row) => OrderingTerm.desc(row.rowId),
-              ])
-              ..limit(100, offset: 64))
-            .get();
-    if (old.isNotEmpty) {
-      await (delete(calendarSnapshots)..where(
-            (row) => row.calendarDate.isIn(
-              old.map((item) => item.calendarDate).toList(),
-            ),
-          ))
-          .go();
-    }
+    return transaction(() async {
+      await into(calendarSnapshots).insert(
+        CalendarSnapshotsCompanion.insert(
+          calendarDate: date,
+          payload: payload,
+          savedAt: DateTime.now().toUtc(),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+      final old =
+          await (select(calendarSnapshots)
+                ..orderBy([
+                  (row) => OrderingTerm.desc(row.savedAt),
+                  (row) => OrderingTerm.desc(row.rowId),
+                ])
+                ..limit(100, offset: 64))
+              .get();
+      if (old.isNotEmpty) {
+        await (delete(calendarSnapshots)..where(
+              (row) => row.calendarDate.isIn(
+                old.map((item) => item.calendarDate).toList(),
+              ),
+            ))
+            .go();
+      }
+    });
   }
 
   Future<CatalogSnapshot?> readCatalogEntry(String key) => (select(
@@ -356,62 +361,66 @@ class AppDatabase extends _$AppDatabase {
   )..where((row) => row.cacheKey.equals(key))).getSingleOrNull();
 
   Future<void> saveCatalogSnapshot(String key, String payload) async {
-    await into(catalogSnapshots).insert(
-      CatalogSnapshotsCompanion.insert(
-        cacheKey: key,
-        payload: payload,
-        savedAt: DateTime.now().toUtc(),
-      ),
-      mode: InsertMode.insertOrReplace,
-    );
-    final old =
-        await (select(catalogSnapshots)
-              ..where((row) => row.cacheKey.like('public:%').not())
-              ..orderBy([
-                (row) => OrderingTerm.desc(row.savedAt),
-                (row) => OrderingTerm.desc(row.rowId),
-              ])
-              ..limit(100, offset: maxCatalogSnapshots))
-            .get();
-    if (old.isNotEmpty) {
-      await (delete(catalogSnapshots)..where(
-            (row) => row.cacheKey.isIn(old.map((item) => item.cacheKey)),
-          ))
-          .go();
-    }
+    return transaction(() async {
+      await into(catalogSnapshots).insert(
+        CatalogSnapshotsCompanion.insert(
+          cacheKey: key,
+          payload: payload,
+          savedAt: DateTime.now().toUtc(),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+      final old =
+          await (select(catalogSnapshots)
+                ..where((row) => row.cacheKey.like('public:%').not())
+                ..orderBy([
+                  (row) => OrderingTerm.desc(row.savedAt),
+                  (row) => OrderingTerm.desc(row.rowId),
+                ])
+                ..limit(100, offset: maxCatalogSnapshots))
+              .get();
+      if (old.isNotEmpty) {
+        await (delete(catalogSnapshots)..where(
+              (row) => row.cacheKey.isIn(old.map((item) => item.cacheKey)),
+            ))
+            .go();
+      }
+    });
   }
 
   /// Only validated public match/entity responses belong here. Reject a
   /// single oversized answer so the entire offline partition stays bounded.
   Future<void> savePublicSnapshot(String key, String payload) async {
-    if (!key.startsWith('public:') ||
-        utf8.encode(payload).length > maxPublicSnapshotBytes) {
-      return;
-    }
-    await _pruneExpiredPublicSnapshots();
-    await into(catalogSnapshots).insert(
-      CatalogSnapshotsCompanion.insert(
-        cacheKey: key,
-        payload: payload,
-        savedAt: DateTime.now().toUtc(),
-      ),
-      mode: InsertMode.insertOrReplace,
-    );
-    final old =
-        await (select(catalogSnapshots)
-              ..where((row) => row.cacheKey.like('public:%'))
-              ..orderBy([
-                (row) => OrderingTerm.desc(row.savedAt),
-                (row) => OrderingTerm.desc(row.rowId),
-              ])
-              ..limit(100, offset: maxPublicSnapshots))
-            .get();
-    if (old.isNotEmpty) {
-      await (delete(catalogSnapshots)..where(
-            (row) => row.cacheKey.isIn(old.map((item) => item.cacheKey)),
-          ))
-          .go();
-    }
+    return transaction(() async {
+      if (!key.startsWith('public:') ||
+          utf8.encode(payload).length > maxPublicSnapshotBytes) {
+        return;
+      }
+      await _pruneExpiredPublicSnapshots();
+      await into(catalogSnapshots).insert(
+        CatalogSnapshotsCompanion.insert(
+          cacheKey: key,
+          payload: payload,
+          savedAt: DateTime.now().toUtc(),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+      final old =
+          await (select(catalogSnapshots)
+                ..where((row) => row.cacheKey.like('public:%'))
+                ..orderBy([
+                  (row) => OrderingTerm.desc(row.savedAt),
+                  (row) => OrderingTerm.desc(row.rowId),
+                ])
+                ..limit(100, offset: maxPublicSnapshots))
+              .get();
+      if (old.isNotEmpty) {
+        await (delete(catalogSnapshots)..where(
+              (row) => row.cacheKey.isIn(old.map((item) => item.cacheKey)),
+            ))
+            .go();
+      }
+    });
   }
 
   Future<CatalogSnapshot?> readPublicSnapshot(String key) async {
