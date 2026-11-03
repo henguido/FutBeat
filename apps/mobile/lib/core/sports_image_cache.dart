@@ -92,20 +92,34 @@ class SportsImageDiskCache {
     try {
       await directory.create(recursive: true);
       final file = File('${directory.path}${Platform.pathSeparator}$key.img');
-      if (await file.exists()) {
+      // A peer may replace a corrupt file while its decoder is pending.
+      // Retry one changed disk version, never delete or memoize a stale one.
+      for (var read = 0; read < 2 && await file.exists(); read++) {
         final stat = await file.stat();
+        var valid = false;
         if (stat.size > 0 &&
             stat.size <= maxImageBytes &&
             clock().difference(stat.modified) < ttl) {
           final signature = (modified: stat.modified, size: stat.size);
-          if (_validatedFiles[file.path] == signature ||
-              await _validImage(await file.readAsBytes())) {
-            _rememberValidation(file.path, signature);
-            return file;
-          }
+          valid =
+              _validatedFiles[file.path] == signature ||
+              await _validImage(await file.readAsBytes());
+        }
+        if (!_sameFileVersion(stat, await file.stat())) {
+          _validatedFiles.remove(file.path);
+          if (read == 0) continue;
+          return null;
+        }
+        if (valid) {
+          _rememberValidation(file.path, (
+            modified: stat.modified,
+            size: stat.size,
+          ));
+          return file;
         }
         _validatedFiles.remove(file.path);
         await file.delete();
+        break;
       }
       _validatedFiles.remove(file.path);
       final bytes = await fetch(uri);
@@ -137,6 +151,11 @@ class SportsImageDiskCache {
       return null;
     }
   }
+
+  bool _sameFileVersion(FileStat expected, FileStat current) =>
+      expected.type == current.type &&
+      expected.modified == current.modified &&
+      expected.size == current.size;
 
   void _rememberValidation(
     String path,
@@ -228,7 +247,7 @@ class SportsImageDiskCache {
       if (clock().difference(stat.modified) >= ttl ||
           stat.size > maxImageBytes) {
         _validatedFiles.remove(entity.path);
-        await entity.delete();
+        if (_sameFileVersion(stat, await entity.stat())) await entity.delete();
       } else {
         files.add((file: entity, stat: stat));
       }
@@ -239,7 +258,9 @@ class SportsImageDiskCache {
       final oldest = files.removeAt(0);
       bytes -= oldest.stat.size;
       _validatedFiles.remove(oldest.file.path);
-      if (await oldest.file.exists()) await oldest.file.delete();
+      if (_sameFileVersion(oldest.stat, await oldest.file.stat())) {
+        await oldest.file.delete();
+      }
     }
     final retainedPaths = files.map((entry) => entry.file.path).toSet();
     _validatedFiles.removeWhere((path, _) => !retainedPaths.contains(path));
