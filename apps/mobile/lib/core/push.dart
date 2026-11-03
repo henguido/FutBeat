@@ -512,12 +512,20 @@ Future<String> _customTabBrowser(Uri url, String callbackScheme) async {
   }
 }
 
-typedef _LocalSignOutContext = ({
-  String? userId,
-  Future<Set<String>> follows,
-  Options? headers,
-  String? deviceToken,
-});
+class _LocalSignOutContext {
+  _LocalSignOutContext({
+    required this.userId,
+    required this.follows,
+    required this.headers,
+    required this.deviceToken,
+    required this.deleteRequired,
+  });
+  final String? userId;
+  final Future<Set<String>> follows;
+  final Options? headers;
+  final String? deviceToken;
+  bool deleteRequired;
+}
 
 class PushService {
   PushService(
@@ -952,6 +960,19 @@ class PushService {
   /// reconcile (offline) is retried by the renewal tick; the session stays.
   Future<void> _startSession(Map<String, dynamic> value) async {
     final previousUser = userId;
+    final targetUser = value['user'] is Map
+        ? (value['user'] as Map)['id']?.toString().trim()
+        : null;
+    if (previousUser != null && targetUser != previousUser) {
+      final attempt = _authenticationAttempt;
+      // Persist ownership before another account can reconcile local follows.
+      // This is part of the current login, not a newer logout intent.
+      await _clearLocalSession(
+        cancelAuthentication: false,
+        replacingSession: true,
+      );
+      if (_authenticationStale(attempt)) return;
+    }
     final oldRotation = rotation;
     rotation = null;
     final generation = ++_generation;
@@ -1285,7 +1306,10 @@ class PushService {
 
   /// Drops the local session, its merge base and account timers. Never
   /// touches Drift, so guest follows and preferences survive sign-out.
-  Future<void> _clearLocalSession() {
+  Future<void> _clearLocalSession({
+    bool cancelAuthentication = true,
+    bool replacingSession = false,
+  }) {
     final active = _localSignOutPending;
     if (active != null && !_localSignOutFailed) return active;
     var context = _localSignOutContext;
@@ -1299,38 +1323,47 @@ class PushService {
       unawaited(
         snapshot.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
       );
-      context = (
+      context = _LocalSignOutContext(
         userId: uid,
         follows: snapshot,
         headers: authenticated ? authHeaders : null,
         deviceToken: enabled ? token : null,
+        deleteRequired: !replacingSession,
       );
       _localSignOutContext = context;
     }
+    if (!replacingSession) context.deleteRequired = true;
     _localSignOutFailed = false;
     late final Future<void> operation;
-    operation = _performLocalSignOut(context).then<void>(
-      (_) {
-        if (identical(_localSignOutPending, operation)) {
-          _localSignOutPending = null;
-          _localSignOutContext = null;
-        }
-      },
-      onError: (Object error, StackTrace stack) {
-        if (identical(_localSignOutPending, operation)) {
-          _localSignOutFailed = true;
-        }
-        Error.throwWithStackTrace(error, stack);
-      },
-    );
+    operation =
+        _performLocalSignOut(
+          context,
+          cancelAuthentication: cancelAuthentication,
+        ).then<void>(
+          (_) {
+            if (identical(_localSignOutPending, operation)) {
+              _localSignOutPending = null;
+              _localSignOutContext = null;
+            }
+          },
+          onError: (Object error, StackTrace stack) {
+            if (identical(_localSignOutPending, operation)) {
+              _localSignOutFailed = true;
+            }
+            Error.throwWithStackTrace(error, stack);
+          },
+        );
     _localSignOutPending = operation;
     return operation;
   }
 
-  Future<void> _performLocalSignOut(_LocalSignOutContext context) async {
+  Future<void> _performLocalSignOut(
+    _LocalSignOutContext context, {
+    required bool cancelAuthentication,
+  }) async {
     final uid = context.userId;
     cancelPasswordRecovery();
-    _authenticationAttempt++;
+    if (cancelAuthentication) _authenticationAttempt++;
     final generation = ++_generation;
     // A previous failed startup read is no longer an authorization to restore
     // this account. Even if disk deletion fails, this service stays a guest
@@ -1379,8 +1412,6 @@ class PushService {
     // Ownership must be durable before removing the only persistent account
     // identity. If a read/write above fails, a new process still knows A;
     // it never mistakes A's remaining follows for anonymous guest choices.
-    await _deletePersistedSession();
-    if (_stale(generation)) return;
     if (uid != null) {
       // The next sign-in of this user must union, never replace.
       await storage.delete(key: pushedKey(uid));
@@ -1388,7 +1419,17 @@ class PushService {
       await storage.delete(key: linkedFlagKey(uid));
     }
     if (_stale(generation)) return;
-    await disabling;
+    try {
+      await disabling;
+    } finally {
+      // A direct switch retains A until its FIFO replacement. An explicit
+      // logout can upgrade this same critical operation, including while the
+      // final flag write is pending. Flag IO must not prevent credential
+      // deletion once ownership is durable; its error still remains visible.
+      if (!_stale(generation) && context.deleteRequired) {
+        await _deletePersistedSession();
+      }
+    }
   }
 
   /// Retries refresh/reconcile after the app returns to the foreground.
@@ -2210,9 +2251,15 @@ class PushService {
   /// unregistration and the server logout run in the background with a
   /// short timeout; Drift follows/preferences stay for the guest.
   Future<void> signOut() async {
+    // An explicit logout is newer than any login already preparing ownership,
+    // even when both callers share the same critical local cleanup.
+    _authenticationAttempt++;
     final active = _localSignOutPending;
-    if (active != null && !_localSignOutFailed) return active;
-    final local = _clearLocalSession();
+    if (active != null && !_localSignOutFailed) {
+      _localSignOutContext!.deleteRequired = true;
+      return active;
+    }
+    final local = _clearLocalSession(cancelAuthentication: false);
     final context = _localSignOutContext!;
     final headers = context.headers;
     if (headers != null) {

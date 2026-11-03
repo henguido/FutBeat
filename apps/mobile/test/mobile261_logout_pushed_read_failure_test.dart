@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
@@ -22,6 +23,39 @@ class _Tokens implements PushTokenSource {
 class _ReadFault extends FlutterSecureStorage {
   bool armed = false;
   bool fired = false;
+  Completer<void>? ownershipEntered;
+  Completer<void>? ownershipRelease;
+  Completer<void>? metadataEntered;
+  Completer<void>? metadataRelease;
+  int sessionDeletes = 0;
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == PushService.linkedFlagKey('synthetic-account-a') &&
+        metadataEntered != null &&
+        !metadataEntered!.isCompleted) {
+      metadataEntered!.complete();
+      await metadataRelease!.future;
+    }
+    if (key == 'futbeat.push.session') sessionDeletes++;
+    await super.delete(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
+
   @override
   Future<String?> read({
     required String key,
@@ -32,6 +66,12 @@ class _ReadFault extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (key == PushService.pushedKey('synthetic-account-a') &&
+        ownershipEntered != null &&
+        !ownershipEntered!.isCompleted) {
+      ownershipEntered!.complete();
+      await ownershipRelease!.future;
+    }
     if (armed && key == PushService.pushedKey('synthetic-account-a')) {
       armed = false;
       fired = true;
@@ -70,8 +110,38 @@ class _Service extends PushService {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   // Real service, synthetic GoTrue/profile server, reviewed push source80228b2.
-  for (final mode in ['ok', 'io', 'io-reopen', 'missing', 'invalid-json']) {
-    test('A logout pushed-marker $mode is distinguished before B login', () async {
+  // Direct-switch review pinned candidate blob d9d7dba67bc152a25a623cf006b3ad2fef118728.
+  for (final mode in [
+    'ok',
+    'io',
+    'io-reopen',
+    'direct-signin',
+    'same-account',
+    'latest-intent',
+    'latest-logout',
+    'late-logout',
+    'late-logout-c',
+    'late-logout-c-fail',
+    'missing',
+    'invalid-json',
+  ]) {
+    final description = switch (mode) {
+      'direct-signin' =>
+        'explicit B signIn while A is authenticated keeps follows isolated',
+      'same-account' =>
+        'same account reauthentication retains its follows without changing B',
+      'latest-intent' =>
+        'newer C signIn supersedes delayed B without importing A follows',
+      'latest-logout' =>
+        'explicit logout supersedes B while local ownership is pending',
+      'late-logout' =>
+        'late logout upgrades pending switch to credential deletion',
+      'late-logout-c' => 'newer C waits for late logout credential deletion',
+      'late-logout-c-fail' =>
+        'rejected newer C cannot falsely acknowledge disk logout',
+      _ => 'A logout pushed-marker $mode is distinguished before B login',
+    };
+    test(description, () async {
       FlutterSecureStorage.setMockInitialValues({});
       final storage = _ReadFault();
       final directory = await Directory.systemTemp.createTemp(
@@ -82,19 +152,43 @@ void main() {
       final server = <String, Set<String>>{
         'synthetic-account-a': {'team:fb_team_only_a'},
         'synthetic-account-b': {'team:fb_team_only_b'},
+        'synthetic-account-c': {'team:fb_team_only_c'},
       };
+      final heldB = Completer<void>();
+      final releaseB = Completer<void>();
+      final tokenRequests = <String>[];
       var dio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
             onRequest: (request, handler) {
-              final uid =
-                  '${request.headers['Authorization']}'.endsWith('access-b')
+              final bearer = '${request.headers['Authorization']}';
+              final uid = bearer.endsWith('access-b')
                   ? 'synthetic-account-b'
+                  : bearer.endsWith('access-c')
+                  ? 'synthetic-account-c'
                   : 'synthetic-account-a';
               Object? result;
               if (request.path.contains('/auth/v1/token')) {
-                final isB = (request.data as Map)['email'] == 'b@example.test';
-                final suffix = isB ? 'b' : 'a';
+                final email = (request.data as Map)['email'];
+                tokenRequests.add('$email');
+                if (mode == 'late-logout-c-fail' && email == 'c@example.test') {
+                  handler.reject(
+                    DioException(
+                      requestOptions: request,
+                      response: Response(
+                        requestOptions: request,
+                        statusCode: 401,
+                      ),
+                      type: DioExceptionType.badResponse,
+                    ),
+                  );
+                  return;
+                }
+                final suffix = email == 'c@example.test'
+                    ? 'c'
+                    : email == 'b@example.test'
+                    ? 'b'
+                    : 'a';
                 result = {
                   'access_token': 'synthetic-access-$suffix',
                   'refresh_token': 'synthetic-refresh-$suffix',
@@ -106,6 +200,22 @@ void main() {
                     'email': '$suffix@example.test',
                   },
                 };
+                if (mode == 'latest-intent' && suffix == 'b') {
+                  heldB.complete();
+                  final issued = result;
+                  unawaited(
+                    releaseB.future.then(
+                      (_) => handler.resolve(
+                        Response(
+                          requestOptions: request,
+                          statusCode: 200,
+                          data: issued,
+                        ),
+                      ),
+                    ),
+                  );
+                  return;
+                }
               } else if (request.path.endsWith('futbeat_read_user_profile')) {
                 result = {
                   'preferences': <String, dynamic>{},
@@ -149,6 +259,97 @@ void main() {
         await storage.read(key: PushService.pushedKey('synthetic-account-a')),
         isNotNull,
       );
+      if (mode == 'direct-signin') {
+        await service.signIn('b@example.test', 'synthetic-password');
+        await service.pending;
+        final local = await db.watchFollows().first;
+        debugPrint(
+          'AUTH261 directSignIn bConnected=${service.userId == 'synthetic-account-b'} localHasA=${local.contains('team:fb_team_only_a')} serverBHasA=${server['synthetic-account-b']!.contains('team:fb_team_only_a')}',
+        );
+        expect(service.userId, 'synthetic-account-b');
+        expect(local, {'team:fb_team_only_b'});
+        expect(server['synthetic-account-b'], {'team:fb_team_only_b'});
+        expect(server['synthetic-account-a'], {'team:fb_team_only_a'});
+        return;
+      }
+      if (mode == 'latest-logout') {
+        storage.ownershipEntered = Completer<void>();
+        storage.ownershipRelease = Completer<void>();
+        final login = service.signIn('b@example.test', 'synthetic-password');
+        await storage.ownershipEntered!.future;
+        final logout = service.signOut();
+        storage.ownershipRelease!.complete();
+        await Future.wait([login, logout]);
+        await service.pending;
+        expect(service.authenticated, isFalse);
+        expect(service.userId, isNull);
+        expect(await storage.read(key: 'futbeat.push.session'), isNull);
+        expect(server['synthetic-account-b'], {'team:fb_team_only_b'});
+        return;
+      }
+      if (mode.startsWith('late-logout')) {
+        storage.metadataEntered = Completer<void>();
+        storage.metadataRelease = Completer<void>();
+        final loginB = service.signIn('b@example.test', 'synthetic-password');
+        await storage.metadataEntered!.future;
+        final logout = service.signOut();
+        Object? cError;
+        final loginC = mode.startsWith('late-logout-c')
+            ? service.signIn('c@example.test', 'synthetic-password').catchError(
+                (Object error) {
+                  cError = error;
+                },
+              )
+            : Future<void>.value();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(tokenRequests, ['a@example.test', 'b@example.test']);
+        storage.metadataRelease!.complete();
+        await Future.wait([loginB, logout, loginC]);
+        await service.pending;
+        expect(storage.sessionDeletes, 1);
+        final saved = await storage.read(key: 'futbeat.push.session');
+        if (mode == 'late-logout-c') {
+          expect(service.userId, 'synthetic-account-c');
+          expect(jsonDecode(saved!)['user']['id'], 'synthetic-account-c');
+          expect(await db.watchFollows().first, {'team:fb_team_only_c'});
+        } else {
+          if (mode == 'late-logout-c-fail') expect(cError, isNotNull);
+          expect(service.authenticated, isFalse);
+          expect(saved, isNull);
+        }
+        return;
+      }
+      if (mode == 'same-account') {
+        await service.signIn('a@example.test', 'synthetic-password');
+        await service.pending;
+        expect(service.userId, 'synthetic-account-a');
+        expect(await db.watchFollows().first, {'team:fb_team_only_a'});
+        expect(server['synthetic-account-a'], {'team:fb_team_only_a'});
+        expect(server['synthetic-account-b'], {'team:fb_team_only_b'});
+        expect(await storage.read(key: PushService.leftoverKey), isNull);
+        return;
+      }
+      if (mode == 'latest-intent') {
+        final staleB = service.signIn('b@example.test', 'synthetic-password');
+        await heldB.future;
+        try {
+          await service.signIn('c@example.test', 'synthetic-password');
+          await service.pending;
+        } finally {
+          releaseB.complete();
+          await staleB;
+        }
+        await service.pending;
+        final local = await db.watchFollows().first;
+        debugPrint(
+          'AUTH261 latestIntent cConnected=${service.userId == 'synthetic-account-c'} localHasA=${local.contains('team:fb_team_only_a')} serverCHasA=${server['synthetic-account-c']!.contains('team:fb_team_only_a')}',
+        );
+        expect(service.userId, 'synthetic-account-c');
+        expect(local, {'team:fb_team_only_c'});
+        expect(server['synthetic-account-c'], {'team:fb_team_only_c'});
+        expect(server['synthetic-account-b'], {'team:fb_team_only_b'});
+        return;
+      }
       if (mode.startsWith('io')) storage.armed = true;
       if (mode == 'missing') {
         await storage.delete(key: PushService.pushedKey('synthetic-account-a'));
