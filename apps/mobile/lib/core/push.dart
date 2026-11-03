@@ -685,6 +685,7 @@ class PushService {
   Future<void> _sessionStoragePending = Future.value();
   Future<void> _profileStoragePending = Future.value();
   int _profileWriteVersion = 0;
+  int _countryWriteVersion = 0;
   Future<void>? _restoreFuture;
 
   /// Bumped on every sign-in, sign-out and local session drop. Any network
@@ -1526,11 +1527,13 @@ class PushService {
   }
 
   Future<void> markDetectedCountryDirty() async {
+    _countryWriteVersion++;
     await storage.write(key: 'futbeat.country.detected.dirty', value: 'true');
     await storage.write(key: 'futbeat.country.dirty', value: 'true');
   }
 
   Future<void> markSelectedCountryDirty() async {
+    _countryWriteVersion++;
     await storage.write(key: 'futbeat.country.selected.dirty', value: 'true');
     await storage.write(key: 'futbeat.country.dirty', value: 'true');
   }
@@ -1801,10 +1804,13 @@ class PushService {
     Map<String, dynamic> values, {
     required bool firstLink,
   }) async {
+    final generation = _generation;
+    final localVersion = _countryWriteVersion;
     final current = await database.watchPreference().first;
     final legacyCountryDirty = await _flag('futbeat.country.dirty');
     var detectedDirty = await _flag('futbeat.country.detected.dirty');
     var selectedDirty = await _flag('futbeat.country.selected.dirty');
+    if (_stale(generation) || localVersion != _countryWriteVersion) return;
     if (legacyCountryDirty && !detectedDirty && !selectedDirty) {
       detectedDirty = true;
       selectedDirty = true;
@@ -1839,9 +1845,11 @@ class PushService {
     if (detected != current.detectedCountry) {
       await database.saveDetectedCountry(detected);
     }
+    if (_stale(generation) || localVersion != _countryWriteVersion) return;
     if (selected != current.selectedCountry) {
       await database.saveSelectedCountry(selected);
     }
+    if (_stale(generation) || localVersion != _countryWriteVersion) return;
     if (detectedDirty || selectedDirty) {
       final effective = await database.watchPreference().first;
       await syncCountries(

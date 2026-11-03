@@ -60,6 +60,8 @@ class _Storage extends FlutterSecureStorage {
 }
 
 class _HeldProfileRead extends FlutterSecureStorage {
+  _HeldProfileRead({this.heldKey = 'futbeat.profile.settings'});
+  final String heldKey;
   final captured = Completer<void>();
   final release = Completer<void>();
   @override
@@ -81,7 +83,7 @@ class _HeldProfileRead extends FlutterSecureStorage {
       mOptions: mOptions,
       wOptions: wOptions,
     );
-    if (key == 'futbeat.profile.settings' && !captured.isCompleted) {
+    if (key == heldKey && !captured.isCompleted) {
       captured.complete();
       await release.future;
     }
@@ -370,6 +372,69 @@ void main() {
           loggedOut ? 'true' : 'false',
         );
         expect(profileCalls, hasLength(loggedOut ? 0 : 1));
+      },
+    );
+  }
+  for (final loggedOut in [false, true]) {
+    test(
+      'cloud country read cannot erase newer manual country (logout=$loggedOut)',
+      () async {
+        final db = AppDatabase(NativeDatabase.memory());
+        await db.savePreference(detectedCountry: 'CR', selectedCountry: 'CR');
+        final dio = Dio();
+        final storage = _HeldProfileRead(
+          heldKey: 'futbeat.country.selected.dirty',
+        );
+        final service = _Service(db, dio, storage)
+          ..session = {
+            'access_token': 'synthetic-A',
+            'refresh_token': 'synthetic-refresh-A',
+            'expires_at':
+                DateTime.now()
+                    .add(const Duration(hours: 1))
+                    .millisecondsSinceEpoch ~/
+                1000,
+            'user': {'id': 'synthetic-A'},
+          };
+        addTearDown(() async {
+          service.dispose();
+          await db.close();
+        });
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              handler.resolve(
+                Response(
+                  requestOptions: request,
+                  data: request.path.endsWith('futbeat_read_user_profile')
+                      ? {
+                          'preferences': {
+                            'selectedCountry': 'US',
+                            'detectedCountry': 'US',
+                          },
+                          'follows': <Object>[],
+                        }
+                      : <String, dynamic>{},
+                ),
+              );
+            },
+          ),
+        );
+        final reconcile = service.resume();
+        await storage.captured.future;
+        if (loggedOut) {
+          await service.signOut();
+          await service.signOutCleanup;
+        }
+        await db.saveSelectedCountry('MX');
+        await service.markSelectedCountryDirty();
+        storage.release.complete();
+        await reconcile;
+        expect((await db.watchPreference().first).selectedCountry, 'MX');
+        expect(
+          await storage.read(key: 'futbeat.country.selected.dirty'),
+          'true',
+        );
       },
     );
   }
