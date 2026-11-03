@@ -255,3 +255,7 @@ Ver FUTBEAT-MOBILE-260-PROGRESS.md y ledger local. Correcciones vinculadas a A02
 FUTBEAT-MOBILE-260-PROGRESS.md contiene commits, requisitos asociados y diferencias entre mocks, SQLite real y aceptación física pendiente.1730PASS del bloque31ecbb7, analyze limpio02651d1; bloque posterior8ce170d:1737/1737PASS, goldens incluidos. Ninguna fila se marca DONE por esas pruebas. La referencia errónea L01 del trailer original68d9366e se aclara como S07 (frescura); no se inventa otro requisito.
 
 E260 final local:1737/1737PASS sobre8ce170d (113s), analyze0avisos7,7s. R09 continúaBLOCKED por CI Linux del HEAD nuevo; R01/certificado sigueNOT VERIFIED. No cambia el porcentaje de aceptación final.
+
+## E261 — operación en curso
+
+PRDraft244/1719ecb:CI LinuxSUCCESS(run41733921175),1731portables;6visual_test.dartomitidossegúnworkflowexistente. M260Windows1737PASSincluyógoldens. Nuevo261localver docs/release/FUTBEAT-MOBILE-261-STATUS.md; no trasladarCI_PASS260a261. Aceptaciónfísica/conectada/RCpendiente,0DONEadicionales.
