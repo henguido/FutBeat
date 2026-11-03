@@ -684,6 +684,7 @@ class PushService {
   Future<void> countryPending = Future.value();
   Future<void> _sessionStoragePending = Future.value();
   Future<void> _profileStoragePending = Future.value();
+  int _profileWriteVersion = 0;
   Future<void>? _restoreFuture;
 
   /// Bumped on every sign-in, sign-out and local session drop. Any network
@@ -1570,17 +1571,22 @@ class PushService {
   Future<void> _writeLocalProfile(
     UserProfileSettings settings, {
     required bool dirty,
-  }) => _queueProfileStorage(() async {
-    await storage.write(
-      key: 'futbeat.profile.settings',
-      value: jsonEncode(settings.toJson()),
-    );
-    await storage.write(
-      key: 'futbeat.profile.dirty',
-      value: dirty ? 'true' : 'false',
-    );
-    if (!_profileChanges.isClosed) _profileChanges.add(null);
-  });
+  }) {
+    // The intent changes before the platform write begins. A reconcile that
+    // was reading the old profile must not import its cloud snapshot over it.
+    _profileWriteVersion++;
+    return _queueProfileStorage(() async {
+      await storage.write(
+        key: 'futbeat.profile.settings',
+        value: jsonEncode(settings.toJson()),
+      );
+      await storage.write(
+        key: 'futbeat.profile.dirty',
+        value: dirty ? 'true' : 'false',
+      );
+      if (!_profileChanges.isClosed) _profileChanges.add(null);
+    });
+  }
 
   /// Platform writes may finish out of order. Profile data and its dirty
   /// acknowledgement share one queue, so a late save/ACK cannot overwrite
@@ -1756,8 +1762,11 @@ class PushService {
     Object? cloudPreferences, {
     required bool firstLink,
   }) async {
+    final generation = _generation;
+    final localVersion = _profileWriteVersion;
     final dirty = await _flag('futbeat.profile.dirty');
     final localProfile = await loadProfileSettings();
+    if (_stale(generation) || localVersion != _profileWriteVersion) return;
     if (cloudPreferences is! Map) {
       await _syncProfileSettings(localProfile);
       return;

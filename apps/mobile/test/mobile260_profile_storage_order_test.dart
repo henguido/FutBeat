@@ -59,6 +59,36 @@ class _Storage extends FlutterSecureStorage {
   }
 }
 
+class _HeldProfileRead extends FlutterSecureStorage {
+  final captured = Completer<void>();
+  final release = Completer<void>();
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final value = await super.read(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+    if (key == 'futbeat.profile.settings' && !captured.isCompleted) {
+      captured.complete();
+      await release.future;
+    }
+    return value;
+  }
+}
+
 class _Service extends PushService {
   _Service(AppDatabase database, Dio dio, this.testStorage)
     : super(
@@ -281,4 +311,66 @@ void main() {
       reason: 'A preference intent must not use account B headers',
     );
   });
+  for (final loggedOut in [false, true]) {
+    test(
+      'cloud reconciliation cannot erase preference edited during read (logout=$loggedOut)',
+      () async {
+        final db = AppDatabase(NativeDatabase.memory());
+        final dio = Dio();
+        final storage = _HeldProfileRead();
+        final service = _Service(db, dio, storage)
+          ..session = {
+            'access_token': 'synthetic-A',
+            'refresh_token': 'synthetic-refresh-A',
+            'expires_at':
+                DateTime.now()
+                    .add(const Duration(hours: 1))
+                    .millisecondsSinceEpoch ~/
+                1000,
+            'user': {'id': 'synthetic-A'},
+          };
+        addTearDown(() async {
+          service.dispose();
+          await db.close();
+        });
+        final profileCalls = <RequestOptions>[];
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              if (request.path.contains('sync_user_profile'))
+                profileCalls.add(request);
+              handler.resolve(
+                Response(
+                  requestOptions: request,
+                  data: request.path.endsWith('futbeat_read_user_profile')
+                      ? {
+                          'preferences': {'hourFormat': '12h'},
+                          'follows': <Object>[],
+                        }
+                      : <String, dynamic>{},
+                ),
+              );
+            },
+          ),
+        );
+        final reconcile = service.resume();
+        await storage.captured.future;
+        if (loggedOut) {
+          await service.signOut();
+          await service.signOutCleanup;
+        }
+        await service.saveProfileSettings(
+          const UserProfileSettings(hourFormat: '24h'),
+        );
+        storage.release.complete();
+        await reconcile;
+        expect((await service.loadProfileSettings()).hourFormat, '24h');
+        expect(
+          await storage.read(key: 'futbeat.profile.dirty'),
+          loggedOut ? 'true' : 'false',
+        );
+        expect(profileCalls, hasLength(loggedOut ? 0 : 1));
+      },
+    );
+  }
 }
