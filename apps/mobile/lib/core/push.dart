@@ -1043,6 +1043,9 @@ class PushService {
   /// never published: the account is signed in after the new password is
   /// set, not before.
   Map<String, dynamic>? _recoverySession;
+  int _recoveryAttempt = 0;
+
+  bool _recoveryStale(int attempt) => disposed || attempt != _recoveryAttempt;
 
   /// A reset link was redeemed and waits for the new password.
   bool get passwordRecoveryPending => _recoverySession != null;
@@ -1073,6 +1076,7 @@ class PushService {
         params['type'] != 'recovery') {
       throw const RecoveryLinkInvalid('missing_token');
     }
+    final attempt = ++_recoveryAttempt;
     final Response<dynamic> result;
     try {
       result = await dio.post<dynamic>(
@@ -1088,6 +1092,7 @@ class PushService {
       }
       rethrow;
     }
+    if (_recoveryStale(attempt)) return;
     final session = _validSession(result.data);
     if (session == null) throw _invalidSession(result.requestOptions);
     _recoverySession = session;
@@ -1099,9 +1104,14 @@ class PushService {
   Future<void> completePasswordRecovery(String newPassword) async {
     final verified = _recoverySession;
     if (verified == null) throw const RecoveryLinkInvalid('no_recovery');
+    final recoveryAttempt = _recoveryAttempt;
     final attempt = ++_authenticationAttempt;
     await _awaitSignOutCleanup();
-    if (_authenticationStale(attempt)) return;
+    if (_authenticationStale(attempt) ||
+        _recoveryStale(recoveryAttempt) ||
+        !identical(_recoverySession, verified)) {
+      return;
+    }
     await dio.put<dynamic>(
       '${config.supabaseUrl}/auth/v1/user',
       data: {'password': newPassword},
@@ -1112,13 +1122,20 @@ class PushService {
         },
       ),
     );
-    if (_authenticationStale(attempt)) return;
+    if (_authenticationStale(attempt) ||
+        _recoveryStale(recoveryAttempt) ||
+        !identical(_recoverySession, verified)) {
+      return;
+    }
     _recoverySession = null;
     await _startSession(verified);
   }
 
   /// Leaving the new-password screen drops the recovery session.
-  void cancelPasswordRecovery() => _recoverySession = null;
+  void cancelPasswordRecovery() {
+    _recoveryAttempt++;
+    _recoverySession = null;
+  }
 
   Future<void> restore() =>
       _restoreFuture ??= _restore().whenComplete(_markAccountKnown);
@@ -1184,6 +1201,7 @@ class PushService {
   /// touches Drift, so guest follows and preferences survive sign-out.
   Future<void> _clearLocalSession() async {
     final uid = userId;
+    cancelPasswordRecovery();
     _authenticationAttempt++;
     _generation++;
     renewal?.cancel();

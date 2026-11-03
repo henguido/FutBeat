@@ -1036,6 +1036,49 @@ void main() {
       expect(value.service.authenticated, isFalse);
     });
 
+    test('cancel discards a recovery verification already in flight', () async {
+      final value = await _service();
+      verifyOnce(value.http);
+      final gate = value.http.hold('/auth/v1/verify');
+      final verifying = value.service.beginPasswordRecovery(link);
+      await value.http.waitFor('/auth/v1/verify');
+      value.service.cancelPasswordRecovery();
+      gate.complete();
+      await verifying;
+      expect(value.service.passwordRecoveryPending, isFalse);
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test(
+      'cancel prevents automatic login after a pending password update',
+      () async {
+        final value = await _service();
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+        await value.service.beginPasswordRecovery(link);
+        final gate = value.http.hold('/auth/v1/user');
+        final completing = value.service.completePasswordRecovery(
+          'password-next',
+        );
+        await value.http.waitFor('/auth/v1/user');
+        value.service.cancelPasswordRecovery();
+        gate.complete();
+        await completing;
+        expect(value.service.passwordRecoveryPending, isFalse);
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+      },
+    );
+
+    test('sign out drops a verified recovery session', () async {
+      final value = await _service();
+      verifyOnce(value.http);
+      await value.service.beginPasswordRecovery(link);
+      await value.service.signOut();
+      expect(value.service.passwordRecoveryPending, isFalse);
+      expect(value.service.authenticated, isFalse);
+    });
+
     test('App Link and web fallback are reset links; OAuth is not', () async {
       expect(PushService.isPasswordResetLink(link), isTrue);
       expect(
