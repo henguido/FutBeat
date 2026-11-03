@@ -77,8 +77,9 @@ void main() {
       dio.interceptors.add(
         InterceptorsWrapper(
           onError: (error, handler) {
-            if (CancelToken.isCancel(error) && !cancelled.isCompleted)
+            if (CancelToken.isCancel(error) && !cancelled.isCompleted) {
               cancelled.complete();
+            }
             handler.next(error);
           },
         ),
