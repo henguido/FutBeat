@@ -4844,6 +4844,8 @@ class _LineupEventIcon extends StatelessWidget {
       'OWN_GOAL' => (Icons.sports_soccer, Colors.orangeAccent),
       'ASSIST' => (Icons.assistant_rounded, lime),
       'YELLOW_CARD' => (Icons.square_rounded, Colors.amber),
+      'SECOND_YELLOW_CARD' ||
+      'YELLOW_RED_CARD' => (Icons.square_rounded, Colors.deepOrangeAccent),
       'RED_CARD' => (Icons.square_rounded, Colors.redAccent),
       'SUB_IN' => (Icons.arrow_upward_rounded, lime),
       'SUB_OUT' => (Icons.arrow_downward_rounded, Colors.redAccent),
@@ -5041,8 +5043,12 @@ PlayerMatchSummary playerMatchSummary(
     goals: count('GOAL'),
     ownGoals: count('OWN_GOAL'),
     assists: count('ASSIST'),
-    yellowCards: count('YELLOW_CARD'),
-    redCards: count('RED_CARD'),
+    yellowCards: count('YELLOW_CARD') +
+        count('SECOND_YELLOW_CARD') +
+        count('YELLOW_RED_CARD'),
+    redCards: count('RED_CARD') +
+        count('SECOND_YELLOW_CARD') +
+        count('YELLOW_RED_CARD'),
   );
 }
 
@@ -5081,7 +5087,9 @@ int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
     if (type == 'SUBSTITUTION') {
       if (incident['inPlayerId']?.toString() == id) subIn.add(minute);
       if (incident['outPlayerId']?.toString() == id) subOut.add(minute);
-    } else if (type == 'RED_CARD' && incident['playerId']?.toString() == id) {
+    } else if (const {'RED_CARD', 'SECOND_YELLOW_CARD', 'YELLOW_RED_CARD'}
+            .contains(type) &&
+        incident['playerId']?.toString() == id) {
       red.add(minute);
     }
   }
