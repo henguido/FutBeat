@@ -1418,7 +1418,22 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Widget _alertsStep() {
     final value = settings;
-    if (value == null) return const LinearProgressIndicator();
+    if (value == null) {
+      if (ref.watch(profileSettingsProvider).hasError) {
+        return Column(
+          children: [
+            const Text(
+              'No pudimos cargar tus preferencias. Inténtalo nuevamente.',
+            ),
+            TextButton(
+              onPressed: () => ref.invalidate(profileSettingsProvider),
+              child: const Text('Reintentar'),
+            ),
+          ],
+        );
+      }
+      return const LinearProgressIndicator();
+    }
     final any = value.anyNotification;
     final service = ref.watch(pushServiceProvider);
     return Column(

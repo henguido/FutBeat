@@ -229,7 +229,26 @@ class _HourFormatPreferenceState extends ConsumerState<_HourFormatPreference> {
       );
     } catch (_) {
       // Account sync may fail after the preference was saved locally.
-      final local = await service.loadProfileSettings();
+      final UserProfileSettings local;
+      try {
+        local = await service.loadProfileSettings();
+      } catch (_) {
+        if (!mounted) return;
+        _restoring = true;
+        try {
+          _field.currentState?.didChange(widget.settings.hourFormat);
+        } finally {
+          _restoring = false;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No pudimos comprobar el cambio. Inténtalo nuevamente.',
+            ),
+          ),
+        );
+        return;
+      }
       if (!mounted) return;
       _restoring = true;
       try {

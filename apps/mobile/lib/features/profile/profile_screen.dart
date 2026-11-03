@@ -21,6 +21,7 @@ class ProfileScreen extends ConsumerStatefulWidget {
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   UserProfileSettings settings = const UserProfileSettings();
   bool loaded = false;
+  String? loadError;
 
   @override
   void initState() {
@@ -29,14 +30,29 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _load() async {
-    final service = ref.read(pushServiceProvider);
-    await service.restore();
-    final value = await service.loadProfileSettings();
     if (!mounted) return;
+    final service = ref.read(pushServiceProvider);
     setState(() {
-      settings = value;
-      loaded = true;
+      loadError = null;
+      loaded = false;
     });
+    try {
+      await service.restore();
+      if (!mounted) return;
+      final value = await service.loadProfileSettings();
+      if (!mounted) return;
+      setState(() {
+        settings = value;
+        loaded = true;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () =>
+              loadError = 'No pudimos cargar tu perfil. Inténtalo nuevamente.',
+        );
+      }
+    }
   }
 
   Future<void> _openAuth(AuthMode mode) async {
@@ -74,6 +90,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         key: const ValueKey('profile-root'),
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
         children: [
+          if (loadError != null)
+            ListTile(
+              title: Text(loadError!),
+              trailing: TextButton(
+                onPressed: _load,
+                child: const Text('Reintentar'),
+              ),
+            ),
           _ProfileHeader(
             initials: _initials(service),
             name: settings.displayName,

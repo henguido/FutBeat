@@ -1625,9 +1625,12 @@ class PushService {
   }
 
   Future<UserProfileSettings> loadProfileSettings() async {
+    // Missing/invalid legacy data has defaults. An I/O failure does not prove
+    // that no saved preferences exist: callers must retry, not edit defaults
+    // over an unreadable profile.
+    final raw = await storage.read(key: 'futbeat.profile.settings');
+    if (raw == null) return const UserProfileSettings();
     try {
-      final raw = await storage.read(key: 'futbeat.profile.settings');
-      if (raw == null) return const UserProfileSettings();
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return const UserProfileSettings();
       return UserProfileSettings.fromJson(Map<String, dynamic>.from(decoded));

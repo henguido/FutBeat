@@ -31,8 +31,21 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     final service = ref.read(pushServiceProvider);
-    final loaded = await service.loadProfileSettings();
+    setState(() => actionError = null);
+    final UserProfileSettings loaded;
+    try {
+      loaded = await service.loadProfileSettings();
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => actionError =
+              'No pudimos cargar tus preferencias. Inténtalo nuevamente.',
+        );
+      }
+      return;
+    }
     if (!mounted) return;
     setState(() => settings = loaded);
     final devicePermission = service.pushConfigured
@@ -58,7 +71,18 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
       ref.invalidate(profileSettingsProvider);
     } catch (_) {
       if (!mounted || generation != _saveGeneration) return;
-      final local = await service.loadProfileSettings();
+      final UserProfileSettings local;
+      try {
+        local = await service.loadProfileSettings();
+      } catch (_) {
+        if (mounted && generation == _saveGeneration) {
+          setState(
+            () => actionError =
+                'No pudimos comprobar el cambio. Inténtalo nuevamente.',
+          );
+        }
+        return;
+      }
       if (!mounted || generation != _saveGeneration) return;
       final savedLocally = option.value(local) == enabled;
       setState(() {
@@ -123,7 +147,20 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
     return Scaffold(
       appBar: AppBar(title: const Text('Notificaciones')),
       body: value == null
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: actionError == null
+                  ? const CircularProgressIndicator()
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _InlineMessage(message: actionError!),
+                        TextButton(
+                          onPressed: _load,
+                          child: const Text('Reintentar'),
+                        ),
+                      ],
+                    ),
+            )
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
               children: [
