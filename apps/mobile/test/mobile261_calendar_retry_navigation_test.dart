@@ -57,7 +57,9 @@ void main() {
       final oldRetry = StreamController<Snapshot>();
       final oldCancelled = Completer<void>();
       oldRetry.onCancel = () {
-        if (!oldCancelled.isCompleted) oldCancelled.complete();
+        if (!oldCancelled.isCompleted) {
+          oldCancelled.complete();
+        }
       };
       final reads = <int, int>{};
       final container = ProviderContainer(
@@ -69,8 +71,9 @@ void main() {
               (count) => count + 1,
               ifAbsent: () => 1,
             );
-            if (attempt == 1)
+            if (attempt == 1) {
               return Stream.error(StateError('Synthetic calendar failure'));
+            }
             if (date.day == 3) return oldRetry.stream;
             return Stream.value(_day(date));
           }),
