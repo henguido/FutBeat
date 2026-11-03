@@ -186,11 +186,13 @@ class ApiRepository implements FootballRepository {
       '${date.month.toString().padLeft(2, '0')}-'
       '${date.day.toString().padLeft(2, '0')}';
 
-  Snapshot _canonical(Json json) {
-    final snapshot = Snapshot(
-      json,
-      blockedAliasIds: media?.revokedDisplayAliases ?? const {},
-    );
+  Snapshot _canonical(Json json, {Snapshot? prepared}) {
+    final snapshot =
+        prepared ??
+        Snapshot(
+          json,
+          blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+        );
     if (snapshot.demo) {
       throw StateError('Cloud endpoint returned demo data');
     }
@@ -406,22 +408,54 @@ class ApiRepository implements FootballRepository {
         // the requested cache key. Empty/no-data contexts remain legitimate.
         throw const FormatException('Match context identity mismatch');
       }
+      Snapshot? checkedEntity;
+      final requestedType = queryParameters?['type'];
+      final contextEntities = switch (requestedType) {
+        'team' => raw['teams'],
+        'player' => raw['players'],
+        'competition' => raw['competitions'],
+        _ => null,
+      };
+      if (requestedId is String &&
+          requestedId.startsWith('fb_') &&
+          key == 'entity:$requestedType:$requestedId' &&
+          contextEntities is List &&
+          contextEntities.isNotEmpty) {
+        checkedEntity = Snapshot(
+          raw,
+          blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+        );
+        final belongs = switch (requestedType) {
+          'team' => checkedEntity.team(requestedId) != null,
+          'player' => checkedEntity.player(requestedId) != null,
+          'competition' => checkedEntity.competition(requestedId) != null,
+          _ => false,
+        };
+        if (!belongs) {
+          // Related entities and explicit canonical redirects are valid;
+          // a foreign target is not. Validate before absorbing shared media,
+          // redirects or the requested in-memory observation timestamp.
+          throw const FormatException('Entity context identity mismatch');
+        }
+      }
       final previous = _snapshotCache[key];
       if (previous != null &&
           (key.startsWith('match-context:') || key.startsWith('entity:'))) {
         // Decide freshness before _canonical absorbs media and redirects into
         // shared memory. A rejected late snapshot must not roll those back
         // while the visible Match Center correctly keeps its newer data.
-        final candidate = Snapshot(
-          raw,
-          blockedAliasIds: media?.revokedDisplayAliases ?? const {},
-        );
+        final candidate =
+            checkedEntity ??
+            Snapshot(
+              raw,
+              blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+            );
         if (_publicSnapshotMatches(key, candidate, queryParameters) &&
             candidate.updatedAt.isBefore(previous.updatedAt)) {
           return previous.asStale();
         }
       }
-      final snapshot = _canonical(raw);
+      final snapshot = _canonical(raw, prepared: checkedEntity);
       _remember(key, snapshot);
       if (_publicSnapshotMatches(key, snapshot, queryParameters)) {
         _persistPublicJson(key, raw);
