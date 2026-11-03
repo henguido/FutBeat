@@ -52,8 +52,10 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
     final service = ref.read(pushServiceProvider);
     try {
       await service.saveProfileSettings(next);
+      if (!mounted) return;
       ref.invalidate(profileSettingsProvider);
     } catch (_) {
+      if (!mounted) return;
       final local = await service.loadProfileSettings();
       if (!mounted) return;
       final savedLocally = option.value(local) == enabled;
