@@ -2009,6 +2009,20 @@ bool _hasVisibleLineup(Json home, Json away) {
 /// latest answer. Rechecks may add data, but never erase richer UI state.
 MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   if (!current.available) return next;
+  // Both timestamps describe the stored provider observations, not when the
+  // HTTP requests finished. A delayed older answer cannot restore an annulled
+  // event or roll back corrected statistics. Equal/missing timestamps retain
+  // the legacy authoritative replacement contract.
+  final currentObservation = DateTime.tryParse(current.fetchedAt ?? '');
+  final nextObservation = DateTime.tryParse(next.fetchedAt ?? '');
+  if (currentObservation != null &&
+      nextObservation != null &&
+      nextObservation.isBefore(currentObservation)) {
+    return current.withBlockedAliases({
+      ...current.blockedAliasIds,
+      ...next.blockedAliasIds,
+    });
+  }
   // Merge untouched provider rows; presentation may have hidden an alias row
   // that must be restorable if the adjudication is revoked later.
   final currentRaw = current.sourceJson;
