@@ -6,6 +6,20 @@ import 'package:dio/dio.dart';
 
 import 'models.dart';
 
+// A DELETE with only the primary key cannot establish an ordering fence.
+// Full records can reject an older replay, without preventing a genuinely
+// newer incarnation (whose revision may restart) or a new provider.
+bool _predatesLiveDeletion(LiveMatchUpdate update, Json deleted) {
+  final changedAt = DateTime.tryParse(deleted['changed_at'] as String? ?? '');
+  if (changedAt == null) return false;
+  if (update.changedAt.isBefore(changedAt)) return true;
+  final revision = deleted['revision'];
+  return update.changedAt.isAtSameMomentAs(changedAt) &&
+      update.provider == deleted['provider'] &&
+      revision is num &&
+      update.revision <= revision;
+}
+
 /// [serverNow] is the REST response's server time (HTTP `Date`) and
 /// [deviceNow] the device time it arrived; together they give every row a
 /// skew-free receipt time (#120: an old LIVE row never looks fresh).
@@ -26,6 +40,7 @@ Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
   Set<String>? keysBeforeRequest,
   Map<String, LiveMatchUpdate>? stateBeforeRequest,
   Set<String> deletedDuringRequest = const {},
+  Map<String, Json> deletedVersions = const {},
   DateTime? serverNow,
   DateTime? deviceNow,
   bool complete = true,
@@ -62,6 +77,8 @@ Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
       if (!update.matchId.startsWith('fb_')) continue;
       fetched.add(update.matchId);
       if (deletedDuringRequest.contains(update.matchId)) continue;
+      final deleted = deletedVersions[update.matchId];
+      if (deleted != null && _predatesLiveDeletion(update, deleted)) continue;
       final previous = result[update.matchId];
       if (previous != null &&
           (update.changedAt.isBefore(previous.changedAt) ||
@@ -418,6 +435,7 @@ class LiveRealtimeClient {
 
   Stream<Map<String, LiveMatchUpdate>> watch() {
     final state = <String, LiveMatchUpdate>{};
+    final deletedVersions = <String, Json>{};
     late StreamController<Map<String, LiveMatchUpdate>> controller;
     WebSocket? socket;
     Timer? retry, heartbeat, refresh, joinTimeout, scopeDebounce;
@@ -443,6 +461,7 @@ class LiveRealtimeClient {
     Future<void> stopWatch() async {
       if (disposed) return;
       disposed = true;
+      deletedVersions.clear();
       _closeWatches.remove(closeWatch);
       _refreshActiveScopes.remove(refreshScope);
       _setActiveScopes.remove(setScopeActive);
@@ -484,6 +503,8 @@ class LiveRealtimeClient {
         ),
       );
       if (!update.matchId.startsWith('fb_')) return;
+      final deleted = deletedVersions[update.matchId];
+      if (deleted != null && _predatesLiveDeletion(update, deleted)) return;
       final previous = state[update.matchId];
       if (previous != null &&
           (update.changedAt.isBefore(previous.changedAt) ||
@@ -492,6 +513,7 @@ class LiveRealtimeClient {
         return;
       }
       state[update.matchId] = update;
+      deletedVersions.remove(update.matchId);
     }
 
     Future<void> bootstrapOnce() async {
@@ -534,6 +556,7 @@ class LiveRealtimeClient {
           read.rows,
           stateBeforeRequest: before,
           deletedDuringRequest: deletedDuringRequest,
+          deletedVersions: deletedVersions,
           serverNow: serverNow,
           deviceNow: deviceNow,
           complete: read.complete,
@@ -544,6 +567,7 @@ class LiveRealtimeClient {
         state
           ..clear()
           ..addAll(reconciled);
+        deletedVersions.removeWhere((id, _) => state.containsKey(id));
         // A failed or cut read is retried on the next tick, joined or not; a
         // read that hit maxPages is not (it would only repeat the same cut).
         lastBootstrap = read.complete || read.exhausted ? deviceNow : null;
@@ -693,21 +717,52 @@ class LiveRealtimeClient {
                     ? DateTime.tryParse(row['changed_at'] as String)
                     : null;
                 final deletedRevision = row is Map ? row['revision'] : null;
+                final priorDeletion = deletedVersions[matchId];
+                final priorDeletedAt = DateTime.tryParse(
+                  priorDeletion?['changed_at'] as String? ?? '',
+                );
                 // FULL replica identity can carry an older deleted version
                 // after a newer correction/reinsert has already arrived.
                 // PK-only deletes have no ordering evidence and keep their
                 // authoritative removal semantics.
-                if (previous != null &&
-                    ((deletedAt != null &&
-                            deletedAt.isBefore(previous.changedAt)) ||
-                        (row is Map &&
-                            row['provider'] == previous.provider &&
-                            deletedRevision is num &&
-                            deletedRevision < previous.revision))) {
+                if ((priorDeletedAt != null &&
+                        deletedAt != null &&
+                        (deletedAt.isBefore(priorDeletedAt) ||
+                            (deletedAt.isAtSameMomentAs(priorDeletedAt) &&
+                                row is Map &&
+                                row['provider'] == priorDeletion?['provider'] &&
+                                deletedRevision is num &&
+                                priorDeletion?['revision'] is num &&
+                                deletedRevision <
+                                    (priorDeletion!['revision'] as num)))) ||
+                    (previous != null &&
+                        ((deletedAt != null &&
+                                deletedAt.isBefore(previous.changedAt)) ||
+                            (row is Map &&
+                                row['provider'] == previous.provider &&
+                                deletedRevision is num &&
+                                deletedRevision < previous.revision)))) {
                   emit();
                   return;
                 }
                 state.remove(matchId);
+                if (matchId is String && deletedAt != null && row is Map) {
+                  deletedVersions.remove(matchId);
+                  deletedVersions[matchId] = {
+                    'changed_at': row['changed_at'],
+                    'provider': row['provider'],
+                    'revision': row['revision'],
+                  };
+                  // Same bounds as the observable scope/bootstrap. Keep no
+                  // unbounded history of every deleted match in a session.
+                  final limit = scopedRealtime
+                      ? maxRealtimeMatchIds
+                      : bootstrapPolicy.pageSize * bootstrapPolicy.maxPages;
+                  while (deletedVersions.length > limit &&
+                      deletedVersions.isNotEmpty) {
+                    deletedVersions.remove(deletedVersions.keys.first);
+                  }
+                }
                 if (matchId is String) bootstrapDeletes?.add(matchId);
               } else if (data['record'] is Map) {
                 accept(Map<String, dynamic>.from(data['record'] as Map));
@@ -780,6 +835,8 @@ class LiveRealtimeClient {
           scopeSubscription = _scopeChanges.stream.listen((_) {
             scopeDebounce?.cancel();
             scopeDebounce = Timer(const Duration(milliseconds: 250), () {
+              final ids = realtimeMatchIds.toSet();
+              deletedVersions.removeWhere((id, _) => !ids.contains(id));
               scopeVersion++;
               bootstrapToken?.cancel('LIVE scope changed');
               joined = false;
