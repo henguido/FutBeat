@@ -685,6 +685,7 @@ class PushService {
   Future<void> _sessionStoragePending = Future.value();
   Future<void> _profileStoragePending = Future.value();
   Future<void> _pushStoragePending = Future.value();
+  Future<void> _countryStoragePending = Future.value();
   int _profileWriteVersion = 0;
   int _countryWriteVersion = 0;
   Future<void>? _restoreFuture;
@@ -1542,46 +1543,62 @@ class PushService {
           'p_update_selected': updateSelected,
         },
       );
-      final current = await database.watchPreference().first;
-      if (!disposed &&
-          session?['access_token']?.toString() == sessionToken &&
-          current.detectedCountry == detected &&
-          current.selectedCountry == selected) {
-        if (updateDetected) {
-          await storage.write(
-            key: 'futbeat.country.detected.dirty',
-            value: 'false',
-          );
+      await _queueCountryStorage(() async {
+        final current = await database.watchPreference().first;
+        if (!disposed &&
+            session?['access_token']?.toString() == sessionToken &&
+            current.detectedCountry == detected &&
+            current.selectedCountry == selected) {
+          if (updateDetected) {
+            await storage.write(
+              key: 'futbeat.country.detected.dirty',
+              value: 'false',
+            );
+          }
+          if (updateSelected) {
+            await storage.write(
+              key: 'futbeat.country.selected.dirty',
+              value: 'false',
+            );
+          }
+          final detectedDirty =
+              await storage.read(key: 'futbeat.country.detected.dirty') ==
+              'true';
+          final selectedDirty =
+              await storage.read(key: 'futbeat.country.selected.dirty') ==
+              'true';
+          if (!detectedDirty && !selectedDirty) {
+            await storage.write(key: 'futbeat.country.dirty', value: 'false');
+          }
         }
-        if (updateSelected) {
-          await storage.write(
-            key: 'futbeat.country.selected.dirty',
-            value: 'false',
-          );
-        }
-        final detectedDirty =
-            await storage.read(key: 'futbeat.country.detected.dirty') == 'true';
-        final selectedDirty =
-            await storage.read(key: 'futbeat.country.selected.dirty') == 'true';
-        if (!detectedDirty && !selectedDirty) {
-          await storage.write(key: 'futbeat.country.dirty', value: 'false');
-        }
-      }
+      });
     });
     countryPending = operation;
     return operation;
   }
 
-  Future<void> markDetectedCountryDirty() async {
-    _countryWriteVersion++;
-    await storage.write(key: 'futbeat.country.detected.dirty', value: 'true');
-    await storage.write(key: 'futbeat.country.dirty', value: 'true');
+  Future<void> _queueCountryStorage(Future<void> Function() action) {
+    final operation = _countryStoragePending
+        .catchError((_) {})
+        .then((_) => action());
+    _countryStoragePending = operation.catchError((_) {});
+    return operation;
   }
 
-  Future<void> markSelectedCountryDirty() async {
+  Future<void> markDetectedCountryDirty() {
     _countryWriteVersion++;
-    await storage.write(key: 'futbeat.country.selected.dirty', value: 'true');
-    await storage.write(key: 'futbeat.country.dirty', value: 'true');
+    return _queueCountryStorage(() async {
+      await storage.write(key: 'futbeat.country.detected.dirty', value: 'true');
+      await storage.write(key: 'futbeat.country.dirty', value: 'true');
+    });
+  }
+
+  Future<void> markSelectedCountryDirty() {
+    _countryWriteVersion++;
+    return _queueCountryStorage(() async {
+      await storage.write(key: 'futbeat.country.selected.dirty', value: 'true');
+      await storage.write(key: 'futbeat.country.dirty', value: 'true');
+    });
   }
 
   Future<void> touchInterest(String type, String id) async {
