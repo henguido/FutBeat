@@ -1560,8 +1560,9 @@ class PushService {
   }
 
   Future<void> saveProfileSettings(UserProfileSettings settings) async {
+    final generation = _generation;
     await _writeLocalProfile(settings, dirty: true);
-    if (authenticated) {
+    if (!_stale(generation) && authenticated) {
       await _syncProfileSettings(settings);
     }
   }
@@ -1643,11 +1644,16 @@ class PushService {
     // as synced. It also belongs only to the account generation that sent it.
     await _queueProfileStorage(() async {
       final current = await loadProfileSettings();
-      if (_stale(generation) ||
-          jsonEncode(current.toJson()) != jsonEncode(settings.toJson())) {
-        return;
-      }
-      await storage.write(key: 'futbeat.profile.dirty', value: 'false');
+      if (_stale(generation)) return;
+      final acknowledgedLatest =
+          jsonEncode(current.toJson()) == jsonEncode(settings.toJson());
+      // An old remote write may have committed after the newer one. Preserve
+      // the latest device value and retry it on the existing reconciliation
+      // cycle; never regard this stale acknowledgement as convergence.
+      await storage.write(
+        key: 'futbeat.profile.dirty',
+        value: acknowledgedLatest ? 'false' : 'true',
+      );
     });
   }
 
