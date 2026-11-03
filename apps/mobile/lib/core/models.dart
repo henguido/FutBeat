@@ -540,7 +540,15 @@ class LiveMatchUpdate {
     // copies) the list neither re-sends nor owns. Owned by this provider:
     // its labelled rows and the synthetic score goals (GOAL feed only).
     final current = (match['events'] as List? ?? []).cast<Json>();
-    final latestIds = {for (final event in events) event['id']};
+    // Reject foreign rows before they can claim an existing event's ID.
+    // A discarded row must not erase another provider's retained event.
+    final latest = events.where((event) {
+      return event['id'] is String &&
+          (event['matchId'] == null || event['matchId'] == matchId) &&
+          (event['teamId'] == null ||
+              [match['homeTeamId'], match['awayTeamId']].contains(event['teamId']));
+    }).toList();
+    final latestIds = {for (final event in latest) event['id']};
     bool ownedByThisFeed(Json event) {
       final label = event['provider'];
       if (label != null) return label == provider;
@@ -556,7 +564,7 @@ class LiveMatchUpdate {
         )
       else
         ...current,
-      ...events,
+      ...latest,
     ]) {
       final id = event['id'];
       if (id is! String) continue;
