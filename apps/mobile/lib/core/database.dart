@@ -430,9 +430,13 @@ class AppDatabase extends _$AppDatabase {
     if (row == null) return null;
     if (DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
         publicSnapshotRetention) {
-      await (delete(
-        catalogSnapshots,
-      )..where((entry) => entry.cacheKey.equals(key))).go();
+      await (delete(catalogSnapshots)..where(
+            // A refresh may commit after this read observed an expired row.
+            // Never delete the replacement saved under the same cache key.
+            (entry) =>
+                entry.cacheKey.equals(key) & entry.savedAt.equals(row.savedAt),
+          ))
+          .go();
       return null;
     }
     return row;
