@@ -275,25 +275,32 @@ List<(String, String)> playerFacts(Entity player) {
   ];
 }
 
+bool _profileEventBelongsToPlayer(
+  Snapshot data,
+  Json event,
+  String playerId, {
+  bool assist = false,
+}) {
+  final canonical = event[assist ? 'canonicalAssistPlayerId' : 'canonicalPlayerId']
+      ?.toString().trim() ?? '';
+  final id = canonical.isNotEmpty
+      ? canonical
+      : event[assist ? 'assistPlayerId' : 'playerId']?.toString().trim() ?? '';
+  return id.isNotEmpty &&
+      data.resolveEntityId(id) == data.resolveEntityId(playerId);
+}
+
 /// Stored events where this player scored, assisted or was booked/subbed.
 List<(FootballMatch, Json, bool)> playerRecentEvents(
   Snapshot data,
   String playerId,
 ) {
   final result = <(FootballMatch, Json, bool)>[];
-  final canonicalPlayerId = data.resolveEntityId(playerId);
-  bool belongsToPlayer(Object? rawId) {
-    final id = rawId?.toString();
-    return id != null &&
-        id.isNotEmpty &&
-        data.resolveEntityId(id) == canonicalPlayerId;
-  }
-
   for (final match in data.matches) {
     for (final event in match.events) {
-      if (belongsToPlayer(event['playerId'])) {
+      if (_profileEventBelongsToPlayer(data, event, playerId)) {
         result.add((match, event, false));
-      } else if (belongsToPlayer(event['assistPlayerId']) &&
+      } else if (_profileEventBelongsToPlayer(data, event, playerId, assist: true) &&
           event['type'] == 'GOAL' &&
           event['ownGoal'] != true) {
         result.add((match, event, true));
@@ -332,17 +339,10 @@ List<FootballMatch> playerProfileMatches(Snapshot data, Entity player) {
         teamIds.contains(data.resolveEntityId(match.homeId)) ||
         teamIds.contains(data.resolveEntityId(match.awayId));
     final explicitActivity = match.events.any((event) {
-      bool belongsToPlayer(Object? value) {
-        final raw = value?.toString();
-        return raw != null &&
-            raw.isNotEmpty &&
-            data.resolveEntityId(raw) == playerId;
-      }
-
-      return belongsToPlayer(event['playerId']) ||
+      return _profileEventBelongsToPlayer(data, event, playerId) ||
           (event['type'] == 'GOAL' &&
               event['ownGoal'] != true &&
-              belongsToPlayer(event['assistPlayerId']));
+              _profileEventBelongsToPlayer(data, event, playerId, assist: true));
     });
     if (currentTeamMatch || explicitActivity) {
       byId.putIfAbsent(match.id, () => match);
