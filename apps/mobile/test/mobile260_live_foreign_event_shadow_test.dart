@@ -12,7 +12,7 @@ void main() {
         () {
           final currentEvent = <String, dynamic>{
             'id': 'fb_event260',
-            if (provider != null) 'provider': provider,
+            'provider': ?provider,
             'type': 'YELLOW_CARD',
             'minute': 12,
             'matchId': 'fb_match260',

@@ -533,6 +533,26 @@ class LiveMatchUpdate {
         (match['liveRevision'] as int? ?? 0) > revision) {
       return match;
     }
+    if (match['liveProvider'] == provider &&
+        match['liveRevision'] == revision &&
+        previousAt != null && changedAt.isAtSameMomentAs(previousAt)) {
+      final previousObserved = DateTime.tryParse(
+        match['liveObservedAt'] as String? ?? '',
+      ) ?? previousAt;
+      final observation = observedAt ?? changedAt;
+      if (observation.isBefore(previousObserved)) return match;
+      // Identical content/observation can arrive again from an older REST
+      // response. Keep the later device-clock freshness already persisted.
+      if (observation.isAtSameMomentAs(previousObserved)) {
+        final previousDevice = DateTime.tryParse(
+          match['liveObservationDeviceAt'] as String? ?? '',
+        );
+        final incomingDevice = receivedAt ?? observedAt ?? changedAt;
+        if (previousDevice != null && incomingDevice.isBefore(previousDevice)) {
+          return match;
+        }
+      }
+    }
     // P0-A: latest_events is the provider's complete, already reconciled
     // list (corrections, annulled goals, deleted cards). It REPLACES that
     // provider's events: never a union, so a row it no longer sends is gone.
