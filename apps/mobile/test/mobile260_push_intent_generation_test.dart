@@ -76,6 +76,19 @@ class _Service extends PushService {
         pushConfigured: true,
       );
   final FlutterSecureStorage testStorage;
+  final bRegistrationIntent = Completer<void>();
+  final disableRegistrationIntent = Completer<void>();
+  @override
+  Future<void> register(bool active) {
+    if (!active && !disableRegistrationIntent.isCompleted) {
+      disableRegistrationIntent.complete();
+    }
+    if (active && userId == 'B' && !bRegistrationIntent.isCompleted) {
+      bRegistrationIntent.complete();
+    }
+    return super.register(active);
+  }
+
   @override
   FlutterSecureStorage get storage => testStorage;
 }
@@ -94,6 +107,25 @@ class _Harness {
               holdRegistration) {
             registrationStarted.complete();
             await releaseRegistration.future;
+          }
+          if (request.path.endsWith('futbeat_register_push')) {
+            serverEnabled = (request.data as Map)['p_enabled'] == true;
+            registrationCommits.add(serverEnabled);
+            if (!serverEnabled && !disableCommitted.isCompleted) {
+              disableCommitted.complete();
+            }
+          }
+          if (request.path.endsWith('futbeat-delete-account') && holdDeletion) {
+            deletionStarted.complete();
+            await releaseDeletion.future;
+            handler.reject(
+              DioException(
+                requestOptions: request,
+                response: Response(requestOptions: request, statusCode: 503),
+                type: DioExceptionType.badResponse,
+              ),
+            );
+            return;
           }
           Object data = <String, dynamic>{};
           if (request.path.contains('/auth/v1/token')) {
@@ -114,6 +146,12 @@ class _Harness {
   final _Service service;
   final requests = <RequestOptions>[];
   bool holdRegistration = false;
+  bool holdDeletion = false;
+  bool serverEnabled = false;
+  final registrationCommits = <bool>[];
+  final disableCommitted = Completer<void>();
+  final deletionStarted = Completer<void>();
+  final releaseDeletion = Completer<void>();
   final registrationStarted = Completer<void>();
   final releaseRegistration = Completer<void>();
   Iterable<RequestOptions> get enabledRegistrations => requests.where(
@@ -126,6 +164,7 @@ class _Harness {
   Future<void> close() async {
     if (!tokens.release.isCompleted) tokens.release.complete(null);
     if (!releaseRegistration.isCompleted) releaseRegistration.complete();
+    if (!releaseDeletion.isCompleted) releaseDeletion.complete();
     if (storage case final _HeldInstallation held) {
       if (!held.release.isCompleted) held.release.complete();
     }
@@ -239,11 +278,15 @@ void main() {
     await storage.captured.future.timeout(const Duration(seconds: 5));
     await h.signInB();
     // B explicitly opts in here; its own registration is allowed.
-    await h.service.enable();
+    final enablingB = h.service.enable();
+    await h.service.bRegistrationIntent.future.timeout(
+      const Duration(seconds: 5),
+    );
     expect(h.service.userId, 'B');
     expect(h.service.token, 'synthetic-device-B');
     storage.release.complete();
     await registeringA;
+    await enablingB;
     await h.service.pending;
     final crossed = h.enabledRegistrations.where(
       (request) =>
@@ -268,5 +311,67 @@ void main() {
       isTrue,
       reason: 'only explicit B opt-in remains active',
     );
+  });
+  test('new disable commits after an already dispatched enable on server', () async {
+    final h = _open()..holdRegistration = true;
+    final enabling = h.service.enable().then(
+      (_) => true,
+      onError: (_) => false,
+    );
+    await h.registrationStarted.future.timeout(const Duration(seconds: 5));
+    final disabling = h.service.disable();
+    await h.service.disableRegistrationIntent.future.timeout(
+      const Duration(seconds: 5),
+    );
+    // Let an unordered implementation commit false before old true finishes.
+    // FIFO implementations legitimately keep false queued: never await it
+    // unconditionally while the active request is deliberately held.
+    // Drain Dio's asynchronous interceptor turns, not wall-clock time. The
+    // real commit event ends this early; a future FIFO implementation can
+    // remain queued and will proceed only after we release old true below.
+    for (var turn = 0; turn < 32 && !h.disableCommitted.isCompleted; turn++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    h.releaseRegistration.complete();
+    await enabling;
+    await disabling;
+    await h.service.pending;
+    expect(
+      h.serverEnabled,
+      isFalse,
+      reason:
+          'remote last commit must honor newest disable; commits=${h.registrationCommits}',
+    );
+    expect(h.registrationCommits.last, isFalse);
+    expect(h.service.enabled, isFalse);
+    expect(await h.storage.read(key: 'futbeat.push.enabled'), 'false');
+  });
+
+  test('deletion failure cannot undo a newer explicit disable', () async {
+    final h = _open()..holdDeletion = true;
+    h.service.enabled = true;
+    h.service.token = 'synthetic-device-A';
+    await h.storage.write(key: 'futbeat.push.enabled', value: 'true');
+    final deleting = h.service.deleteAccount().then(
+      (_) => true,
+      onError: (_) => false,
+    );
+    await h.deletionStarted.future.timeout(const Duration(seconds: 5));
+    await h.service.disable();
+    expect(h.serverEnabled, isFalse);
+    expect(h.service.enabled, isFalse);
+    expect(await h.storage.read(key: 'futbeat.push.enabled'), 'false');
+    h.releaseDeletion.complete();
+    expect(await deleting, isFalse);
+    await h.service.pending;
+    expect(h.service.userId, 'A');
+    expect(
+      h.service.enabled,
+      isFalse,
+      reason: 'wasEnabled at delete intent cannot override a newer disable',
+    );
+    expect(await h.storage.read(key: 'futbeat.push.enabled'), 'false');
+    expect(h.tokens.controller.hasListener, isFalse);
+    expect(h.serverEnabled, isFalse);
   });
 }

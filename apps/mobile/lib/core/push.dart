@@ -685,6 +685,7 @@ class PushService {
   Future<void> _sessionStoragePending = Future.value();
   Future<void> _profileStoragePending = Future.value();
   Future<void> _pushStoragePending = Future.value();
+  Future<void> _pushRegistrationPending = Future.value();
   Future<void> _countryStoragePending = Future.value();
   int _profileWriteVersion = 0;
   int _countryWriteVersion = 0;
@@ -1374,17 +1375,26 @@ class PushService {
     if (!authenticated || registeringToken == null || disposed) return;
     final installationId = await installation();
     if (_pushStale(generation, attempt)) return;
-    await dio.post(
-      '${config.supabaseUrl}/rest/v1/rpc/futbeat_register_push',
-      options: authHeaders,
-      data: {
-        'p_installation': installationId,
-        'p_platform': Platform.isIOS ? 'ios' : 'android',
-        'p_transport': 'fcm',
-        'p_token': registeringToken,
-        'p_enabled': active,
-      },
-    );
+    // Installation lookup must not block a newer account. Serialize only
+    // accepted HTTP writes so an in-flight enable cannot land after disable.
+    final operation = _pushRegistrationPending.catchError((_) {}).then((
+      _,
+    ) async {
+      if (_pushStale(generation, attempt)) return;
+      await dio.post(
+        '${config.supabaseUrl}/rest/v1/rpc/futbeat_register_push',
+        options: authHeaders,
+        data: {
+          'p_installation': installationId,
+          'p_platform': Platform.isIOS ? 'ios' : 'android',
+          'p_transport': 'fcm',
+          'p_token': registeringToken,
+          'p_enabled': active,
+        },
+      );
+    });
+    _pushRegistrationPending = operation.catchError((_) {});
+    await operation;
   }
 
   /// Pushes [values] as a full replace of the server follows. Skipped until
@@ -2130,6 +2140,7 @@ class PushService {
     final deletedUser = userId;
     final pendingAtIntent = pending;
     final wasEnabled = enabled;
+    final pushAttemptAtIntent = _pushAttempt;
     final oldRotation = rotation;
     final oldFollows = follows;
     renewal?.cancel();
@@ -2156,18 +2167,9 @@ class PushService {
     } catch (_) {
       if (!_stale(generation) && authenticated) {
         await _startAccountSync();
-        if (!_stale(generation) && wasEnabled) {
+        if (!_pushStale(generation, pushAttemptAtIntent) && wasEnabled) {
           enabled = true;
-          rotation = tokens.rotations.listen((value) {
-            pending = pending
-                .catchError((_) {})
-                .then((_) async {
-                  if (disposed || !enabled) return;
-                  token = value;
-                  await register(true);
-                })
-                .catchError((_) {});
-          });
+          _listenForTokenRotation(generation, pushAttemptAtIntent);
         }
       }
       rethrow;
