@@ -698,9 +698,19 @@ class PushService {
   /// Starting another request or signing out invalidates earlier responses
   /// without interrupting the current account's reconciliation generation.
   int _authenticationAttempt = 0;
+  int _pushAttempt = 0;
 
   bool _authenticationStale(int attempt) =>
       disposed || attempt != _authenticationAttempt;
+
+  bool _pushStale(int generation, int attempt) =>
+      _stale(generation) || attempt != _pushAttempt;
+
+  void _requireCurrentPush(int generation, int attempt) {
+    if (_pushStale(generation, attempt)) {
+      throw StateError('Notification request changed');
+    }
+  }
 
   /// Generation in which the server follows were read and merged into
   /// Drift. Follows are never pushed (a full replace) before that.
@@ -925,6 +935,8 @@ class PushService {
   /// reconcile (offline) is retried by the renewal tick; the session stays.
   Future<void> _startSession(Map<String, dynamic> value) async {
     final previousUser = userId;
+    final oldRotation = rotation;
+    rotation = null;
     final generation = ++_generation;
     session = value;
     _markAccountKnown();
@@ -935,14 +947,16 @@ class PushService {
     if (previousUser != userId) {
       // Device permission is not consent for a different FutBeat account.
       // Detach the old token listener before any asynchronous reconciliation.
-      final oldRotation = rotation;
-      rotation = null;
       enabled = false;
       token = null;
-      await _persistPushEnabled(false);
+      await Future.wait([
+        _persistPushEnabled(false),
+        oldRotation?.cancel() ?? Future<void>.value(),
+      ]);
+    } else {
       await oldRotation?.cancel();
-      if (_stale(generation)) return;
     }
+    if (_stale(generation)) return;
     await storage.delete(key: 'futbeat.auth.pendingConfirmationEmail');
     if (_stale(generation)) return;
     await _persistSession();
@@ -955,6 +969,9 @@ class PushService {
     }
     if (_stale(generation)) return;
     await _startAccountSync();
+    if (!_stale(generation) && enabled && rotation == null) {
+      _listenForTokenRotation(generation, _pushAttempt);
+    }
   }
 
   /// A late sign-out request (device unregistration) must not land after
@@ -1350,15 +1367,20 @@ class PushService {
   }
 
   Future<void> register(bool active) async {
-    if (!authenticated || token == null || disposed) return;
+    final generation = _generation;
+    final attempt = _pushAttempt;
+    final registeringToken = token;
+    if (!authenticated || registeringToken == null || disposed) return;
+    final installationId = await installation();
+    if (_pushStale(generation, attempt)) return;
     await dio.post(
       '${config.supabaseUrl}/rest/v1/rpc/futbeat_register_push',
       options: authHeaders,
       data: {
-        'p_installation': await installation(),
+        'p_installation': installationId,
         'p_platform': Platform.isIOS ? 'ios' : 'android',
         'p_transport': 'fcm',
-        'p_token': token,
+        'p_token': registeringToken,
         'p_enabled': active,
       },
     );
@@ -1973,39 +1995,63 @@ class PushService {
   /// the system permission dialog, so only a user action passes it; the
   /// automatic re-enable at startup never asks again.
   Future<void> enable({bool prompt = true}) async {
+    final generation = _generation;
+    final attempt = ++_pushAttempt;
     await _awaitSignOutCleanup();
+    _requireCurrentPush(generation, attempt);
     if (!pushConfigured || !authenticated) {
       throw StateError('Push requires configuration and sign-in');
     }
-    token = await (prompt ? tokens.requestToken() : tokens.currentToken());
-    if (token == null) {
+    final grantedToken = await (prompt
+        ? tokens.requestToken()
+        : tokens.currentToken());
+    _requireCurrentPush(generation, attempt);
+    if (grantedToken == null) {
       throw StateError('Notification permission or device token unavailable');
     }
+    token = grantedToken;
     await register(true);
+    _requireCurrentPush(generation, attempt);
     enabled = true;
     await _persistPushEnabled(true);
+    _requireCurrentPush(generation, attempt);
+    final oldRotation = rotation;
+    rotation = null;
+    await oldRotation?.cancel();
+    _requireCurrentPush(generation, attempt);
+    _listenForTokenRotation(generation, attempt);
+    await _startAccountSync();
+  }
 
-    await rotation?.cancel();
+  void _listenForTokenRotation(int generation, int attempt) {
     rotation = tokens.rotations.listen((value) {
       pending = pending
           .catchError((_) {})
           .then((_) async {
-            if (disposed || !enabled) return;
+            if (_pushStale(generation, attempt) || !enabled) return;
             token = value;
             await register(true);
           })
           .catchError((_) {});
     });
-
-    await _startAccountSync();
   }
 
   Future<void> disable() async {
-    await pending;
-    await register(false);
+    final generation = _generation;
+    final attempt = ++_pushAttempt;
+    final pendingAtIntent = pending;
+    final oldRotation = rotation;
+    rotation = null;
     enabled = false;
-    await rotation?.cancel();
-    await _persistPushEnabled(false);
+    await Future.wait([
+      _persistPushEnabled(false),
+      oldRotation?.cancel() ?? Future<void>.value(),
+    ]);
+    _requireCurrentPush(generation, attempt);
+    await pendingAtIntent;
+    _requireCurrentPush(generation, attempt);
+    await register(false);
+    _requireCurrentPush(generation, attempt);
   }
 
   /// Always ends the local session immediately, even offline. Device
