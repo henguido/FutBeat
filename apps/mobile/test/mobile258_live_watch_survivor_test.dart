@@ -28,7 +28,20 @@ void main() {
             liveRow(id, updatedAt: DateTime.now().toUtc()),
           ]);
           await server.start();
+          var completedReads = 0;
           final dio = Dio();
+          dio.interceptors.add(
+            InterceptorsWrapper(
+              onResponse: (response, handler) {
+                if (response.requestOptions.uri.path.endsWith(
+                  '/live_match_updates',
+                )) {
+                  completedReads++;
+                }
+                handler.next(response);
+              },
+            ),
+          );
           final client = LiveRealtimeClient(
             LiveRealtimeConfig(
               supabaseUrl: server.url,
@@ -44,8 +57,14 @@ void main() {
           ];
           try {
             await _until(
-              () => server.joins.length == 2 && server.restRequests.length >= 4,
+              () =>
+                  server.joins.length == 2 &&
+                  completedReads >= 4 &&
+                  completedReads == server.restRequests.length,
             );
+            // Server request arrival is not client bootstrap completion.
+            // Drain the response continuations before testing a new refresh.
+            await Future<void>.delayed(Duration.zero);
             await subscriptions[cancelledIndex].cancel();
             await _until(
               () =>
