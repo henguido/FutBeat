@@ -1,4 +1,4 @@
-# Matriz única de defectos y requisitos — MOBILE259
+# Matriz única de defectos y requisitos — MOBILE260
 
 Corte local 03-nov-2026. Fuente GitHub consultada en modo de solo lectura:43 issues,20 abiertos. Esta matriz reúne el backlog sin cerrar issues remotos ni reemplazar la aceptación del roadmap. **RESUELTO LOCAL** requiere regresión que falló antes y pasó después; no equivale a aceptación física o distribución. Filas históricas se conservan como referencia fechada, nunca como health actual.
 
@@ -149,3 +149,46 @@ Validación integrada final:1643/1643 FlutterPASS, goldens incluidos; analyze li
 ## MOBILE260 — evidencia local en curso
 
 Ver FUTBEAT-MOBILE-260-PROGRESS.md y ledger local. Correcciones vinculadas a A02/A03/A07/A09, S03/S05/S06/S07 y M02–M10; ninguna aceptación física ni issue remoto se marca DONE. Suite global1730/1730 PASS (31ecbb7), goldens incluidos; analyze limpio tras llaves de estilo en02651d1. Evidencia anterior y fallos conservados.
+
+## Parches MOBILE260 revisados e integrados
+
+No representan issues nuevos ni cierres GitHub. Esta tabla registra unidades de corrección/integración; el cambio CI es soporte R09, no un bug funcional. Pruebas antes/después detalladas en los archivos mobile260_* y logs locales.
+
+| Unidad / requisito | Corrección | Estado | Commit integrado | Evidencia |
+|---|---|---|---|---|
+| D260-I01 / M01/M02 | fix(feed): complete bounded favorite disk warm batches | INTEGRADO LOCAL; aceptación pendiente | `3e7f30ee` | patch-id exacto `e088b0d42a9c`; suite1730PASS (31ecbb7) |
+| D260-I02 / M04/M09 | fix(match): resolve dismissal minutes by canonical identity | INTEGRADO LOCAL; aceptación pendiente | `c3332dbb` | patch-id exacto `19f20d73c3b8`; suite1730PASS (31ecbb7) |
+| D260-I03 / M04 | fix(match): retain canonical penalty goals in summaries | INTEGRADO LOCAL; aceptación pendiente | `a2bfec6c` | patch-id exacto `be4ce0a53fc9`; suite1730PASS (31ecbb7) |
+| D260-I04 / S03/S05 | fix(live): fence deleted versions against stale replay | INTEGRADO LOCAL; aceptación pendiente | `519079b9` | patch-id exacto `bd94e7cebe67`; suite1730PASS (31ecbb7) |
+| D260-I05 / S07 | fix(live): preserve freshness across bootstrap pagination | INTEGRADO LOCAL; aceptación pendiente | `1e9dd425` | patch-id exacto `ffc88d39e571`; suite1730PASS (31ecbb7) |
+| D260-I06 / M02/S06 | fix(feed): retain followed teams through explicit redirects | INTEGRADO LOCAL; aceptación pendiente | `433c9cea` | patch-id exacto `f45a6f609372`; suite1730PASS (31ecbb7) |
+| D260-I07 / S06 | fix(feed): deduplicate explicit redirected fixture identities | INTEGRADO LOCAL; aceptación pendiente | `d92aacfd` | patch-id exacto `38a066c5c2b1`; suite1730PASS (31ecbb7) |
+| D260-I08 / M02/M03 | fix(feed): warm canonical followed fixtures from disk | INTEGRADO LOCAL; aceptación pendiente | `543c5570` | patch-id exacto `f47da5b54bd3`; suite1730PASS (31ecbb7) |
+| D260-I09 / M01/S06 | fix(feed): preserve redirected competition groups | INTEGRADO LOCAL; aceptación pendiente | `f15ef4c5` | patch-id exacto `5b3e7139b710`; suite1730PASS (31ecbb7) |
+| D260-I10 / M02/A07 | fix(feed): preserve canonical competition pin order | INTEGRADO LOCAL; aceptación pendiente | `41de2389` | patch-id exacto `2329db153858`; suite1730PASS (31ecbb7) |
+| D260-I11 / M04 | fix(match): retain explicit own-goal attribution | INTEGRADO LOCAL; aceptación pendiente | `3b7625dd` | patch-id exacto `8c764928d52f`; suite1730PASS (31ecbb7) |
+| D260-I12 / M09/#217/#222 | fix(profile): preserve canonical player match activity | INTEGRADO LOCAL; aceptación pendiente | `35f8dbe0` | patch-id exacto `8f6243fa3787`; suite1730PASS (31ecbb7) |
+| D260-I13 / M08/#221 | fix(profile): retain standings through team redirects | INTEGRADO LOCAL; aceptación pendiente | `77a65af3` | patch-id exacto `6d396a11e07c`; suite1730PASS (31ecbb7) |
+| D260-I14 / M08/#221 | fix(profile): resolve primary competition before table choice | INTEGRADO LOCAL; aceptación pendiente | `ed8df6ce` | patch-id exacto `c755c6c73e73`; suite1730PASS (31ecbb7) |
+| D260-I15 / R09 | ci: allow dependent Android release candidate checks | INTEGRADO LOCAL; aceptación pendiente | `4d247bcd` | patch-id exacto `fb6b52bcfdbb`; suite1730PASS (31ecbb7) |
+| D260-I16 / M07/M10 | fix(images): recover corrupt persistent entity images | INTEGRADO LOCAL; aceptación pendiente | `42d4d35f` | patch-id exacto `0d20a29a394f`; suite1730PASS (31ecbb7) |
+| D260-I17 / M07/M10 | fix(images): preserve newer repaired cache file versions | INTEGRADO LOCAL; aceptación pendiente | `5d7e3d7b` | patch-id exacto `5e76910161cc`; suite1730PASS (31ecbb7) |
+| D260-I18 / N08/A07 | fix(alerts): finish saves safely after route closes | INTEGRADO LOCAL; aceptación pendiente | `bd911849` | patch-id exacto `d3050049b8ec`; suite1730PASS (31ecbb7) |
+| D260-I19 / N08/A07 | fix(alerts): ignore obsolete preference recovery reads | INTEGRADO LOCAL; aceptación pendiente | `1b7f0b53` | patch-id exacto `de2c28e7140d`; suite1730PASS (31ecbb7) |
+| D260-I20 / A02/A07 | fix(onboarding): order progress persistence and completion | INTEGRADO LOCAL; aceptación pendiente | `577bf25c` | patch-id exacto `1725fcbf1969`; suite1730PASS (31ecbb7) |
+| D260-I21 / A03 | fix(onboarding): recover country selection after local errors | INTEGRADO LOCAL; aceptación pendiente | `3d7a4f29` | patch-id exacto `792c8eacbf9c`; suite1730PASS (31ecbb7) |
+| D260-I22 / A07/A09 | fix(account): wait for stored settings before name changes | INTEGRADO LOCAL; aceptación pendiente | `b18b101b` | patch-id exacto `cc12a2750adb`; suite1730PASS (31ecbb7) |
+| D260-I23 / A07 | fix(preferences): atomically preserve concurrent preference edits | INTEGRADO LOCAL; aceptación pendiente | `0ba2b182` | patch-id exacto `def345e29dfe`; suite1730PASS (31ecbb7) |
+| D260-I24 / M04 | fix(live): filter foreign events before replacing retained IDs | INTEGRADO LOCAL; aceptación pendiente | `816498e7` | patch-id exacto `bb653fc775ee`; suite1730PASS (31ecbb7) |
+| D260-I25 / S07 | fix(live): preserve newer identical-version observations | INTEGRADO LOCAL; aceptación pendiente | `31ecbb7c` | patch-id exacto `bca6aaf3fa50`; suite1730PASS (31ecbb7) |
+
+Correcciones raíz adicionales: f3720b66/16a56ad0/6dfdec2b (perfil y ACK),6f661a7d (país),2e092e14/f45894df/ea9bebc (cuenta/push),04a0d0f (identidad de contexto). Todas conservan aceptación externa pendiente. Los ajustes f66feff y02651d1 son del harness/estilo, no defectos adicionales de producto.
+
+## Correcciones raíz posteriores
+
+| Unidad / requisito | Defecto | Estado | Commit | Evidencia |
+|---|---|---|---|---|
+| D260-R09 / A07 | ACK tardío de país borra marcador de un cambio posterior | RESUELTO LOCAL | e44257e | 1FAIL antes;102focalesPASS; aceptación física pendiente |
+| D260-R10 / N08/A09 | Register true tardío o error de delete revierte disable | RESUELTO LOCAL | 6303b0f | 2FAIL antes;144focalesPASS; FCM real no probado |
+
+Corte E260:1737PASS/goldens y analyze limpio sobre8ce170d;20issues abiertos (2P0release,10P1,8P2),0cierres remotos. Los fixes locales no acreditan datos productivos ni QA física.
