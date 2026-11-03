@@ -525,6 +525,7 @@ class _LocalSignOutContext {
   final Options? headers;
   final String? deviceToken;
   bool deleteRequired;
+  bool serverCleanupStarted = false;
 }
 
 class PushService {
@@ -2256,11 +2257,20 @@ class PushService {
     _authenticationAttempt++;
     final active = _localSignOutPending;
     if (active != null && !_localSignOutFailed) {
-      _localSignOutContext!.deleteRequired = true;
+      final context = _localSignOutContext!;
+      context.deleteRequired = true;
+      _startServerSignOut(context);
       return active;
     }
     final local = _clearLocalSession(cancelAuthentication: false);
     final context = _localSignOutContext!;
+    _startServerSignOut(context);
+    await local;
+  }
+
+  void _startServerSignOut(_LocalSignOutContext context) {
+    if (context.serverCleanupStarted) return;
+    context.serverCleanupStarted = true;
     final headers = context.headers;
     if (headers != null) {
       final cancel = CancelToken();
@@ -2271,7 +2281,6 @@ class PushService {
         cancel,
       ).catchError((_) {}).whenComplete(timer.cancel);
     }
-    await local;
   }
 
   /// Revokes only this session (scope=local), never the refresh tokens of
