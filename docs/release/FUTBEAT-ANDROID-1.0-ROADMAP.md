@@ -60,7 +60,7 @@ Cada fila permanece abierta hasta reunir su aceptación concreta. Las referencia
 | S03 | Actualización de marcador | P0 | IN PROGRESS | E1; correcciones y revisiones probadas localmente | Codex | S02 | Un cambio real llega sin recarga ni duplicación | 57b9851b | INTERNAL |
 | S04 | Final termina LIVE | P0 | IN PROGRESS | E1; estados terminales locales | Codex + Claude | S02 | Final canónico cancela seguimiento y persiste tras reabrir | 57b9851b | INTERNAL |
 | S05 | Correcciones de goles | P1 | IN PROGRESS | E1; fixtures de revisiones y marcador | Codex | S02 | Anulación y corrección convergen al estado canónico sin sumar doble | 57b9851b | INTERNAL |
-| S06 | Feed sin partidos duplicados | P0 | IN PROGRESS | E1; feed/identidad local | Codex | S01 | Mismo ID aparece una vez por grupo; favorito también permanece en liga | abc3b671 | INTERNAL |
+| S06 | Feed sin partidos duplicados | P0 | IN PROGRESS | E258:82 tests feed PASS; usuario confirma Favoritos y liga; dedupe por sección | Codex | S01 | Mismo ID aparece una vez por grupo; favorito también permanece en liga | abc3b671,fe31e1b9 | INTERNAL |
 | S07 | Datos antiguos identificados | P0 | IN PROGRESS | E1; avisos frescura y LIVE sin timestamp | Codex | S01/S02 | Offline/stale no se presenta como observación actual | 57b9851b | INTERNAL |
 | S08 | Error temporal sin crash | P0 | IN PROGRESS | E1/E2; errores terminales y503, caché preservada | Codex | R08 | Corte y503 mantienen pantalla recuperable y datos guardados | ec16b80d | INTERNAL |
 | S09 | Cobertura Costa Rica validada | P0 | BLOCKED | E7 fechado; no es health actual | Claude | R10 | IDs de competiciones/fechas CR y cobertura parcial explicitados | handoff244 | INTERNAL |
@@ -214,3 +214,18 @@ APK+36: SHA,paquete/code36,firmaDEBUG ycuatroELF verificados nuevamente; conserv
 PrecheckA32 02-nov16:00UTC: ACKADB,SM-A325M/RF8R32GQWGL/SDK33,PIDQAausente; modoavión=0. STOPantes de red/READY/apertura. No cambia conectividad, controladores ni apps. La red activa no se presume: falta acreditar aislamientooffline. Supabase/GOAL no consultados.
 
 Siguiente acción: autorización de publicación dePRdependiente conCIpreparado y aceptaciónoffline bajoaislamiento+READY. Después congelarconfiguración/firma/SHA y generaruna únicaRC. La automatización agotada no se reinicia; esta sesión es manual.
+
+
+## MOBILE258 — evidencia local consolidada (03-nov-2026)
+
+Rama aislada `codex/mobile-258-integration`, base exacta `07a54b2566d90d978c80c985a3708868a551127d`. PR243/base conserva su CI Linux; no es CI del nuevo HEAD. Integraciones mediante parches revisados, ascendencia y patch-id equivalentes, sin merge/cherry-pick. Ledger: `artifacts/mobile258/integration/ledger.json`.
+
+- **S06 / #220**: el propietario confirmó Favoritos **y también su liga**. `fe31e1b9` conserva todos los partidos en liga, un grupo Favoritos y una aparición canónica por sección. Regresión nueva falla antes de la corrección; después 82/82 tests del feed PASS. Sin nuevas solicitudes de precarga y sin cambiar referencias golden.
+- **A09**: respuestas de autenticación/recuperación/restauración obsoletas descartadas; formularios no duplican envío; escrituras y borrados del token mantienen orden. 253 pruebas focales del agente PASS con almacenamiento/control de red simulado; OAuth/correo real NOT VERIFIED.
+- **A03/A07/M02**: guardar orden de competiciones solo escribe los campos editados; no revierte país/modo recientes. Favoritos vacíos liberan su scope LIVE, preservando scopes de otras pantallas.
+- **S02/M03**: dispose y cierre de un watch LIVE liberan sus recursos sin quitar las funciones de pausa/refresh de otros watches. 63 pruebas relacionadas PASS. No observación de Realtime productivo.
+- **M03/M08**: cambio del ID de Match Center reinicia recuperación local; Tabla completa conserva temporada/fase/snapshot sin GET adicional; intereses pendientes no usan WidgetRef desmontado.
+
+Esto es evidencia de código y pruebas locales, **no aceptación física ni DONE** de los requisitos. No se usó teléfono, Supabase, proveedores ni credenciales de producción. RC sigue NO-GO por certificado upload/configuración y aceptación del artefacto exacto pendientes. El versionCode5 continúa como propuesta sin aplicar.
+
+Validación final MOBILE258: **1625/1625PASS**, suite completa con goldens103s; analyze limpio12,8s. Evidencia: `artifacts/mobile258/flutter-full-final.log`, `analyze-final.log` y `FUTBEAT-MOBILE-258-FINAL.md`. CI remoto del nuevo HEAD y aceptación física siguen pendientes.
