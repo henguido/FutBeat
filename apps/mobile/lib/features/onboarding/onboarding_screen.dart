@@ -565,26 +565,39 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Future<void> _selectCountry(String? value) async {
     if (countryBusy) return;
-    setState(() => countryBusy = true);
+    setState(() {
+      countryBusy = true;
+      message = null;
+    });
     // Capture provider-owned objects before the first await. The route can be
     // dismissed while Drift is saving, after which WidgetRef is no longer safe.
     final database = ref.read(databaseProvider);
     final service = ref.read(pushServiceProvider);
-    await database.saveSelectedCountry(value);
-    final current = await database.watchPreference().first;
-    await service.markSelectedCountryDirty();
-    if (service.authenticated) {
-      try {
-        await service.syncCountries(
-          current.detectedCountry,
-          value,
-          updateDetected: false,
-        );
-      } catch (_) {
-        // Drift remains authoritative offline; the normal reconcile can retry.
+    try {
+      await database.saveSelectedCountry(value);
+      final current = await database.watchPreference().first;
+      await service.markSelectedCountryDirty();
+      if (service.authenticated) {
+        try {
+          await service.syncCountries(
+            current.detectedCountry,
+            value,
+            updateDetected: false,
+          );
+        } catch (_) {
+          // Drift remains authoritative offline; normal reconciliation retries.
+        }
       }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          message =
+              'No pudimos completar el cambio de país. Inténtalo nuevamente.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => countryBusy = false);
     }
-    if (mounted) setState(() => countryBusy = false);
   }
 
   /// Sign in / create the account in place: the onboarding stays on the
