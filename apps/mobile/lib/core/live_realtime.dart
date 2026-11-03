@@ -340,6 +340,7 @@ class LiveRealtimeClient {
   );
   Future<void> Function()? _refreshActiveScope;
   void Function(bool)? _setActiveScope;
+  final Set<void Function()> _closeWatches = {};
   bool _appActive = true;
 
   /// Pause sport traffic while the app is not visible. Resume only the
@@ -395,6 +396,12 @@ class LiveRealtimeClient {
   }
 
   void dispose() {
+    if (_scopeChanges.isClosed) return;
+    _appActive = false;
+    for (final close in List<void Function()>.of(_closeWatches)) {
+      close();
+    }
+    _closeWatches.clear();
     _refreshActiveScope = null;
     _setActiveScope = null;
     _scopes.clear();
@@ -421,6 +428,28 @@ class LiveRealtimeClient {
     DateTime? lastBootstrap;
     // Server minus device clock, from the last answer's `Date`.
     var serverOffset = Duration.zero;
+    late void Function() closeWatch;
+
+    Future<void> stopWatch() async {
+      if (disposed) return;
+      disposed = true;
+      _closeWatches.remove(closeWatch);
+      _refreshActiveScope = null;
+      _setActiveScope = null;
+      bootstrapToken?.cancel('LIVE listener closed');
+      retry?.cancel();
+      scopeDebounce?.cancel();
+      heartbeat?.cancel();
+      refresh?.cancel();
+      joinTimeout?.cancel();
+      await scopeSubscription?.cancel();
+      await socket?.close();
+    }
+
+    closeWatch = () {
+      unawaited(stopWatch());
+      unawaited(controller.close());
+    };
 
     void emit() {
       if (!disposed) {
@@ -681,11 +710,12 @@ class LiveRealtimeClient {
     };
     controller = StreamController<Map<String, LiveMatchUpdate>>(
       onListen: () {
-        if (!config.isConfigured) {
+        if (!config.isConfigured || _scopeChanges.isClosed) {
           emit();
           unawaited(controller.close());
           return;
         }
+        _closeWatches.add(closeWatch);
         _refreshActiveScope = () async {
           if (disposed ||
               !_appActive ||
@@ -750,19 +780,7 @@ class LiveRealtimeClient {
           unawaited(bootstrap());
         });
       },
-      onCancel: () async {
-        disposed = true;
-        _refreshActiveScope = null;
-        _setActiveScope = null;
-        bootstrapToken?.cancel('LIVE listener closed');
-        retry?.cancel();
-        scopeDebounce?.cancel();
-        await scopeSubscription?.cancel();
-        heartbeat?.cancel();
-        refresh?.cancel();
-        joinTimeout?.cancel();
-        await socket?.close();
-      },
+      onCancel: stopWatch,
     );
     return controller.stream;
   }
