@@ -748,6 +748,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     );
     // Every player entry point opens the same local sheet (#99).
     return MatchPlayerScope(
+      data: data,
       detail: detail,
       home: home,
       away: away,
@@ -2918,14 +2919,20 @@ class _HeaderScorers extends StatelessWidget {
 
 /// Timeline taps reuse a known lineup row and the same local panel as pitch
 /// and bench. Only explicit canonical IDs qualify; homonyms never participate.
+String _matchPlayerCanonicalId(Json player, Snapshot? data) {
+  final id = player['canonicalId']?.toString().trim() ?? '';
+  if (id.isEmpty || data == null) return id;
+  return _timelinePlayerId({'canonicalPlayerId': id}, data) ?? id;
+}
+
 Future<void> _openTimelinePlayer(BuildContext context, String canonicalId) async {
   final scope = MatchPlayerScope.maybeOf(context);
   if (scope != null) {
     final matches = <({Json player, String side})>[
       for (final player in [...scope.detail.homeStarters, ...scope.detail.homeSubstitutes])
-        if (player['canonicalId'] == canonicalId) (player: player, side: 'home'),
+        if (_matchPlayerCanonicalId(player, scope.data) == canonicalId) (player: player, side: 'home'),
       for (final player in [...scope.detail.awayStarters, ...scope.detail.awaySubstitutes])
-        if (player['canonicalId'] == canonicalId) (player: player, side: 'away'),
+        if (_matchPlayerCanonicalId(player, scope.data) == canonicalId) (player: player, side: 'away'),
     ];
     if (matches.length == 1) {
       await showMatchPlayerSheet(context, matches.single.player, matches.single.side);
@@ -4992,10 +4999,12 @@ class MatchPlayerScope extends InheritedWidget {
     required this.home,
     required this.away,
     required super.child,
+    this.data,
     super.key,
   });
 
   final MatchDetail detail;
+  final Snapshot? data;
   final Entity home;
   final Entity away;
 
@@ -5005,6 +5014,7 @@ class MatchPlayerScope extends InheritedWidget {
   @override
   bool updateShouldNotify(MatchPlayerScope oldWidget) =>
       detail != oldWidget.detail ||
+      data != oldWidget.data ||
       home != oldWidget.home ||
       away != oldWidget.away;
 }
@@ -5246,7 +5256,7 @@ Future<void> showMatchPlayerSheet(
       : playerMinutesPlayed(player, scope.detail, side);
   final summary = playerMatchSummary(player, events, minutes: minutes);
   final statSections = playerMatchStatSections(player);
-  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  final canonicalId = _matchPlayerCanonicalId(player, scope?.data);
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
