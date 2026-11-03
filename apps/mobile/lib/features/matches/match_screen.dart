@@ -3773,6 +3773,25 @@ class LineupPlayerEvent {
   final String? role;
 }
 
+bool _matchesLineupPlayerIdentity(
+  Json player,
+  Json evidence,
+  String providerKey, [
+  String? canonicalKey,
+]) {
+  final id = player['id']?.toString().trim() ?? '';
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  final canonical = canonicalKey == null
+      ? ''
+      : evidence[canonicalKey]?.toString().trim() ?? '';
+  // Canonical evidence wins over a colliding provider ID. Names and provider
+  // numbers never establish a canonical relationship.
+  if (canonical.isNotEmpty && canonicalId.isNotEmpty) {
+    return canonical == canonicalId;
+  }
+  return id.isNotEmpty && evidence[providerKey]?.toString() == id;
+}
+
 List<LineupPlayerEvent> lineupEventsForPlayer(
   Json player,
   List<Json> incidents,
@@ -3781,17 +3800,8 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
   final id = player['id']?.toString().trim() ?? '';
   final canonicalId = player['canonicalId']?.toString().trim() ?? '';
   if (id.isEmpty && canonicalId.isEmpty) return const [];
-  bool matches(Json incident, String providerKey, [String? canonicalKey]) {
-    final canonical = canonicalKey == null
-        ? ''
-        : incident[canonicalKey]?.toString().trim() ?? '';
-    // Explicit canonical evidence takes precedence. Never compare a provider
-    // number/name with a canonical ID, or override a conflicting canonical ID.
-    if (canonical.isNotEmpty && canonicalId.isNotEmpty) {
-      return canonical == canonicalId;
-    }
-    return id.isNotEmpty && incident[providerKey]?.toString() == id;
-  }
+  bool matches(Json incident, String providerKey, [String? canonicalKey]) =>
+      _matchesLineupPlayerIdentity(player, incident, providerKey, canonicalKey);
   final result = <LineupPlayerEvent>[];
   for (final incident in incidents) {
     final incidentSide =
@@ -5077,9 +5087,10 @@ PlayerMatchSummary playerMatchSummary(
 /// sub-out minutes, exit before entry) also returns null.
 int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
   final id = player['id']?.toString().trim() ?? '';
-  if (id.isEmpty) return null;
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  if (id.isEmpty && canonicalId.isEmpty) return null;
   bool listed(List<Json> players) =>
-      players.any((p) => p['id']?.toString().trim() == id);
+      players.any((p) => _matchesLineupPlayerIdentity(player, p, 'id', 'canonicalId'));
   final starter = listed(
     side == 'home' ? detail.homeStarters : detail.awayStarters,
   );
@@ -5097,11 +5108,15 @@ int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
     if (minute is! int || minute < 0) continue;
     final type = incident['type']?.toString();
     if (type == 'SUBSTITUTION') {
-      if (incident['inPlayerId']?.toString() == id) subIn.add(minute);
-      if (incident['outPlayerId']?.toString() == id) subOut.add(minute);
+      if (_matchesLineupPlayerIdentity(player, incident, 'inPlayerId')) {
+        subIn.add(minute);
+      }
+      if (_matchesLineupPlayerIdentity(player, incident, 'outPlayerId')) {
+        subOut.add(minute);
+      }
     } else if (const {'RED_CARD', 'SECOND_YELLOW_CARD', 'YELLOW_RED_CARD'}
             .contains(type) &&
-        incident['playerId']?.toString() == id) {
+        _matchesLineupPlayerIdentity(player, incident, 'playerId', 'canonicalPlayerId')) {
       red.add(minute);
     }
   }
