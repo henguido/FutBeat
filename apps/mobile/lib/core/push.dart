@@ -2039,26 +2039,37 @@ class PushService {
     if (!accountConfigured || !authenticated) {
       throw StateError('Authentication required');
     }
+    final generation = _generation;
+    final deletedUser = userId;
+    final pendingAtIntent = pending;
     final wasEnabled = enabled;
-    await rotation?.cancel();
-    await follows?.cancel();
+    final oldRotation = rotation;
+    final oldFollows = follows;
     renewal?.cancel();
     rotation = null;
     follows = null;
     renewal = null;
-    await pending.catchError((_) {});
+    await oldRotation?.cancel();
+    await oldFollows?.cancel();
+    await pendingAtIntent.catchError((_) {});
+    if (_stale(generation)) {
+      throw StateError('Account changed during deletion');
+    }
     try {
       final response = await dio.post<Map<String, dynamic>>(
         '${config.supabaseUrl}/functions/v1/futbeat-delete-account',
         options: authHeaders,
       );
+      if (_stale(generation)) {
+        throw StateError('Account changed during deletion');
+      }
       if (response.data?['deleted'] != true) {
         throw StateError('Account deletion was not confirmed');
       }
     } catch (_) {
-      if (authenticated && !disposed) {
+      if (!_stale(generation) && authenticated) {
         await _startAccountSync();
-        if (wasEnabled) {
+        if (!_stale(generation) && wasEnabled) {
           enabled = true;
           rotation = tokens.rotations.listen((value) {
             pending = pending
@@ -2075,8 +2086,7 @@ class PushService {
       rethrow;
     }
 
-    final deletedUser = userId;
-    _generation++;
+    final cleanupGeneration = ++_generation;
     enabled = false;
     token = null;
     session = null;
@@ -2086,14 +2096,20 @@ class PushService {
     pending = Future.value();
     countryPending = Future.value();
     await _deletePersistedSession();
+    if (_stale(cleanupGeneration)) return;
     // Leftover follows are guest data now: the next sign-in unions them.
     await storage.delete(key: lastUserKey);
+    if (_stale(cleanupGeneration)) return;
     await storage.delete(key: leftoverKey);
+    if (_stale(cleanupGeneration)) return;
     if (deletedUser != null) {
       await storage.delete(key: pushedKey(deletedUser));
+      if (_stale(cleanupGeneration)) return;
       await storage.delete(key: linkedFlagKey(deletedUser));
+      if (_stale(cleanupGeneration)) return;
     }
     await storage.write(key: 'futbeat.push.enabled', value: 'false');
+    if (_stale(cleanupGeneration)) return;
     await _writeLocalProfile(const UserProfileSettings(), dirty: false);
   }
 
