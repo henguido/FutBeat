@@ -144,3 +144,8 @@ Corte local 03-nov-2026. Fuente GitHub consultada en modo de solo lectura:43 iss
 
 
 Validación integrada final:1643/1643 FlutterPASS, goldens incluidos; analyze limpio.8regresiones raíz posteriores PASS. Los sieteD259 están resueltos localmente; no se cerraron issues ni requisitos de aceptación física.
+
+
+## MOBILE260 — evidencia local en curso
+
+Ver FUTBEAT-MOBILE-260-PROGRESS.md y ledger local. Correcciones vinculadas a A02/A03/A07/A09, S03/S05/S06/S07 y M02–M10; ninguna aceptación física ni issue remoto se marca DONE. Suite global1730/1730 PASS (31ecbb7), goldens incluidos; analyze limpio tras llaves de estilo en02651d1. Evidencia anterior y fallos conservados.

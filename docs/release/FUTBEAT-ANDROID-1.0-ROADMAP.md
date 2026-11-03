@@ -244,3 +244,8 @@ Base455c9094 en `codex/mobile-259-integration`. Matriz única de defectos e issu
 Evidencia focal local:85regresiones raíz,61Match Center,55LIVE y12preferencias PASS (bloques solapados, no sumarlos como suite única). Suite final/analyze se registran en `FUTBEAT-MOBILE-259-CLOSURE.md`. No se acredita aceptación física, OAuth real, entregaFCM, contrato desplegado ni binario RC. FCM no se activó; firma/versión/configuración oficiales siguen pendientes de verificación y aprobación.
 
 Validación MOBILE259 final:1643PASS/goldens113s; analyze limpio;8regresiones raíz PASS tras ajustes solo de tests. ReferenciasPNG intactas. Informe: `FUTBEAT-MOBILE-259-CLOSURE.md`. No CI remoto/QA física ni nuevos builds.
+
+
+## MOBILE260 — evidencia local en curso
+
+Ver FUTBEAT-MOBILE-260-PROGRESS.md y ledger local. Correcciones vinculadas a A02/A03/A07/A09, S03/S05/S06/S07 y M02–M10; ninguna aceptación física ni issue remoto se marca DONE. Suite global1730/1730 PASS (31ecbb7), goldens incluidos; analyze limpio tras llaves de estilo en02651d1. Evidencia anterior y fallos conservados.
