@@ -20,6 +20,23 @@ bool _predatesLiveDeletion(LiveMatchUpdate update, Json deleted) {
       update.revision <= revision;
 }
 
+// Content revision and provider observation are separate clocks. Replays of
+// unchanged content must not regress the latest confirmed observation.
+bool _olderLiveObservation(LiveMatchUpdate update, LiveMatchUpdate previous) {
+  if (update.provider != previous.provider ||
+      update.revision != previous.revision ||
+      !update.changedAt.isAtSameMomentAs(previous.changedAt)) {
+    return false;
+  }
+  final incoming = update.observedAt ?? update.changedAt;
+  final existing = previous.observedAt ?? previous.changedAt;
+  if (incoming.isBefore(existing)) return true;
+  return incoming.isAtSameMomentAs(existing) &&
+      update.receivedAt != null &&
+      previous.receivedAt != null &&
+      update.receivedAt!.isBefore(previous.receivedAt!);
+}
+
 /// [serverNow] is the REST response's server time (HTTP `Date`) and
 /// [deviceNow] the device time it arrived; together they give every row a
 /// skew-free receipt time (#120: an old LIVE row never looks fresh).
@@ -83,7 +100,8 @@ Map<String, LiveMatchUpdate> reconcileLiveBootstrapSnapshot(
       if (previous != null &&
           (update.changedAt.isBefore(previous.changedAt) ||
               (update.provider == previous.provider &&
-                  update.revision < previous.revision))) {
+                  update.revision < previous.revision) ||
+              _olderLiveObservation(update, previous))) {
         continue;
       }
       // Same row already received live: keep its (later) local receipt.
@@ -513,7 +531,8 @@ class LiveRealtimeClient {
       if (previous != null &&
           (update.changedAt.isBefore(previous.changedAt) ||
               (update.provider == previous.provider &&
-                  update.revision < previous.revision))) {
+                  update.revision < previous.revision) ||
+              _olderLiveObservation(update, previous))) {
         return;
       }
       state[update.matchId] = update;
