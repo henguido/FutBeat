@@ -18,9 +18,13 @@ import '../../shared/widgets.dart';
 
 /// "Favoritos" is only for matches of a favourite TEAM (never a followed
 /// league, never a single followed match: those only mark the follow).
-bool isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
-    follows.contains('team:${match.homeId}') ||
-    follows.contains('team:${match.awayId}');
+bool isFollowedTeamMatch(
+  FootballMatch match,
+  Set<String> follows, {
+  String Function(String)? resolve,
+}) =>
+    follows.contains('team:${resolve?.call(match.homeId) ?? match.homeId}') ||
+    follows.contains('team:${resolve?.call(match.awayId) ?? match.awayId}');
 
 // Lower is better: finished, live, played evidence, scheduled, called off.
 int _fixtureRank(FootballMatch match) {
@@ -564,7 +568,13 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
 
           final followedGames =
               games
-                  .where((match) => isFollowedTeamMatch(match, follows))
+                  .where(
+                    (match) => isFollowedTeamMatch(
+                      match,
+                      follows,
+                      resolve: data.resolveEntityId,
+                    ),
+                  )
                   .toList()
                 ..sort(compareFeedKickoffs);
           // Favorites highlight canonical fixtures without removing them from
