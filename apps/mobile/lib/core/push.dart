@@ -690,6 +690,7 @@ class PushService {
   int _profileWriteVersion = 0;
   int _countryWriteVersion = 0;
   Future<void>? _restoreFuture;
+  bool _restoreStorageRetryNeeded = false;
 
   /// Bumped on every sign-in, sign-out and local session drop. Any network
   /// result that lands after the generation changed is discarded, so a late
@@ -1174,8 +1175,22 @@ class PushService {
     _recoverySession = null;
   }
 
-  Future<void> restore() =>
-      _restoreFuture ??= _restore().whenComplete(_markAccountKnown);
+  Future<void> restore() {
+    final current = _restoreFuture;
+    if (current != null) return current;
+    _restoreStorageRetryNeeded = false;
+    late final Future<void> operation;
+    operation = _restore().whenComplete(() {
+      _markAccountKnown();
+      // Only a failed platform read is retryable here. A completed guest,
+      // rejected token, logout or successful restoration stays memoized.
+      if (_restoreStorageRetryNeeded && identical(_restoreFuture, operation)) {
+        _restoreFuture = null;
+      }
+    });
+    _restoreFuture = operation;
+    return operation;
+  }
 
   Future<void> _restore() async {
     if (!accountConfigured || disposed) return;
@@ -1190,6 +1205,11 @@ class PushService {
       pendingConfirmationEmail = confirmation;
       saved = await storage.read(key: 'futbeat.push.session');
     } catch (_) {
+      if (!_stale(generation) &&
+          !_authenticationStale(attempt) &&
+          !authenticated) {
+        _restoreStorageRetryNeeded = true;
+      }
       return;
     }
     // A sign-out or newer sign-in intent during either storage read wins.
@@ -1286,7 +1306,10 @@ class PushService {
   /// Refreshes only when the access token is close to expiry and runs the
   /// full reconcile at most every five minutes.
   Future<void> resume() {
-    if (disposed || !authenticated) return Future.value();
+    if (disposed) return Future.value();
+    if (!authenticated) {
+      return _restoreStorageRetryNeeded ? restore() : Future.value();
+    }
     final operation = pending
         .catchError((_) {})
         .then((_) => _accountTick(throttled: true))
