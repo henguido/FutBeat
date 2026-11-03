@@ -689,6 +689,14 @@ class PushService {
   /// refresh can never resurrect a signed-out session.
   int _generation = 0;
 
+  /// An authentication request is an intent, not an accepted account yet.
+  /// Starting another request or signing out invalidates earlier responses
+  /// without interrupting the current account's reconciliation generation.
+  int _authenticationAttempt = 0;
+
+  bool _authenticationStale(int attempt) =>
+      disposed || attempt != _authenticationAttempt;
+
   /// Generation in which the server follows were read and merged into
   /// Drift. Follows are never pushed (a full replace) before that.
   int _mergedGeneration = -1;
@@ -787,12 +795,15 @@ class PushService {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
+    final attempt = ++_authenticationAttempt;
     await _awaitSignOutCleanup();
+    if (_authenticationStale(attempt)) return;
     final result = await dio.post<dynamic>(
       '${config.supabaseUrl}/auth/v1/token?grant_type=password',
       data: {'email': email.trim(), 'password': password},
       options: Options(headers: {'apikey': config.publicKey}),
     );
+    if (_authenticationStale(attempt)) return;
     final next = _validSession(result.data);
     if (next == null) throw _invalidSession(result.requestOptions);
     await _startSession(next);
@@ -859,7 +870,9 @@ class PushService {
     if (!buildOAuthProviders.contains(provider)) {
       throw StateError('Social sign-in is not configured');
     }
+    final attempt = ++_authenticationAttempt;
     await _awaitSignOutCleanup();
+    if (_authenticationStale(attempt)) return;
     final (:verifier, :challenge) = _pkcePair();
     final url = Uri.parse('${config.supabaseUrl}/auth/v1/authorize').replace(
       queryParameters: {
@@ -870,6 +883,7 @@ class PushService {
       },
     );
     final callback = Uri.parse(await oauthBrowser(url, oauthCallbackScheme));
+    if (_authenticationStale(attempt)) return;
     // GoTrue reports failures in the query or, for implicit errors, the
     // fragment.
     final params = _redirectParams(callback);
@@ -885,6 +899,7 @@ class PushService {
       data: {'auth_code': code, 'code_verifier': verifier},
       options: Options(headers: {'apikey': config.publicKey}),
     );
+    if (_authenticationStale(attempt)) return;
     final next = _validSession(result.data);
     if (next == null) throw _invalidSession(result.requestOptions);
     await _startSession(next);
@@ -955,12 +970,15 @@ class PushService {
       throw StateError('Account service is not configured');
     }
     final normalized = email.trim();
+    final attempt = ++_authenticationAttempt;
     await _awaitSignOutCleanup();
+    if (_authenticationStale(attempt)) return;
     final response = await dio.post<dynamic>(
       '${config.supabaseUrl}/auth/v1/signup',
       data: {'email': normalized, 'password': password},
       options: Options(headers: {'apikey': config.publicKey}),
     );
+    if (_authenticationStale(attempt)) return;
     final data = response.data;
     // With "Confirm email" disabled GoTrue returns a full session.
     final next = _validSession(data);
@@ -1081,7 +1099,9 @@ class PushService {
   Future<void> completePasswordRecovery(String newPassword) async {
     final verified = _recoverySession;
     if (verified == null) throw const RecoveryLinkInvalid('no_recovery');
+    final attempt = ++_authenticationAttempt;
     await _awaitSignOutCleanup();
+    if (_authenticationStale(attempt)) return;
     await dio.put<dynamic>(
       '${config.supabaseUrl}/auth/v1/user',
       data: {'password': newPassword},
@@ -1092,6 +1112,7 @@ class PushService {
         },
       ),
     );
+    if (_authenticationStale(attempt)) return;
     _recoverySession = null;
     await _startSession(verified);
   }
@@ -1163,6 +1184,7 @@ class PushService {
   /// touches Drift, so guest follows and preferences survive sign-out.
   Future<void> _clearLocalSession() async {
     final uid = userId;
+    _authenticationAttempt++;
     _generation++;
     renewal?.cancel();
     final oldFollows = follows;

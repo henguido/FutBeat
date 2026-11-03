@@ -213,11 +213,15 @@ class _Http {
       calls.where((c) => c.path.contains(suffix)).length;
   bool called(String suffix) => count(suffix) > 0;
 
-  Future<void> waitFor(String suffix) async {
-    for (var i = 0; i < 200 && !called(suffix); i++) {
+  Future<void> waitFor(String suffix, {int count = 1}) async {
+    for (var i = 0; i < 200 && this.count(suffix) < count; i++) {
       await Future<void>.delayed(Duration.zero);
     }
-    expect(called(suffix), isTrue, reason: 'waiting for $suffix');
+    expect(
+      this.count(suffix),
+      greaterThanOrEqualTo(count),
+      reason: 'waiting for $suffix',
+    );
   }
 }
 
@@ -227,6 +231,7 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
   Set<String> server = const {},
   _Http? http,
   Duration cleanupTimeout = const Duration(seconds: 5),
+  OAuthBrowser? oauthBrowser,
 }) async {
   FlutterSecureStorage.setMockInitialValues(Map.of(storage));
   final db = AppDatabase(NativeDatabase.memory());
@@ -244,6 +249,7 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
     clock: () => fake.now,
     signOutCleanupTimeout: cleanupTimeout,
     oauthEnabled: true,
+    oauthBrowser: oauthBrowser,
     oauthAllowedProviders: const {OAuthProvider.google, OAuthProvider.facebook},
   );
   addTearDown(() async {
@@ -610,6 +616,144 @@ void main() {
         expect(await _read('futbeat.push.session'), isNull);
       },
     );
+  });
+
+  group('authentication intent lifecycle', () {
+    test(
+      'sign out discards an email sign-in response already in flight',
+      () async {
+        final value = await _service(local: {'team:guest'});
+        final gate = value.http.hold('grant_type=password');
+        final signingIn = value.service.signIn(
+          'user@example.com',
+          'password-test',
+        );
+        await value.http.waitFor('grant_type=password');
+
+        await value.service.signOut();
+        gate.complete();
+        await signingIn;
+        await _settle(value.service);
+
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(value.http.called('futbeat_read_user_profile'), isFalse);
+        expect(await value.db.watchFollows().first, {'team:guest'});
+      },
+    );
+
+    test(
+      'the latest sign-in intent wins even when its response is slower',
+      () async {
+        final value = await _service();
+        final first = Completer<void>();
+        final second = Completer<void>();
+        value.http.routes['grant_type=password'] = (options) async {
+          final email = (options.data as Map)['email'];
+          await (email == 'user@example.com' ? first.future : second.future);
+          return value.http.signInRoute(options);
+        };
+        final a = value.service.signIn('user@example.com', 'password-test');
+        await value.http.waitFor('grant_type=password');
+        final b = value.service.signIn('b@example.com', 'password-test');
+        await value.http.waitFor('grant_type=password', count: 2);
+
+        first.complete();
+        await a;
+        final staleResponseAuthenticated = value.service.authenticated;
+        second.complete();
+        await b;
+
+        expect(staleResponseAuthenticated, isFalse);
+        expect(value.service.userId, 'user-b');
+        expect(
+          jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+          'user-b',
+        );
+      },
+    );
+
+    test('an older email sign-in cannot replace the newer account', () async {
+      final value = await _service();
+      final first = Completer<void>();
+      value.http.routes['grant_type=password'] = (options) async {
+        if ((options.data as Map)['email'] == 'user@example.com') {
+          await first.future;
+        }
+        return value.http.signInRoute(options);
+      };
+      final a = value.service.signIn('user@example.com', 'password-test');
+      await value.http.waitFor('grant_type=password');
+      await value.service.signIn('b@example.com', 'password-test');
+      first.complete();
+      await a;
+      expect(value.service.userId, 'user-b');
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
+    test('sign out discards a sign-up session already in flight', () async {
+      final value = await _service();
+      value.http.routes['/auth/v1/signup'] = (_) => value.http.issue('user-a');
+      final gate = value.http.hold('/auth/v1/signup');
+      final signup = value.service.signUp('user@example.com', 'password-test');
+      await value.http.waitFor('/auth/v1/signup');
+      await value.service.signOut();
+      gate.complete();
+      await signup;
+      expect(value.service.authenticated, isFalse);
+      expect(await _read('futbeat.push.session'), isNull);
+    });
+
+    for (final provider in OAuthProvider.values) {
+      test(
+        'sign out during ${provider.id} browser cancels its code exchange',
+        () async {
+          final callback = Completer<String>();
+          final opened = Completer<void>();
+          final value = await _service(
+            oauthBrowser: (_, _) {
+              opened.complete();
+              return callback.future;
+            },
+          );
+          value.http.routes['grant_type=pkce'] = (_) =>
+              value.http.issue('user-a');
+          final signingIn = value.service.signInWithOAuth(provider);
+          await opened.future;
+          await value.service.signOut();
+          callback.complete(
+            'com.futbeat.futbeat://login-callback?code=local-code',
+          );
+          await signingIn;
+          expect(value.service.authenticated, isFalse);
+          expect(value.http.called('grant_type=pkce'), isFalse);
+        },
+      );
+    }
+
+    test('sign out discards password recovery completion in flight', () async {
+      final value = await _service();
+      value.http.routes['/auth/v1/verify'] = (_) => value.http.issue('user-a');
+      value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+      await value.service.beginPasswordRecovery(
+        Uri.parse(
+          'https://futbeat.com/auth/reset?token_hash=local-hash&type=recovery',
+        ),
+      );
+      final gate = value.http.hold('/auth/v1/user');
+      final completing = value.service.completePasswordRecovery(
+        'password-next',
+      );
+      await value.http.waitFor('/auth/v1/user');
+      await value.service.signOut();
+      gate.complete();
+      await completing;
+      expect(value.service.authenticated, isFalse);
+      expect(await _read('futbeat.push.session'), isNull);
+    });
   });
 
   group('restore', () {
