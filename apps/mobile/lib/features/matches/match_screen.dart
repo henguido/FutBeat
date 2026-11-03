@@ -2735,7 +2735,9 @@ class ScorerLine {
 String _heroGoalMinute(Json event) {
   final minute = eventMinuteLabel(event);
   if (event['ownGoal'] == true) return '$minute (a.g.)';
-  if (event['penalty'] == true) return '$minute (p.)';
+  if (event['penalty'] == true || event['type'] == 'PENALTY_GOAL') {
+    return '$minute (p.)';
+  }
   return minute;
 }
 
@@ -2767,7 +2769,7 @@ String _heroGoalMinute(Json event) {
         event['playerId'].toString(): event['canonicalPlayerId'].toString(),
   };
   for (final event in timeline) {
-    if (event['type'] != 'GOAL') continue;
+    if (event['type'] != 'GOAL' && event['type'] != 'PENALTY_GOAL') continue;
     final side = timelineSide(event, match, data);
     if (side == null) continue;
     goals[side]!.add(event);
@@ -4862,7 +4864,7 @@ class _LineupEventIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, color) = switch (event.type) {
-      'GOAL' => (Icons.sports_soccer, Colors.white),
+      'GOAL' || 'PENALTY_GOAL' => (Icons.sports_soccer, Colors.white),
       'OWN_GOAL' => (Icons.sports_soccer, Colors.orangeAccent),
       'ASSIST' => (Icons.assistant_rounded, lime),
       'YELLOW_CARD' => (Icons.square_rounded, Colors.amber),
@@ -5062,7 +5064,7 @@ PlayerMatchSummary playerMatchSummary(
   return PlayerMatchSummary(
     rating: rating is num && rating > 0 ? rating : null,
     minutes: minutes,
-    goals: count('GOAL'),
+    goals: count('GOAL') + count('PENALTY_GOAL'),
     ownGoals: count('OWN_GOAL'),
     assists: count('ASSIST'),
     yellowCards: count('YELLOW_CARD') +
