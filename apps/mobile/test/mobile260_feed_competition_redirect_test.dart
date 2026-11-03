@@ -54,6 +54,53 @@ Snapshot _data(String metadata) => Snapshot({
   ],
 });
 void main() {
+  for (final duplicateAlias in [false, true]) {
+    test(
+      'custom competition pins follow canonical redirects first occurrence duplicate=$duplicateAlias',
+      () {
+        final data = Snapshot({
+          'schemaVersion': 1,
+          'demo': false,
+          'updatedAt': '2026-11-03T18:00:00Z',
+          'entityRedirects': {'fb_comp_old_a': 'fb_comp_a'},
+          'competitions': [
+            {'id': 'fb_comp_a', 'name': 'League A'},
+            {'id': 'fb_comp_b', 'name': 'League B'},
+          ],
+          'teams': [
+            {'id': 'fb_team_a', 'name': 'Team A'},
+            {'id': 'fb_team_b', 'name': 'Team B'},
+          ],
+          'players': [],
+          'standings': [],
+          'matches': [
+            for (final id in ['a', 'b'])
+              {
+                'id': 'fb_match_$id',
+                'competitionId': 'fb_comp_$id',
+                'homeTeamId': 'fb_team_a',
+                'awayTeamId': 'fb_team_b',
+                'startTime': '2026-11-03T18:00:00Z',
+                'status': 'VERIFIED',
+                'score': {'home': 1, 'away': 0},
+              },
+          ],
+        });
+        final groups = orderMatchCompetitions(
+          data: data,
+          matches: data.matches,
+          follows: {'competition:fb_comp_a', 'competition:fb_comp_b'},
+          orderMode: CompetitionOrderMode.personalized,
+          pinnedCompetitionIds: [
+            'fb_comp_old_a',
+            'fb_comp_b',
+            if (duplicateAlias) 'fb_comp_a',
+          ],
+        );
+        expect(groups.map((c) => c.id), ['fb_comp_a', 'fb_comp_b']);
+      },
+    );
+  }
   for (final metadata in ['canonical', 'both', 'aliases']) {
     test(
       'canonical competition ordering retains redirected fixtures metadata=$metadata',

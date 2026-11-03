@@ -276,12 +276,16 @@ List<Entity> orderMatchCompetitions({
   final userCountry = selectedCountry ?? detectedCountry;
   final custom = orderMode == CompetitionOrderMode.personalized;
   // A stale pin (no longer followed) never reorders anything.
-  final pins = {
-    if (custom)
-      for (var i = 0; i < pinnedCompetitionIds.length; i++)
-        if (follows.contains('competition:${pinnedCompetitionIds[i]}'))
-          pinnedCompetitionIds[i]: i,
-  };
+  final pins = <String, int>{};
+  if (custom) {
+    for (var i = 0; i < pinnedCompetitionIds.length; i++) {
+      final id = data.resolveEntityId(pinnedCompetitionIds[i]);
+      if (follows.contains('competition:$id')) {
+        // Keep the first saved position when alias and canonical IDs coexist.
+        pins.putIfAbsent(id, () => i);
+      }
+    }
+  }
   return sortCompetitionsByFeedPriority(
     visible,
     follows: follows,
