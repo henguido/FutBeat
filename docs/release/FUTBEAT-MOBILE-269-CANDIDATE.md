@@ -13,7 +13,6 @@ MOBILE261 f020f434, efdb4c97, 01fc21ff y ff77b9d se omiten por equivalencia de p
 | A09 | Reabrir manualmente el mismo enlace tras un fallo transitorio de verificación. | 7929dfef → 9408ed6b | 98 PASS |
 | S01/S07 | Reintentar revalida solo la fecha seleccionada, aunque el calendario parcial siga vigente en caché. | bcd1172c → 2971be1d | 31 PASS |
 | M03 | Una actualización incompleta conserva el último contexto válido del mismo partido y lo muestra como guardado. | c36d0bc0 → 88a47254 | 43 PASS |
-
 | A03/A07 | Volver a elegir el país ya guardado completa el marcador de sincronización que falló. | a7e9bc6a → fd0c3b2b | 75 PASS |
 
 Las cuatro regresiones fallaron antes del arreglo. Los análisis focales quedaron limpios. La revisión de recuperación/calendario confirmó que se conservan deduplicación, cancelación y presupuesto existentes. Las pruebas de HTTP usan fixtures locales.
@@ -27,3 +26,11 @@ Las cuatro regresiones fallaron antes del arreglo. Los análisis focales quedaro
 - R08/R10: el manifiesto fuente declara INTERNET y POST_NOTIFICATIONS; exporta MainActivity y el callback OAuth. processReleaseMainManifest offline pasó; minSdk 24, targetSdk 36, permiso interno DYNAMIC_RECEIVER_NOT_EXPORTED y ProfileInstallReceiver de AndroidX. Una simulación de 1.0.0 (5) produjo el applicationId y la versión esperados; se restauró la configuración local. Revisar otra vez el manifiesto del AAB firmado. QA física solo con autorización, watchdog y conservación de datos. QA conectada requiere contrato pasivo desplegado, alcance y preflight vigente.
 - R09: PR #245 Draft, mobile y contracts SUCCESS en Linux sobre 13912399, run 41851884666. La propuesta de PR MOBILE269 queda lista para autorización; pendiente CI del candidato.
 - R04/R11: autorizar publicación del SHA local para CI sin secretos, confirmar certificado público de subida y configuración. Luego generar un único AAB trazable, inspeccionar firma/manifest/versionado/SDK/ABI/16 KB, ejecutar QA del artefacto autorizado y confirmar checklist de Internal Testing antes de subir. RC NO-GO hasta verificar esos puntos.
+
+## Evidencia final
+
+Flutter: 1.951 PASS, incluidos goldens, contratos HTTP con fixtures, SQLite, cuentas, LIVE y ciclo de vida simulado. Analyze limpio. SHA ejecutado: b719198e16ec7432977889943ae82c04d77c030f. Este checkpoint modifica únicamente documentación. Los logs están en artifacts/mobile269/final-full.log y final-analyze.log. No hay evidencia de Android físico ni autenticación conectada.
+
+Ventana de pared desde la creación del worktree: 11.9 minutos. La suite final ocupó 159,49 s y analyze 10,59 s. El tiempo efectivo se documenta mediante las pruebas, commits y checkpoints; no se suman las tandas concurrentes ni se atribuye todo el tiempo de pared a desarrollo activo. Participaron tres agentes en worktrees separados, con roles B/D y C/F secuenciales. El orquestador verificó Android y fue el único integrador. MOBILE261 conservó su programación y su worktree.
+
+El borrador local y checklist de aceptación están en artifacts/mobile269/pr-draft.md. No se publicó el candidato.
