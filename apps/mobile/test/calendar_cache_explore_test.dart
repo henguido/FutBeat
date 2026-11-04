@@ -36,7 +36,210 @@ Map<String, dynamic> calendarPayload({
   return raw;
 }
 
+class _DelayedCalendarReadDatabase extends AppDatabase {
+  _DelayedCalendarReadDatabase() : super(NativeDatabase.memory());
+
+  final releaseRead = Completer<void>();
+  final readStarted = Completer<void>();
+
+  @override
+  Future<CalendarSnapshot?> readCalendarEntry(String date) async {
+    final row = await super.readCalendarEntry(date);
+    readStarted.complete();
+    await releaseRead.future;
+    return row;
+  }
+}
+
 void main() {
+  test(
+    'slow SQLite read cannot replace a newer HTTP calendar answer',
+    () async {
+      final db = _DelayedCalendarReadDatabase();
+      final old = calendarPayload();
+      old['updatedAt'] = '2026-08-20T18:00:00Z';
+      await db.saveCalendarSnapshot('2026-08-20', jsonEncode(old));
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (o, h) {
+            final fresh = calendarPayload(score: true);
+            fresh['updatedAt'] = '2026-08-20T20:00:00Z';
+            h.resolve(Response(requestOptions: o, data: fresh));
+          },
+        ),
+      );
+      final repo = ApiRepository(
+        dio,
+        db,
+        const CalendarCachePolicy(prefetchRadius: 0),
+      );
+      final date = DateTime(2026, 8, 20);
+      final staleRead = repo.watchDate(date).toList();
+      await db.readStarted.future;
+      expect((await repo.loadDate(date)).matches.single.score, '1 - 1');
+      db.releaseRead.complete();
+      expect((await staleRead).first.matches.single.score, '1 - 1');
+      expect(repo.peekDate(date)?.matches.single.score, '1 - 1');
+      await repo.settleBackground();
+      dio.close();
+      await db.close();
+    },
+  );
+
+  test(
+    'visible calendar timer stops on pause and rechecks on resume',
+    () async {
+      final dio = Dio();
+      var calls = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            calls++;
+            handler.resolve(
+              Response(requestOptions: options, data: calendarPayload()),
+            );
+          },
+        ),
+      );
+      final repo = ApiRepository(
+        dio,
+        null,
+        const CalendarCachePolicy(
+          todayTtl: Duration.zero,
+          prefetchRadius: 0,
+          revalidateEvery: Duration(milliseconds: 200),
+        ),
+      );
+      final container = ProviderContainer(
+        overrides: [repositoryProvider.overrideWithValue(repo)],
+      );
+      final now = costaRicaNow();
+      final date = DateTime(now.year, now.month, now.day);
+      final listener = container.listen(
+        calendarSnapshotProvider(date),
+        (_, _) {},
+      );
+      await container.read(calendarSnapshotProvider(date).future);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(calls, 1);
+      container.read(sportsAppActiveProvider).value = false;
+      repo.setAppActive(false);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(calls, 1);
+      repo.refreshDate(date);
+      repo.setAppActive(true);
+      container.read(sportsAppActiveProvider).value = true;
+      for (var i = 0; i < 20 && calls < 2; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(calls, 2);
+      listener.close();
+      container.dispose();
+      dio.close();
+    },
+  );
+
+  test(
+    'complete historical day keeps past TTL despite revalidating hint',
+    () async {
+      final dio = Dio();
+      var calls = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            calls++;
+            final raw = calendarPayload();
+            raw['freshness'] = {'stale': false, 'revalidating': true};
+            raw['coverage'] = {
+              'partial': false,
+              'calendar': {'complete': true},
+            };
+            handler.resolve(Response(requestOptions: options, data: raw));
+          },
+        ),
+      );
+      final repo = ApiRepository(
+        dio,
+        null,
+        const CalendarCachePolicy(recoveringTtl: Duration.zero),
+      );
+      final date = costaRicaNow().subtract(const Duration(days: 1));
+      await repo.loadDate(date);
+      await repo.watchDate(date).toList();
+      expect(calls, 1);
+      dio.close();
+    },
+  );
+
+  test(
+    'calendar performs zero reads while backgrounded and resumes on demand',
+    () async {
+      final dio = Dio();
+      var calls = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            calls++;
+            handler.resolve(
+              Response(requestOptions: options, data: calendarPayload()),
+            );
+          },
+        ),
+      );
+      final repo = ApiRepository(dio);
+      final today = costaRicaNow();
+      final date = DateTime(today.year, today.month, today.day);
+      repo.setAppActive(false);
+      expect(await repo.watchDate(date).toList(), isEmpty);
+      await repo.prefetchDate(date);
+      expect(calls, 0);
+      repo.setAppActive(true);
+      expect(await repo.watchDate(date).toList(), isNotEmpty);
+      expect(calls, greaterThanOrEqualTo(1));
+      dio.close();
+    },
+  );
+
+  test(
+    'older calendar response cannot replace newer memory and disk',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final dio = Dio();
+      var calls = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (o, h) {
+            calls++;
+            final raw = calendarPayload(score: calls == 1);
+            raw['updatedAt'] = calls == 1
+                ? '2026-08-20T20:00:00Z'
+                : '2026-08-20T19:00:00Z';
+            h.resolve(Response(requestOptions: o, data: raw));
+          },
+        ),
+      );
+      final repo = ApiRepository(dio, db);
+      final date = DateTime(2026, 8, 20);
+      expect((await repo.loadDate(date)).matches.single.score, '1 - 1');
+      await repo.settleBackground();
+      expect((await repo.loadDate(date)).matches.single.score, '1 - 1');
+      await repo.settleBackground();
+      expect(repo.peekDate(date)?.matches.single.score, '1 - 1');
+      final persisted = await db.readCalendarSnapshot('2026-08-20');
+      expect(
+        Snapshot(jsonDecode(persisted!) as Map<String, dynamic>)
+            .matches
+            .single
+            .score,
+        '1 - 1',
+      );
+      expect(calls, 2);
+      dio.close();
+      await db.close();
+    },
+  );
+
   test('calendar refresh requests remain single-flight without request cache headers', () async {
     final dio = Dio();
     final entered = Completer<void>();
@@ -337,6 +540,16 @@ void main() {
       dio.interceptors.add(
         InterceptorsWrapper(
           onRequest: (o, h) {
+            // Player suggestions are a separate, optional request.
+            if (o.path == '/v1/player-suggestions') {
+              h.resolve(
+                Response(
+                  requestOptions: o,
+                  data: {...calendarPayload(), 'matches': [], 'players': []},
+                ),
+              );
+              return;
+            }
             requests.add(o);
             if (o.path == '/v1/explore') {
               h.resolve(
@@ -372,7 +585,7 @@ void main() {
       expect(requests.map((r) => r.path), ['/v1/explore', '/v1/explore']);
       expect(requests.first.queryParameters, isEmpty);
       expect(requests[1].queryParameters['country'], 'CR');
-      expect(find.text('Competiciones destacadas'), findsOneWidget);
+      expect(find.text('Competiciones'), findsOneWidget);
       expect(find.text('Equipos sugeridos'), findsOneWidget);
       expect(find.text('COSTA RICA'), findsNothing);
       await tester.enterText(find.byType(TextField), 'm');
@@ -386,8 +599,11 @@ void main() {
       expect(requests.length, 3);
       expect(requests.last.queryParameters['q'], 'manchester');
       expect(requests.last.queryParameters['country'], 'CR');
-      expect(find.text('Home'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      // Discovery recommendations never leak into the query state while its
+      // own response is pending.
+      expect(find.text('Home'), findsNothing);
+      expect(find.text('Buscando “manchester”…'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
       await tester.enterText(find.byType(TextField), 'london');
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump(const Duration(milliseconds: 10));
@@ -404,7 +620,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
       expect(requests[3].cancelToken!.isCancelled, true);
       expect(requests.last.queryParameters['country'], 'ES');
-      expect(find.text('Home'), findsOneWidget);
+      expect(find.text('Home'), findsNothing);
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
       await tester.runAsync(countries.close);

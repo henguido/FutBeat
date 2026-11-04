@@ -39,14 +39,19 @@ import '../../core/models.dart';
 Json adaptNewsFeed(Json response, {DateTime? now}) {
   // v1 has no source-level rights attestation. Keep only link-out metadata.
   if (response['schemaVersion'] == 1) {
+    final news = response['news'];
+    if (news != null && news is! List) {
+      throw const FormatException('Lista de noticias inválida');
+    }
     return {
       ...response,
       'news': [
-        for (final value in (response['news'] as List? ?? const []))
+        for (final value in (news as List? ?? const []))
           if (value is Map)
             (Map<String, dynamic>.from(value)
               ..remove('description')
-              ..remove('imageUrl')),
+              ..remove('imageUrl')
+              ..remove('snippet')),
       ],
     };
   }

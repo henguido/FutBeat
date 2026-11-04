@@ -1,0 +1,1071 @@
+{
+  "contract": "futbeat-passive-api/v1",
+  "generatedFrom": "handler.ts + PGlite (all migrations + manual candidates)",
+  "fixtures": [
+    {
+      "path": "/v1/calendar?date=2026-11-01&timezone=America/Costa_Rica",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=30"
+      },
+      "body": {
+        "demo": false,
+        "teams": [
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local"
+          },
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita"
+          }
+        ],
+        "matches": [
+          {
+            "id": "fb_match_contract_ft",
+            "score": {
+              "away": 1,
+              "home": 2
+            },
+            "status": "FINISHED",
+            "startTime": "2026-11-01T20:00:00Z",
+            "awayTeamId": "fb_team_contract_a",
+            "homeTeamId": "fb_team_contract_h",
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": true
+          }
+        ],
+        "players": [],
+        "coverage": {
+          "live": false,
+          "source": "FutBeat",
+          "partial": true,
+          "sources": [
+            "GOAL API"
+          ],
+          "calendar": {
+            "to": "2026-11-01",
+            "from": "2026-11-01",
+            "complete": false,
+            "timezone": "America/Costa_Rica"
+          },
+          "developmentOnly": false
+        },
+        "freshness": {
+          "stale": false,
+          "revalidating": false
+        },
+        "standings": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "domesticTier": null,
+            "audienceClass": "unknown",
+            "relevanceScore": 100,
+            "relevanceSource": "derived",
+            "competitionClass": "other",
+            "isGlobalRelevant": false,
+            "isPrimaryDomestic": false
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "path": "/v1/calendar?date=2031-02-02&timezone=America/Costa_Rica",
+      "status": 404,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=30"
+      },
+      "body": {
+        "error": "Not stored; no demand registered"
+      }
+    },
+    {
+      "path": "/v1/match-context?id=fb_match_contract_ft",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=15"
+      },
+      "body": {
+        "demo": false,
+        "news": [],
+        "teams": [
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          },
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          }
+        ],
+        "matches": [
+          {
+            "id": "fb_match_contract_ft",
+            "score": {
+              "away": 1,
+              "home": 2
+            },
+            "events": [],
+            "status": "FINISHED",
+            "startTime": "2026-11-01T20:00:00Z",
+            "awayTeamId": "fb_team_contract_a",
+            "homeTeamId": "fb_team_contract_h",
+            "provenance": {
+              "receivedAt": "2026-11-01T23:00:00.000Z"
+            },
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": true
+          }
+        ],
+        "players": [],
+        "coverage": {
+          "partial": false,
+          "standings": "missing",
+          "standingsStale": false,
+          "standingsPending": false
+        },
+        "freshness": {
+          "stale": false
+        },
+        "standings": [],
+        "transfers": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "season": "2026",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "relevanceSource": "derived"
+          }
+        ],
+        "schemaVersion": 1,
+        "entityRedirects": {}
+      }
+    },
+    {
+      "path": "/v1/match-detail?id=fb_match_contract_ft&request=0",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=15"
+      },
+      "body": {
+        "matchId": "fb_match_contract_ft",
+        "available": false,
+        "pending": false,
+        "hydrationNeeded": false,
+        "coverage": {
+          "detail": "missing",
+          "lineup": "missing",
+          "statistics": "missing",
+          "stale": false,
+          "hydrationNeeded": false,
+          "pending": false,
+          "videos": "available",
+          "storedRead": true
+        },
+        "detailLevel": "none",
+        "fetchedAt": null,
+        "provider": null,
+        "referee": null,
+        "stadium": null,
+        "round": null,
+        "stage": null,
+        "periodScores": {},
+        "home": {
+          "formation": null,
+          "starters": [],
+          "substitutes": [],
+          "missing": [],
+          "coach": null
+        },
+        "away": {
+          "formation": null,
+          "starters": [],
+          "substitutes": [],
+          "missing": [],
+          "coach": null
+        },
+        "statistics": [],
+        "incidents": [],
+        "videos": []
+      }
+    },
+    {
+      "path": "/v1/match-preview?id=fb_match_contract_ns",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=300"
+      },
+      "body": {
+        "h2h": {
+          "state": "none",
+          "totals": {
+            "draws": 0,
+            "counted": 0,
+            "awayWins": 0,
+            "homeWins": 0
+          },
+          "current": {
+            "status": "SCHEDULED",
+            "matchId": "fb_match_contract_ns",
+            "startTime": "2031-01-05T20:00:00Z",
+            "awayTeamId": "fb_team_contract_h",
+            "homeTeamId": "fb_team_contract_a",
+            "competitionId": "fb_comp_contract"
+          },
+          "pairKey": "fb_team_contract_a|fb_team_contract_h",
+          "summary": {
+            "draws": 0,
+            "counted": 0,
+            "awayWins": 0,
+            "homeWins": 0
+          },
+          "coverage": {
+            "away": "UNAVAILABLE",
+            "home": "UNAVAILABLE"
+          },
+          "matchIds": [],
+          "meetings": [],
+          "awayTeamId": "fb_team_contract_h",
+          "homeTeamId": "fb_team_contract_a",
+          "availability": "UNAVAILABLE",
+          "competitionId": "fb_comp_contract",
+          "competitionTotals": {
+            "draws": 0,
+            "counted": 0,
+            "awayWins": 0,
+            "homeWins": 0,
+            "competitionId": "fb_comp_contract"
+          }
+        },
+        "form": {
+          "away": {
+            "state": "none",
+            "results": [],
+            "matchIds": []
+          },
+          "home": {
+            "state": "none",
+            "results": [],
+            "matchIds": []
+          }
+        },
+        "teams": [
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita"
+          },
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local"
+          }
+        ],
+        "matchId": "fb_match_contract_ns",
+        "matches": [],
+        "startTime": "2031-01-05T20:00:00Z",
+        "awayTeamId": "fb_team_contract_h",
+        "homeTeamId": "fb_team_contract_a",
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato"
+          }
+        ],
+        "schemaVersion": 1,
+        "formWindowDays": 365
+      }
+    },
+    {
+      "path": "/v1/match-h2h?id=fb_match_contract_ns&scope=all&limit=20",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=600"
+      },
+      "body": {
+        "scope": "all",
+        "teams": [
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita"
+          },
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local"
+          }
+        ],
+        "totals": {
+          "draws": 0,
+          "counted": 0,
+          "awayWins": 0,
+          "homeWins": 0
+        },
+        "window": {
+          "canExtend": false,
+          "extending": false,
+          "historyFloor": "2023-11-05"
+        },
+        "hasMore": false,
+        "matchId": "fb_match_contract_ns",
+        "pairKey": "fb_team_contract_a|fb_team_contract_h",
+        "meetings": [],
+        "awayTeamId": "fb_team_contract_h",
+        "homeTeamId": "fb_team_contract_a",
+        "nextCursor": null,
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato"
+          }
+        ],
+        "competitionId": "fb_comp_contract",
+        "schemaVersion": 1
+      }
+    },
+    {
+      "path": "/v1/entity?type=team&id=fb_team_contract_h",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=300"
+      },
+      "body": {
+        "demo": false,
+        "news": [],
+        "teams": [
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          },
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          }
+        ],
+        "matches": [
+          {
+            "id": "fb_match_contract_ft",
+            "score": {
+              "away": 1,
+              "home": 2
+            },
+            "events": [],
+            "status": "FINISHED",
+            "startTime": "2026-11-01T20:00:00Z",
+            "awayTeamId": "fb_team_contract_a",
+            "homeTeamId": "fb_team_contract_h",
+            "provenance": {
+              "receivedAt": "2026-11-01T23:00:00.000Z"
+            },
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": true
+          },
+          {
+            "id": "fb_match_contract_ns",
+            "score": null,
+            "events": [],
+            "status": "SCHEDULED",
+            "startTime": "2031-01-05T20:00:00Z",
+            "awayTeamId": "fb_team_contract_h",
+            "homeTeamId": "fb_team_contract_a",
+            "provenance": {
+              "receivedAt": "2026-11-01T23:00:00.000Z"
+            },
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": false
+          }
+        ],
+        "players": [],
+        "coverage": {
+          "live": false,
+          "squad": {
+            "state": "UNAVAILABLE",
+            "reason": "no_provider_source",
+            "playerCount": 0
+          },
+          "source": "FutBeat",
+          "partial": false,
+          "sources": [
+            "GOAL API"
+          ],
+          "developmentOnly": false
+        },
+        "freshness": {
+          "stale": false
+        },
+        "standings": [],
+        "transfers": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "season": "2026",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "relevanceSource": "derived"
+          }
+        ],
+        "schemaVersion": 1,
+        "entityRedirects": {}
+      }
+    },
+    {
+      "path": "/v1/entity?type=competition&id=fb_comp_contract",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=300"
+      },
+      "body": {
+        "demo": false,
+        "news": [],
+        "teams": [
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          },
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          }
+        ],
+        "matches": [
+          {
+            "id": "fb_match_contract_ft",
+            "score": {
+              "away": 1,
+              "home": 2
+            },
+            "events": [],
+            "status": "FINISHED",
+            "startTime": "2026-11-01T20:00:00Z",
+            "awayTeamId": "fb_team_contract_a",
+            "homeTeamId": "fb_team_contract_h",
+            "provenance": {
+              "receivedAt": "2026-11-01T23:00:00.000Z"
+            },
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": true
+          },
+          {
+            "id": "fb_match_contract_ns",
+            "score": null,
+            "events": [],
+            "status": "SCHEDULED",
+            "startTime": "2031-01-05T20:00:00Z",
+            "awayTeamId": "fb_team_contract_h",
+            "homeTeamId": "fb_team_contract_a",
+            "provenance": {
+              "receivedAt": "2026-11-01T23:00:00.000Z"
+            },
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": false
+          }
+        ],
+        "players": [],
+        "coverage": {
+          "live": false,
+          "source": "FutBeat",
+          "partial": false,
+          "sources": [
+            "GOAL API"
+          ],
+          "developmentOnly": false
+        },
+        "freshness": {
+          "stale": false
+        },
+        "standings": [],
+        "transfers": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "season": "2026",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "relevanceSource": "derived"
+          }
+        ],
+        "schemaVersion": 1,
+        "entityRedirects": {}
+      }
+    },
+    {
+      "path": "/v1/entity?type=player&id=fb_player_contract_9",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=300"
+      },
+      "body": {
+        "demo": false,
+        "news": [],
+        "teams": [
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          },
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          }
+        ],
+        "matches": [
+          {
+            "id": "fb_match_contract_ft",
+            "score": {
+              "away": 1,
+              "home": 2
+            },
+            "events": [],
+            "status": "FINISHED",
+            "startTime": "2026-11-01T20:00:00Z",
+            "awayTeamId": "fb_team_contract_a",
+            "homeTeamId": "fb_team_contract_h",
+            "provenance": {
+              "receivedAt": "2026-11-01T23:00:00.000Z"
+            },
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": true
+          },
+          {
+            "id": "fb_match_contract_ns",
+            "score": null,
+            "events": [],
+            "status": "SCHEDULED",
+            "startTime": "2031-01-05T20:00:00Z",
+            "awayTeamId": "fb_team_contract_h",
+            "homeTeamId": "fb_team_contract_a",
+            "provenance": {
+              "receivedAt": "2026-11-01T23:00:00.000Z"
+            },
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": false
+          }
+        ],
+        "players": [
+          {
+            "id": "fb_player_contract_9",
+            "name": "Delantero Contrato",
+            "teamId": "fb_team_contract_h",
+            "teamIds": [
+              "fb_team_contract_h"
+            ],
+            "position": "Forward"
+          }
+        ],
+        "coverage": {
+          "live": false,
+          "source": "FutBeat",
+          "partial": false,
+          "sources": [
+            "GOAL API"
+          ],
+          "developmentOnly": false
+        },
+        "freshness": {
+          "stale": false
+        },
+        "standings": [],
+        "transfers": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "season": "2026",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "relevanceSource": "derived"
+          }
+        ],
+        "schemaVersion": 1,
+        "entityRedirects": {}
+      }
+    },
+    {
+      "path": "/v1/team-context?id=fb_team_contract_h",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=300"
+      },
+      "body": {
+        "teams": [
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          }
+        ],
+        "teamId": "fb_team_contract_h",
+        "options": [
+          {
+            "lastStart": "2026-11-01T23:00:00.000Z",
+            "nextStart": "2026-11-01T23:00:00.000Z",
+            "firstStart": "2026-11-01T23:00:00.000Z",
+            "matchCount": 2,
+            "hasStandings": false,
+            "competitionId": "fb_comp_contract",
+            "currentSeason": false,
+            "competitionName": "Liga Contrato"
+          }
+        ],
+        "coverage": {
+          "standings": "missing",
+          "teamMatches": {
+            "state": "UNAVAILABLE",
+            "reason": "no_provider_source",
+            "windowComplete": false
+          }
+        },
+        "selected": {
+          "requested": false,
+          "competitionId": "fb_comp_contract"
+        },
+        "standings": [],
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "season": "2026",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "relevanceSource": "derived"
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "path": "/v1/team-matches?id=fb_team_contract_h&bucket=results&limit=20",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=120"
+      },
+      "body": {
+        "demo": false,
+        "teams": [
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          },
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          }
+        ],
+        "bucket": "results",
+        "teamId": "fb_team_contract_h",
+        "hasMore": false,
+        "matches": [
+          {
+            "id": "fb_match_contract_ft",
+            "score": {
+              "away": 1,
+              "home": 2
+            },
+            "events": [],
+            "status": "FINISHED",
+            "startTime": "2026-11-01T20:00:00Z",
+            "awayTeamId": "fb_team_contract_a",
+            "homeTeamId": "fb_team_contract_h",
+            "provenance": {
+              "receivedAt": "2026-11-01T23:00:00.000Z"
+            },
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": true
+          }
+        ],
+        "players": [],
+        "coverage": {
+          "live": false,
+          "source": "FutBeat",
+          "partial": false,
+          "sources": [
+            "GOAL API"
+          ],
+          "teamMatches": {
+            "state": "UNAVAILABLE",
+            "reason": "no_provider_source",
+            "windowComplete": false
+          },
+          "developmentOnly": false
+        },
+        "freshness": {
+          "stale": false
+        },
+        "seasonKey": null,
+        "standings": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "nextCursor": null,
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "season": "2026",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "relevanceSource": "derived"
+          }
+        ],
+        "competitionId": null,
+        "schemaVersion": 1
+      }
+    },
+    {
+      "path": "/v1/team-matches?id=fb_team_contract_h&bucket=upcoming&limit=20",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=120"
+      },
+      "body": {
+        "demo": false,
+        "teams": [
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          },
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          }
+        ],
+        "bucket": "upcoming",
+        "teamId": "fb_team_contract_h",
+        "hasMore": false,
+        "matches": [
+          {
+            "id": "fb_match_contract_ns",
+            "score": null,
+            "events": [],
+            "status": "SCHEDULED",
+            "startTime": "2031-01-05T20:00:00Z",
+            "awayTeamId": "fb_team_contract_h",
+            "homeTeamId": "fb_team_contract_a",
+            "provenance": {
+              "receivedAt": "2026-11-01T23:00:00.000Z"
+            },
+            "competitionId": "fb_comp_contract",
+            "hasPlayedEvidence": false
+          }
+        ],
+        "players": [],
+        "coverage": {
+          "live": false,
+          "source": "FutBeat",
+          "partial": false,
+          "sources": [
+            "GOAL API"
+          ],
+          "teamMatches": {
+            "state": "UNAVAILABLE",
+            "reason": "no_provider_source",
+            "windowComplete": false
+          },
+          "developmentOnly": false
+        },
+        "freshness": {
+          "stale": false
+        },
+        "seasonKey": null,
+        "standings": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "nextCursor": null,
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "season": "2026",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "relevanceSource": "derived"
+          }
+        ],
+        "competitionId": null,
+        "schemaVersion": 1
+      }
+    },
+    {
+      "path": "/v1/standings-form?competitionId=fb_comp_contract&season=2026",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=300"
+      },
+      "body": {
+        "limit": 5,
+        "teams": {},
+        "until": null,
+        "seasonKey": "2026",
+        "groupFilter": false,
+        "competitionId": "fb_comp_contract",
+        "schemaVersion": 1,
+        "matchesConsidered": 0
+      }
+    },
+    {
+      "path": "/v1/favorites?keys=competition:fb_comp_contract,team:fb_team_contract_h",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=60"
+      },
+      "body": {
+        "demo": false,
+        "news": [],
+        "teams": [
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local",
+            "country": "Costa Rica",
+            "competitionId": "fb_comp_contract"
+          }
+        ],
+        "matches": [],
+        "players": [],
+        "coverage": {
+          "partial": true
+        },
+        "freshness": {
+          "stale": false
+        },
+        "standings": [],
+        "transfers": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "season": "2026",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "relevanceSource": "derived"
+          }
+        ],
+        "schemaVersion": 1,
+        "entityRedirects": {}
+      }
+    },
+    {
+      "path": "/v1/explore?country=CR",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=600"
+      },
+      "body": {
+        "demo": false,
+        "news": [],
+        "teams": [],
+        "matches": [],
+        "players": [],
+        "coverage": {
+          "partial": false
+        },
+        "freshness": {
+          "stale": false
+        },
+        "standings": [],
+        "transfers": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "competitions": [],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "path": "/v1/search?q=contrato&country=CR",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=300"
+      },
+      "body": {
+        "demo": false,
+        "news": [],
+        "teams": [
+          {
+            "id": "fb_team_contract_h",
+            "name": "Contrato Local",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "competitionId": "fb_comp_contract",
+            "relevanceScore": 100,
+            "isGlobalRelevant": false
+          },
+          {
+            "id": "fb_team_contract_a",
+            "name": "Contrato Visita",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "competitionId": "fb_comp_contract",
+            "relevanceScore": 100,
+            "isGlobalRelevant": false
+          }
+        ],
+        "matches": [],
+        "players": [
+          {
+            "id": "fb_player_contract_9",
+            "name": "Delantero Contrato",
+            "teamId": "fb_team_contract_h",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "isGlobalRelevant": false
+          }
+        ],
+        "coverage": {
+          "partial": false
+        },
+        "freshness": {
+          "stale": false
+        },
+        "standings": [],
+        "transfers": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "competitions": [
+          {
+            "id": "fb_comp_contract",
+            "name": "Liga Contrato",
+            "country": "Costa Rica",
+            "countryCode": "CR",
+            "relevanceScore": 100,
+            "isGlobalRelevant": false,
+            "isPrimaryDomestic": false
+          }
+        ],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "path": "/v1/search?q=zzzzqq",
+      "status": 200,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "public, max-age=300"
+      },
+      "body": {
+        "demo": false,
+        "news": [],
+        "teams": [],
+        "matches": [],
+        "players": [],
+        "coverage": {
+          "partial": false
+        },
+        "freshness": {
+          "stale": false
+        },
+        "standings": [],
+        "transfers": [],
+        "updatedAt": "2026-11-01T23:00:00.000Z",
+        "competitions": [],
+        "schemaVersion": 1
+      }
+    },
+    {
+      "path": "/v1/snapshot",
+      "status": 403,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "no-store"
+      },
+      "body": {
+        "error": "Route outside stored-read scope"
+      }
+    },
+    {
+      "path": "/v1/news?tab=for_you",
+      "status": 403,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "no-store"
+      },
+      "body": {
+        "error": "Route outside stored-read scope"
+      }
+    },
+    {
+      "path": "/v1/player-suggestions",
+      "status": 403,
+      "headers": {
+        "x-futbeat-passive": "v1",
+        "x-futbeat-qa-stored": "v1",
+        "cache-control": "no-store"
+      },
+      "body": {
+        "error": "Route outside stored-read scope"
+      }
+    }
+  ]
+}

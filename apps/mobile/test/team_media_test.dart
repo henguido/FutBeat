@@ -7,6 +7,7 @@ import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
 import 'package:futbeat/shared/widgets.dart';
 import 'package:go_router/go_router.dart';
@@ -45,10 +46,10 @@ Map<String, dynamic> _payload({
 };
 
 bool _showsCrest(WidgetTester tester, Finder within) => tester
-    .widgetList<Image>(
-      find.descendant(of: within, matching: find.byType(Image)),
+    .widgetList<SportsImage>(
+      find.descendant(of: within, matching: find.byType(SportsImage)),
     )
-    .any((image) => (image.image as NetworkImage).url == _crest);
+    .any((image) => image.url == _crest);
 
 void main() {
   test('memory keeps verified media only, shares it with aliases and '
@@ -166,7 +167,8 @@ void main() {
         databaseProvider.overrideWithValue(db),
         // The server hydrates the crest while the profile is open.
         entitySnapshotProvider.overrideWith(
-          (ref, request) async => Snapshot(_payload(crest: reads++ > 0)),
+          (ref, request) =>
+              Stream.value(Snapshot(_payload(crest: reads++ > 0))),
         ),
         followsProvider.overrideWith((ref) => Stream.value({})),
       ],

@@ -112,7 +112,17 @@ void main() {
       final net = scriptedDio(
         (call, _) => call < 3 ? pendingPayload() : calendarPayload(score: true),
       );
-      final repo = ApiRepository(net.dio, null, fastPolicy);
+      // This success path asserts exactly3requests and a cache hit. The
+      // separate negative test still enforces the400ms deadline. Give this
+      // positive sequence headroom for parallel-isolate scheduling delays.
+      const successPolicy = CalendarCachePolicy(
+        visibleDeadline: Duration(seconds: 2),
+        pendingPollMin: Duration(milliseconds: 20),
+        pendingPollMax: Duration(milliseconds: 40),
+        revalidateEvery: Duration(milliseconds: 60),
+        revalidateMax: Duration(milliseconds: 400),
+      );
+      final repo = ApiRepository(net.dio, null, successPolicy);
       final values = await repo.watchDate(DateTime(2026, 8, 20)).toList();
       expect(values.first.calendarPending, true);
       expect(values.last.calendarPending, false);
@@ -211,13 +221,20 @@ void main() {
         ),
       );
       final values = <Snapshot>[];
+      final first = Completer<Snapshot>();
       final done = Completer<void>();
       ApiRepository(dio, db, fastPolicy)
           .watchDate(DateTime(2026, 8, 20), retryDelay: Duration.zero)
-          .listen(values.add, onDone: done.complete);
-      await Future<void>.delayed(const Duration(milliseconds: 30));
-      expect(values.single.matches.single.score, '1 - 1', reason: 'at once');
+          .listen((value) {
+            values.add(value);
+            if (!first.isCompleted) first.complete(value);
+          }, onDone: done.complete);
+      final cached = await first.future;
+      // The held transport has not returned. The first emission must be the
+      // stored score, even if the visible deadline expires on a loaded host.
       gate.complete();
+      expect(cached.matches.single.score, '1 - 1');
+      expect(cached.revalidating, isTrue);
       await done.future;
       expect(values.last.stale, true);
       expect(values.every((v) => v.matches.single.score == '1 - 1'), true);

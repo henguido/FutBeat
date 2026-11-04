@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/profile_context.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
@@ -34,7 +35,13 @@ Set<String> liveTeamIds(Snapshot data, String competitionId) => {
 
 /// One displayable group of a standings table ([label] null for a single,
 /// unnamed table).
-typedef StandingsGroup = ({String? label, List<Json> rows});
+typedef StandingsGroup = ({
+  String? label,
+  String? stage,
+  String? group,
+  String? subgroup,
+  List<Json> rows,
+});
 
 /// Label shown on the unlabelled table (the competition's overall/annual
 /// table) when the stored table also has labelled groups.
@@ -56,11 +63,18 @@ Set<String> standingsLabelTokens(String? text) {
   };
 }
 
+/// Only a provider-backed, positive integral position is a position. Missing or
+/// malformed ranks stay unknown; array order is not classification evidence.
+int? _standingsPosition(Object? value) =>
+    value is num && value.isFinite && value > 0 && value == value.roundToDouble()
+    ? value.toInt()
+    : null;
+
 /// The groups of [table] that can be shown, or null when the table must not
 /// be shown at all ("Tabla no disponible"):
 ///  * no rows, or the server could not tell its groups apart;
 ///  * a row whose team entity is unknown (never a placeholder name);
-///  * a repeated position inside one group (unlabelled groups mixed).
+///  * a repeated position or canonical team inside one group (mixed rows).
 /// Without [focusTeamIds], every group; the unlabelled one is labelled
 /// [overallStandingsLabel] when labelled groups are shown with it.
 /// With one group and [focusTeamIds], it is shown only when it holds every
@@ -74,9 +88,9 @@ Set<String> standingsLabelTokens(String? text) {
 ///        one labelled group of the table (every normalized token of the
 ///        label is in the stage, see [standingsLabelTokens]) and that group
 ///        holds them all: that group;
-///     2. the table's server hint `currentGroup` (every recent match of the
-///        competition was played in that phase) is a labelled group holding
-///        them all: that group;
+///     2. without a match stage, the table's server hint `currentGroup`
+///        (every recent match of the competition was played in that phase)
+///        is a labelled group holding them all: that group;
 ///     3. exactly one of them is unlabelled: that one, the competition's
 ///        overall table, labelled [overallStandingsLabel];
 ///     4. otherwise (e.g. "Grupo A" plus a ranking of third-placed teams):
@@ -95,27 +109,105 @@ List<StandingsGroup>? standingsGroups(
   if (table == null || rows.isEmpty || table['groupsResolved'] == false) {
     return null;
   }
-  final groups = <String, List<Json>>{};
+  // A server `subgroup` splits one provider label holding several groups
+  // (rebuilt from fixtures): each is its own table under the same label.
+  final groups = <(String, String, String), List<Json>>{};
   for (final row in rows) {
     final teamId = row['teamId']?.toString() ?? '';
     if (standingsTeam(data, teamId) == null) return null;
-    groups.putIfAbsent(row['group']?.toString() ?? '', () => []).add(row);
+    final stage = row['stage']?.toString().trim() ?? '';
+    final group = row['group']?.toString().trim() ?? '';
+    final subgroup = row['subgroup']?.toString().trim() ?? '';
+    groups.putIfAbsent((stage, group, subgroup), () => []).add(row);
   }
   for (final group in groups.values) {
     final positions = [
       for (final row in group)
-        if (row['position'] != null) (row['position'] as num).toInt(),
+        ?_standingsPosition(row['position']),
     ];
-    if (positions.toSet().length != positions.length) return null;
+    final teams = [
+      for (final row in group)
+        data.resolveEntityId(row['teamId']?.toString() ?? ''),
+    ];
+    if (positions.toSet().length != positions.length ||
+        teams.toSet().length != teams.length) {
+      return null;
+    }
   }
   final all = [
     for (final entry in groups.entries)
-      (label: entry.key.isEmpty ? null : entry.key, rows: entry.value),
+      (
+        label: _standingsGroupLabel(
+          stage: entry.key.$1,
+          group: entry.key.$2,
+          subgroup: entry.key.$3,
+        ),
+        stage: entry.key.$1.isEmpty ? null : entry.key.$1,
+        group: entry.key.$2.isEmpty ? null : entry.key.$2,
+        subgroup: entry.key.$3.isEmpty ? null : entry.key.$3,
+        rows: entry.value,
+      ),
   ];
   StandingsGroup labelled(StandingsGroup group) =>
       group.label == null && all.any((other) => other.label != null)
-      ? (label: overallStandingsLabel, rows: group.rows)
+      ? (
+          label: overallStandingsLabel,
+          stage: group.stage,
+          group: group.group,
+          subgroup: group.subgroup,
+          rows: group.rows,
+        )
       : group;
+  // A lone table is not proof that it belongs to this match's phase. When
+  // both sides name a stage, refuse a table from a different stage.
+  final matchStageTokens = standingsLabelTokens(stage);
+  const phases = {'apertura', 'clausura'};
+  final matchPhases = matchStageTokens.intersection(phases);
+  bool regularStageHasExactPhase(StandingsGroup group) {
+    final storedStage = standingsLabelTokens(group.stage);
+    final storedGroup = standingsLabelTokens(group.group);
+    final storedPhases = storedGroup.intersection(phases);
+    return matchStageTokens.length == 1 &&
+        matchPhases.length == 1 &&
+        storedStage.length == 2 &&
+        storedStage.containsAll(const {'regular', 'season'}) &&
+        storedGroup.length == 1 &&
+        group.subgroup == null &&
+        storedPhases.length == 1 &&
+        matchPhases.containsAll(storedPhases);
+  }
+
+  bool matchesMatchStage(StandingsGroup group) {
+    final groupStageTokens = standingsLabelTokens(group.stage);
+    // A provider can send generic stage="Regular season" alongside an
+    // explicit group="Clausura". The generic stage must not hide a phase
+    // conflict with an Apertura match. Inspect both stored fields first;
+    // neither generic labels nor wall-clock freshness prove a phase.
+    final tablePhases = {
+      ...groupStageTokens,
+      ...standingsLabelTokens(group.group),
+    }.intersection(phases);
+    if (matchPhases.isNotEmpty &&
+        tablePhases.isNotEmpty &&
+        (matchPhases.length != 1 ||
+            tablePhases.length != 1 ||
+            !matchPhases.containsAll(tablePhases))) {
+      return false;
+    }
+    // Provider `stage=Regular season, group=Clausura` is enough for an exact
+    // Clausura request. It does not establish a final, playoff or substage.
+    if (regularStageHasExactPhase(group)) return true;
+    return matchStageTokens.isEmpty ||
+        groupStageTokens.isEmpty ||
+        matchStageTokens.containsAll(groupStageTokens);
+  }
+
+  bool namedByMatchStage(StandingsGroup group) {
+    if (regularStageHasExactPhase(group)) return true;
+    final tokens = standingsLabelTokens(group.stage ?? group.group ?? group.label);
+    return tokens.isNotEmpty && matchStageTokens.containsAll(tokens);
+  }
+
   if (focusTeamIds.isEmpty) {
     return [for (final group in all) labelled(group)];
   }
@@ -125,7 +217,8 @@ List<StandingsGroup>? standingsGroups(
         data.resolveEntityId(id),
   );
   if (all.length == 1) {
-    return focusTeamIds.every((id) => holds(all.single, id))
+    return matchesMatchStage(all.single) &&
+            focusTeamIds.every((id) => holds(all.single, id))
         ? [labelled(all.single)]
         : null;
   }
@@ -139,21 +232,26 @@ List<StandingsGroup>? standingsGroups(
     if (stageTokens.isNotEmpty) {
       final named = [
         for (final group in all)
-          if (group.label != null)
-            if (standingsLabelTokens(group.label) case final tokens
-                when tokens.isNotEmpty && stageTokens.containsAll(tokens))
-              group,
+          if (group.label != null &&
+              matchesMatchStage(group) &&
+              namedByMatchStage(group))
+            group,
       ];
       if (named.length == 1 && whole.contains(named.single)) {
         return [named.single];
       }
     }
-    // 2. The server's evidence-based current phase.
+    // 2. The current phase is only a fallback when the match has no stage.
+    // A historical or knockout match with a different explicit stage must
+    // not silently inherit today's phase table.
     final current = table['currentGroup']?.toString().trim() ?? '';
-    if (current.isNotEmpty) {
+    if (stageTokens.isEmpty && current.isNotEmpty) {
       final hinted = [
         for (final group in whole)
-          if (group.label == current) group,
+          if (group.stage == current ||
+              group.group == current ||
+              group.label == current)
+            group,
       ];
       if (hinted.length == 1) return hinted;
     }
@@ -164,7 +262,9 @@ List<StandingsGroup>? standingsGroups(
     ];
     return overall.length == 1 ? [labelled(overall.single)] : null;
   }
-  if (whole.isNotEmpty) return [labelled(whole.single)];
+  if (whole.isNotEmpty) {
+    return matchesMatchStage(whole.single) ? [labelled(whole.single)] : null;
+  }
   final picked = <int>{};
   for (final id in focusTeamIds) {
     final candidates = [
@@ -175,7 +275,22 @@ List<StandingsGroup>? standingsGroups(
     picked.add(candidates.single);
   }
   final own = [for (final i in picked.toList()..sort()) all[i]];
-  return own.any((group) => group.label == null) ? null : own;
+  return own.any((group) => group.label == null || !matchesMatchStage(group))
+      ? null
+      : own;
+}
+
+String? _standingsGroupLabel({
+  required String stage,
+  required String group,
+  required String subgroup,
+}) {
+  final parts = <String>[];
+  for (final value in [stage, group]) {
+    if (value.isNotEmpty && !parts.contains(value)) parts.add(value);
+  }
+  if (subgroup.isNotEmpty) parts.add('Subgrupo $subgroup');
+  return parts.isEmpty ? null : parts.join(' · ');
 }
 
 /// The team entity of a standings row, also when the row was stored under
@@ -196,10 +311,31 @@ String? standingsSeason(Json table) {
   return null;
 }
 
-/// The table of [competitionId] in [data] (first one), if any.
-Json? standingsTableFor(Snapshot data, String competitionId) => data.standings
-    .where((s) => s['competitionId'] == competitionId)
-    .firstOrNull;
+/// The unambiguous table of [competitionId] in [data]. When several seasons
+/// coexist, resolve the requested (or competition-current) season exactly;
+/// never let list order choose a historical table.
+Json? standingsTableFor(Snapshot data, String competitionId, {String? season}) {
+  final candidates = data.standings
+      .where((table) => table['competitionId'] == competitionId)
+      .toList();
+  if (candidates.isEmpty) return null;
+  // The competition's current overview retains its sole table even when its
+  // season label differs. An explicit match season must match exactly.
+  if (season == null && candidates.length == 1) return candidates.single;
+  final wanted = normalizeSeasonKey(
+    season ?? data.competition(competitionId)?.json['season']?.toString(),
+  );
+  if (wanted == null) return null;
+  final exact = [
+    for (final table in candidates)
+      if (normalizeSeasonKey(
+            table['seasonKey']?.toString() ?? table['season']?.toString(),
+          ) ==
+          wanted)
+        table,
+  ];
+  return exact.length == 1 ? exact.single : null;
+}
 
 class Standings extends StatefulWidget {
   const Standings(
@@ -212,6 +348,8 @@ class Standings extends StatefulWidget {
     this.focusTeamIds = const {},
     this.season,
     this.stage,
+    this.contextRows,
+    this.teamAvatarSize = 22,
   });
 
   final Snapshot data;
@@ -239,6 +377,14 @@ class Standings extends StatefulWidget {
   /// Season of the table for the Forma read (default: [standingsSeason]).
   final String? season;
 
+  /// Match Center only: keep the focused sides and nearby context instead
+  /// of rendering a very long group. Null renders the full resolved group.
+  final int? contextRows;
+
+  /// Profile-specific visual override. Every existing consumer keeps the
+  /// established 22 px presentation unless it opts in explicitly.
+  final double teamAvatarSize;
+
   @override
   State<Standings> createState() => _StandingsState();
 }
@@ -258,7 +404,11 @@ class _StandingsState extends State<Standings> {
   bool _formFailed = false;
 
   String get _storageId {
-    final table = standingsTableFor(widget.data, widget.competitionId);
+    final table = standingsTableFor(
+      widget.data,
+      widget.competitionId,
+      season: widget.season,
+    );
     final season = table == null ? null : _season(table);
     return 'standings-view-${widget.competitionId}-${season ?? ''}';
   }
@@ -308,7 +458,11 @@ class _StandingsState extends State<Standings> {
     if (!widget.selectableView || widget.data.demo || _api() == null) {
       return null;
     }
-    final table = standingsTableFor(widget.data, widget.competitionId);
+    final table = standingsTableFor(
+      widget.data,
+      widget.competitionId,
+      season: widget.season,
+    );
     final season = table == null ? null : _season(table);
     if (table == null || season == null) return null;
     // Only a parseable timestamp is sent (normalized to UTC ISO 8601): a
@@ -357,7 +511,11 @@ class _StandingsState extends State<Standings> {
   @override
   Widget build(BuildContext context) {
     final data = widget.data;
-    final table = standingsTableFor(data, widget.competitionId);
+    final table = standingsTableFor(
+      data,
+      widget.competitionId,
+      season: widget.season,
+    );
     final groups = standingsGroups(
       table,
       data,
@@ -365,14 +523,19 @@ class _StandingsState extends State<Standings> {
       stage: widget.stage,
     );
     if (table == null || groups == null) {
-      return const Padding(
+      return Padding(
         key: ValueKey('standings-unavailable'),
-        padding: EdgeInsets.symmetric(vertical: 32),
+        padding: const EdgeInsets.symmetric(vertical: 32),
         child: Column(
           children: [
-            Icon(Icons.table_rows_outlined, size: 36, color: muted),
-            SizedBox(height: 10),
-            Text('Tabla no disponible', style: TextStyle(color: muted)),
+            const Icon(Icons.table_rows_outlined, size: 36, color: muted),
+            const SizedBox(height: 10),
+            Text(
+              table == null
+                  ? 'Tabla no disponible'
+                  : 'Tabla no disponible para esta fase.',
+              style: const TextStyle(color: muted),
+            ),
           ],
         ),
       );
@@ -383,7 +546,9 @@ class _StandingsState extends State<Standings> {
       StandingsView.full,
       if (formIdentity != null) StandingsView.form,
     ];
-    final view = !widget.selectableView
+    final view = widget.contextRows != null
+        ? StandingsView.compact
+        : !widget.selectableView
         ? StandingsView.full
         : views.contains(_view)
         ? _view
@@ -399,25 +564,34 @@ class _StandingsState extends State<Standings> {
         }
       });
     }
-    final highlighted =
+    final rawHighlighted =
         widget.highlightedTeams.isEmpty && widget.focusTeamIds.length == 1
         ? {widget.focusTeamIds.single: lime}
         : widget.highlightedTeams;
+    final highlighted = {
+      for (final entry in rawHighlighted.entries)
+        data.resolveEntityId(entry.key): entry.value,
+    };
+    final live = {
+      for (final id in widget.liveTeamIds) data.resolveEntityId(id),
+    };
     Widget tableOf(List<_Entry> entries) => switch (view) {
       StandingsView.compact => _Table(
         key: const ValueKey('standings-compact'),
         entries: entries,
         columns: _compactColumns,
         highlightedTeams: highlighted,
-        liveTeamIds: widget.liveTeamIds,
+        liveTeamIds: live,
+        teamAvatarSize: widget.teamAvatarSize,
       ),
       StandingsView.form => _Table(
         key: const ValueKey('standings-form'),
         entries: entries,
         columns: _formColumns,
         highlightedTeams: highlighted,
-        liveTeamIds: widget.liveTeamIds,
+        liveTeamIds: live,
         form: _form,
+        teamAvatarSize: widget.teamAvatarSize,
       ),
       StandingsView.full => LayoutBuilder(
         builder: (context, constraints) => SingleChildScrollView(
@@ -434,7 +608,8 @@ class _StandingsState extends State<Standings> {
               entries: entries,
               columns: _fullColumns,
               highlightedTeams: highlighted,
-              liveTeamIds: widget.liveTeamIds,
+              liveTeamIds: live,
+              teamAvatarSize: widget.teamAvatarSize,
             ),
           ),
         ),
@@ -456,7 +631,7 @@ class _StandingsState extends State<Standings> {
         const SizedBox(height: 12),
         // Its own row above the table: never squeezes the title on a
         // narrow phone.
-        if (widget.selectableView) ...[
+        if (widget.selectableView && widget.contextRows == null) ...[
           _ViewSwitch(views: views, view: view, onChanged: _select),
           const SizedBox(height: 10),
         ],
@@ -479,14 +654,57 @@ class _StandingsState extends State<Standings> {
             KeyedSubtree(
               key: ValueKey('standings-table-$g'),
               child: tableOf([
-                for (var i = 0; i < groups[g].rows.length; i++)
-                  _Entry.from(groups[g].rows[i], i, data),
+                for (final indexed in _standingsContextRows(
+                  groups[g].rows,
+                  data,
+                  widget.focusTeamIds,
+                  widget.contextRows,
+                ))
+                  _Entry.from(indexed.$2, indexed.$1, data),
               ]),
             ),
           ],
       ],
     );
   }
+}
+
+List<(int, Json)> _standingsContextRows(
+  List<Json> rows,
+  Snapshot data,
+  Set<String> focusTeamIds,
+  int? limit,
+) {
+  final indexed = rows.indexed.toList();
+  if (limit == null || limit <= 0 || rows.length <= limit) return indexed;
+  final focus = {for (final id in focusTeamIds) data.resolveEntityId(id)};
+  final focused = [
+    for (final item in indexed)
+      if (focus.contains(
+        data.resolveEntityId(item.$2['teamId']?.toString() ?? ''),
+      ))
+        item.$1,
+  ];
+  if (focused.isEmpty) return indexed.take(limit).toList();
+  final first = focused.reduce((a, b) => a < b ? a : b);
+  final last = focused.reduce((a, b) => a > b ? a : b);
+  if (last - first + 1 <= limit) {
+    final room = limit - (last - first + 1);
+    final start = (first - room ~/ 2).clamp(0, rows.length - limit);
+    return indexed.skip(start).take(limit).toList();
+  }
+  // Far-apart teams: show each side plus immediate neighbours, in table
+  // order. This keeps both match teams visible without a misleading splice.
+  final wanted = <int>{};
+  for (final at in focused) {
+    for (var i = at - 1; i <= at + 1; i++) {
+      if (i >= 0 && i < rows.length) wanted.add(i);
+    }
+  }
+  return [
+    for (final item in indexed)
+      if (wanted.contains(item.$1)) item,
+  ];
 }
 
 /// Forma not loaded yet: a bounded single read, then "Reintentar".
@@ -539,7 +757,7 @@ class _Entry {
     required this.values,
   });
 
-  factory _Entry.from(Json row, int index, Snapshot data) {
+  factory _Entry.from(Json row, int _, Snapshot data) {
     final teamId = row['teamId']?.toString() ?? '';
     int? value(String key) {
       final raw = row[key];
@@ -559,7 +777,7 @@ class _Entry {
       formTeamId: data.resolveEntityId(teamId),
       // standingsGroups only lets through rows whose team is known.
       team: standingsTeam(data, teamId)!,
-      position: (row['position'] as num?)?.toInt() ?? index + 1,
+      position: _standingsPosition(row['position']),
       values: {
         'played': value('played'),
         'won': value('won'),
@@ -578,7 +796,7 @@ class _Entry {
   /// [teamId] through the snapshot's entity redirects (canonical id).
   final String formTeamId;
   final Entity team;
-  final int position;
+  final int? position;
   final Map<String, int?> values;
 
   String get name => team.displayName;
@@ -594,13 +812,13 @@ class _Column {
 }
 
 const _compactColumns = [
-  _Column('J', 'played', semantic: 'jugados'),
+  _Column('PJ', 'played', semantic: 'partidos jugados'),
   _Column('DG', 'diff', width: 38, semantic: 'diferencia de gol'),
   _Column('Pts', 'points', width: 38, semantic: 'puntos'),
 ];
 
 const _fullColumns = [
-  _Column('J', 'played', semantic: 'jugados'),
+  _Column('PJ', 'played', semantic: 'partidos jugados'),
   _Column('G', 'won', semantic: 'ganados'),
   _Column('E', 'drawn', semantic: 'empatados'),
   _Column('P', 'lost', semantic: 'perdidos'),
@@ -624,6 +842,7 @@ class _Table extends StatelessWidget {
     required this.columns,
     required this.highlightedTeams,
     required this.liveTeamIds,
+    required this.teamAvatarSize,
     this.form,
     super.key,
   });
@@ -632,6 +851,7 @@ class _Table extends StatelessWidget {
   final List<_Column> columns;
   final Map<String, Color> highlightedTeams;
   final Set<String> liveTeamIds;
+  final double teamAvatarSize;
   final StandingsForm? form;
 
   @override
@@ -650,11 +870,12 @@ class _Table extends StatelessWidget {
             _TeamRow(
               entry: entries[i],
               columns: columns,
-              accent: highlightedTeams[entries[i].teamId],
-              live: liveTeamIds.contains(entries[i].teamId),
+              accent: highlightedTeams[entries[i].formTeamId],
+              live: liveTeamIds.contains(entries[i].formTeamId),
               divider: i > 0,
               // Stored rows may carry an alias; Forma is keyed canonically.
               form: form?.results(entries[i].formTeamId) ?? const [],
+              teamAvatarSize: teamAvatarSize,
             ),
         ],
       ),
@@ -725,6 +946,7 @@ class _TeamRow extends StatelessWidget {
     required this.live,
     required this.divider,
     required this.form,
+    required this.teamAvatarSize,
   });
 
   final _Entry entry;
@@ -732,6 +954,7 @@ class _TeamRow extends StatelessWidget {
   final Color? accent;
   final bool live;
   final bool divider;
+  final double teamAvatarSize;
 
   /// Newest first; empty = no data (a dash, never an invented result).
   final List<String> form;
@@ -762,7 +985,9 @@ class _TeamRow extends StatelessWidget {
       container: true,
       button: entry.teamId.isNotEmpty,
       label: [
-        'Posición ${entry.position}',
+        entry.position == null
+            ? 'Posición no disponible'
+            : 'Posición ${entry.position}',
         entry.name,
         if (live) 'en vivo',
         for (final column in columns) ?semantic(column),
@@ -790,7 +1015,7 @@ class _TeamRow extends StatelessWidget {
               SizedBox(
                 width: 28,
                 child: Text(
-                  '${entry.position}',
+                  entry.position?.toString() ?? '—',
                   textAlign: TextAlign.center,
                   style: _numberStyle.copyWith(
                     color: highlighted ? accent : muted,
@@ -799,7 +1024,10 @@ class _TeamRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              EntityAvatar(team, size: 22),
+              SizedBox(
+                key: ValueKey('standings-team-${entry.teamId}-logo'),
+                child: EntityAvatar(team, size: teamAvatarSize),
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
