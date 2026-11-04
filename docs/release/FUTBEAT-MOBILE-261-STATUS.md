@@ -53,3 +53,21 @@ Automatización única autorizada: `futbeat-mobile261-reanudaciones-locales-limi
 Límites consultados: 75% disponible en ventana semanal compartida; no se consumieron reinicios ni créditos adicionales. Sin IDs de cuenta o crédito en estos archivos.
 
 43 issues iniciales, 20 abiertos al inicio, 0 cerrados por esta operación. LOCAL_PASS no equivale a DONE, OAuth/FCM real, PHYSICAL_PASS o CONNECTED_PASS. RC permanece NO-GO, especialmente mientras el P0 A5 esté pendiente. Publicar los cambios nuevos de MOBILE261 requiere autorización separada.
+
+
+## Corte actualizado 2026-11-04T00:05:31.536640+00:00
+
+HEAD de código `cf2987f75ad92c57ba1c4f176b4e1df05dd4e027`. El corte anterior se conserva como evidencia histórica.
+
+- A5/A6: LOCAL_PASS, `f221ba3e`: el cierre local incompleto bloquea la cuenta siguiente; mantiene contexto original, recuperación acotada y mensaje de reintento. 335 focales PASS. La revocación remota no se declara acreditada.
+- A7: LOCAL_PASS, `41d5c14c`: cambio directo A→B prepara aislamiento duradero; la cuenta más reciente prevalece. 341 focales PASS.
+- A8: guardia de integración LOCAL_PASS, `4a683dd0`: cierre explícito durante cambio interno realiza exactamente un intento remoto limitado. 344 focales PASS; no se cuenta como defecto inicial adicional.
+- Controles de microtareas `cf2987f7`: 25 casos positivos; no reprodujeron otra carrera, por lo que no se agregó código especulativo.
+- D5: LOCAL_PASS, `5533ba27`: contexto ajeno no contamina identidad, memoria o persistencia; 8 FAIL antes, 76 focales PASS después.
+- Suite completa sobre `f221ba3e`: 1824 PASS, goldens incluidos. Suite del bloque `cf2987f7` en ejecución; no atribuirle aún resultado final.
+- A9: IN_PROGRESS, 3 regresiones reproducidas de nombre A heredado por B. Corrección y revisión de intenciones concurrentes en desarrollo. No existe campo avatar en este contrato móvil; no se afirma corregirlo.
+- Recorrido de dos cuentas con cierre/reapertura SQLite: IN_PROGRESS, complemento del onboarding 251 ya existente, no QA física.
+
+Automatización única verificada nuevamente por herramienta: ACTIVE, máximo 24 invocaciones y STOP 2026-11-04T22:49:30Z. Ledger aún con 0 invocaciones programadas acreditadas. No se promete ejecución futura ni 24 horas efectivas. Consulta agregada de recursos a las 23:49:55 UTC: 65% restante de la ventana compartida; sin consumir reinicios ni créditos adicionales. La cifra anterior de 75% es histórica, no actual.
+
+Nuevo código MOBILE261 sigue exclusivamente local. CI Linux de PR244 valida solamente MOBILE260/1719ecb; no acredita este HEAD. No se modificaron PNG, backend, SQL, Android, teléfono, QA123 ni artefactos de compilación. RC NO-GO: firma/configuración aprobada, CI del nuevo código y aceptación del artefacto exacto pendientes.
