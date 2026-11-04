@@ -511,6 +511,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   Future<void> _retry(DateTime value) async {
     if (_retrying) return;
     setState(() => _retrying = true);
+    final repository = ref.read(repositoryProvider);
+    if (repository is ApiRepository) repository.refreshDate(value);
     ref.invalidate(calendarSnapshotProvider(value));
     try {
       await ref.read(calendarSnapshotProvider(value).future);

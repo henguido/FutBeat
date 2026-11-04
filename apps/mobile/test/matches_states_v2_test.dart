@@ -73,6 +73,7 @@ Future<void> _pump(
   Stream<Snapshot> Function() stream, {
   double width = 390,
   double textScale = 1,
+  ApiRepository? repository,
 }) async {
   tester.view.physicalSize = Size(width, 900);
   tester.view.devicePixelRatio = 1;
@@ -83,6 +84,8 @@ Future<void> _pump(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        if (repository != null)
+          repositoryProvider.overrideWithValue(repository),
         calendarSnapshotProvider.overrideWith((ref, date) => stream()),
         liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
         followsProvider.overrideWith((ref) => Stream.value(<String>{})),
@@ -104,7 +107,35 @@ Future<void> _pump(
   );
 }
 
+class _PartialCalendarCache extends ApiRepository {
+  _PartialCalendarCache(super.dio);
+
+  final refreshedDates = <DateTime>[];
+
+  @override
+  void refreshDate(DateTime date) => refreshedDates.add(date);
+
+  Stream<Snapshot> snapshots() =>
+      Stream.value(_data(partial: refreshedDates.isEmpty));
+}
+
 void main() {
+  testWidgets('retry revalidates a partial date still inside cache TTL', (
+    tester,
+  ) async {
+    final dio = Dio();
+    addTearDown(() => dio.close(force: true));
+    final repository = _PartialCalendarCache(dio);
+    await _pump(tester, repository.snapshots, repository: repository);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('matches-partial-empty')), findsOneWidget);
+
+    await tester.tap(find.text('Reintentar'));
+    await tester.pumpAndSettle();
+    expect(repository.refreshedDates, [_today]);
+    expect(find.byKey(const ValueKey('matches-empty-day')), findsOneWidget);
+  });
+
   testWidgets('initial loading uses a bounded competition-shaped skeleton', (
     tester,
   ) async {
