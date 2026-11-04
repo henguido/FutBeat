@@ -970,8 +970,14 @@ class PushService {
 
   /// Stores a fresh GoTrue session and starts account sync. A failed first
   /// reconcile (offline) is retried by the renewal tick; the session stays.
-  Future<void> _startSession(Map<String, dynamic> value) async {
+  Future<void> _startSession(
+    Map<String, dynamic> value, {
+    int? recoveryAttempt,
+  }) async {
     final attempt = _authenticationAttempt;
+    bool stale() =>
+        _authenticationStale(attempt) ||
+        (recoveryAttempt != null && _recoveryStale(recoveryAttempt));
     final previousUser = userId;
     final targetUser = value['user'] is Map
         ? (value['user'] as Map)['id']?.toString().trim()
@@ -979,7 +985,7 @@ class PushService {
     // Preserve a live deletion ACK before local separation drops A's runtime
     // identity and its scoped in-memory guard.
     await _resumeConfirmedDeletionPreparation();
-    if (_authenticationStale(attempt)) return;
+    if (stale()) return;
     if (previousUser != null && targetUser != previousUser) {
       // Persist ownership before another account can reconcile local follows.
       // This is part of the current login, not a newer logout intent.
@@ -987,12 +993,12 @@ class PushService {
         cancelAuthentication: false,
         replacingSession: true,
       );
-      if (_authenticationStale(attempt)) return;
+      if (stale()) return;
     }
     // A deletion ACK may become durable while this auth request was in
     // flight. Recheck after local separation, before accepting B's runtime.
     await _resumeConfirmedDeletionPreparation();
-    if (_authenticationStale(attempt)) return;
+    if (stale()) return;
     final oldRotation = rotation;
     rotation = null;
     final generation = ++_generation;
@@ -1231,7 +1237,7 @@ class PushService {
       return;
     }
     _recoverySession = null;
-    await _startSession(verified);
+    await _startSession(verified, recoveryAttempt: recoveryAttempt);
   }
 
   /// Leaving the new-password screen drops the recovery session.

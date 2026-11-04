@@ -283,9 +283,10 @@ class _ServiceWithStorage extends PushService {
 }
 
 class _HeldSessionRead extends FlutterSecureStorage {
-  _HeldSessionRead({this.heldKey = 'futbeat.push.session'});
+  _HeldSessionRead({this.heldKey = 'futbeat.push.session', this.hold = true});
 
   final String heldKey;
+  bool hold;
   final captured = Completer<void>();
   final release = Completer<void>();
 
@@ -308,7 +309,7 @@ class _HeldSessionRead extends FlutterSecureStorage {
       mOptions: mOptions,
       wOptions: wOptions,
     );
-    if (key == heldKey && !captured.isCompleted) {
+    if (hold && key == heldKey && !captured.isCompleted) {
       captured.complete();
       await release.future;
     }
@@ -1351,6 +1352,42 @@ void main() {
         );
         expect(value.service.passwordRecoveryPending, isFalse);
         expect(value.service.authenticated, isFalse);
+      },
+    );
+    test(
+      'a replacement after PUT prevents the previous session from committing',
+      () async {
+        final storage = _HeldSessionRead(
+          heldKey: PushService.leftoverKey,
+          hold: false,
+        );
+        final value = await _service(secureStorage: storage);
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) {
+          storage.hold = true;
+          return <String, dynamic>{};
+        };
+        await value.service.beginPasswordRecovery(link);
+        final completing = value.service.completePasswordRecovery(
+          'nueva-clave-8',
+        );
+        await storage.captured.future;
+        expect(value.http.count('/auth/v1/user'), 1);
+        expect(value.service.authenticated, isFalse);
+        value.http.routes['/auth/v1/verify'] = (_) =>
+            value.http.issue('user-b');
+        try {
+          await value.service.beginPasswordRecovery(link);
+        } finally {
+          storage.release.complete();
+        }
+        await completing;
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(value.service.passwordRecoveryPending, isTrue);
+
+        await value.service.completePasswordRecovery('nueva-clave-9');
+        expect(value.service.userId, 'user-b');
       },
     );
     test('cancel drops the recovery session', () async {
