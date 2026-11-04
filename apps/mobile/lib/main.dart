@@ -120,7 +120,8 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
           AppShell(location: state.uri.path, child: child),
       routes: [
         GoRoute(path: '/matches', builder: (_, state) => const MatchesScreen()),
-        GoRoute(path: '/news', builder: (_, state) => const NewsScreen()),
+        if (!passivePreview)
+          GoRoute(path: '/news', builder: (_, state) => const NewsScreen()),
         GoRoute(
           path: '/explore',
           builder: (_, state) =>

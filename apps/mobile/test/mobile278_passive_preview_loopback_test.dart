@@ -59,13 +59,18 @@ void main() {
           ..headers.contentType = ContentType.json
           ..headers.set('x-futbeat-passive', 'v1')
           ..headers.set('x-futbeat-qa-stored', 'v1')
+          ..headers.set('retry-after', '2')
           ..write('{}');
         await request.response.close();
       });
       final base = Uri.parse(
         'https://fixture.invalid/functions/v1/futbeat-passive-api',
       );
-      final transport = PassivePreviewTransport(baseUri: base);
+      var now = DateTime.utc(2026, 11, 4);
+      final transport = PassivePreviewTransport(
+        baseUri: base,
+        clock: () => now,
+      );
       final dio = Dio(BaseOptions(baseUrl: base.toString()))
         ..httpClientAdapter = LoopbackAdapter(server.port)
         ..interceptors.add(transport);
@@ -81,6 +86,10 @@ void main() {
           ),
         ),
       );
+      await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+      await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+      expect(requests, hasLength(2));
+      now = now.add(const Duration(seconds: 2));
       await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
       await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
       await expectLater(dio.get('/v1/snapshot'), throwsA(isA<DioException>()));

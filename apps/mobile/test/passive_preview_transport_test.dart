@@ -49,6 +49,73 @@ Dio _client(PassivePreviewTransport transport, _FixtureAdapter adapter) {
 
 void main() {
   test(
+    'replays fresh and absent results without network until their TTL',
+    () async {
+      var now = DateTime.utc(2026, 11, 4);
+      final transport = PassivePreviewTransport(
+        baseUri: _base,
+        clock: () => now,
+      );
+      final dio = _client(
+        transport,
+        _FixtureAdapter((request) {
+          final absent = request.path.endsWith('match-detail');
+          return _response(absent ? 404 : 200)
+            ..headers['cache-control'] = [
+              absent ? 'no-store' : 'public, max-age=15',
+            ];
+        }),
+      );
+      Future<void> expectAbsent() => expectLater(
+        dio.get('/v1/match-detail', queryParameters: {'id': 'fb_match_absent'}),
+        throwsA(predicate<Object>(isQaStoredDetailAbsent)),
+      );
+      await dio.get('/v1/match-context');
+      await expectAbsent();
+      now = now.add(const Duration(seconds: 14));
+      await dio.get('/v1/match-context');
+      await expectAbsent();
+      expect(transport.counters['requests'], 2);
+      now = now.add(const Duration(seconds: 1));
+      await dio.get('/v1/match-context');
+      await expectAbsent();
+      expect(transport.counters['requests'], 3);
+      now = now.add(const Duration(seconds: 15));
+      await expectAbsent();
+      expect(transport.counters['requests'], 4);
+    },
+  );
+
+  test(
+    '503 backs off across routes and permits a later explicit read',
+    () async {
+      var now = DateTime.utc(2026, 11, 4);
+      final transport = PassivePreviewTransport(
+        baseUri: _base,
+        clock: () => now,
+      );
+      var sent = 0;
+      final dio = _client(
+        transport,
+        _FixtureAdapter((_) {
+          return _response(++sent == 1 ? 503 : 200)
+            ..headers['retry-after'] = ['7'];
+        }),
+      );
+      await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+      now = now.add(const Duration(seconds: 6));
+      await expectLater(
+        dio.get('/v1/match-context'),
+        throwsA(isA<DioException>()),
+      );
+      expect(sent, 1);
+      now = now.add(const Duration(seconds: 1));
+      await dio.get('/v1/match-context');
+      expect(sent, 2);
+    },
+  );
+
+  test(
     'sends only stored alias and dedicated headers to the passive function',
     () async {
       final transport = PassivePreviewTransport(

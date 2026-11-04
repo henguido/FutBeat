@@ -1838,9 +1838,12 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
   );
 
   if (passivePreview && passivePreviewEnabled) {
-    final baseUri = Uri.parse(
-      const String.fromEnvironment('FUTBEAT_PASSIVE_API_URL'),
-    );
+    const passiveEndpoint =
+        'https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-passive-api';
+    if (baseUrl != passiveEndpoint) {
+      throw StateError('Invalid passive Preview endpoint');
+    }
+    final baseUri = Uri.parse(passiveEndpoint);
     const clientKey = String.fromEnvironment('FUTBEAT_PASSIVE_CLIENT_KEY');
     if (clientKey.isEmpty) {
       throw StateError('Passive Preview client key missing');
@@ -2079,6 +2082,7 @@ final exploreSnapshotProvider = StreamProvider.autoDispose<Snapshot>((ref) {
 /// any failure (or a non-API repository) answers no players.
 final playerSuggestionsProvider = FutureProvider.autoDispose
     .family<List<Entity>, String>((ref, teamsKey) async {
+      if (passivePreview) return const <Entity>[];
       final repository = ref.watch(repositoryProvider);
       if (repository is! ApiRepository) return const <Entity>[];
       final token = CancelToken();

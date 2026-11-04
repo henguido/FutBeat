@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart';
 
-/// Bounded, fail-closed transport for the dedicated API276 Preview function.
+/// Bounded, fail-closed transport for the dedicated API277 Preview function.
 /// Construct on a dedicated Dio before it can send any request.
 class PassivePreviewTransport extends Interceptor {
   PassivePreviewTransport({
@@ -35,6 +35,9 @@ class PassivePreviewTransport extends Interceptor {
   final String? _clientKey;
   final int sessionLimit, minuteLimit, concurrentLimit;
   bool _closed = false;
+  DateTime? _retryAfter;
+  final _cache = <String, ({DateTime expires, Response<dynamic> response})>{};
+  static const _cacheLimit = 30;
   int _used = 0, _blocked = 0;
   final _recent = <DateTime>[];
   final _active = <RequestOptions>{};
@@ -79,6 +82,7 @@ class PassivePreviewTransport extends Interceptor {
 
   void close() {
     _closed = true;
+    _cache.clear();
     final pending = _active.toList();
     _active.clear();
     for (final request in pending) {
@@ -115,10 +119,7 @@ class PassivePreviewTransport extends Interceptor {
         options.baseUrl != baseUri.toString() ||
         (hasDemandFlag && (path != '/v1/match-detail' || request != '0')) ||
         params.keys.any((key) => !_queryKeys.contains(key)) ||
-        options.cancelToken?.isCancelled == true ||
-        _recent.length >= sessionLimit ||
-        minuteRequests >= minuteLimit ||
-        _active.length >= concurrentLimit) {
+        options.cancelToken?.isCancelled == true) {
       _blocked++;
       handler.reject(_blockedRequest(options));
       return;
@@ -126,6 +127,36 @@ class PassivePreviewTransport extends Interceptor {
 
     options.path = path.replaceFirst('/v1/', '/v1/qa-stored/');
     options.queryParameters = params;
+    _cache.removeWhere((_, entry) => !now.isBefore(entry.expires));
+    final cached = _cache[_cacheKey(options)];
+    if (cached != null) {
+      final response = Response<dynamic>(
+        requestOptions: options,
+        statusCode: cached.response.statusCode,
+        data: cached.response.data,
+        headers: cached.response.headers,
+      );
+      if (response.statusCode == 404) {
+        handler.reject(
+          DioException.badResponse(
+            statusCode: 404,
+            requestOptions: options,
+            response: response,
+          ),
+        );
+      } else {
+        handler.resolve(response);
+      }
+      return;
+    }
+    if (_retryAfter?.isAfter(now) == true ||
+        _recent.length >= sessionLimit ||
+        minuteRequests >= minuteLimit ||
+        _active.length >= concurrentLimit) {
+      _blocked++;
+      handler.reject(_blockedRequest(options));
+      return;
+    }
     options.headers
       ..clear()
       ..['accept'] = 'application/json';
@@ -141,6 +172,57 @@ class PassivePreviewTransport extends Interceptor {
     _recent.add(now);
     _active.add(options);
     handler.next(options);
+  }
+
+  String _cacheKey(RequestOptions options) {
+    final query = options.uri.queryParametersAll;
+    final keys = query.keys.toList()..sort();
+    return Uri(
+      path: options.uri.path,
+      queryParameters: {for (final key in keys) key: query[key]},
+    ).toString();
+  }
+
+  void _remember(Response<dynamic> response) {
+    final now = _clock();
+    final status = response.statusCode;
+    if (status == 429 || status == 503) {
+      final values = response.headers['retry-after'];
+      final seconds = values?.length == 1 ? int.tryParse(values!.single) : null;
+      final deadline = now.add(
+        Duration(
+          seconds: seconds != null && seconds > 0
+              ? seconds
+              : (status == 429 ? 60 : 2),
+        ),
+      );
+      if (_retryAfter?.isAfter(deadline) != true) _retryAfter = deadline;
+      return;
+    }
+    if (status != 200 && status != 404) return;
+    final directives = (response.headers['cache-control'] ?? const <String>[])
+        .join(',')
+        .toLowerCase()
+        .split(',')
+        .map((value) => value.trim());
+    final age = RegExp(r'^max-age=(\d+)$');
+    final maxAge = directives.map(age.firstMatch).nonNulls.firstOrNull;
+    final seconds = status == 404
+        ? 30
+        : int.tryParse(maxAge?.group(1) ?? '') ?? 0;
+    if (seconds <= 0 ||
+        (status == 200 &&
+            (directives.contains('no-store') ||
+                directives.contains('no-cache')))) {
+      return;
+    }
+    final key = _cacheKey(response.requestOptions);
+    _cache.remove(key);
+    if (_cache.length >= _cacheLimit) _cache.remove(_cache.keys.first);
+    _cache[key] = (
+      expires: now.add(Duration(seconds: seconds)),
+      response: response,
+    );
   }
 
   void _settle(RequestOptions options) {
@@ -168,6 +250,7 @@ class PassivePreviewTransport extends Interceptor {
   ) {
     _settle(response.requestOptions);
     if (_accepted(response)) {
+      _remember(response);
       handler.next(response);
     } else {
       close();
@@ -184,6 +267,7 @@ class PassivePreviewTransport extends Interceptor {
       handler.reject(_blockedRequest(err.requestOptions));
       return;
     }
+    if (response != null) _remember(response);
     handler.next(err);
   }
 }
