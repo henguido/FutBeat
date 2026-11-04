@@ -476,7 +476,21 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       ref.read(entityMediaProvider).redirects,
       type,
       id,
+      onIntent: ref.read(pushServiceProvider).recordFollowIntent,
     );
+  }
+
+  Future<void> _toggleChoices(
+    String type,
+    String canonicalId,
+    Set<String> ids,
+  ) async {
+    final db = ref.read(databaseProvider);
+    await ref.read(pushServiceProvider).recordFollowIntent({
+      '$type:$canonicalId',
+      for (final id in ids) '$type:$id',
+    });
+    await db.toggleAny(type, canonicalId, ids);
   }
 
   Future<void> _saveSettings(
@@ -1364,9 +1378,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           borderRadius: BorderRadius.circular(18),
           onTap: () => ids == null || ids.length < 2
               ? _toggle(type, entity.id)
-              : ref
-                    .read(databaseProvider)
-                    .toggleAny(type, canonicalId ?? entity.id, ids),
+              : _toggleChoices(type, canonicalId ?? entity.id, {
+                  ...ids,
+                  entity.id,
+                }),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
