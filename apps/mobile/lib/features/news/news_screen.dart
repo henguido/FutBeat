@@ -215,7 +215,8 @@ class _NewsScreenState extends ConsumerState<NewsScreen> {
       _rightsExpiry?.cancel();
       _scrubProtected(_lastFeed);
       _lastFeed = null;
-      await ref.refresh(newsFeedProvider.future);
+      ref.invalidate(newsFeedProvider);
+      await ref.read(newsFeedProvider.future);
     }
 
     final children = <Widget>[
