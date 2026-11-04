@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/models.dart';
 import '../../core/news_links.dart';
 import '../../core/providers.dart';
+import '../../core/qa_development.dart';
 import '../../shared/widgets.dart';
 
 enum NewsSection {
@@ -110,27 +111,33 @@ void showNewsDetails(BuildContext context, Json article) {
               Text(names.join(' · ')),
             ],
             const SizedBox(height: 16),
-            const Text('Lee el contenido completo en la fuente original.'),
+            const Text(
+              offlinePreview
+                  ? 'Enlace externo no disponible sin conexión.'
+                  : 'Lee el contenido completo en la fuente original.',
+            ),
             const SizedBox(height: 12),
             FilledButton.icon(
-              onPressed: () async {
-                var opened = false;
-                try {
-                  opened = await launchUrl(
-                    uri,
-                    mode: LaunchMode.externalApplication,
-                  );
-                } catch (_) {
-                  /* Browser unavailable. */
-                }
-                if (!opened && sheetContext.mounted) {
-                  ScaffoldMessenger.of(sheetContext).showSnackBar(
-                    const SnackBar(
-                      content: Text('No se pudo abrir el artículo'),
-                    ),
-                  );
-                }
-              },
+              onPressed: offlinePreview
+                  ? null
+                  : () async {
+                      var opened = false;
+                      try {
+                        opened = await launchUrl(
+                          uri,
+                          mode: LaunchMode.externalApplication,
+                        );
+                      } catch (_) {
+                        /* Browser unavailable. */
+                      }
+                      if (!opened && sheetContext.mounted) {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('No se pudo abrir el artículo'),
+                          ),
+                        );
+                      }
+                    },
               icon: const Icon(Icons.open_in_new),
               label: const Text('Leer noticia original'),
             ),

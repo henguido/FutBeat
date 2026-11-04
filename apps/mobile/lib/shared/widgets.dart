@@ -10,6 +10,7 @@ import '../core/models.dart';
 import '../core/news_links.dart';
 import '../core/providers.dart';
 import '../core/push.dart';
+import '../core/qa_development.dart';
 import '../core/sports_image_cache.dart';
 import '../core/relevance.dart';
 import '../core/theme.dart';
@@ -420,6 +421,7 @@ class NewsArticleCard extends StatelessWidget {
   final VoidCallback? onOpenDetails;
 
   Future<void> _openArticle(BuildContext context, Uri uri) async {
+    if (offlinePreview) return;
     var opened = false;
     try {
       opened =

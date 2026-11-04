@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 /// Staged QA227 policy. Ordinary builds keep all existing behavior.
 const qaLocalCacheOnly = bool.fromEnvironment('FUTBEAT_QA_LOCAL_CACHE_ONLY');
+const offlinePreview = bool.fromEnvironment('FUTBEAT_OFFLINE_PREVIEW');
 
 class QaOfflineHttpOverrides extends HttpOverrides {
   static int blockedClients = 0;
