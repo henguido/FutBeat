@@ -584,6 +584,14 @@ class LiveRealtimeClient {
         if (disposed || !_appActive || requestedScopeVersion != scopeVersion) {
           return;
         }
+        // The current scope changes before its debounced socket reconnect.
+        // Do not reconcile a response for the previous set in that interval.
+        if (ids != null) {
+          final activeIds = realtimeMatchIds.toSet();
+          if (activeIds.length != ids.length || !activeIds.containsAll(ids)) {
+            return;
+          }
+        }
         final deviceNow = DateTime.now().toUtc();
         final serverNow = read.serverNow;
         if (serverNow != null) serverOffset = serverNow.difference(deviceNow);

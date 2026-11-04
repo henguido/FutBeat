@@ -637,6 +637,43 @@ void main() {
       }
     });
 
+    test(
+      'scope change rejects a REST answer before the reconnect debounce',
+      () async {
+        final server = FakeSupabase([
+          liveRow(id(1), updatedAt: now),
+          liveRow(id(2), updatedAt: now),
+        ]);
+        final release = Completer<void>();
+        server.beforeAnswerAsync = (index) async {
+          if (index == 0) await release.future;
+        };
+        await server.start();
+        final dio = Dio();
+        final client = LiveRealtimeClient(
+          LiveRealtimeConfig(supabaseUrl: server.url, publicKey: 't'),
+          dio,
+          scopedRealtime: true,
+          refreshInterval: const Duration(hours: 1),
+        )..setScope('match:open', [id(1)]);
+        final emitted = <Map<String, LiveMatchUpdate>>[];
+        final sub = client.watch().listen(emitted.add);
+        try {
+          await until(() => server.restRequests.isNotEmpty);
+          client.setScope('match:open', [id(2)]);
+          release.complete();
+          await until(() => emitted.any((state) => state.containsKey(id(2))));
+          expect(emitted.any((state) => state.containsKey(id(1))), isFalse);
+        } finally {
+          if (!release.isCompleted) release.complete();
+          await sub.cancel();
+          client.dispose();
+          dio.close(force: true);
+          await server.stop();
+        }
+      },
+    );
+
     test('background cancels an in-flight LIVE bootstrap request', () async {
       final server = FakeSupabase([liveRow(id(1), updatedAt: now)]);
       final release = Completer<void>();
