@@ -382,7 +382,9 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
           data: query.copyWith(alwaysUse24HourFormat: use24HourClock),
           child: EntityMediaScope(
             memory: media,
-            child: qaLocalCacheOnly
+            child:
+                qaLocalCacheOnly &&
+                    !const bool.fromEnvironment('FUTBEAT_OFFLINE_PREVIEW')
                 ? Banner(
                     message: 'QA LOCAL · SIN RED',
                     location: BannerLocation.topEnd,

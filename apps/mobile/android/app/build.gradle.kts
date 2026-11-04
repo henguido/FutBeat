@@ -22,6 +22,7 @@ val missingReleaseSigningProperties =
 val releaseArtifactTaskPrefixes =
     listOf("assemble", "bundle", "package", "sign", "validateSigning")
 val appProjectPath = project.path
+val offlinePreview = System.getenv("FUTBEAT_OFFLINE_PREVIEW") == "true"
 
 // --- Release ads configuration (fail closed) ------------------------------
 // A release (Play) build must carry FutBeat's production AdMob App ID and ad
@@ -191,11 +192,19 @@ android {
         }
     }
 
+    if (offlinePreview) {
+        sourceSets.getByName("debug").manifest.srcFile("src/preview/AndroidManifest.xml")
+    }
+
     buildTypes {
         debug {
             // Opt-in QA install alongside the Play-signed app. Never changes
             // the normal debug or release package when the flag is absent.
-            if (System.getenv("FUTBEAT_QA_ISOLATED_PACKAGE") == "true") {
+            if (offlinePreview) {
+                applicationIdSuffix = ".preview"
+                manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.preview"
+                manifestPlaceholders["futbeatAppLinkHost"] = "preview.invalid"
+            } else if (System.getenv("FUTBEAT_QA_ISOLATED_PACKAGE") == "true") {
                 applicationIdSuffix = ".qa"
                 manifestPlaceholders["futbeatAppLabel"] = "FutBeat QA"
                 manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.qa"
@@ -231,6 +240,22 @@ gradle.taskGraph.whenReady(
                             task.name.startsWith(prefix, ignoreCase = true)
                         }
                 }
+
+            if (offlinePreview && releaseArtifactRequested) {
+                throw GradleException("FutBeat Preview is available only as an isolated debug artifact.")
+            }
+            if (offlinePreview && taskGraph.allTasks.any {
+                    it.project.path == appProjectPath && it.name == "assembleDebug"
+                }) {
+                val defines = dartDefines()
+                if (defines["FUTBEAT_OFFLINE_PREVIEW"] != "true" ||
+                    defines["FUTBEAT_QA_LOCAL_CACHE_ONLY"] != "true" ||
+                    defines["FUTBEAT_ADS_DISABLED"] != "true" ||
+                    listOf("FUTBEAT_USE_DEMO", "FUTBEAT_PUSH_ENABLED", "FUTBEAT_OAUTH_GOOGLE_ENABLED",
+                        "FUTBEAT_OAUTH_FACEBOOK_ENABLED").any { defines[it] == "true" }) {
+                    throw GradleException("FutBeat Preview requires local cache and Ads/OAuth/Push/DEMO off.")
+                }
+            }
 
             if (releaseArtifactRequested) {
                 val runtimeProblems = releaseRuntimeProblems()
