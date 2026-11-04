@@ -275,7 +275,7 @@ void main() {
       value.service.session = {
         'access_token': 'a',
         'refresh_token': 'r',
-        'user': {'email': 'a@b.test'},
+        'user': {'id': 'user-a', 'email': 'a@b.test'},
       };
       await value.service.deleteAccount();
       expect(value.service.authenticated, isFalse);
@@ -411,7 +411,11 @@ void main() {
       });
       value.service.session = {
         'access_token': 'a',
-        'user': {'email': 'a@b.test', 'email_confirmed_at': 'now'},
+        'user': {
+          'id': 'user-a',
+          'email': 'a@b.test',
+          'email_confirmed_at': 'now',
+        },
       };
       FlutterSecureStorage.setMockInitialValues({
         'futbeat.profile.settings': '{"hourFormat":"12h"}',
