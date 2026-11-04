@@ -259,3 +259,11 @@ E260 final local:1737/1737PASS sobre8ce170d (113s), analyze0avisos7,7s. R09 cont
 ## E261 — operación en curso
 
 PRDraft244/1719ecb:CI LinuxSUCCESS(run41733921175),1731portables;6visual_test.dartomitidossegúnworkflowexistente. M260Windows1737PASSincluyógoldens. Nuevo261localver docs/release/FUTBEAT-MOBILE-261-STATUS.md; no trasladarCI_PASS260a261. Aceptaciónfísica/conectada/RCpendiente,0DONEadicionales.
+
+E261 A07/A09/N08: aislamiento y recuperación de cuentas, procedencia de perfil
+en `788a1b23`, y edición por campos/guardia de nombre en `73027e8c`.
+Los handlers de alertas y nombre tienen regresiones locales antes/después;
+el recorrido de dos cuentas cierra y reabre SQLite. Hora: servicio LOCAL_PASS,
+widget completo NOT VERIFIED por harness inconcluso. Ver matriz y STATUS para
+el resultado global final, sin convertir estas pruebas en aceptación física,
+OAuth real, entrega FCM o DONE. No nuevo binario ni publicación de MOBILE261.

@@ -217,10 +217,22 @@ No se suman las suites focales porque se solapan. Aceptación real sigue pendien
 | D261-A5/A6 / A09,M02 | Error de cierre local permite cruce de cuentas y oculta reintento | f221ba3e | LOCAL_PASS; 335 focales; revocación remota NOT VERIFIED |
 | D261-A7 / A09 | Cambio directo A→B conserva favoritos de A | 41d5c14c | LOCAL_PASS; regresiones de cambio de cuenta y precedencia |
 | D261-A8 / A09 | Guardia de integración: cierre explícito omite intento remoto durante cambio interno | 4a683dd0 | LOCAL_PASS; 344 focales. No cuenta como defecto inicial adicional |
-| D261-A9 / A09,A07 | Nombre de A heredado por B tras edición de preferencias de invitado | — | IN_PROGRESS; 3 fallos iniciales reproducidos, revisión concurrente pendiente |
+| D261-A9 / A09,A07 | Nombre de A heredado por B tras edición de preferencias de invitado | 788a1b23 | LOCAL_PASS; procedencia opcional en registro existente; 18 focales y recorrido SQLite cubiertos. No se promete intención parcial para API de reemplazo completo |
+| D261-A10 / A07,A09,N08 | Formulario retenido de A sobrescribe campos de B al editar solo alerta/hora; formulario de nombre antiguo renombra B | 73027e8c | LOCAL_PASS focal; handler real de alertas falla antes (B→A), pasa después. Operación por campos en FIFO y guardia de cuenta; 370 focales del agente. Hora/widget completo NOT VERIFIED; servicio probado |
 
 Suite completa del código `cf2987f7`: **1859 PASS**, goldens incluidos, 123 s;
 analyze limpio en 10,2 s. Evidencia: `artifacts/mobile261/full-batch04.log` y
 `analyze-batch04.log`. A9 y el recorrido extendido aún no están integrados en ese corte.
 PR Draft244/CI Linux corresponde exclusivamente a MOBILE260/1719ecb.
 Ningún PNG, binario Android, backend o entorno productivo se modificó.
+
+Corte A9/A10: `788a1b23` equivale exactamente al parche revisado `f7c8ced1`;
+`73027e8c` a `21379fcd`. Journey real de widgets/SQLite local: 19 PASS en
+`artifacts/mobile261/a9-journey-root.log`. Alertas: antes ver
+`a10-handler-before.log`, con RPC simulado completado y precondición B comprobada.
+Los timeouts anteriores se conservan como fallos del harness, no del producto.
+El harness horario incompleto original `8fdae7bd` se retiró de la suite en
+`ecc731d` y se conservó en `artifacts/mobile261/unverified-hour-harness`:
+no construía el selector, no acreditó defecto ni PASS. No se redujeron expectativas.
+La suite global final y analyze se registrarán en FUTBEAT-MOBILE-261-STATUS.md;
+no confundir los 1859 PASS históricos con el resultado del nuevo corte.
