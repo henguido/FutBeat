@@ -830,13 +830,18 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                 onAction: _retrying ? null : () => _retry(requestDate),
               ),
             );
-          } else if (data.stale && allGames.isEmpty) {
+          } else if (allGames.isEmpty &&
+              (data.stale || data.coverage?['partial'] == true)) {
             feedItems.add(
               () => _MatchesStatusCard(
-                key: const ValueKey('matches-stale-empty'),
+                key: ValueKey(
+                  data.stale ? 'matches-stale-empty' : 'matches-partial-empty',
+                ),
                 icon: Icons.cloud_sync_outlined,
                 title: 'No pudimos confirmar los partidos de este día.',
-                message: 'La información guardada puede estar incompleta.',
+                message: data.stale
+                    ? 'La información guardada puede estar incompleta.'
+                    : 'La cobertura del calendario todavía es parcial.',
                 actionLabel: _retrying ? 'Reintentando…' : 'Reintentar',
                 onAction: _retrying ? null : () => _retry(requestDate),
               ),

@@ -28,11 +28,13 @@ Snapshot _data({
   String? status,
   bool stale = false,
   bool revalidating = false,
+  bool partial = false,
 }) {
   final payload = <String, dynamic>{
     'schemaVersion': 1,
     'demo': false,
     'updatedAt': '2026-10-07T12:00:00Z',
+    'coverage': {'partial': partial},
     'freshness': {'stale': stale, 'revalidating': revalidating},
     'competitions': [
       {'id': 'competition', 'name': 'Liga FutBeat', 'countryCode': 'CR'},
@@ -146,6 +148,26 @@ void main() {
     expect(find.text('No hay partidos para este día.'), findsOneWidget);
     expect(find.byKey(const ValueKey('matches-empty-day')), findsOneWidget);
     expect(find.byKey(ValueKey('feed-ad-$_todayKey-0')), findsNothing);
+  });
+
+  testWidgets('partial empty day is unconfirmed until coverage is complete', (
+    tester,
+  ) async {
+    final controller = StreamController<Snapshot>();
+    addTearDown(controller.close);
+    await _pump(tester, () => controller.stream);
+
+    controller.add(_data(partial: true));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('No pudimos confirmar los partidos de este día.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('matches-empty-day')), findsNothing);
+
+    controller.add(_data());
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('matches-empty-day')), findsOneWidget);
   });
 
   testWidgets('filters have specific empty states and return to Todos', (
