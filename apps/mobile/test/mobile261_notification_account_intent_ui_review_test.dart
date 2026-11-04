@@ -44,6 +44,7 @@ void main() {
           notifyFinal: true,
         ).toJson(),
       };
+      final chosenFieldSaved = Completer<void>();
       final dio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
@@ -67,6 +68,11 @@ void main() {
                 profiles[uid] = Map<String, dynamic>.from(
                   (r.data as Map)['p_profile'] as Map,
                 );
+                if (uid == 'b' &&
+                    profiles['b']!['notifyFinal'] == false &&
+                    !chosenFieldSaved.isCompleted) {
+                  chosenFieldSaved.complete();
+                }
               }
               h.resolve(
                 Response(requestOptions: r, statusCode: 200, data: data),
@@ -126,27 +132,59 @@ void main() {
           'Account B',
           reason: 'B identity already reconciled before interacting with retained UI',
         );
-        expect(current.hourFormat, '24h');
-        expect(current.notifyGoals, isFalse);
+        expect(
+          current.hourFormat,
+          '24h',
+          reason:
+              'Stored hour format must reflect only the intended field change',
+        );
+        expect(
+          current.notifyGoals,
+          isFalse,
+          reason: 'Unedited B goal-alert preference must remain false',
+        );
         expect(
           await storage.read(key: PushService.leftoverKey),
           isNull,
           reason: 'No A ownership marker remains to mask this caller-intent regression',
         );
       });
-      await tester.tap(option);
-      await tester.pumpAndSettle();
-      await tester.runAsync(() async {
+      final observed = await tester.runAsync(() async {
+        await tester.tap(option);
+        await chosenFieldSaved.future.timeout(const Duration(seconds: 3));
         await service.pending;
-        final current = await service.loadProfileSettings();
-        expect(current.notifyFinal, isFalse);
-        expect(profiles['b']!['notifyFinal'], isFalse);
-        expect(current.displayName, 'Account B');
-        expect(profiles['b']!['displayName'], 'Account B');
-        expect(current.hourFormat, '24h');
-        expect(current.notifyGoals, isFalse);
-        expect(profiles['a']!['displayName'], 'Account A');
+        return (
+          current: await service.loadProfileSettings(),
+          cloudB: Map<String, dynamic>.from(profiles['b']!),
+        );
       });
+      expect(
+        observed,
+        isNotNull,
+        reason: 'UI chosen-field save must finish within bounded real I/O',
+      );
+      final current = observed!.current;
+      expect(current.notifyFinal, isFalse);
+      expect(profiles['b']!['notifyFinal'], isFalse);
+      expect(
+        current.displayName,
+        'Account B',
+        reason: 'An unedited account name must stay B after the UI field save',
+      );
+      expect(profiles['b']!['displayName'], 'Account B');
+      expect(
+        current.hourFormat,
+        '24h',
+        reason:
+            'Stored hour format must reflect only the intended field change',
+      );
+      expect(
+        current.notifyGoals,
+        isFalse,
+        reason: 'Unedited B goal-alert preference must remain false',
+      );
+      expect(profiles['a']!['displayName'], 'Account A');
+
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       await tester.runAsync(() async {
