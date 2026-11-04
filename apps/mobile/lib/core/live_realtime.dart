@@ -480,6 +480,19 @@ class LiveRealtimeClient {
     Future<void> Function()? refreshScope;
     void Function(bool)? setScopeActive;
 
+    void rememberVersionFence(String id, Json row) {
+      deletedVersions.remove(id);
+      deletedVersions[id] = row;
+      // Same bound for full DELETE and retired terminal overlay evidence.
+      // Never retain an unbounded history of match IDs in one watch.
+      final limit = scopedRealtime
+          ? maxRealtimeMatchIds
+          : bootstrapPolicy.pageSize * bootstrapPolicy.maxPages;
+      while (deletedVersions.length > limit && deletedVersions.isNotEmpty) {
+        deletedVersions.remove(deletedVersions.keys.first);
+      }
+    }
+
     Future<void> stopWatch() async {
       if (disposed) return;
       disposed = true;
@@ -587,6 +600,21 @@ class LiveRealtimeClient {
           // this exact [since], so no device/server mapping is involved.
           removableSince: since.add(policy.removalMargin),
         );
+        // A completed match can leave the hot overlay table after its
+        // canonical snapshot is stored. Forget the overlay, not its ordering
+        // evidence: an older REST/socket replay is not a new incarnation.
+        for (final entry in state.entries) {
+          final previous = entry.value;
+          if (!reconciled.containsKey(entry.key) &&
+              (previous.status == 'VERIFIED' ||
+                  previous.status == 'FINISHED_PENDING_VERIFICATION')) {
+            rememberVersionFence(entry.key, {
+              'changed_at': previous.changedAt.toIso8601String(),
+              'provider': previous.provider,
+              'revision': previous.revision,
+            });
+          }
+        }
         state
           ..clear()
           ..addAll(reconciled);
@@ -770,21 +798,11 @@ class LiveRealtimeClient {
                 }
                 state.remove(matchId);
                 if (matchId is String && deletedAt != null && row is Map) {
-                  deletedVersions.remove(matchId);
-                  deletedVersions[matchId] = {
+                  rememberVersionFence(matchId, {
                     'changed_at': row['changed_at'],
                     'provider': row['provider'],
                     'revision': row['revision'],
-                  };
-                  // Same bounds as the observable scope/bootstrap. Keep no
-                  // unbounded history of every deleted match in a session.
-                  final limit = scopedRealtime
-                      ? maxRealtimeMatchIds
-                      : bootstrapPolicy.pageSize * bootstrapPolicy.maxPages;
-                  while (deletedVersions.length > limit &&
-                      deletedVersions.isNotEmpty) {
-                    deletedVersions.remove(deletedVersions.keys.first);
-                  }
+                  });
                 }
                 if (matchId is String) bootstrapDeletes?.add(matchId);
               } else if (data['record'] is Map) {
