@@ -286,3 +286,7 @@ La rama codex/mobile-264-integration verifica por ascendencia los nueve commits 
 - **R03/R04/R08/R09**: procedimiento de configuración, empaquetado y QA preparado. El CI verde de PR #245 corresponde a bb79bf70. Los commits posteriores requieren CI propio. RC NO-GO.
 
 Validación E266 sobre f92b5b6: 109 focales, 1941 pruebas completas con goldens y analyze sin incidencias. Las dos pruebas exitosas de borrado ahora incluyen un UID sintético. Evidencia local en artifacts/mobile266; el código nuevo sigue pendiente de CI Linux propio.
+
+### E269 — consolidación local
+
+Correcciones A09 (9408ed6b), S01/S07 (2971be1d), M03 (88a47254) y A03/A07 (fd0c3b2b) integradas con regresiones reproducidas y patch-id idéntico. R03/R06: 11 guardas Gradle, firma faltante bloqueada en dry-run y manifiesto local 1.0.0 (5) verificado. Ver FUTBEAT-MOBILE-269-CANDIDATE.md. R05 BLOCKED_BACKEND, R09 pendiente de CI Linux del candidato; R02/R08/R10 pendientes. RC NO-GO.
