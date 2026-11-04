@@ -39,7 +39,27 @@ void main() {
     expect(match.isAwaitingUpdate, isTrue);
     expect(match.isScheduled, isTrue);
     expect(match.isUpcoming, isFalse);
+    // Same honest state the feed shows: never "Programado" after kickoff.
+    expect(match.statusLabel, 'Por confirmar');
+  });
+
+  test('a scheduled match before its kickoff is still Programado', () {
+    final match = _match(
+      status: 'SCHEDULED',
+      startTime: DateTime.now().toUtc().add(const Duration(hours: 2)),
+    );
     expect(match.statusLabel, 'Programado');
+  });
+
+  test('overdue with a partial score keeps the partial-score copy', () {
+    final match = FootballMatch({
+      ..._match(
+        status: 'SCHEDULED',
+        startTime: DateTime.now().toUtc().subtract(const Duration(hours: 3)),
+      ).json,
+      'score': {'home': 1, 'away': 0},
+    });
+    expect(match.statusLabel, 'Marcador parcial');
   });
 
   test(

@@ -131,9 +131,11 @@ String? teamTableCompetitionId(Snapshot data, Entity team) {
         standingsTableFor(data, id),
         data,
         focusTeamIds: {team.id},
-      )?.any((group) => group.rows.any((row) => row['teamId'] == team.id)) ==
+      )?.any((group) => group.rows.any((row) =>
+          data.resolveEntityId(row['teamId']?.toString() ?? '') ==
+          data.resolveEntityId(team.id))) ==
       true;
-  final main = team.json['competitionId']?.toString() ?? '';
+  final main = data.resolveEntityId(team.json['competitionId']?.toString() ?? '');
   if (main.isNotEmpty && shows(main)) return main;
   final candidates = {
     for (final table in data.standings)
@@ -191,9 +193,48 @@ class TeamProfileView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final players = data.players
-        .where((player) => player.json['teamId'] == team.id)
-        .toList();
+    // /v1/entity already selects this team's roster by team_squad_members.
+    // A player's singular profile teamId may instead be their club (or their
+    // new club after a transfer), so it cannot filter this scoped roster.
+    // Likewise, a shirt number on another team's profile is not this team's
+    // contextual number; leave it unknown rather than showing a wrong one.
+    // DemoRepository is the exception: it serves a global snapshot, so first
+    // scope it to this team. Production /v1/entity already did that by the
+    // team_squad_members relation rather than the mutable profile teamId.
+    final roster = data.demo
+        ? data.players
+              .where(
+                (player) =>
+                    data.resolveEntityId(
+                      player.json['teamId']?.toString() ?? '',
+                    ) ==
+                    team.id,
+              )
+              .toList()
+        : data.players;
+    final rosterIds = {for (final player in roster) player.id};
+    final representedMissingRoots = <String>{};
+    bool keepRosterPlayer(Entity player) {
+      final canonical = data.resolveEntityId(player.id);
+      if (canonical == player.id) return true;
+      if (rosterIds.contains(canonical)) return false;
+      // Several explicit aliases may resolve to a root absent from this
+      // response. Keep one representative, never merge by display name.
+      return representedMissingRoots.add(canonical);
+    }
+
+    final players = [
+      for (final player in roster)
+        // An authoritative redirect may leave both rows in the response.
+        // Prefer its present canonical row; keep one alias if the target
+        // was not included. No name- or shirt-based merge is inferred here.
+        if (keepRosterPlayer(player))
+          if (data.resolveEntityId(player.json['teamId']?.toString() ?? '') ==
+              team.id)
+            player
+          else
+            Entity({...player.json, 'shirtNumber': null}),
+    ];
     final visiblePlayerCount = squadGroups(
       players,
       blockedAliasIds: {
@@ -691,7 +732,7 @@ class SquadPlayerRow extends StatelessWidget {
             SizedBox(
               width: 28,
               child: Text(
-                number?.toString() ?? '–',
+                number?.toString() ?? '',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: muted,
@@ -764,7 +805,7 @@ class PlayerPhoto extends StatelessWidget {
         ),
       ),
     );
-    final image = player.imageUrl;
+    final image = entityImageOf(context, player);
     if (image == null) return fallback;
     return SizedBox(
       width: size,

@@ -10,12 +10,14 @@ import '../../core/countries.dart';
 import '../../core/database.dart';
 import '../../core/entity_media.dart';
 import '../../core/interests.dart';
+import '../../core/load_errors.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../core/push.dart';
 import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
+import '../auth/auth_sheet.dart';
 import '../profile/notification_options.dart';
 
 /// Onboarding steps (#107): welcome → country → teams → competitions →
@@ -36,13 +38,26 @@ const onboardingStepCount = 8;
 bool isSelectableCountryCode(String? value) =>
     value != null && RegExp(r'^[A-Z]{2}$').hasMatch(value);
 
-/// Country shown in onboarding: only the user's own choice. The device
-/// locale is not a location, so it never pre-fills the selector. Unknown
-/// codes are never shown raw.
-String? onboardingCountryCode(CountryPreference preference) {
-  final code = preference.selectedCountry;
-  return countryDisplayName(code) == null ? null : code!.trim().toUpperCase();
+String? _displayableCountry(String? value) {
+  final code = value?.trim().toUpperCase();
+  return isSelectableCountryCode(code) && countryDisplayName(code) != null
+      ? code
+      : null;
 }
+
+/// Country shown in onboarding: the user's own choice, else the device
+/// region as a suggestion (see [isSuggestedOnboardingCountry]). The
+/// suggestion is never stored as the choice, so a manual pick always wins
+/// and survives restarts. Unknown codes are never shown raw.
+String? onboardingCountryCode(CountryPreference preference) =>
+    _displayableCountry(preference.selectedCountry) ??
+    _displayableCountry(preference.detectedCountry);
+
+/// True when [onboardingCountryCode] comes from the device region, not
+/// from a manual choice.
+bool isSuggestedOnboardingCountry(CountryPreference preference) =>
+    _displayableCountry(preference.selectedCountry) == null &&
+    _displayableCountry(preference.detectedCountry) != null;
 
 bool isCurrentOnboardingRequest(
   ({String query, String? country}) request, {
@@ -130,10 +145,26 @@ class SecureOnboardingProgressStore implements OnboardingProgressStore {
   const SecureOnboardingProgressStore();
   static const _key = 'futbeat.onboarding.step';
   static const _storage = FlutterSecureStorage();
+  // Multiple route instances still write the same secure-storage key. Keep
+  // invocation order so an earlier slow save cannot undo a later step/clear.
+  static Future<void> _pendingMutation = Future<void>.value();
+
+  Future<void> _mutate(Future<void> Function() action) {
+    final next = _pendingMutation.then((_) async {
+      try {
+        await action();
+      } catch (_) {
+        // Progress is best effort; one failed write must not block later ones.
+      }
+    });
+    _pendingMutation = next;
+    return next;
+  }
 
   @override
   Future<int?> read() async {
     try {
+      await _pendingMutation;
       return int.tryParse(await _storage.read(key: _key) ?? '');
     } catch (_) {
       return null;
@@ -141,18 +172,11 @@ class SecureOnboardingProgressStore implements OnboardingProgressStore {
   }
 
   @override
-  Future<void> write(int step) async {
-    try {
-      await _storage.write(key: _key, value: '$step');
-    } catch (_) {}
-  }
+  Future<void> write(int step) =>
+      _mutate(() => _storage.write(key: _key, value: '$step'));
 
   @override
-  Future<void> clear() async {
-    try {
-      await _storage.delete(key: _key);
-    } catch (_) {}
-  }
+  Future<void> clear() => _mutate(() => _storage.delete(key: _key));
 }
 
 final onboardingProgressStoreProvider = Provider<OnboardingProgressStore>(
@@ -350,6 +374,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   bool busy = false;
   bool settingsBusy = false;
   bool countryBusy = false;
+  bool _countrySaveNeedsRetry = false;
   String? message;
 
   OnboardingProgressStore get _progress =>
@@ -452,19 +477,43 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       ref.read(entityMediaProvider).redirects,
       type,
       id,
+      onIntent: ref.read(pushServiceProvider).recordFollowIntent,
     );
   }
 
-  Future<void> _saveSettings(UserProfileSettings next) async {
-    if (settingsBusy) return;
+  Future<void> _toggleChoices(
+    String type,
+    String canonicalId,
+    Set<String> ids,
+  ) async {
+    final db = ref.read(databaseProvider);
+    await ref.read(pushServiceProvider).recordFollowIntent({
+      '$type:$canonicalId',
+      for (final id in ids) '$type:$id',
+    });
+    await db.toggleAny(type, canonicalId, ids);
+  }
+
+  Future<void> _saveSettings(
+    UserProfileSettings Function(UserProfileSettings current) update,
+  ) async {
+    final current = settings;
+    if (settingsBusy || current == null) return;
+    final next = update(current);
     setState(() {
       settings = next;
       settingsBusy = true;
       message = null;
     });
+    final service = ref.read(pushServiceProvider);
+    UserProfileSettings? applied;
+    String? appliedUserId;
     final saved = await saveOnboardingSettings(
       settings: next,
-      save: ref.read(pushServiceProvider).saveProfileSettings,
+      save: (_) => service.updateProfileSettings((latest) {
+        appliedUserId = service.userId;
+        return applied = update(latest);
+      }),
       invalidate: () {
         if (mounted) ref.invalidate(profileSettingsProvider);
       },
@@ -472,6 +521,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (mounted) {
       setState(() {
         settingsBusy = false;
+        if (saved && applied != null && service.userId == appliedUserId) {
+          settings = applied;
+        }
         if (!saved) {
           message = 'Guardado sin conexión';
         }
@@ -541,37 +593,57 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Future<void> _selectCountry(String? value) async {
     if (countryBusy) return;
-    setState(() => countryBusy = true);
+    setState(() {
+      countryBusy = true;
+      _countrySaveNeedsRetry = false;
+      message = null;
+    });
     // Capture provider-owned objects before the first await. The route can be
     // dismissed while Drift is saving, after which WidgetRef is no longer safe.
     final database = ref.read(databaseProvider);
     final service = ref.read(pushServiceProvider);
-    await database.saveSelectedCountry(value);
-    final current = await database.watchPreference().first;
-    await service.markSelectedCountryDirty();
-    if (service.authenticated) {
-      try {
-        await service.syncCountries(
-          current.detectedCountry,
-          value,
-          updateDetected: false,
-        );
-      } catch (_) {
-        // Drift remains authoritative offline; the normal reconcile can retry.
+    try {
+      await database.saveSelectedCountry(value);
+      final current = await database.watchPreference().first;
+      await service.markSelectedCountryDirty();
+      if (service.authenticated) {
+        try {
+          await service.syncCountries(
+            current.detectedCountry,
+            value,
+            updateDetected: false,
+          );
+        } catch (_) {
+          // Drift remains authoritative offline; normal reconciliation retries.
+        }
       }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _countrySaveNeedsRetry = true;
+          message =
+              'No pudimos completar el cambio de país. Inténtalo nuevamente.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => countryBusy = false);
     }
-    if (mounted) setState(() => countryBusy = false);
   }
 
-  /// Sign in / create the account in Perfil (one auth screen for the whole
-  /// app); the onboarding updates by itself when the account changes.
-  Future<void> _openProfile() async {
-    // Perfil has the tab bar: leaving through it must not send a first-run
-    // user back into onboarding on the next launch.
-    if (!widget.reentry) {
-      await ref.read(databaseProvider).markBootstrapDismissed();
+  /// Sign in / create the account in place: the onboarding stays on the
+  /// same step and updates by itself when the account changes. From the
+  /// welcome screen of a first run, an account that already has favourites
+  /// or a country (reinstall, new phone) is set up: straight to Partidos.
+  Future<void> _openAuth(AuthMode mode, {bool fromWelcome = false}) async {
+    final signedIn = await showAuthSheet(context, mode);
+    if (!signedIn || !mounted) return;
+    if (fromWelcome &&
+        !widget.reentry &&
+        ref.read(pushServiceProvider).accountHadData == true) {
+      await _finish();
+      return;
     }
-    if (mounted) await context.push('/profile');
+    setState(() {});
   }
 
   static const _searchSteps = {
@@ -582,6 +654,19 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // A restored, already set-up account (see PushService.accountHadData)
+    // marks the setup done: from the first-run welcome go to Partidos.
+    // Mid-setup steps and Personalizar FutBeat are never moved.
+    ref.listen(preferenceProvider, (previous, next) {
+      final was = previous?.asData?.value.bootstrapDismissed;
+      if (!widget.reentry &&
+          step == OnboardingStep.welcome &&
+          was == false &&
+          next.asData?.value.bootstrapDismissed == true &&
+          mounted) {
+        context.go('/matches');
+      }
+    });
     final preference = ref.watch(preferenceProvider).asData?.value;
     final follows =
         ref.watch(followsProvider).asData?.value ?? const <String>{};
@@ -626,7 +711,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         searchState,
       ),
       OnboardingStep.players => _playerStep(
-        data,
+        searchState == null || rawSearch != null ? data : null,
         follows,
         catalogState,
         searchState,
@@ -663,7 +748,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       : ListView(
                           keyboardDismissBehavior:
                               ScrollViewKeyboardDismissBehavior.onDrag,
-                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                          padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
                           children: [
                             if (widget.reentry)
                               const Padding(
@@ -714,32 +799,49 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         : OnboardingStep.welcome;
     final canSkip = step < OnboardingStep.summary;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(4, 4, 8, 6),
+      child: Column(
         children: [
-          IconButton(
-            tooltip: 'Atrás',
-            onPressed: busy || step <= first ? null : _back,
-            icon: const Icon(Icons.arrow_back_rounded),
+          Row(
+            children: [
+              IconButton(
+                tooltip: 'Atrás',
+                onPressed: busy || step <= first ? null : _back,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              Expanded(
+                child: Text(
+                  'Paso $step de ${onboardingStepCount - 1}',
+                  key: const ValueKey('onboarding-step-label'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (canSkip)
+                TextButton(
+                  onPressed: busy ? null : _finish,
+                  child: const Text('Saltar'),
+                )
+              else
+                const SizedBox(width: 56),
+            ],
           ),
-          Expanded(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
                 key: const ValueKey('onboarding-progress'),
                 value: step / (onboardingStepCount - 1),
                 minHeight: 4,
+                backgroundColor: panel,
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          if (canSkip)
-            TextButton(
-              onPressed: busy ? null : _finish,
-              child: const Text('Saltar'),
-            )
-          else
-            const SizedBox(width: 48),
         ],
       ),
     );
@@ -747,7 +849,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Widget _footer() => SafeArea(
     top: false,
-    minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+    minimum: const EdgeInsets.fromLTRB(18, 8, 18, 12),
     child: SizedBox(
       width: double.infinity,
       height: 52,
@@ -755,7 +857,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         key: const ValueKey('onboarding-next'),
         onPressed: busy ? null : _next,
         child: Text(
-          step == onboardingStepCount - 1 ? 'Ir a Partidos' : 'Continuar',
+          _primaryActionLabel,
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
       ),
@@ -772,7 +874,33 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     _ => 'Todo listo',
   };
 
-  String? get _subtitle => step == OnboardingStep.players ? 'Opcional.' : null;
+  String get _primaryActionLabel {
+    if (step == OnboardingStep.summary) return 'Ir a Partidos';
+    final service = ref.read(pushServiceProvider);
+    if (step == OnboardingStep.account &&
+        service.accountConfigured &&
+        !service.authenticated) {
+      return 'Continuar sin cuenta';
+    }
+    return 'Continuar';
+  }
+
+  String? get _subtitle => switch (step) {
+    OnboardingStep.country =>
+      'Tu país ayuda a mostrar primero los partidos más relevantes.',
+    OnboardingStep.teams =>
+      'Tus equipos aparecerán primero. Puedes elegir todos los que quieras.',
+    OnboardingStep.competitions =>
+      'Sigue ligas y torneos sin mezclarlos con tus equipos favoritos.',
+    OnboardingStep.players =>
+      'Opcional. Podrás recibir noticias y eventos de quienes sigues.',
+    OnboardingStep.alerts =>
+      'Decide qué quieres recibir. Puedes cambiarlo después.',
+    OnboardingStep.account =>
+      'Inicia sesión para conservar tus preferencias en otros dispositivos.',
+    OnboardingStep.summary => 'Tu configuración está lista.',
+    _ => null,
+  };
 
   Widget _welcomeStep() => LayoutBuilder(
     // Scrolls on short screens (landscape); spacers fill tall ones.
@@ -840,6 +968,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     letterSpacing: 3,
                   ),
                 ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Partidos, equipos y jugadores que te importan, en un solo lugar.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: muted, height: 1.4),
+                ),
                 const Spacer(flex: 4),
                 SizedBox(
                   height: 56,
@@ -863,7 +997,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   SizedBox(
                     height: 52,
                     child: OutlinedButton(
-                      onPressed: busy ? null : _openProfile,
+                      key: const ValueKey('onboarding-welcome-login'),
+                      onPressed: busy
+                          ? null
+                          : () => _openAuth(AuthMode.login, fromWelcome: true),
                       child: const Text('Iniciar sesión'),
                     ),
                   ),
@@ -884,60 +1021,127 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final code = onboardingCountryCode(preference);
     final name = countryDisplayName(code);
     final flag = countryFlag(code);
-    return Material(
-      color: panel,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        key: const ValueKey('onboarding-country'),
-        borderRadius: BorderRadius.circular(20),
-        onTap: countryBusy ? null : () => _pickCountry(code),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
-          decoration: BoxDecoration(
+    final suggested = isSuggestedOnboardingCountry(preference);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: panel,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            key: const ValueKey('onboarding-country'),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: name == null ? const Color(0xFF2B373D) : lime,
-              width: name == null ? 1 : 2,
+            onTap: countryBusy
+                ? null
+                : () => _pickCountry(code, preference.selectedCountry),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: name == null ? const Color(0xFF2B373D) : lime,
+                  width: name == null ? 1 : 2,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Text(flag ?? '🌍', style: const TextStyle(fontSize: 44)),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name == null
+                              ? 'SIN ELEGIR'
+                              : suggested
+                              ? 'SUGERIDO'
+                              : 'SELECCIONADO',
+                          style: const TextStyle(
+                            color: lime,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          name ?? 'Elegir país',
+                          key: const ValueKey('onboarding-country-name'),
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    name == null ? '' : 'Cambiar',
+                    style: const TextStyle(
+                      color: lime,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Icon(Icons.expand_more_rounded),
+                ],
+              ),
             ),
           ),
-          child: Row(
-            children: [
-              Text(flag ?? '🌍', style: const TextStyle(fontSize: 44)),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  name ?? 'Elegir país',
-                  key: const ValueKey('onboarding-country-name'),
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              Text(
-                name == null ? '' : 'Cambiar',
-                style: const TextStyle(
-                  color: lime,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const Icon(Icons.expand_more_rounded),
-            ],
-          ),
         ),
-      ),
+        const SizedBox(height: 12),
+        Text(
+          suggested
+              ? 'Lo detectamos en este dispositivo. Tócalo para confirmarlo o elegir otro.'
+              : 'Tu elección manual se conservará aunque cambie la región del dispositivo.',
+          style: const TextStyle(color: muted, height: 1.35),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
 
-  Future<void> _pickCountry(String? current) async {
+  Widget _emptyState({
+    required IconData icon,
+    required String title,
+    required String description,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 28),
+    child: Column(
+      children: [
+        Icon(icon, color: muted, size: 38),
+        const SizedBox(height: 10),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          description,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: muted, height: 1.35),
+        ),
+      ],
+    ),
+  );
+
+  /// [current] is the country shown (maybe the suggestion); picking it
+  /// still records a manual choice when none was saved yet.
+  Future<void> _pickCountry(String? current, String? saved) async {
     final picked = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (_) => CountryPickerSheet(current: current),
     );
-    if (picked != null && picked != current) await _selectCountry(picked);
+    if (mounted &&
+        picked != null &&
+        (picked != saved || _countrySaveNeedsRetry)) {
+      await _selectCountry(picked);
+    }
   }
 
   Widget _searchField(String hint, int selected) => Row(
@@ -1013,6 +1217,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           const LinearProgressIndicator(minHeight: 2),
         if ((searchState ?? catalogState).hasError)
           _catalogError(
+            (searchState ?? catalogState).error,
             () => searchState == null
                 ? ref.invalidate(exploreSnapshotProvider)
                 : ref.invalidate(
@@ -1032,9 +1237,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             _choiceCard(choice, type, follows, redirects),
         ]),
         if (entities.isEmpty && !(searchState ?? catalogState).isLoading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 20),
-            child: Text('Sin sugerencias', textAlign: TextAlign.center),
+          _emptyState(
+            icon: type == 'team'
+                ? Icons.shield_outlined
+                : Icons.emoji_events_outlined,
+            title: query.length >= 2 ? 'Sin resultados' : 'Sin sugerencias',
+            description: query.length >= 2
+                ? 'Prueba con otro nombre.'
+                : 'Puedes continuar y cambiarlo después.',
           ),
       ],
     );
@@ -1050,10 +1260,26 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         .where((item) => item.startsWith('team:'))
         .map((item) => item.substring(5))
         .toSet();
-    final source = data?.players ?? <Entity>[];
+    // Real squad players (followed teams, country, global clubs) first;
+    // the catalog's own players after them (deduplicated below).
+    final suggested = searchState == null
+        ? ref
+                  .watch(playerSuggestionsProvider(followedTeamsKey(follows)))
+                  .asData
+                  ?.value ??
+              const <Entity>[]
+        : const <Entity>[];
+    final source = [...suggested, ...?data?.players];
     final country = ref.read(preferenceProvider).asData?.value.effectiveCountry;
     final sections = query.length >= 2
-        ? [(label: '', players: source.take(30).toList())]
+        ? [
+            (
+              label: '',
+              players: {for (final player in source) player.id: player}.values
+                  .take(30)
+                  .toList(),
+            ),
+          ]
         : onboardingPlayerSuggestions(source, selectedTeams, country);
     final players = [for (final section in sections) ...section.players];
     final selected = follows.where((f) => f.startsWith('player:')).length;
@@ -1078,6 +1304,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           ),
         if ((searchState ?? catalogState).hasError)
           _catalogError(
+            (searchState ?? catalogState).error,
             () => searchState == null
                 ? ref.invalidate(exploreSnapshotProvider)
                 : ref.invalidate(
@@ -1097,26 +1324,29 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           grid(section.players),
         ],
         if (players.isEmpty && !(searchState ?? catalogState).isLoading)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 20),
-            child: Text(
-              query.length >= 2 ? 'Sin resultados' : 'Busca a tus jugadores',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: muted),
-            ),
+          _emptyState(
+            icon: Icons.person_search_outlined,
+            title: query.length >= 2
+                ? 'Sin resultados'
+                : 'Busca a tus jugadores',
+            description: query.length >= 2
+                ? 'Prueba con otro nombre.'
+                : 'Este paso es opcional y puedes continuar.',
           ),
       ],
     );
   }
 
-  Widget _grid(List<Widget> tiles) => GridView.count(
-    crossAxisCount: 3,
-    shrinkWrap: true,
-    physics: const NeverScrollableScrollPhysics(),
-    mainAxisSpacing: 10,
-    crossAxisSpacing: 10,
-    childAspectRatio: .78,
-    children: tiles,
+  Widget _grid(List<Widget> tiles) => LayoutBuilder(
+    builder: (context, constraints) => GridView.count(
+      crossAxisCount: constraints.maxWidth < 330 ? 2 : 3,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 10,
+      crossAxisSpacing: 10,
+      childAspectRatio: constraints.maxWidth < 330 ? 1.02 : .78,
+      children: tiles,
+    ),
   );
 
   /// A merged card: its ids normalized (canonical ids plus every known
@@ -1163,9 +1393,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           borderRadius: BorderRadius.circular(18),
           onTap: () => ids == null || ids.length < 2
               ? _toggle(type, entity.id)
-              : ref
-                    .read(databaseProvider)
-                    .toggleAny(type, canonicalId ?? entity.id, ids),
+              : _toggleChoices(type, canonicalId ?? entity.id, {
+                  ...ids,
+                  entity.id,
+                }),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
@@ -1221,16 +1452,31 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
-  Widget _catalogError(VoidCallback retry) => Card(
+  Widget _catalogError(Object? error, VoidCallback retry) => Card(
     child: ListTile(
-      title: const Text('Sin conexión'),
+      title: Text(loadErrorMessage(error)),
       trailing: TextButton(onPressed: retry, child: const Text('Reintentar')),
     ),
   );
 
   Widget _alertsStep() {
     final value = settings;
-    if (value == null) return const LinearProgressIndicator();
+    if (value == null) {
+      if (ref.watch(profileSettingsProvider).hasError) {
+        return Column(
+          children: [
+            const Text(
+              'No pudimos cargar tus preferencias. Inténtalo nuevamente.',
+            ),
+            TextButton(
+              onPressed: () => ref.invalidate(profileSettingsProvider),
+              child: const Text('Reintentar'),
+            ),
+          ],
+        );
+      }
+      return const LinearProgressIndicator();
+    }
     final any = value.anyNotification;
     final service = ref.watch(pushServiceProvider);
     return Column(
@@ -1250,7 +1496,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     value: option.value(value),
                     onChanged: settingsBusy
                         ? null
-                        : (next) => _saveSettings(option.update(value, next)),
+                        : (next) => _saveSettings(
+                            (current) => option.update(current, next),
+                          ),
                   ),
               ],
             ),
@@ -1289,7 +1537,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Widget _accountStep() {
-    // Rebuilds after signing in / creating the account from Perfil.
+    // Rebuilds after signing in / creating the account.
     ref.watch(currentAccountProvider);
     final service = ref.watch(pushServiceProvider);
     if (!service.accountConfigured) {
@@ -1330,7 +1578,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         SizedBox(
           height: 52,
           child: FilledButton.tonal(
-            onPressed: _openProfile,
+            key: const ValueKey('onboarding-account-signup'),
+            onPressed: () => _openAuth(AuthMode.signup),
             child: const Text('Crear cuenta'),
           ),
         ),
@@ -1338,14 +1587,16 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         SizedBox(
           height: 52,
           child: OutlinedButton(
-            onPressed: _openProfile,
+            key: const ValueKey('onboarding-account-login'),
+            onPressed: () => _openAuth(AuthMode.login),
             child: const Text('Iniciar sesión'),
           ),
         ),
-        const SizedBox(height: 6),
-        TextButton(
-          onPressed: busy ? null : _next,
-          child: const Text('Continuar sin cuenta'),
+        const SizedBox(height: 14),
+        const Text(
+          'También puedes continuar como invitado. No perderás lo que elegiste en este dispositivo.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: muted, height: 1.35),
         ),
       ],
     );
