@@ -28,8 +28,14 @@ const _persistedTerminalStatuses = {
 };
 
 LiveMatchUpdate? _storedTerminalObservation(Json match) {
-  if (!_persistedTerminalStatuses.contains(match['status']) ||
-      match['id'] is! String ||
+  return _persistedTerminalStatuses.contains(match['status'])
+      ? _storedSportingObservation(match)
+      : null;
+}
+
+LiveMatchUpdate? _storedSportingObservation(Json match) {
+  if (match['id'] is! String ||
+      match['status'] is! String ||
       match['liveProvider'] is! String ||
       match['liveRevision'] is! int) {
     return null;
@@ -109,7 +115,7 @@ String _preserveStoredTerminals(String? previous, String incoming) {
           () {
             final current = Map<String, dynamic>.from(row);
             final before = updates[row['id']]!;
-            final candidate = _storedTerminalObservation(current);
+            final candidate = _storedSportingObservation(current);
             // Envelope generation/request times are not sporting observations.
             // A provider revision may advance only without moving changedAt back;
             // otherwise require a strictly later explicit sporting observation.

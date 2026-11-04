@@ -48,6 +48,7 @@ void main() {
     'correction',
     'old-terminal',
     'unobserved-terminal',
+    'resumed',
   ]) {
     _verify(mode);
   }
@@ -64,6 +65,7 @@ void _verify(String mode) {
         : AppDatabase(NativeDatabase(file));
     var dio = Dio(BaseOptions(baseUrl: 'https://fixture.invalid'));
     final now = DateTime.now().toUtc();
+    final initialTerminal = mode == 'resumed' ? 'SUSPENDED' : 'VERIFIED';
     final raw = <String, dynamic>{
       'entityRedirects': {'fb_team_old_h': 'fb_team_h'},
       'schemaVersion': 1,
@@ -169,7 +171,7 @@ void _verify(String mode) {
       _,
       value,
     ) {
-      if (value.asData?.value.match(_id)?.status == 'VERIFIED' &&
+      if (value.asData?.value.match(_id)?.status == initialTerminal &&
           !observed.isCompleted) {
         observed.complete();
       }
@@ -181,7 +183,7 @@ void _verify(String mode) {
           'match_id': _id,
           'provider': 'fixture',
           'external_match_id': 'fixture_terminal',
-          'status': 'VERIFIED',
+          'status': initialTerminal,
           'minute': 90,
           'home_score': 2,
           'away_score': 0,
@@ -198,7 +200,7 @@ void _verify(String mode) {
           .asData!
           .value
           .match(_id)!;
-      expect(shown.status, 'VERIFIED');
+      expect(shown.status, initialTerminal);
       expect(shown.json['score']['home'], 2);
       await repository.settleBackground();
       expect(
@@ -262,6 +264,7 @@ void _verify(String mode) {
         'correction',
         'old-terminal',
         'unobserved-terminal',
+        'resumed',
       ].contains(mode)) {
         responseRaw = {
           ...raw,
@@ -272,7 +275,7 @@ void _verify(String mode) {
                   for (final row in raw['matches'] as List)
                     {
                       ...Map<String, dynamic>.from(row as Map),
-                      'status': 'VERIFIED',
+                      'status': mode == 'resumed' ? 'LIVE' : 'VERIFIED',
                       'score': {
                         'home': mode == 'old-terminal' ? 1 : 3,
                         'away': 0,
@@ -353,14 +356,17 @@ void _verify(String mode) {
               'correction',
               'old-terminal',
               'unobserved-terminal',
+              'resumed',
             ].contains(mode)
             ? 2
             : 1,
       );
       expect(
         reopened.match(_id)!.status,
-        'VERIFIED',
-        reason: 'A previously observed final must not return as cached LIVE',
+        mode == 'resumed' ? 'LIVE' : 'VERIFIED',
+        reason: mode == 'resumed'
+            ? 'A newer explicit canonical resumption must survive restart'
+            : 'A previously observed final must not return as cached LIVE',
       );
       expect(
         reopened.resolveEntityId('fb_team_old_h'),
@@ -376,7 +382,7 @@ void _verify(String mode) {
       );
       expect(
         reopened.match(_id)!.json['score']['home'],
-        mode == 'correction' ? 3 : 2,
+        ['correction', 'resumed'].contains(mode) ? 3 : 2,
       );
     } finally {
       if (!releaseOld.isCompleted) releaseOld.complete();
