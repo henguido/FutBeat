@@ -336,7 +336,15 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final refreshed = watchesContext
         ? ref.watch(matchContextSnapshotProvider(widget.id)).value
         : null;
-    final source = refreshed ?? widget.initialData;
+    final routeSnapshot = widget.initialData;
+    // A context without the requested fixture does not replace the match
+    // already opened from the feed. Keep its exact route snapshot as stale.
+    final source =
+        refreshed != null &&
+            refreshed.match(widget.id) == null &&
+            routeSnapshot?.match(widget.id) != null
+        ? routeSnapshot!.asStale()
+        : refreshed ?? routeSnapshot;
     final initialData = source == null
         ? null
         : presentSnapshotForSession(ref, source);
