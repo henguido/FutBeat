@@ -22,23 +22,48 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
       DeviceNotificationPermission.unknown;
   bool busy = false;
   int _saveGeneration = 0;
+  int _loadGeneration = 0;
+  String? _settingsUserId;
+  StreamSubscription<void>? _profileSubscription;
   String? actionError;
 
   @override
   void initState() {
     super.initState();
+    final service = ref.read(pushServiceProvider);
+    _settingsUserId = service.userId;
+    _profileSubscription = service.profileChanges.listen((_) {
+      // A UID change can precede reconciliation. Reload when the new
+      // profile is written, without disrupting edits to the same profile.
+      if (mounted && _settingsUserId != service.userId) unawaited(_load());
+    });
     unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    unawaited(_profileSubscription?.cancel());
+    super.dispose();
   }
 
   Future<void> _load() async {
     if (!mounted) return;
     final service = ref.read(pushServiceProvider);
+    final owner = service.userId;
+    final generation = ++_loadGeneration;
+    final saveGeneration = _saveGeneration;
+    bool isCurrent() =>
+        mounted &&
+        generation == _loadGeneration &&
+        saveGeneration == _saveGeneration &&
+        service.userId == owner;
+
     setState(() => actionError = null);
     final UserProfileSettings loaded;
     try {
       loaded = await service.loadProfileSettings();
     } catch (_) {
-      if (mounted) {
+      if (isCurrent()) {
         setState(
           () => actionError =
               'No pudimos cargar tus preferencias. Inténtalo nuevamente.',
@@ -46,12 +71,15 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
       }
       return;
     }
-    if (!mounted) return;
-    setState(() => settings = loaded);
+    if (!isCurrent()) return;
+    setState(() {
+      settings = loaded;
+      _settingsUserId = owner;
+    });
     final devicePermission = service.pushConfigured
         ? await service.notificationPermission()
         : DeviceNotificationPermission.unknown;
-    if (!mounted) return;
+    if (!isCurrent()) return;
     setState(() => permission = devicePermission);
   }
 

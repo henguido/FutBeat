@@ -149,6 +149,25 @@ void main() {
           reason: 'No A ownership marker remains to mask this caller-intent regression',
         );
       });
+      final goalsBeforeEdit = find.byKey(
+        const ValueKey('notification-notify_goals'),
+      );
+      for (var turn = 0; turn < 40; turn++) {
+        await tester.pump();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        final matches = goalsBeforeEdit.evaluate().toList();
+        if (matches.length == 1 &&
+            !(matches.single.widget as SwitchListTile).value) {
+          break;
+        }
+      }
+      expect(
+        tester.widget<SwitchListTile>(goalsBeforeEdit).value,
+        isFalse,
+        reason: 'A mounted screen must display reconciled B before any edit',
+      );
       final tile = tester.widget<SwitchListTile>(option);
       expect(
         tile.value,
