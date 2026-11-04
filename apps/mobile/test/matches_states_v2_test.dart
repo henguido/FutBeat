@@ -226,6 +226,17 @@ void main() {
     expect(find.text('Mostrando datos guardados.'), findsOneWidget);
     expect(find.text('Sin conexión.'), findsNothing);
     expect(find.byKey(const ValueKey('match-row-match')), findsOneWidget);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+    await tester.pumpAndSettle();
+    expect(find.text('Mostrando datos guardados.'), findsOneWidget);
+    expect(find.text('No hay partidos en vivo ahora.'), findsNothing);
+    expect(
+      find.text('No hay partidos guardados para este filtro.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Ver todos'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('match-row-match')), findsOneWidget);
     await tester.tap(find.widgetWithText(ChoiceChip, 'Próximos'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('match-row-match')), findsOneWidget);

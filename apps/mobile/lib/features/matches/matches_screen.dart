@@ -791,6 +791,13 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             )
             ..add(() => const SizedBox(height: 16));
 
+          if (data.stale && allGames.isNotEmpty && !loading && !failed) {
+            feedItems.add(
+              () =>
+                  const _SavedDataNotice(message: 'Mostrando datos guardados.'),
+            );
+          }
+
           if (loading) {
             if (data.calendarPending) {
               feedItems.add(
@@ -854,21 +861,20 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                 icon: effectiveFilter == 'En vivo'
                     ? Icons.sensors_outlined
                     : Icons.filter_alt_off_outlined,
-                title: switch (effectiveFilter) {
-                  'En vivo' => 'No hay partidos en vivo ahora.',
-                  'Próximos' => 'No hay próximos partidos.',
-                  'Finalizados' => 'No hay partidos finalizados.',
-                  _ => 'No hay partidos para este filtro.',
-                },
-                message: 'Los partidos del día siguen disponibles en Todos.',
+                title: data.stale
+                    ? 'No hay partidos guardados para este filtro.'
+                    : switch (effectiveFilter) {
+                        'En vivo' => 'No hay partidos en vivo ahora.',
+                        'Próximos' => 'No hay próximos partidos.',
+                        'Finalizados' => 'No hay partidos finalizados.',
+                        _ => 'No hay partidos para este filtro.',
+                      },
+                message: data.stale
+                    ? 'Puedes ver los partidos guardados en Todos.'
+                    : 'Los partidos del día siguen disponibles en Todos.',
                 actionLabel: 'Ver todos',
                 onAction: () => setState(() => filter = 'Todos'),
               ),
-            );
-          } else if (data.stale) {
-            feedItems.add(
-              () =>
-                  const _SavedDataNotice(message: 'Mostrando datos guardados.'),
             );
           }
 
