@@ -22,7 +22,7 @@ class _Tokens implements PushTokenSource {
 
 void main() {
   testWidgets(
-    'notification toggle from retained A screen changes only B chosen field',
+    'notification real widget handler preserves current B unedited fields',
     (tester) async {
       tester.view.physicalSize = const Size(390, 2000);
       tester.view.devicePixelRatio = 1;
@@ -149,10 +149,32 @@ void main() {
           reason: 'No A ownership marker remains to mask this caller-intent regression',
         );
       });
+      final tile = tester.widget<SwitchListTile>(option);
+      expect(
+        tile.value,
+        isTrue,
+        reason: 'Retained real widget still offers enabled final alerts',
+      );
+      expect(
+        tile.onChanged,
+        isNotNull,
+        reason: 'Actual widget save handler must be available',
+      );
+      await tester.runAsync(() async {
+        tile.onChanged!(false);
+      });
+      for (var turn = 0; turn < 200 && !chosenFieldSaved.isCompleted; turn++) {
+        await tester.pump();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+      }
+      expect(
+        chosenFieldSaved.isCompleted,
+        isTrue,
+        reason: 'Real handler save must complete across bounded fake/real I/O turns',
+      );
       final observed = await tester.runAsync(() async {
-        await tester.tap(option);
-        await chosenFieldSaved.future.timeout(const Duration(seconds: 3));
-        await service.pending;
         return (
           current: await service.loadProfileSettings(),
           cloudB: Map<String, dynamic>.from(profiles['b']!),
