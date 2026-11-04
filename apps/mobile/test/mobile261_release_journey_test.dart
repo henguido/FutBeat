@@ -569,6 +569,9 @@ void main() {
       expect(bAfter.displayName, 'Synthetic account B');
       expect(cloud.profiles['B']!['displayName'], 'Synthetic account B');
       expect(tester.takeException(), isNull);
+      // Widget-test timer invariants run before addTearDown: dispose the final
+      // authenticated service here, just as for the preceding process restarts.
+      await app.close(tester);
     },
   );
 }
