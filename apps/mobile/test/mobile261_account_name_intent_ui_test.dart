@@ -20,7 +20,113 @@ class _Tokens implements PushTokenSource {
   Stream<String> get rotations => const Stream.empty();
 }
 
+class _DeletionRecordingService extends PushService {
+  _DeletionRecordingService(AppDatabase db, Dio dio)
+    : super(
+        const LiveRealtimeConfig(
+          supabaseUrl: 'https://fixture.invalid',
+          publicKey: 'synthetic',
+        ),
+        db,
+        _Tokens(),
+        dio: dio,
+        pushConfigured: false,
+      );
+
+  final deletionUsers = <String?>[];
+
+  @override
+  Future<void> deleteAccount() async {
+    deletionUsers.add(userId);
+  }
+}
+
 void main() {
+  for (final switchesAccount in [false, true]) {
+    testWidgets(
+      switchesAccount
+          ? 'confirmation shown for A never dispatches deletion for B'
+          : 'confirmation shown for A dispatches deletion for unchanged A',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 2000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        FlutterSecureStorage.setMockInitialValues({});
+
+        final dio = Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (request, handler) {
+                Object? data;
+                if (request.path.contains('/auth/v1/token')) {
+                  final email = (request.data as Map)['email'] as String;
+                  final uid = email.split('@').first;
+                  data = {
+                    'access_token': 'access-$uid',
+                    'refresh_token': 'refresh-$uid',
+                    'user': {'id': uid, 'email': email},
+                  };
+                } else if (request.path.endsWith('futbeat_read_user_profile')) {
+                  data = {
+                    'preferences': <String, dynamic>{},
+                    'follows': <Object>[],
+                  };
+                }
+                handler.resolve(Response(requestOptions: request, data: data));
+              },
+            ),
+          );
+        late final AppDatabase db;
+        late final _DeletionRecordingService service;
+        late final ProviderContainer container;
+        await tester.runAsync(() async {
+          db = AppDatabase(NativeDatabase.memory());
+          service = _DeletionRecordingService(db, dio);
+          container = ProviderContainer(
+            overrides: [pushServiceProvider.overrideWithValue(service)],
+          );
+          await service.signIn('a@example.test', 'synthetic-password');
+        });
+        addTearDown(() async {
+          service.dispose();
+          container.dispose();
+          await db.close();
+        });
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const MaterialApp(home: AccountSecurityScreen()),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('account-delete')));
+        await tester.pumpAndSettle();
+        final confirm = find.text('Eliminar definitivamente');
+        expect(confirm, findsOneWidget);
+        expect(service.userId, 'a');
+
+        if (switchesAccount) {
+          await tester.runAsync(
+            () => service.signIn('b@example.test', 'synthetic-password'),
+          );
+          expect(service.userId, 'b');
+        }
+        await tester.tap(confirm);
+        await tester.pumpAndSettle();
+        expect(service.deletionUsers, switchesAccount ? isEmpty : ['a']);
+        expect(service.userId, switchesAccount ? 'b' : 'a');
+        expect(
+          find.text(
+            switchesAccount
+                ? 'La cuenta cambió. Vuelve a abrir esta pantalla.'
+                : 'Cuenta eliminada.',
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+  }
+
   testWidgets(
     'old account name form cannot rename a different current account',
     (tester) async {

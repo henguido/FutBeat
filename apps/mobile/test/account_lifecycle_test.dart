@@ -358,7 +358,7 @@ void main() {
       });
       value.service.session = {
         'access_token': 'a',
-        'user': {'email': 'a@b.test', 'email_confirmed_at': 'now'},
+        'user': {'id': 'u1', 'email': 'a@b.test', 'email_confirmed_at': 'now'},
       };
       await tester.pumpWidget(
         ProviderScope(

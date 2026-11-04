@@ -115,7 +115,20 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
     }, 'Perfil actualizado.');
   }
 
-  Future<void> _delete(PushService service) async {
+  Future<void> _delete(PushService service, String? accountId) async {
+    bool accountChanged() =>
+        accountId == null ||
+        !identical(ref.read(pushServiceProvider), service) ||
+        service.userId != accountId;
+
+    void showAccountChanged() => setState(
+      () => message = 'La cuenta cambió. Vuelve a abrir esta pantalla.',
+    );
+
+    if (accountChanged()) {
+      showAccountChanged();
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -138,14 +151,18 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
         ],
       ),
     );
-    if (confirmed == true) {
-      await _action(service.deleteAccount, 'Cuenta eliminada.');
+    if (!mounted || confirmed != true) return;
+    if (accountChanged()) {
+      showAccountChanged();
+      return;
     }
+    await _action(service.deleteAccount, 'Cuenta eliminada.');
   }
 
   @override
   Widget build(BuildContext context) {
     final service = ref.watch(pushServiceProvider);
+    final accountId = service.userId;
     final provider = authProviderLabel(service.authProvider) ?? 'Correo';
     final isEmail =
         service.authProvider == null || service.authProvider == 'email';
@@ -301,7 +318,7 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
                   subtitle: const Text(
                     'Borra el perfil y los datos asociados de FutBeat.',
                   ),
-                  onTap: busy ? null : () => _delete(service),
+                  onTap: busy ? null : () => _delete(service, accountId),
                 ),
               ],
             ),
