@@ -207,6 +207,27 @@ void main() {
       );
       expect(profiles['a']!['displayName'], 'Account A');
 
+      final goalsOption = find.byKey(
+        const ValueKey('notification-notify_goals'),
+      );
+      for (
+        var turn = 0;
+        turn < 200 && tester.widget<SwitchListTile>(goalsOption).value;
+        turn++
+      ) {
+        await tester.pump();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+      }
+      expect(
+        tester.widget<SwitchListTile>(goalsOption).value,
+        isFalse,
+        reason:
+            'The retained screen must display B preferences, not stale A '
+            'switches, after the current-account save finishes',
+      );
+
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       await tester.runAsync(() async {

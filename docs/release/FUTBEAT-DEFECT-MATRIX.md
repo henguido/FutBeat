@@ -244,3 +244,14 @@ de personalización que no implementaba la entrada por campos. Se conservó en
 `full-final-attempt01.log`; el adaptador de cinco líneas `185e511` no cambia
 expectativas. Resultado final: `full-final.log` y `analyze-final.log`.
 No aceptación física/conectada ni CI remoto del nuevo HEAD.
+
+### Continuación programada 01 — D261-A11 / N08,A07
+
+P1, LOCAL_PASS: la pantalla de alertas conservaba los interruptores de A aun
+después de guardar correctamente una preferencia de B. Regresión de widget con
+almacenamiento/HTTP simulados: 1 FAIL antes; después 62 focales PASS y analyze
+limpio. Se aplica a la vista el perfil fresco que ya utilizó el FIFO de guardado,
+sin otra lectura o solicitud. No cambia persistencia, endpoints, referencias
+golden ni servicios. Evidencia `artifacts/mobile261/scheduled01-*.log`.
+La suite global1882 de la base no se atribuye al nuevo cambio. No issue remoto
+creado/cerrado ni aceptación real acreditada.

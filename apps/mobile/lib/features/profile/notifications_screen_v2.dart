@@ -66,10 +66,19 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
     });
     final service = ref.read(pushServiceProvider);
     try {
-      await service.updateProfileSettings(
-        (current) => option.update(current, enabled),
-      );
+      UserProfileSettings? applied;
+      String? appliedUserId;
+      await service.updateProfileSettings((current) {
+        appliedUserId = service.userId;
+        return applied = option.update(current, enabled);
+      });
       if (!mounted || generation != _saveGeneration) return;
+      // The queued edit read the active account's latest profile. Keep the
+      // other switches consistent with that saved value, rather than the
+      // snapshot this screen held before an account change.
+      if (applied != null && service.userId == appliedUserId) {
+        setState(() => settings = applied);
+      }
       ref.invalidate(profileSettingsProvider);
     } catch (_) {
       if (!mounted || generation != _saveGeneration) return;

@@ -267,3 +267,8 @@ el recorrido de dos cuentas cierra y reabre SQLite. Hora: servicio LOCAL_PASS,
 widget completo NOT VERIFIED por harness inconcluso. Ver matriz y STATUS para
 el resultado global final, sin convertir estas pruebas en aceptación física,
 OAuth real, entrega FCM o DONE. No nuevo binario ni publicación de MOBILE261.
+
+E261 continuación programada01 / N08,A07: después del guardado, los controles
+de alertas reflejan el perfil fresco de la cuenta activa, no el snapshot de una
+cuenta anterior. Antes1FAIL; después62focalesPASS/analyze0. Ver D261-A11 y STATUS.
+LOCAL_PASS únicamente; sin nuevas lecturas/HTTP, build, CI remoto o QA real.

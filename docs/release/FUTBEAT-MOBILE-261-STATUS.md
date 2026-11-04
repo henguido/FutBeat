@@ -1,5 +1,24 @@
 # MOBILE261 — checkpoint verificable
 
+## Continuación programada 01 — N08/A07, 04-nov-2026 UTC
+
+Sobre base `dadd5a1`, se reprodujo un defecto P1 restante: tras guardar una
+alerta de B desde una pantalla que había cargado A, la persistencia era correcta
+pero los demás interruptores seguían mostrando las preferencias de A.
+La regresión exige que el interruptor no editado coincida con B después del
+guardado real simulado; antes: 1 FAIL, después: **62 focales PASS** (7 archivos)
+y analyze limpio, 12,9 s. Logs `scheduled01-alert-display-before.log`,
+`scheduled01-alert-display-after.log` y `scheduled01-analyze.log` en
+`artifacts/mobile261/`. No se repitió la suite global recién aprobada por este
+cambio de estado de una pantalla; sus 1882 PASS de abajo son evidencia de la
+base anterior, no del nuevo commit.
+
+La pantalla reutiliza el perfil fresco que ya produjo la edición serializada;
+no añade lecturas ni solicitudes. Conserva las guardias de última edición,
+cuenta activa y ruta desmontada. LOCAL_PASS, sin QA física/conectada, publicación
+ni aceptación final. El estado anterior se conserva debajo como historial;
+el ledger de reanudaciones se actualiza al cerrar esta invocación.
+
 Corte UTC: 2026-11-04T00:44:01.364145+00:00. Código probado: `185e51186f86efcc51010a3b744e9b48c4d566d9` en `codex/mobile-261-integration`.
 Ventana manual observada: 114.5 minutos desde 2026-11-03T16:49:30.073554-06:00; incluye coordinación y espera de pruebas. No equivale a horas CPU, no se suman agentes y no se acreditan 24 horas.
 
