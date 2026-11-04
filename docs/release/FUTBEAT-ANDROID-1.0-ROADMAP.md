@@ -272,3 +272,7 @@ E261 continuación programada01 / N08,A07: después del guardado, los controles
 de alertas reflejan el perfil fresco de la cuenta activa, no el snapshot de una
 cuenta anterior. Antes1FAIL; después62focalesPASS/analyze0. Ver D261-A11 y STATUS.
 LOCAL_PASS únicamente; sin nuevas lecturas/HTTP, build, CI remoto o QA real.
+
+### E264 — consolidación local
+
+La rama codex/mobile-264-integration verifica por ascendencia los nueve commits programados de MOBILE261 y conserva los parches equivalentes de MOBILE262 y MOBILE263. A06/A07/A09, M03 y S01/S02/S07/N08 tienen regresiones locales por SHA. La matriz completa y las limitaciones quedan en FUTBEAT-MOBILE-264-CONSOLIDATION.md. R05 sigue NO CONFIRMADO si se pierde la confirmación antes de persistirla. El candidato permanece NO-GO hasta verificar R01–R05 y R08–R10 en las superficies autorizadas. CI Linux se solicita en borrador contra codex/mobile-252-release.
