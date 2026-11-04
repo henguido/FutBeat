@@ -144,6 +144,7 @@ String _preserveStoredTerminals(String? previous, String incoming) {
                 'liveChangedAt',
                 'liveObservedAt',
                 'liveObservationDeviceAt',
+                localTerminalObservationKey,
               ])
                 if (known.containsKey(key)) key: known[key],
             };
@@ -558,6 +559,18 @@ class ApiRepository implements FootballRepository {
     ) as Json;
   }
 
+  Json _canonicalNetworkSnapshot(Json raw) => {
+    ...raw,
+    if (raw['matches'] is List)
+      'matches': [
+        for (final row in raw['matches'] as List)
+          if (row is Map)
+            Map<String, dynamic>.from(row)..remove(localTerminalObservationKey)
+          else
+            row,
+      ],
+  };
+
   bool _publicSnapshotMatches(
     String key,
     Snapshot snapshot,
@@ -670,6 +683,7 @@ class ApiRepository implements FootballRepository {
         queryParameters: queryParameters,
         cancelToken: cancelToken,
       );
+      raw = _canonicalNetworkSnapshot(raw);
       final requestedId = queryParameters?['id'];
       final contextMatches = raw['matches'];
       if (requestedId is String &&
@@ -842,6 +856,14 @@ class ApiRepository implements FootballRepository {
     _snapshotCache.updateAll(
       (_, snapshot) => snapshot.withLiveUpdates(terminal),
     );
+    terminal.removeWhere((_, update) {
+      final rejected = _containsPrivateCacheField(update.events);
+      if (rejected) {
+        diagnostics?.record('/local/terminal', 'sqliteWriteRejected');
+      }
+      return rejected;
+    });
+    if (terminal.isEmpty) return Future<void>.value();
     final db = database;
     if (db == null) return Future<void>.value();
     late final Future<void> write;
@@ -920,6 +942,7 @@ class ApiRepository implements FootballRepository {
           maxAttempts: 1,
           receiveTimeout: calendarPolicy.receiveTimeout,
         );
+        raw = _canonicalNetworkSnapshot(raw);
         raw = _carryMemoryTerminals('calendar:$value', raw);
         final fresh = _canonical(raw);
         // A "pending" answer (server still materializing) is never cached.

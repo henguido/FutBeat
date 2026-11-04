@@ -3,6 +3,11 @@ import 'player_display_identity.dart';
 
 typedef Json = Map<String, dynamic>;
 
+/// Local cache provenance, never provider evidence. A terminal learned from a
+/// LIVE overlay can accept a later terminal correction; a canonical HTTP final
+/// remains absorbing. Network readers remove this local-only annotation.
+const localTerminalObservationKey = '_futbeatLocalTerminalObservation';
+
 String? safePlayerImage(dynamic value) {
   if (value is! String) return null;
   final uri = Uri.tryParse(value.trim());
@@ -507,10 +512,16 @@ class LiveMatchUpdate {
       'ABANDONED',
       'CANCELLED',
     };
-    // A terminal snapshot is absorbing (#120): realtime is an overlay and can
-    // never downgrade or rewrite it, however late its changedAt. Corrections
-    // after the final arrive as a new canonical snapshot, not through here.
-    if (terminalStatuses.contains(match['status'] as String?)) return match;
+    // A canonical terminal snapshot is absorbing (#120). A terminal derived
+    // locally from an overlay is not canonical evidence: later terminal
+    // corrections still use the same ordering guards below. Even that local
+    // result cannot be resumed by a LIVE overlay; only canonical HTTP can do so.
+    if (terminalStatuses.contains(match['status'] as String?)) {
+      if (match[localTerminalObservationKey] != true ||
+          !terminalStatuses.contains(status)) {
+        return match;
+      }
+    }
     // A result overlay dated before this fixture's kickoff is contradictory
     // provisional evidence (or an incorrectly matched provider row). A new
     // canonical VERIFIED snapshot was accepted above, even if its kickoff is
@@ -535,10 +546,11 @@ class LiveMatchUpdate {
     }
     if (match['liveProvider'] == provider &&
         match['liveRevision'] == revision &&
-        previousAt != null && changedAt.isAtSameMomentAs(previousAt)) {
-      final previousObserved = DateTime.tryParse(
-        match['liveObservedAt'] as String? ?? '',
-      ) ?? previousAt;
+        previousAt != null &&
+        changedAt.isAtSameMomentAs(previousAt)) {
+      final previousObserved =
+          DateTime.tryParse(match['liveObservedAt'] as String? ?? '') ??
+          previousAt;
       final observation = observedAt ?? changedAt;
       if (observation.isBefore(previousObserved)) return match;
       // Identical content/observation can arrive again from an older REST
@@ -566,7 +578,10 @@ class LiveMatchUpdate {
       return event['id'] is String &&
           (event['matchId'] == null || event['matchId'] == matchId) &&
           (event['teamId'] == null ||
-              [match['homeTeamId'], match['awayTeamId']].contains(event['teamId']));
+              [
+                match['homeTeamId'],
+                match['awayTeamId'],
+              ].contains(event['teamId']));
     }).toList();
     final latestIds = {for (final event in latest) event['id']};
     bool ownedByThisFeed(Json event) {
@@ -609,6 +624,11 @@ class LiveMatchUpdate {
       ..['liveObservationDeviceAt'] = (receivedAt ?? observedAt ?? changedAt)
           .toUtc()
           .toIso8601String();
+    if (terminalStatuses.contains(status)) {
+      result[localTerminalObservationKey] = true;
+    } else {
+      result.remove(localTerminalObservationKey);
+    }
     if (homeScore != null && awayScore != null) {
       result['score'] = {'home': homeScore, 'away': awayScore};
     }

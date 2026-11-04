@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/live_realtime.dart';
@@ -49,6 +50,11 @@ void main() {
     'old-terminal',
     'unobserved-terminal',
     'resumed',
+    'terminal-correction',
+    'canonical-terminal',
+    'private-event',
+    'terminal-correction-stale-http',
+    'canonical-marker',
   ]) {
     _verify(mode);
   }
@@ -90,9 +96,17 @@ void _verify(String mode) {
           'awayTeamId': 'fb_team_a',
           'competitionId': 'fb_comp_c',
           'startTime': now.subtract(const Duration(hours: 2)).toIso8601String(),
-          'status': 'LIVE',
+          'status': ['canonical-terminal', 'canonical-marker'].contains(mode)
+              ? 'VERIFIED'
+              : 'LIVE',
           'minute': 89,
-          'score': {'home': 1, 'away': 0},
+          'score': {
+            'home': ['canonical-terminal', 'canonical-marker'].contains(mode)
+                ? 2
+                : 1,
+            'away': 0,
+          },
+          if (mode == 'canonical-marker') localTerminalObservationKey: true,
           'events': <Json>[],
         },
       ],
@@ -122,6 +136,12 @@ void _verify(String mode) {
       metrics,
     );
     final base = await repository.loadMatchContext(_id);
+    if (mode == 'canonical-marker') {
+      expect(
+        base.match(_id)!.json.containsKey(localTerminalObservationKey),
+        isFalse,
+      );
+    }
     await repository.settleBackground();
     await db.saveCalendarSnapshot('2026-11-03', jsonEncode(raw));
     final detailPayload = jsonEncode({
@@ -132,7 +152,7 @@ void _verify(String mode) {
       'matchId': _id,
     });
     await db.savePublicSnapshot('public:match-detail:$_id', detailPayload);
-    final beforePublicRowId =
+    var beforePublicRowId =
         (await db
                 .customSelect(
                   "SELECT rowid AS rid FROM catalog_snapshots WHERE cache_key LIKE 'public:match-context:%'",
@@ -140,16 +160,16 @@ void _verify(String mode) {
                 .get())
             .single
             .data['rid'];
-    final beforeCalendarRowId =
+    var beforeCalendarRowId =
         (await db
                 .customSelect('SELECT rowid AS rid FROM calendar_snapshots')
                 .get())
             .single
             .data['rid'];
-    final beforePublic = (await db.readPublicSnapshot(
+    var beforePublic = (await db.readPublicSnapshot(
       'public:match-context:$_id',
     ))!.savedAt;
-    final beforeCalendar = (await db.readCalendarEntry('2026-11-03'))!.savedAt;
+    var beforeCalendar = (await db.readCalendarEntry('2026-11-03'))!.savedAt;
     final Future<Snapshot>? held = mode == 'old-http'
         ? repository.loadMatchContext(_id)
         : null;
@@ -166,6 +186,7 @@ void _verify(String mode) {
         ),
       ],
     );
+    int? secondShownScore;
     final observed = Completer<void>();
     final subscription = container.listen(effectiveSnapshotProvider, (
       _,
@@ -191,7 +212,17 @@ void _verify(String mode) {
           'event_count': 0,
           'changed_at': now.toIso8601String(),
           'provider_observed_at': now.toIso8601String(),
-          'latest_events': <Json>[],
+          'latest_events': mode == 'private-event'
+              ? <Json>[
+                  {
+                    'id': 'fb_event_private_fixture',
+                    'matchId': _id,
+                    'type': 'GOAL',
+                    'token': 'synthetic-private-token',
+                    'email': 'fixture@invalid.test',
+                  },
+                ]
+              : <Json>[],
         }, receivedAt: now),
       });
       await observed.future.timeout(const Duration(seconds: 3));
@@ -202,10 +233,112 @@ void _verify(String mode) {
           .match(_id)!;
       expect(shown.status, initialTerminal);
       expect(shown.json['score']['home'], 2);
+      if (mode.startsWith('terminal-correction') ||
+          ['canonical-terminal', 'canonical-marker'].contains(mode)) {
+        await repository.settleBackground();
+        if (mode == 'terminal-correction-stale-http') {
+          responseRaw = {
+            ...raw,
+            'updatedAt': now.add(const Duration(minutes: 1)).toIso8601String(),
+            'matches': [
+              for (final row in raw['matches'] as List)
+                {
+                  ...Map<String, dynamic>.from(row as Map),
+                  'status': 'VERIFIED',
+                  'score': {'home': 1, 'away': 0},
+                  'liveProvider': 'fixture',
+                  'liveRevision': 1,
+                  'liveChangedAt': now
+                      .subtract(const Duration(minutes: 1))
+                      .toIso8601String(),
+                },
+            ],
+          };
+          await repository.loadMatchContext(_id);
+          await repository.settleBackground();
+          beforePublic = (await db.readPublicSnapshot(
+            'public:match-context:$_id',
+          ))!.savedAt;
+          beforePublicRowId =
+              (await db
+                      .customSelect(
+                        "SELECT rowid AS rid FROM catalog_snapshots WHERE cache_key LIKE 'public:match-context:%'",
+                      )
+                      .get())
+                  .single
+                  .data['rid'];
+        }
+        final delivered = Completer<void>();
+        final secondSub = container.listen(liveMatchUpdatesProvider, (
+          _,
+          value,
+        ) {
+          if (value.asData?.value[_id]?.revision == 3 &&
+              !delivered.isCompleted) {
+            delivered.complete();
+          }
+        });
+        updates.add({
+          _id: LiveMatchUpdate.fromJson({
+            'match_id': _id,
+            'provider': 'fixture',
+            'external_match_id': 'fixture_terminal',
+            'status': 'VERIFIED',
+            'minute': 90,
+            'home_score': 3,
+            'away_score': 0,
+            'revision': 3,
+            'event_count': 0,
+            'changed_at': now
+                .add(const Duration(seconds: 20))
+                .toIso8601String(),
+            'provider_observed_at': now
+                .add(const Duration(seconds: 20))
+                .toIso8601String(),
+            'latest_events': mode == 'private-event'
+                ? <Json>[
+                    {
+                      'id': 'fb_event_private_fixture',
+                      'matchId': _id,
+                      'type': 'GOAL',
+                      'token': 'synthetic-private-token',
+                      'email': 'fixture@invalid.test',
+                    },
+                  ]
+                : <Json>[],
+          }, receivedAt: now.add(const Duration(seconds: 20))),
+        });
+        await delivered.future.timeout(const Duration(seconds: 3));
+        await repository.settleBackground();
+        secondShownScore =
+            container
+                    .read(effectiveSnapshotProvider)
+                    .asData!
+                    .value
+                    .match(_id)!
+                    .json['score']['home']
+                as int;
+        secondSub.close();
+      }
       await repository.settleBackground();
+      if (mode == 'private-event') {
+        final storedPayload = (await db.readPublicSnapshot(
+          'public:match-context:$_id',
+        ))!.payload;
+        expect(storedPayload.contains('synthetic-private-token'), isFalse);
+        expect(
+          (metrics.snapshot()['counts']
+              as Map)['/local/terminal:sqliteWriteRejected'],
+          1,
+        );
+        expect(
+          (metrics.snapshot()['counts'] as Map)['/local/terminal:sqliteWrite'],
+          isNull,
+        );
+      }
       expect(
         requests,
-        mode == 'old-http' ? 2 : 1,
+        ['old-http', 'terminal-correction-stale-http'].contains(mode) ? 2 : 1,
         reason: 'Observing a final must not issue another GET',
       );
       expect(
@@ -352,6 +485,7 @@ void _verify(String mode) {
         requests,
         [
               'old-http',
+              'terminal-correction-stale-http',
               'partial',
               'correction',
               'old-terminal',
@@ -363,7 +497,7 @@ void _verify(String mode) {
       );
       expect(
         reopened.match(_id)!.status,
-        mode == 'resumed' ? 'LIVE' : 'VERIFIED',
+        ['resumed', 'private-event'].contains(mode) ? 'LIVE' : 'VERIFIED',
         reason: mode == 'resumed'
             ? 'A newer explicit canonical resumption must survive restart'
             : 'A previously observed final must not return as cached LIVE',
@@ -380,10 +514,26 @@ void _verify(String mode) {
         (await db.readPublicSnapshot('public:match-detail:$_id'))!.payload,
         detailPayload,
       );
+      if (secondShownScore != null) {
+        debugPrint(
+          'TERMINAL_RESTART_LOCAL mode=$mode shown=$secondShownScore stored=${reopened.match(_id)!.json['score']['home']} requests=$requests',
+        );
+      }
       expect(
         reopened.match(_id)!.json['score']['home'],
-        ['correction', 'resumed'].contains(mode) ? 3 : 2,
+        mode == 'private-event'
+            ? 1
+            : (['correction', 'resumed'].contains(mode) ||
+                  mode.startsWith('terminal-correction'))
+            ? 3
+            : 2,
       );
+      if (secondShownScore != null) {
+        expect(
+          secondShownScore,
+          mode.startsWith('terminal-correction') ? 3 : 2,
+        );
+      }
     } finally {
       if (!releaseOld.isCompleted) releaseOld.complete();
       subscription.close();
