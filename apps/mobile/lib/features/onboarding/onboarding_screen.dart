@@ -374,6 +374,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   bool busy = false;
   bool settingsBusy = false;
   bool countryBusy = false;
+  bool _countrySaveNeedsRetry = false;
   String? message;
 
   OnboardingProgressStore get _progress =>
@@ -594,6 +595,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (countryBusy) return;
     setState(() {
       countryBusy = true;
+      _countrySaveNeedsRetry = false;
       message = null;
     });
     // Capture provider-owned objects before the first await. The route can be
@@ -618,6 +620,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     } catch (_) {
       if (mounted) {
         setState(() {
+          _countrySaveNeedsRetry = true;
           message =
               'No pudimos completar el cambio de país. Inténtalo nuevamente.';
         });
@@ -1134,7 +1137,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       useSafeArea: true,
       builder: (_) => CountryPickerSheet(current: current),
     );
-    if (picked != null && picked != saved) await _selectCountry(picked);
+    if (mounted &&
+        picked != null &&
+        (picked != saved || _countrySaveNeedsRetry)) {
+      await _selectCountry(picked);
+    }
   }
 
   Widget _searchField(String hint, int selected) => Row(
