@@ -708,7 +708,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         searchState,
       ),
       OnboardingStep.players => _playerStep(
-        data,
+        searchState == null || rawSearch != null ? data : null,
         follows,
         catalogState,
         searchState,
@@ -1255,16 +1255,24 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         .toSet();
     // Real squad players (followed teams, country, global clubs) first;
     // the catalog's own players after them (deduplicated below).
-    final suggested =
-        ref
-            .watch(playerSuggestionsProvider(followedTeamsKey(follows)))
-            .asData
-            ?.value ??
-        const <Entity>[];
+    final suggested = searchState == null
+        ? ref
+                  .watch(playerSuggestionsProvider(followedTeamsKey(follows)))
+                  .asData
+                  ?.value ??
+              const <Entity>[]
+        : const <Entity>[];
     final source = [...suggested, ...?data?.players];
     final country = ref.read(preferenceProvider).asData?.value.effectiveCountry;
     final sections = query.length >= 2
-        ? [(label: '', players: source.take(30).toList())]
+        ? [
+            (
+              label: '',
+              players: {for (final player in source) player.id: player}.values
+                  .take(30)
+                  .toList(),
+            ),
+          ]
         : onboardingPlayerSuggestions(source, selectedTeams, country);
     final players = [for (final section in sections) ...section.players];
     final selected = follows.where((f) => f.startsWith('player:')).length;
