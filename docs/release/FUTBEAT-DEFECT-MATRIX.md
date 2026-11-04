@@ -236,3 +236,11 @@ El harness horario incompleto original `8fdae7bd` se retiró de la suite en
 no construía el selector, no acreditó defecto ni PASS. No se redujeron expectativas.
 La suite global final y analyze se registrarán en FUTBEAT-MOBILE-261-STATUS.md;
 no confundir los 1859 PASS históricos con el resultado del nuevo corte.
+
+Cierre local exacto `185e51186f86efcc51010a3b744e9b48c4d566d9`:
+**1882/1882 PASS**, goldens incluidos, 119 s; analyze sin incidencias, 9,2 s.
+La primera corrida del nuevo corte tuvo 1879 PASS/3 FAIL por un doble antiguo
+de personalización que no implementaba la entrada por campos. Se conservó en
+`full-final-attempt01.log`; el adaptador de cinco líneas `185e511` no cambia
+expectativas. Resultado final: `full-final.log` y `analyze-final.log`.
+No aceptación física/conectada ni CI remoto del nuevo HEAD.
