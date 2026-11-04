@@ -18,6 +18,217 @@ import 'qa_development.dart';
 import 'team_matches.dart';
 import '../features/news/news_feed_adapter.dart';
 
+const _persistedTerminalStatuses = {
+  'FINISHED_PENDING_VERIFICATION',
+  'VERIFIED',
+  'POSTPONED',
+  'SUSPENDED',
+  'ABANDONED',
+  'CANCELLED',
+};
+
+LiveMatchUpdate? _storedTerminalObservation(Json match) {
+  if (!_persistedTerminalStatuses.contains(match['status']) ||
+      match['id'] is! String ||
+      match['liveProvider'] is! String ||
+      match['liveRevision'] is! int) {
+    return null;
+  }
+  final changed = DateTime.tryParse(match['liveChangedAt']?.toString() ?? '');
+  if (changed == null) return null;
+  final score = match['score'];
+  return LiveMatchUpdate(
+    matchId: match['id'] as String,
+    provider: match['liveProvider'] as String,
+    externalMatchId: '',
+    status: match['status'] as String,
+    minute: match['minute'] as int?,
+    homeScore: score is Map ? score['home'] as int? : null,
+    awayScore: score is Map ? score['away'] as int? : null,
+    revision: match['liveRevision'] as int,
+    eventCount: (match['events'] as List? ?? const []).length,
+    changedAt: changed,
+    observedAt: DateTime.tryParse(match['liveObservedAt']?.toString() ?? ''),
+    receivedAt: DateTime.tryParse(
+      match['liveObservationDeviceAt']?.toString() ?? '',
+    ),
+    events: [
+      for (final row in match['events'] as List? ?? const [])
+        if (row is Map) Map<String, dynamic>.from(row),
+    ],
+    hasEventList: match['events'] is List,
+  );
+}
+
+String? _overlayStoredTerminals(
+  String payload,
+  Map<String, LiveMatchUpdate> updates,
+) {
+  try {
+    final raw = jsonDecode(payload) as Json;
+    if (raw['demo'] == true || raw['matches'] is! List) return null;
+    var changed = false;
+    final matches = [
+      for (final row in raw['matches'] as List)
+        if (row is Map)
+          () {
+            final match = Map<String, dynamic>.from(row);
+            final observation = updates[match['id']];
+            final next = observation?.applyTo(match) ?? match;
+            if (!identical(next, match)) changed = true;
+            return next;
+          }()
+        else
+          row,
+    ];
+    return changed ? jsonEncode({...raw, 'matches': matches}) : null;
+  } catch (_) {
+    return null; // A malformed cache row is not evidence of a final result.
+  }
+}
+
+String _preserveStoredTerminals(String? previous, String incoming) {
+  if (previous == null) return incoming;
+  try {
+    final raw = jsonDecode(previous) as Json;
+    final updates = <String, LiveMatchUpdate>{};
+    for (final row in raw['matches'] as List? ?? const []) {
+      if (row is! Map) continue;
+      final update = _storedTerminalObservation(Map<String, dynamic>.from(row));
+      if (update != null) updates[update.matchId] = update;
+    }
+    final next = jsonDecode(incoming) as Json;
+    if (next['demo'] == true || next['matches'] is! List) return incoming;
+    final previousMatches = {
+      for (final row in raw['matches'] as List? ?? const [])
+        if (row is Map && updates.containsKey(row['id'])) row['id']: row,
+    };
+    next['matches'] = [
+      for (final row in next['matches'] as List)
+        if (row is Map && previousMatches.containsKey(row['id']))
+          () {
+            final current = Map<String, dynamic>.from(row);
+            final before = updates[row['id']]!;
+            final candidate = _storedTerminalObservation(current);
+            // Envelope generation/request times are not sporting observations.
+            // A provider revision may advance only without moving changedAt back;
+            // otherwise require a strictly later explicit sporting observation.
+            final newer =
+                candidate != null &&
+                !candidate.changedAt.isBefore(before.changedAt) &&
+                (candidate.provider != before.provider ||
+                    candidate.revision >= before.revision) &&
+                (candidate.changedAt.isAfter(before.changedAt) ||
+                    (candidate.provider == before.provider &&
+                        candidate.revision > before.revision) ||
+                    (candidate.observedAt ?? candidate.changedAt).isAfter(
+                      before.observedAt ?? before.changedAt,
+                    ));
+            if (newer) return current;
+            final known = previousMatches[row['id']]!;
+            return {
+              ...current,
+              for (final key in [
+                'status',
+                'minute',
+                'score',
+                'events',
+                'liveRevision',
+                'liveProvider',
+                'liveChangedAt',
+                'liveObservedAt',
+                'liveObservationDeviceAt',
+              ])
+                if (known.containsKey(key)) key: known[key],
+            };
+          }()
+        else
+          row,
+    ];
+    final present = {
+      for (final row in next['matches'] as List)
+        if (row is Map) row['id'],
+    };
+    final missing = [
+      for (final row in raw['matches'] as List? ?? const [])
+        if (row is Map &&
+            updates.containsKey(row['id']) &&
+            !present.contains(row['id']))
+          row,
+    ];
+    if (missing.isNotEmpty) {
+      next['matches'] = [...next['matches'] as List, ...missing];
+      next['freshness'] = {
+        if (next['freshness'] is Map) ...next['freshness'] as Map,
+        'stale': true,
+      };
+      // The retained fixture still needs its exact entities. New API rows win
+      // by ID; neither names nor an empty page establish identity/deletion.
+      final needed = <String, Set<String>>{
+        'teams': {
+          for (final match in missing)
+            for (final key in ['homeTeamId', 'awayTeamId'])
+              if (match[key] is String) match[key] as String,
+        },
+        'competitions': {
+          for (final match in missing)
+            if (match['competitionId'] is String)
+              match['competitionId'] as String,
+        },
+        'players': {
+          for (final match in missing)
+            for (final event in match['events'] as List? ?? const [])
+              if (event is Map)
+                for (final key in [
+                  'playerId',
+                  'canonicalPlayerId',
+                  'assistPlayerId',
+                  'canonicalAssistPlayerId',
+                ])
+                  if (event[key] is String) event[key] as String,
+        },
+      };
+      final redirects = <dynamic, dynamic>{
+        if (next['entityRedirects'] is Map) ...next['entityRedirects'] as Map,
+      };
+      final oldRedirects = raw['entityRedirects'] is Map
+          ? raw['entityRedirects'] as Map
+          : const {};
+      for (final ids in needed.values) {
+        final pending = ids.toList();
+        for (var index = 0; index < pending.length; index++) {
+          final id = pending[index];
+          // An explicit new key (including a cleared/revoked redirect) wins.
+          if (!redirects.containsKey(id) && oldRedirects.containsKey(id)) {
+            redirects[id] = oldRedirects[id];
+          }
+          final canonical = redirects[id];
+          if (canonical is String && ids.add(canonical)) pending.add(canonical);
+        }
+      }
+      for (final kind in ['teams', 'competitions', 'players']) {
+        final entities = <String, dynamic>{};
+        for (final row in raw[kind] as List? ?? const []) {
+          if (row is Map && needed[kind]!.contains(row['id'])) {
+            entities[row['id'] as String] = row;
+          }
+        }
+        for (final row in next[kind] as List? ?? const []) {
+          if (row is Map && row['id'] is String) {
+            entities[row['id'] as String] = row;
+          }
+        }
+        next[kind] = entities.values.toList();
+      }
+      next['entityRedirects'] = redirects;
+    }
+    final serialized = jsonEncode(next);
+    return _overlayStoredTerminals(serialized, updates) ?? serialized;
+  } catch (_) {
+    return incoming;
+  }
+}
+
 abstract interface class FootballRepository {
   Future<Snapshot> load();
   Future<Snapshot> loadDate(DateTime date);
@@ -173,6 +384,19 @@ class ApiRepository implements FootballRepository {
     if (_appActive == active) return;
     _appActive = active;
     diagnostics?.record('/v1/calendar', active ? 'resumed' : 'paused');
+    if (active) {
+      // A failed local terminal write can retry on resume without an HTTP read.
+      unawaited(
+        persistTerminalObservations({
+          for (final snapshot in _snapshotCache.values)
+            for (final match in snapshot.matches)
+              ...?switch (_storedTerminalObservation(match.json)) {
+                final update? => {update.matchId: update},
+                _ => null,
+              },
+        }),
+      );
+    }
     if (!active) {
       _prefetchGeneration++;
       for (final flight in _calendarInFlight.values) {
@@ -275,6 +499,24 @@ class ApiRepository implements FootballRepository {
   }
 
   void _remember(String key, Snapshot snapshot) {
+    final previous = _snapshotCache[key];
+    if (previous != null) {
+      if (snapshot.matches.isEmpty &&
+          previous.matches.any(
+            (match) => _storedTerminalObservation(match.json) != null,
+          )) {
+        // An empty/partial answer does not retract an explicitly observed
+        // result. Preserve its complete context, conservatively marked stale.
+        snapshot = previous.asStale();
+      }
+      snapshot = snapshot.withLiveUpdates({
+        for (final match in previous.matches)
+          ...?switch (_storedTerminalObservation(match.json)) {
+            final update? => {update.matchId: update},
+            _ => null,
+          },
+      });
+    }
     _snapshotCache.remove(key);
     _snapshotCache[key] = snapshot;
     while (_snapshotCache.length > 64) {
@@ -284,6 +526,30 @@ class ApiRepository implements FootballRepository {
         _calendarFetchedAt.remove(oldest.substring('calendar:'.length));
       }
     }
+  }
+
+  Json _carryMemoryTerminals(String key, Json incoming) {
+    final previous = _snapshotCache[key];
+    if (previous == null ||
+        !previous.matches.any(
+          (m) => _storedTerminalObservation(m.json) != null,
+        )) {
+      return incoming;
+    }
+    return jsonDecode(
+      _preserveStoredTerminals(
+        jsonEncode({
+          'matches': [for (final match in previous.matches) match.json],
+          'teams': [for (final entity in previous.teams) entity.json],
+          'competitions': [
+            for (final entity in previous.competitions) entity.json,
+          ],
+          'players': [for (final entity in previous.players) entity.json],
+          'entityRedirects': previous.entityRedirects,
+        }),
+        jsonEncode(incoming),
+      ),
+    ) as Json;
   }
 
   bool _publicSnapshotMatches(
@@ -314,7 +580,11 @@ class ApiRepository implements FootballRepository {
     if (db == null || _containsPrivateCacheField(raw)) return;
     late final Future<void> write;
     write = db
-        .savePublicSnapshot('public:$key', jsonEncode(raw))
+        .savePublicSnapshot(
+          'public:$key',
+          jsonEncode(raw),
+          merge: _preserveStoredTerminals,
+        )
         .catchError((Object _) {})
         .whenComplete(() => _diskWrites.remove(write));
     _diskWrites.add(write);
@@ -389,7 +659,7 @@ class ApiRepository implements FootballRepository {
     CancelToken? cancelToken,
   }) async {
     try {
-      final raw = await _getJson(
+      var raw = await _getJson(
         path,
         queryParameters: queryParameters,
         cancelToken: cancelToken,
@@ -439,6 +709,9 @@ class ApiRepository implements FootballRepository {
         }
       }
       final previous = _snapshotCache[key];
+      final beforeTerminalCarry = raw;
+      raw = _carryMemoryTerminals(key, raw);
+      if (!identical(raw, beforeTerminalCarry)) checkedEntity = null;
       if (previous != null &&
           (key.startsWith('match-context:') || key.startsWith('entity:'))) {
         // Decide freshness before _canonical absorbs media and redirects into
@@ -460,7 +733,7 @@ class ApiRepository implements FootballRepository {
       if (_publicSnapshotMatches(key, snapshot, queryParameters)) {
         _persistPublicJson(key, raw);
       }
-      return snapshot;
+      return _snapshotCache[key]!;
     } catch (error, stack) {
       if (cancelToken?.isCancelled == true) {
         Error.throwWithStackTrace(error, stack);
@@ -549,6 +822,40 @@ class ApiRepository implements FootballRepository {
     await Future.wait([..._diskWrites]);
   }
 
+  /// Persist only explicitly observed terminal states. The UI never waits for
+  /// disk: a failed write is reported and can retry from bounded memory on resume.
+  Future<void> persistTerminalObservations(
+    Map<String, LiveMatchUpdate> updates,
+  ) {
+    final terminal = {
+      for (final entry in updates.entries)
+        if (_persistedTerminalStatuses.contains(entry.value.status))
+          entry.key: entry.value,
+    };
+    if (terminal.isEmpty) return Future<void>.value();
+    _snapshotCache.updateAll(
+      (_, snapshot) => snapshot.withLiveUpdates(terminal),
+    );
+    final db = database;
+    if (db == null) return Future<void>.value();
+    late final Future<void> write;
+    write =
+        Future<void>.sync(
+              () => db.rewriteStoredSportingSnapshots(
+                (payload) => _overlayStoredTerminals(payload, terminal),
+              ),
+            )
+            .then((_) {
+              diagnostics?.record('/local/terminal', 'sqliteWrite');
+            })
+            .catchError((Object _) {
+              diagnostics?.record('/local/terminal', 'sqliteWriteError');
+            })
+            .whenComplete(() => _diskWrites.remove(write));
+    _diskWrites.add(write);
+    return write;
+  }
+
   Future<Snapshot?> _readStored(String value) async {
     final key = 'calendar:$value';
     final memory = _snapshotCache[key];
@@ -586,7 +893,11 @@ class ApiRepository implements FootballRepository {
     // Never delays showing fresh data: memory already holds the snapshot.
     late final Future<void> write;
     write = db
-        .saveCalendarSnapshot(value, jsonEncode(raw))
+        .saveCalendarSnapshot(
+          value,
+          jsonEncode(raw),
+          merge: _preserveStoredTerminals,
+        )
         .catchError((Object _) {})
         .whenComplete(() => _diskWrites.remove(write));
     _diskWrites.add(write);
@@ -596,13 +907,14 @@ class ApiRepository implements FootballRepository {
     final flight = _CalendarFlight();
     flight.future = () async {
       try {
-        final raw = await _getJson(
+        var raw = await _getJson(
           '/v1/calendar',
           queryParameters: {'date': value, 'timezone': 'America/Costa_Rica'},
           cancelToken: flight.token,
           maxAttempts: 1,
           receiveTimeout: calendarPolicy.receiveTimeout,
         );
+        raw = _carryMemoryTerminals('calendar:$value', raw);
         final fresh = _canonical(raw);
         // A "pending" answer (server still materializing) is never cached.
         if (fresh.calendarPending) return fresh;
@@ -2335,7 +2647,13 @@ final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
 final liveMatchUpdatesProvider = StreamProvider<Map<String, LiveMatchUpdate>>(
   (ref) => (ref.watch(demoModeProvider) || qaLocalCacheOnly)
       ? Stream.value(const <String, LiveMatchUpdate>{})
-      : ref.watch(liveRealtimeClientProvider).watch(),
+      : ref.watch(liveRealtimeClientProvider).watch().map((updates) {
+          final repository = ref.read(repositoryProvider);
+          if (repository is ApiRepository) {
+            unawaited(repository.persistTerminalObservations(updates));
+          }
+          return updates;
+        }),
 );
 
 final effectiveSnapshotProvider = Provider<AsyncValue<Snapshot>>((ref) {

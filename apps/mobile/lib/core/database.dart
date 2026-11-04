@@ -327,8 +327,15 @@ class AppDatabase extends _$AppDatabase {
   // Replacement renews rowId as a stable same-second recency tie-breaker.
   // Write and eviction must commit together: a stale victim selection must
   // never delete a response refreshed by a concurrent cache write.
-  Future<void> saveCalendarSnapshot(String date, String payload) async {
+  Future<void> saveCalendarSnapshot(
+    String date,
+    String payload, {
+    String Function(String? previous, String incoming)? merge,
+  }) async {
     return transaction(() async {
+      if (merge != null) {
+        payload = merge((await readCalendarEntry(date))?.payload, payload);
+      }
       await into(calendarSnapshots).insert(
         CalendarSnapshotsCompanion.insert(
           calendarDate: date,
@@ -390,13 +397,21 @@ class AppDatabase extends _$AppDatabase {
 
   /// Only validated public match/entity responses belong here. Reject a
   /// single oversized answer so the entire offline partition stays bounded.
-  Future<void> savePublicSnapshot(String key, String payload) async {
+  Future<void> savePublicSnapshot(
+    String key,
+    String payload, {
+    String Function(String? previous, String incoming)? merge,
+  }) async {
     return transaction(() async {
       if (!key.startsWith('public:') ||
           utf8.encode(payload).length > maxPublicSnapshotBytes) {
         return;
       }
       await _pruneExpiredPublicSnapshots();
+      if (merge != null) {
+        payload = merge((await readCatalogEntry(key))?.payload, payload);
+        if (utf8.encode(payload).length > maxPublicSnapshotBytes) return;
+      }
       await into(catalogSnapshots).insert(
         CatalogSnapshotsCompanion.insert(
           cacheKey: key,
@@ -422,6 +437,32 @@ class AppDatabase extends _$AppDatabase {
       }
     });
   }
+
+  /// Updates already retained sporting payloads without refreshing their age,
+  /// eviction order or retention budget. Reads and updates share one transaction.
+  Future<void> rewriteStoredSportingSnapshots(
+    String? Function(String) rewrite,
+  ) => transaction(() async {
+    for (final row in await select(calendarSnapshots).get()) {
+      final next = rewrite(row.payload);
+      if (next != null) {
+        await (update(calendarSnapshots)
+              ..where((r) => r.calendarDate.equals(row.calendarDate)))
+            .write(CalendarSnapshotsCompanion(payload: Value(next)));
+      }
+    }
+    final public = await (select(
+      catalogSnapshots,
+    )..where((r) => r.cacheKey.like('public:%'))).get();
+    for (final row in public) {
+      final next = rewrite(row.payload);
+      if (next != null && utf8.encode(next).length <= maxPublicSnapshotBytes) {
+        await (update(catalogSnapshots)
+              ..where((r) => r.cacheKey.equals(row.cacheKey)))
+            .write(CatalogSnapshotsCompanion(payload: Value(next)));
+      }
+    }
+  });
 
   Future<CatalogSnapshot?> readPublicSnapshot(String key) async {
     if (!key.startsWith('public:')) return null;
