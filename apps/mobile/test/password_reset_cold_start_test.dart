@@ -52,7 +52,7 @@ class _ResetService extends PushService {
   }
 
   @override
-  Future<void> completePasswordRecovery(String newPassword) async {}
+  Future<bool> completePasswordRecovery(String newPassword) async => true;
 }
 
 Uri _link(String token, {bool web = false}) => Uri.parse(

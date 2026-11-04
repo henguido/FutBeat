@@ -184,10 +184,17 @@ class _NewPasswordScreenState extends State<NewPasswordScreen> {
     if (nextPassword != null || nextConfirm != null) return;
     setState(() => busy = true);
     try {
-      await widget.service.completePasswordRecovery(password.text);
+      final signedIn = await widget.service.completePasswordRecovery(
+        password.text,
+      );
+      if (!mounted) return;
       password.clear();
       confirm.clear();
-      if (mounted) Navigator.pop(context, true);
+      if (!signedIn) {
+        setState(() => message = 'La recuperación se interrumpió.');
+        return;
+      }
+      Navigator.pop(context, true);
     } on RecoveryLinkInvalid {
       if (mounted) {
         setState(() => message = 'El enlace ya no es válido. Pide uno nuevo.');

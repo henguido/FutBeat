@@ -1569,6 +1569,69 @@ void main() {
     expect(signedIn, 1);
   });
 
+  testWidgets('reset screen does not acknowledge sign-in superseded by logout', (
+    tester,
+  ) async {
+    final value = (await tester.runAsync(() async {
+      final value = await _service();
+      value.http.routes['/auth/v1/verify'] = (_) => value.http.issue('user-a');
+      value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+      await value.service.beginPasswordRecovery(
+        Uri.parse(
+          'https://futbeat.com/auth/reset?token_hash=local-hash&type=recovery',
+        ),
+      );
+      return value;
+    }))!;
+    final gate = value.http.hold('/auth/v1/user');
+    bool? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async => result = await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => NewPasswordScreen(service: value.service),
+              ),
+            ),
+            child: const Text('abrir'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('abrir'));
+    await tester.pumpAndSettle();
+    for (final key in ['new-password', 'confirm-password']) {
+      await tester.enterText(find.byKey(ValueKey(key)), 'nueva-clave-8');
+    }
+    final save = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('new-password-save')),
+    );
+    await tester.runAsync(() async {
+      save.onPressed!();
+      try {
+        await value.http
+            .waitFor('/auth/v1/user')
+            .timeout(const Duration(seconds: 3));
+        await value.service.signOut();
+      } finally {
+        gate.complete();
+      }
+    });
+    for (var turn = 0; turn < 100; turn++) {
+      await tester.pump(const Duration(milliseconds: 10));
+      if (result != null ||
+          find.text('La recuperación se interrumpió.').evaluate().isNotEmpty)
+        break;
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+    }
+    expect(value.service.authenticated, isFalse);
+    expect(result, isNot(isTrue));
+    expect(find.text('La recuperación se interrumpió.'), findsOneWidget);
+  });
   testWidgets('new password: length and match first, then saved', (
     tester,
   ) async {
@@ -2055,6 +2118,8 @@ class _ResetService extends PushService {
   Future<void> beginPasswordRecovery(Uri link) async {}
 
   @override
-  Future<void> completePasswordRecovery(String newPassword) async =>
-      completed.add(newPassword);
+  Future<bool> completePasswordRecovery(String newPassword) async {
+    completed.add(newPassword);
+    return true;
+  }
 }

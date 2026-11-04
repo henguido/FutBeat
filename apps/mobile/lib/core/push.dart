@@ -970,7 +970,7 @@ class PushService {
 
   /// Stores a fresh GoTrue session and starts account sync. A failed first
   /// reconcile (offline) is retried by the renewal tick; the session stays.
-  Future<void> _startSession(
+  Future<bool> _startSession(
     Map<String, dynamic> value, {
     int? recoveryAttempt,
   }) async {
@@ -985,7 +985,7 @@ class PushService {
     // Preserve a live deletion ACK before local separation drops A's runtime
     // identity and its scoped in-memory guard.
     await _resumeConfirmedDeletionPreparation();
-    if (stale()) return;
+    if (stale()) return false;
     if (previousUser != null && targetUser != previousUser) {
       // Persist ownership before another account can reconcile local follows.
       // This is part of the current login, not a newer logout intent.
@@ -993,12 +993,12 @@ class PushService {
         cancelAuthentication: false,
         replacingSession: true,
       );
-      if (stale()) return;
+      if (stale()) return false;
     }
     // A deletion ACK may become durable while this auth request was in
     // flight. Recheck after local separation, before accepting B's runtime.
     await _resumeConfirmedDeletionPreparation();
-    if (stale()) return;
+    if (stale()) return false;
     final oldRotation = rotation;
     rotation = null;
     final generation = ++_generation;
@@ -1020,22 +1020,23 @@ class PushService {
     } else {
       await oldRotation?.cancel();
     }
-    if (_stale(generation)) return;
+    if (_stale(generation)) return false;
     await storage.delete(key: 'futbeat.auth.pendingConfirmationEmail');
-    if (_stale(generation)) return;
+    if (_stale(generation)) return false;
     await _persistSession();
-    if (_stale(generation)) return;
+    if (_stale(generation)) return false;
     try {
       await _queued(() => _reconcileIfDue(generation));
     } catch (error) {
       // Retried by the renewal tick; the guest data stays local meanwhile.
       debugPrint('FutBeat account link pending (${error.runtimeType})');
     }
-    if (_stale(generation)) return;
+    if (_stale(generation)) return false;
     await _startAccountSync();
     if (!_stale(generation) && enabled && rotation == null) {
       _listenForTokenRotation(generation, _pushAttempt);
     }
+    return !_stale(generation);
   }
 
   /// A late sign-out request (device unregistration) must not land after
@@ -1209,8 +1210,9 @@ class PushService {
 
   /// Sets [newPassword] with the redeemed recovery session and only then
   /// signs the account in (like [signIn]). A failed update keeps the
-  /// recovery session for a retry.
-  Future<void> completePasswordRecovery(String newPassword) async {
+  /// recovery session for a retry. Returns false if a newer intent interrupts
+  /// sign-in.
+  Future<bool> completePasswordRecovery(String newPassword) async {
     final verified = _recoverySession;
     if (verified == null) throw const RecoveryLinkInvalid('no_recovery');
     final recoveryAttempt = _recoveryAttempt;
@@ -1219,7 +1221,7 @@ class PushService {
     if (_authenticationStale(attempt) ||
         _recoveryStale(recoveryAttempt) ||
         !identical(_recoverySession, verified)) {
-      return;
+      return false;
     }
     await dio.put<dynamic>(
       '${config.supabaseUrl}/auth/v1/user',
@@ -1234,10 +1236,10 @@ class PushService {
     if (_authenticationStale(attempt) ||
         _recoveryStale(recoveryAttempt) ||
         !identical(_recoverySession, verified)) {
-      return;
+      return false;
     }
     _recoverySession = null;
-    await _startSession(verified, recoveryAttempt: recoveryAttempt);
+    return _startSession(verified, recoveryAttempt: recoveryAttempt);
   }
 
   /// Leaving the new-password screen drops the recovery session.
