@@ -2718,19 +2718,17 @@ class PushService {
   }
 
   Future<void> deleteAccount() async {
-    if (!accountConfigured || !authenticated) {
-      throw StateError('Authentication required');
-    }
     final uid = userId;
+    if (!accountConfigured || !authenticated || uid == null) {
+      throw StateError('Authentication with a known account is required');
+    }
     final previous = _deletionIntents[uid];
     if (previous?.inFlight == true) {
       throw StateError('Account deletion is in progress');
     }
-    final intent = _AccountDeletionIntent();
-    if (uid != null) {
-      intent.confirmed = previous?.confirmed ?? false;
-      _deletionIntents[uid] = intent;
-    }
+    final intent = _AccountDeletionIntent()
+      ..confirmed = previous?.confirmed ?? false;
+    _deletionIntents[uid] = intent;
     try {
       await _deleteAccount(
         locallyConfirmed: intent.confirmed,
@@ -2738,8 +2736,7 @@ class PushService {
       );
     } finally {
       intent.inFlight = false;
-      if (uid != null &&
-          identical(_deletionIntents[uid], intent) &&
+      if (identical(_deletionIntents[uid], intent) &&
           (!intent.confirmed || userId != uid)) {
         _deletionIntents.remove(uid);
       }

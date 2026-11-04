@@ -447,6 +447,23 @@ Future<void> _scrollTo(WidgetTester tester, Finder finder) => tester
     .scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
 
 void main() {
+  test('account deletion requires a known user ID before dispatch', () async {
+    final value = await _service();
+    value.http.routes['grant_type=password'] = (_) =>
+        value.http.issue('user-a')..remove('user');
+    value.http.routes['futbeat-delete-account'] = (_) => {'deleted': true};
+    await value.service.signIn('user@example.com', 'password-test');
+    expect(value.service.authenticated, isTrue);
+    expect(value.service.userId, isNull);
+    final saved = await _read('futbeat.push.session');
+    expect(saved, isNotNull);
+
+    await expectLater(value.service.deleteAccount(), throwsStateError);
+
+    expect(value.http.count('futbeat-delete-account'), 0);
+    expect(value.service.authenticated, isTrue);
+    expect(await _read('futbeat.push.session'), saved);
+  });
   test('a concurrent account deletion does not send another POST', () async {
     final value = await _service();
     value.service.session = value.http.issue('user-a');
