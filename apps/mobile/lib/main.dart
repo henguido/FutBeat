@@ -58,14 +58,15 @@ Future<CountryPreference> refreshCountryForLocales(
 /// token and opens [NewPasswordScreen] on [navigator]. The token never
 /// becomes a route, so it is not kept in navigation. Other links are
 /// ignored (OAuth callbacks go to flutter_web_auth_2).
-Future<void> handlePasswordResetLink(
+/// Returns false when verification failed and the link can be reopened.
+Future<bool> handlePasswordResetLink(
   Uri link, {
   required PushService service,
   required NavigatorState? navigator,
   required ScaffoldMessengerState? messenger,
   Future<void> Function()? onSignedIn,
 }) async {
-  if (!PushService.isPasswordResetLink(link)) return;
+  if (!PushService.isPasswordResetLink(link)) return true;
   // Host and path only: the one-time token is never logged.
   debugPrint('FutBeat reset link: ${link.host}${link.path}');
   void say(String text) =>
@@ -79,18 +80,19 @@ Future<void> handlePasswordResetLink(
           ? 'Ese enlace está incompleto. Pide uno nuevo.'
           : 'El enlace ya no es válido. Pide uno nuevo.',
     );
-    return;
+    return true;
   } catch (_) {
     say('No se pudo abrir el enlace. Inténtalo de nuevo.');
-    return;
+    return false;
   }
-  if (navigator == null) return;
+  if (navigator == null) return true;
   final changed = await navigator.push<bool>(
     MaterialPageRoute(builder: (_) => NewPasswordScreen(service: service)),
   );
-  if (changed != true) return;
+  if (changed != true) return true;
   say('Contraseña actualizada. Sesión iniciada.');
   await onSignedIn?.call();
+  return true;
 }
 
 GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(

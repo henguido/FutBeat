@@ -41,11 +41,13 @@ class _ResetService extends PushService {
       );
 
   final redeemed = <String>[];
+  bool unavailable = false;
 
   @override
   Future<void> beginPasswordRecovery(Uri link) async {
     final token = link.queryParameters['token_hash'] ?? '';
     redeemed.add(token);
+    if (unavailable) throw StateError('fixture offline');
     if (token == 'bad') throw const RecoveryLinkInvalid('rejected');
   }
 
@@ -114,6 +116,30 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets(
+    'the same recovery link can be reopened after a transient error',
+    (tester) async {
+      final router = _router('/matches');
+      addTearDown(router.dispose);
+      final queue = queueFor(router);
+      addTearDown(queue.dispose);
+      await mount(tester, router);
+      final link = _link('retryable');
+      service.unavailable = true;
+      queue.add(link);
+      await tester.pumpAndSettle();
+      expect(service.redeemed, ['retryable']);
+      expect(find.text(_newPassword), findsNothing);
+
+      service.unavailable = false;
+      await tester.pumpAndSettle();
+      expect(service.redeemed, ['retryable']);
+      queue.add(link);
+      await tester.pumpAndSettle();
+      expect(service.redeemed, ['retryable', 'retryable']);
+      expect(find.text(_newPassword), findsWidgets);
+    },
+  );
   testWidgets(
     'root cause: a screen pushed over /start is removed by the startup go() '
     'after the one-time token was spent',

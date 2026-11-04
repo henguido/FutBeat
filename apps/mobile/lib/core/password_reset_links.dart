@@ -23,8 +23,9 @@ class PasswordResetLinkQueue {
   final GoRouter router;
 
   /// Redeems [link] and opens the new-password screen on [navigator];
-  /// completes when that screen closes.
-  final Future<void> Function(Uri link, NavigatorState navigator) handle;
+  /// completes when that screen closes. Returns false only when the link can
+  /// be explicitly reopened after a retryable verification failure.
+  final Future<bool> Function(Uri link, NavigatorState navigator) handle;
 
   final _pending = <Uri>[];
   final _seen = <String>{};
@@ -84,6 +85,9 @@ class PasswordResetLinkQueue {
     _busy = true;
     unawaited(
       Future.sync(() => handle(link, navigator))
+          .then<void>((handled) {
+            if (!handled) _seen.remove(link.toString());
+          })
           .catchError((Object _) {})
           .whenComplete(() {
             _busy = false;
