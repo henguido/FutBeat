@@ -1647,9 +1647,13 @@ Uri? _safeVerifiedVideoUrl(Json video) {
   if (uri == null ||
       uri.scheme != 'https' ||
       uri.host != 'www.youtube.com' ||
+      uri.port != 443 ||
       uri.path != '/watch' ||
-      uri.userInfo.isNotEmpty ||
-      uri.queryParameters['v'] != id) {
+      uri.userInfo.isNotEmpty) {
+    return null;
+  }
+  final videoIds = uri.queryParametersAll['v'];
+  if (videoIds == null || videoIds.length != 1 || videoIds.single != id) {
     return null;
   }
   return uri;
