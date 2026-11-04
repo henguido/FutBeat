@@ -32,8 +32,21 @@ class PersonalizationScreen extends ConsumerWidget {
     if (code == null) return;
     // Do not replay the snapshot captured when the modal opened: order,
     // pinned competitions or the detected region may have changed since.
-    await database.saveSelectedCountry(code);
-    await service.markSelectedCountryDirty();
+    try {
+      await database.saveSelectedCountry(code);
+      await service.markSelectedCountryDirty();
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No pudimos completar el cambio de país. Inténtalo nuevamente.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
     if (service.authenticated) {
       try {
         await service.syncCountries(
