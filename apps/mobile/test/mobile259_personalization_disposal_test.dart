@@ -36,6 +36,11 @@ class _DelayedSettings extends PushService {
   @override
   Future<UserProfileSettings> loadProfileSettings() async => local;
   @override
+  Future<void> updateProfileSettings(
+    UserProfileSettings Function(UserProfileSettings) update, {
+    String? expectedUserId,
+  }) => saveProfileSettings(update(local));
+  @override
   Future<void> saveProfileSettings(UserProfileSettings value) async {
     saves++;
     submitted = value;
