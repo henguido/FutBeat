@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/models.dart' as core;
 import 'package:futbeat/features/entities/team_profile.dart' show matchDayLabel;
+import 'package:futbeat/features/entities/profile_widgets.dart';
 import 'package:futbeat/features/entities/team_summary.dart';
 
 /// Day label of a UTC instant as the app shows it (Costa Rica time).
@@ -115,8 +116,9 @@ double _y(WidgetTester tester, String text) =>
     tester.getTopLeft(find.text(text).first).dy;
 
 void main() {
-  testWidgets('Partido siguiente comes first: the next match, not a later '
-      'one', (tester) async {
+  testWidgets('Próximos partidos shows the nearest fixtures first', (
+    tester,
+  ) async {
     await _pump(
       tester,
       _snapshot(
@@ -135,8 +137,12 @@ void main() {
       ),
       tableCompetitionId: null,
     );
-    expect(find.text('Partido siguiente'), findsOneWidget);
+    expect(find.text('Próximos partidos'), findsOneWidget);
     expect(find.byKey(const ValueKey('team-next-match')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('team-summary-match-fb_m_later')),
+      findsOneWidget,
+    );
     // The soonest one (in 2 days), not the one in 9 days.
     expect(
       find.descendant(
@@ -148,11 +154,11 @@ void main() {
       findsOneWidget,
     );
     expect(
-      _y(tester, 'Partido siguiente'),
-      lessThan(_y(tester, 'Últimos partidos')),
+      _y(tester, 'Próximos partidos'),
+      lessThan(_y(tester, 'Forma reciente')),
     );
     expect(
-      _y(tester, 'Últimos partidos'),
+      _y(tester, 'Últimos resultados'),
       lessThan(_y(tester, 'Competiciones')),
     );
     expect(find.text('Partidos destacados'), findsNothing);
@@ -174,7 +180,7 @@ void main() {
         ],
       ),
     );
-    expect(find.text('Partido siguiente'), findsNothing);
+    expect(find.text('Próximos partidos'), findsNothing);
     expect(find.text('En vivo'), findsNothing);
     expect(find.byKey(const ValueKey('team-next-match')), findsNothing);
   });
@@ -220,7 +226,7 @@ void main() {
       ),
     );
     expect(find.text('En vivo'), findsOneWidget);
-    expect(find.text('Partido siguiente'), findsNothing);
+    expect(find.text('Próximos partidos'), findsNothing);
     expect(find.text('1 - 1'), findsOneWidget);
   });
 
@@ -292,8 +298,9 @@ void main() {
     ]);
   });
 
-  testWidgets('table: only the team group, at most 5 rows around the team, '
-      'highlighted; Ver todo opens Tabla', (tester) async {
+  testWidgets('table: one compact team row; Ver todo opens Tabla', (
+    tester,
+  ) async {
     final opened = await _pump(
       tester,
       _snapshot(
@@ -324,16 +331,18 @@ void main() {
           w.key is ValueKey<String> &&
           (w.key! as ValueKey<String>).value.startsWith('team-summary-row-'),
     );
-    expect(rows, findsNWidgets(5));
+    expect(rows, findsOneWidget);
     expect(
       find.byKey(const ValueKey('team-summary-row-fb_team')),
       findsOneWidget,
     );
     expect(
       find.byKey(const ValueKey('team-summary-row-fb_rival')),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.text('J'), findsOneWidget);
+    for (final label in ['Pos', 'PJ', 'G', 'E', 'P', 'DG', 'Pts']) {
+      expect(find.text(label), findsOneWidget, reason: label);
+    }
     await tester.tap(find.text('Ver todo').first);
     expect(opened, ['Tabla']);
   });
@@ -391,12 +400,62 @@ void main() {
     tester,
   ) async {
     await _pump(tester, _snapshot());
-    expect(find.text('Partido siguiente'), findsNothing);
-    expect(find.text('Últimos partidos'), findsNothing);
+    expect(find.text('Próximos partidos'), findsNothing);
+    expect(find.text('Forma reciente'), findsNothing);
+    expect(find.text('Últimos resultados'), findsNothing);
     expect(find.text('Noticias'), findsNothing);
     expect(find.text('Sin partidos próximos'), findsNothing);
     expect(find.byKey(const ValueKey('team-summary-table')), findsNothing);
     // Always-true facts stay.
     expect(find.text('Información'), findsOneWidget);
+  });
+
+  testWidgets('upcoming summary is capped at three real fixtures', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _snapshot(
+        matches: [
+          for (var day = 1; day <= 5; day++)
+            _match('fb_up_$day', Duration(days: day), status: 'SCHEDULED'),
+        ],
+      ),
+    );
+    expect(find.byKey(const ValueKey('team-next-match')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('team-summary-match-fb_up_2')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('team-summary-match-fb_up_3')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('team-summary-match-fb_up_4')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('Información is omitted when every real fact is absent', (
+    tester,
+  ) async {
+    final data = Snapshot({
+      'schemaVersion': 1,
+      'demo': false,
+      'updatedAt': _at(Duration.zero),
+      'competitions': <dynamic>[],
+      'teams': [
+        {'id': 'fb_team', 'name': 'Equipo sin ficha'},
+      ],
+      'players': <dynamic>[],
+      'standings': <dynamic>[],
+      'matches': <dynamic>[],
+      'news': <dynamic>[],
+      'transfers': <dynamic>[],
+    });
+    await _pump(tester, data);
+    expect(find.text('Información'), findsNothing);
+    expect(find.byType(ProfileInfoCard), findsNothing);
   });
 }

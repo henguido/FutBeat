@@ -109,7 +109,9 @@ Future<_Harness> _pump(WidgetTester tester, ApiRepository repository) async {
       databaseProvider.overrideWithValue(db),
       repositoryProvider.overrideWithValue(repository),
       // The profile request is still in flight until the test completes it.
-      entitySnapshotProvider.overrideWith((ref, request) => entity.future),
+      entitySnapshotProvider.overrideWith(
+        (ref, request) => Stream.fromFuture(entity.future),
+      ),
       // Never answers here: only records that it was asked (in parallel).
       teamContextProvider.overrideWith((ref, request) {
         contextRequests.add(request.teamId);

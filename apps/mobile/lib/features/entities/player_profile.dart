@@ -309,29 +309,101 @@ List<(String, String)> playerFacts(Entity player) {
   ];
 }
 
+bool _profileEventBelongsToPlayer(
+  Snapshot data,
+  Json event,
+  String playerId, {
+  bool assist = false,
+}) {
+  final canonical = event[assist ? 'canonicalAssistPlayerId' : 'canonicalPlayerId']
+      ?.toString().trim() ?? '';
+  final id = canonical.isNotEmpty
+      ? canonical
+      : event[assist ? 'assistPlayerId' : 'playerId']?.toString().trim() ?? '';
+  return id.isNotEmpty &&
+      data.resolveEntityId(id) == data.resolveEntityId(playerId);
+}
+
+List<FootballMatch> _profileMatchRevisions(Snapshot data) {
+  final revisions = <String, List<FootballMatch>>{};
+  for (final match in data.matches) {
+    revisions.putIfAbsent(match.id, () => []).add(match);
+  }
+  // Reuse the feed's revision selection, only within an exact canonical ID.
+  // Distinct fixtures are not joined by team names, dates or provider guesses.
+  return [for (final rows in revisions.values) dedupeFixtures(rows).single];
+}
+
 /// Stored events where this player scored, assisted or was booked/subbed.
 List<(FootballMatch, Json, bool)> playerRecentEvents(
   Snapshot data,
   String playerId,
 ) {
   final result = <(FootballMatch, Json, bool)>[];
-  for (final match in data.matches) {
+  for (final match in _profileMatchRevisions(data)) {
     for (final event in match.events) {
-      if (event['playerId']?.toString() == playerId) {
+      if (_profileEventBelongsToPlayer(data, event, playerId)) {
         result.add((match, event, false));
-      } else if (event['assistPlayerId']?.toString() == playerId &&
-          event['type'] == 'GOAL' &&
-          event['ownGoal'] != true) {
-        result.add((match, event, true));
+      } else if (_profileEventBelongsToPlayer(data, event, playerId, assist: true)) {
+        // Canonical substitutions use the secondary player field for the
+        // incoming player. It is participation, never a goal assist.
+        if (event['type'] == 'SUBSTITUTION') {
+          result.add((match, event, false));
+        } else if (event['type'] == 'GOAL' && event['ownGoal'] != true) {
+          result.add((match, event, true));
+        }
       }
     }
   }
   result.sort((a, b) {
     final byDate = b.$1.startTime.compareTo(a.$1.startTime);
     if (byDate != 0) return byDate;
-    return (b.$2['minute'] as int? ?? 0).compareTo(a.$2['minute'] as int? ?? 0);
+    final byMinute = (b.$2['minute'] as int? ?? 0).compareTo(
+      a.$2['minute'] as int? ?? 0,
+    );
+    if (byMinute != 0) return byMinute;
+    return (b.$2['extraMinute'] as int? ?? 0).compareTo(
+      a.$2['extraMinute'] as int? ?? 0,
+    );
   });
   return result;
+}
+
+/// Include all explicit team memberships and matches with canonical player
+/// evidence. Never infer a membership from names or nationality.
+List<FootballMatch> playerProfileMatches(Snapshot data, Entity player) {
+  final playerId = data.resolveEntityId(player.id);
+  final teamIds = <String>{};
+  void addTeam(Object? value) {
+    final id = value?.toString().trim() ?? '';
+    if (id.isNotEmpty) teamIds.add(data.resolveEntityId(id));
+  }
+
+  final served = player.json['teamIds'];
+  if (served is List) {
+    for (final id in served) {
+      addTeam(id);
+    }
+  }
+  addTeam(player.json['teamId']);
+  addTeam(player.json['nationalTeamId']);
+  final byId = <String, FootballMatch>{};
+  for (final match in _profileMatchRevisions(data)) {
+    final currentTeamMatch =
+        teamIds.contains(data.resolveEntityId(match.homeId)) ||
+        teamIds.contains(data.resolveEntityId(match.awayId));
+    final explicitActivity = match.events.any((event) {
+      return _profileEventBelongsToPlayer(data, event, playerId) ||
+          ((event['type'] == 'SUBSTITUTION' ||
+              (event['type'] == 'GOAL' && event['ownGoal'] != true)) &&
+              _profileEventBelongsToPlayer(data, event, playerId, assist: true));
+    });
+    if (currentTeamMatch || explicitActivity) {
+      byId.putIfAbsent(match.id, () => match);
+    }
+  }
+  return byId.values.toList()
+    ..sort((a, b) => a.startTime.compareTo(b.startTime));
 }
 
 class PlayerProfileView extends StatelessWidget {
@@ -341,6 +413,7 @@ class PlayerProfileView extends StatelessWidget {
     required this.team,
     required this.matches,
     this.enriching = false,
+    this.matchContext,
     super.key,
   });
 
@@ -348,6 +421,7 @@ class PlayerProfileView extends StatelessWidget {
   final Entity player;
   final Entity? team;
   final List<FootballMatch> matches;
+  final PlayerProfileMatchContext? matchContext;
 
   /// The server is fetching more of this player's data right now.
   final bool enriching;
@@ -355,12 +429,12 @@ class PlayerProfileView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final stats = playerStatRows(player);
-    final transfers = data.transfers
-        .where(
-          (transfer) =>
-              transfer['playerId'] == null || transfer['playerId'] == player.id,
-        )
-        .toList();
+    final transfers = data.transfers.where((transfer) {
+      final id = transfer['playerId']?.toString();
+      return id != null &&
+          id.isNotEmpty &&
+          data.resolveEntityId(id) == data.resolveEntityId(player.id);
+    }).toList();
     final tabs = [
       'Resumen',
       'Partidos',
@@ -452,6 +526,10 @@ class PlayerProfileView extends StatelessWidget {
     final events = playerRecentEvents(data, player.id).take(5).toList();
     return [
       if (enriching) const _EnrichingNotice(),
+      if (matchContext case final context?) ...[
+        const ProfileSectionTitle('En este partido'),
+        PlayerCurrentMatchCard(context),
+      ],
       const ProfileSectionTitle('Ficha del jugador'),
       if (player.json['injured'] == true) const _InjuryBanner(),
       if (facts.isEmpty)
@@ -497,8 +575,12 @@ class PlayerProfileView extends StatelessWidget {
         InlineEmpty(Icons.event_busy_outlined, 'Sin partidos disponibles'),
       ];
     }
-    final upcoming = matches.where((m) => !m.isFinished).toList();
+    final live = matches.where((m) => m.isLive).toList();
+    final upcoming = matches.where((m) => m.isUpcoming).toList();
     final results = matches.where((m) => m.isFinished).toList().reversed;
+    final other = matches
+        .where((m) => !m.isLive && !m.isUpcoming && !m.isFinished)
+        .toList();
     Widget dated(FootballMatch match) => Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Column(
@@ -516,15 +598,214 @@ class PlayerProfileView extends StatelessWidget {
       ),
     );
     return [
+      if (live.isNotEmpty) ...[
+        const ProfileSectionTitle('En vivo'),
+        for (final match in live) dated(match),
+      ],
       if (upcoming.isNotEmpty) ...[
         const ProfileSectionTitle('Próximos'),
         for (final match in upcoming) dated(match),
+      ],
+      if (other.isNotEmpty) ...[
+        const ProfileSectionTitle('Otros estados'),
+        for (final match in other) dated(match),
       ],
       if (results.isNotEmpty) ...[
         const ProfileSectionTitle('Resultados'),
         for (final match in results) dated(match),
       ],
     ];
+  }
+}
+
+/// Match Center context rendered in the full profile without another read.
+/// Missing groups stay absent: a provider omission is never painted as zero.
+class PlayerCurrentMatchCard extends StatelessWidget {
+  const PlayerCurrentMatchCard(this.matchContext, {super.key});
+
+  final PlayerProfileMatchContext matchContext;
+
+  @override
+  Widget build(BuildContext context) {
+    final summary = matchContext.summary.entries;
+    return Column(
+      key: const ValueKey('player-current-match'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (matchContext.team case final team?)
+          Card(
+            child: ListTile(
+              dense: true,
+              leading: EntityAvatar(team, size: 34),
+              title: const Text('Equipo en el partido'),
+              subtitle: Text(team.displayName),
+              trailing: const Icon(Icons.chevron_right, color: muted),
+              onTap: () => context.push('/team/${team.id}'),
+            ),
+          ),
+        if (summary.isNotEmpty)
+          _PlayerMatchSummaryGrid(summary)
+        else if (matchContext.statSections.isEmpty &&
+            matchContext.events.isEmpty)
+          const InlineEmpty(
+            Icons.query_stats_outlined,
+            'Sin datos individuales del partido',
+            detail: 'El proveedor no publicó estadísticas para este jugador.',
+          ),
+        for (final (title, rows) in matchContext.statSections) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(2, 12, 2, 6),
+            child: Text(
+              title,
+              style: const TextStyle(
+                color: muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          _PlayerMatchStatCard(rows),
+        ],
+        if (matchContext.events.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(2, 12, 2, 4),
+            child: Text(
+              'EVENTOS',
+              style: TextStyle(
+                color: muted,
+                fontSize: 11,
+                letterSpacing: .7,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Card(
+            child: Column(
+              children: [
+                for (final event in matchContext.events)
+                  _PlayerMatchEventRow(event),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PlayerMatchSummaryGrid extends StatelessWidget {
+  const _PlayerMatchSummaryGrid(this.entries);
+  final List<(String, String)> entries;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      const gap = 6.0;
+      final columns = constraints.maxWidth < 340 ? 2 : 3;
+      final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [
+          for (final (label, value) in entries)
+            SizedBox(
+              width: width,
+              child: Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 10,
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        value,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: muted, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  );
+}
+
+class _PlayerMatchStatCard extends StatelessWidget {
+  const _PlayerMatchStatCard(this.rows);
+  final List<(String, String)> rows;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      child: Column(
+        children: [
+          for (final (index, (label, value)) in rows.indexed) ...[
+            if (index > 0) const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: muted, fontSize: 13),
+                    ),
+                  ),
+                  Text(
+                    value,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+class _PlayerMatchEventRow extends StatelessWidget {
+  const _PlayerMatchEventRow(this.event);
+  final LineupPlayerEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = eventColor(event.type);
+    return Padding(
+      key: ValueKey('player-current-event-${event.type}-${event.minute}'),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      child: Row(
+        children: [
+          Icon(eventIcon(event.type), size: 18, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              eventLabel(event.type),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          if (event.minute != null)
+            Text('${event.minute}′', style: const TextStyle(color: muted)),
+        ],
+      ),
+    );
   }
 }
 

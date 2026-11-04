@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
+
+import '../../shared/live_freshness_notice.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/ads.dart';
 import '../../core/interests.dart';
 import '../../core/database.dart';
+import '../../core/load_errors.dart';
 import '../../core/models.dart';
+import '../../core/match_prefetch_plan.dart';
 import '../../core/providers.dart';
 import '../../core/relevance.dart';
 import '../../core/theme.dart';
@@ -13,9 +18,13 @@ import '../../shared/widgets.dart';
 
 /// "Favoritos" is only for matches of a favourite TEAM (never a followed
 /// league, never a single followed match: those only mark the follow).
-bool _isFollowedTeamMatch(FootballMatch match, Set<String> follows) =>
-    follows.contains('team:${match.homeId}') ||
-    follows.contains('team:${match.awayId}');
+bool isFollowedTeamMatch(
+  FootballMatch match,
+  Set<String> follows, {
+  String Function(String)? resolve,
+}) =>
+    follows.contains('team:${resolve?.call(match.homeId) ?? match.homeId}') ||
+    follows.contains('team:${resolve?.call(match.awayId) ?? match.awayId}');
 
 // Lower is better: finished, live, played evidence, scheduled, called off.
 int _fixtureRank(FootballMatch match) {
@@ -50,13 +59,20 @@ bool _isPlayedOrPlaying(FootballMatch match) =>
 /// no evidence; a later scheduled game can be a real second game). Two
 /// finished matches with different final scores, and matches of different
 /// competitions, are never merged.
-bool _sameFixture(FootballMatch a, FootballMatch b) {
-  if (a.competitionId.isEmpty ||
-      a.competitionId != b.competitionId ||
-      a.homeId.isEmpty ||
-      a.homeId == a.awayId ||
-      a.homeId != b.homeId ||
-      a.awayId != b.awayId) {
+bool _sameFixture(
+  FootballMatch a,
+  FootballMatch b,
+  String Function(String) resolve,
+) {
+  final competition = resolve(a.competitionId);
+  final home = resolve(a.homeId);
+  final away = resolve(a.awayId);
+  if (competition.isEmpty ||
+      competition != resolve(b.competitionId) ||
+      home.isEmpty ||
+      home == away ||
+      home != resolve(b.homeId) ||
+      away != resolve(b.awayId)) {
     return false;
   }
   if (a.isFinished &&
@@ -82,17 +98,42 @@ bool _sameFixture(FootballMatch a, FootballMatch b) {
 }
 
 /// Defensive UI-level dedupe (the backend calendar is the authority): the
-/// daily feed renders one canonical fixture exactly once: the same canonical
+/// daily feed groups each canonical fixture once per section: the same canonical
 /// match id, or two match entities of one fixture (see [_sameFixture]). The
 /// best twin stays: finished > live > played evidence > scheduled > called
 /// off, then the lower id. The order of the surviving matches is preserved.
-List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
-  final kept = <FootballMatch>[];
-  final seenIds = <String>{};
+List<FootballMatch> dedupeFixtures(
+  Iterable<FootballMatch> matches, {
+  String Function(String)? resolve,
+}) {
+  final resolveId = resolve ?? (String id) => id;
+  // A snapshot may contain several revisions of the same canonical id. Keep
+  // its strongest evidence; for equal evidence, use the last row just as
+  // Snapshot.match(id) does, so a corrected score cannot differ by screen.
+  final byId = <String, FootballMatch>{};
   for (final match in matches) {
-    if (!seenIds.add(match.id)) continue;
-    final twin = kept.indexWhere((other) => _sameFixture(match, other));
-    if (twin < 0) {
+    final previous = byId[match.id];
+    if (previous == null || _fixtureRank(match) <= _fixtureRank(previous)) {
+      byId[match.id] = match;
+    }
+  }
+  final kept = <FootballMatch>[];
+  // Only equal canonical competition/home/away triplets can be twins. Keep
+  // their indexes so unrelated fixtures never enter the comparison scan,
+  // while replacements preserve the original visible position.
+  final candidates = <(String, String, String), List<int>>{};
+  for (final match in byId.values) {
+    final key = (
+      resolveId(match.competitionId),
+      resolveId(match.homeId),
+      resolveId(match.awayId),
+    );
+    final indexes = candidates.putIfAbsent(key, () => <int>[]);
+    final twin = indexes
+        .where((index) => _sameFixture(match, kept[index], resolveId))
+        .firstOrNull;
+    if (twin == null) {
+      indexes.add(kept.length);
       kept.add(match);
       continue;
     }
@@ -103,6 +144,13 @@ List<FootballMatch> dedupeFixtures(Iterable<FootballMatch> matches) {
     }
   }
   return kept;
+}
+
+/// Stable chronological feed order even if a snapshot returns tied kickoffs
+/// in a different order after revalidation or a Realtime update.
+int compareFeedKickoffs(FootballMatch a, FootballMatch b) {
+  final byTime = a.startTime.compareTo(b.startTime);
+  return byTime != 0 ? byTime : a.id.compareTo(b.id);
 }
 
 String _feedEventLabel(String type) => switch (type) {
@@ -147,14 +195,34 @@ String _dateContextLabel(DateTime value, DateTime today) {
   return weekdays[date.weekday - 1];
 }
 
-/// Competition groups shown before the feed's single ad slot.
-const feedAdAfterGroups = 3;
+/// At most this many ad slots in one day's feed.
+const feedAdMaxSlots = 5;
 
-/// The feed's one ad goes right after the [feedAdAfterGroups]-th complete
-/// competition group (never between rows of a group), and never in the
-/// LIVE view. Whether it is shown at all is [adsAllowedProvider]'s call.
-bool feedAdAfterGroup(int groupsRendered, String filter) =>
-    groupsRendered == feedAdAfterGroups && filter != 'En vivo';
+/// Where the Partidos feed may show an ad, as the number of complete
+/// competition groups before each slot (0 = right after the FAVORITOS
+/// block). With favourites: after them, then after groups 3, 7, 11, 15.
+/// Without: after groups 1, 3, 6, 9, 12 (18 is the next candidate, but the
+/// daily cap is already reached). A slot always has feed content
+/// after it (never at the end, never two in a row, never inside a group),
+/// at most [feedAdMaxSlots], and none in the LIVE view. Whether a slot
+/// shows anything is [adsAllowedProvider]'s call (never for Premium).
+List<int> feedAdSlots({
+  required bool favorites,
+  required int groups,
+  required String filter,
+}) {
+  if (filter == 'En vivo') return const [];
+  final slots = <int>[];
+  final candidates = favorites
+      ? const [0, 3, 7, 11, 15]
+      : const [1, 3, 6, 9, 12, 18];
+  for (final after in candidates) {
+    if (slots.length == feedAdMaxSlots) break;
+    // Never reserve an ad at the end of the feed.
+    if (after < groups) slots.add(after);
+  }
+  return slots;
+}
 
 /// Only the LIVE status is date-dependent; all other user filters survive.
 String matchFilterForDate(String filter, DateTime selected, DateTime today) =>
@@ -189,21 +257,35 @@ List<Entity> orderMatchCompetitions({
   List<String> pinnedCompetitionIds = const <String>[],
 }) {
   final visibleCompetitionIds = matches
-      .map((match) => match.competitionId)
+      .map((match) => data.resolveEntityId(match.competitionId))
       .toSet();
-  final visible = data.competitions
-      .where((competition) => visibleCompetitionIds.contains(competition.id))
-      .toList();
+  final visibleById = <String, Entity>{};
+  for (final competition in data.competitions) {
+    final id = data.resolveEntityId(competition.id);
+    if (!visibleCompetitionIds.contains(id)) continue;
+    final canonical = data.competition(competition.id) ?? competition;
+    visibleById.putIfAbsent(
+      id,
+      () => canonical.id == id
+          ? canonical
+          : Entity({...canonical.json, 'id': id}),
+    );
+  }
+  final visible = visibleById.values.toList();
 
   final userCountry = selectedCountry ?? detectedCountry;
   final custom = orderMode == CompetitionOrderMode.personalized;
   // A stale pin (no longer followed) never reorders anything.
-  final pins = {
-    if (custom)
-      for (var i = 0; i < pinnedCompetitionIds.length; i++)
-        if (follows.contains('competition:${pinnedCompetitionIds[i]}'))
-          pinnedCompetitionIds[i]: i,
-  };
+  final pins = <String, int>{};
+  if (custom) {
+    for (var i = 0; i < pinnedCompetitionIds.length; i++) {
+      final id = data.resolveEntityId(pinnedCompetitionIds[i]);
+      if (follows.contains('competition:$id')) {
+        // Keep the first saved position when alias and canonical IDs coexist.
+        pins.putIfAbsent(id, () => i);
+      }
+    }
+  }
   return sortCompetitionsByFeedPriority(
     visible,
     follows: follows,
@@ -222,9 +304,10 @@ class MatchesScreen extends ConsumerStatefulWidget {
 }
 
 class _MatchesScreenState extends ConsumerState<MatchesScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   DateTime? date;
   String filter = 'Todos';
+  bool _retrying = false;
   // Competitions collapsed by the user in this session (headers stay).
   final Set<String> _collapsed = <String>{};
 
@@ -240,9 +323,157 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   int _dayDirection = 1;
   // "Today" of the feed being shown (the demo feed has its own).
   DateTime? _today;
+  bool _sportsActive = true;
+  bool _prefetchQueued = false;
+  bool _prefetchRunning = false;
+  int _prefetchGeneration = 0;
+  int _prefetchRemaining = 8;
+  final Set<String> _prefetchAttempted = {};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final active = state == AppLifecycleState.resumed;
+    if (active == _sportsActive) return;
+    _sportsActive = active;
+    if (!active) {
+      _prefetchGeneration++;
+    } else if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _warmRelevantMatches(
+    Snapshot data,
+    List<FootballMatch> games,
+    Set<String> follows,
+    String? country,
+  ) {
+    if (data.demo ||
+        !_sportsActive ||
+        _prefetchRunning ||
+        _prefetchQueued ||
+        _prefetchRemaining <= 0) {
+      return;
+    }
+    final plan = MatchPrefetchPlan.build(
+      // A finished fixture can be followed too. Its persisted Match Center
+      // detail should paint from disk as promptly as a live fixture.
+      matches: games
+          .where(
+            (match) => match.isUpcoming || match.isLive || match.isFinished,
+          )
+          .map(
+            // Only normalize the planning projection: the disk key remains
+            // the canonical match ID and the displayed fixture is untouched.
+            (match) => FootballMatch({
+              ...match.json,
+              'competitionId': data.resolveEntityId(match.competitionId),
+              'homeTeamId': data.resolveEntityId(match.homeId),
+              'awayTeamId': data.resolveEntityId(match.awayId),
+            }),
+          ),
+      follows: follows,
+      selectedCountry: country,
+      competitions: {
+        for (final entry in data.competitions)
+          data.resolveEntityId(entry.id): data.competition(entry.id) ?? entry,
+      },
+      maxMatches: 8,
+    ).excluding(_prefetchAttempted);
+    if (plan.matchIds.isEmpty) return;
+    final queuedGeneration = _prefetchGeneration;
+    _prefetchQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _prefetchQueued = false;
+      if (!mounted || !_sportsActive || _prefetchRunning) return;
+      if (queuedGeneration != _prefetchGeneration) {
+        // A date/lifecycle change invalidated this plan before it started.
+        // Rebuild once so the newest date can queue its own plan.
+        setState(() {});
+        return;
+      }
+      final repository = ref.read(repositoryProvider);
+      if (repository is! ApiRepository) return;
+      final memory = ref.read(matchDetailMemoryProvider);
+      final generation = ++_prefetchGeneration;
+      _prefetchRunning = true;
+      try {
+        await runMatchPrefetch(
+          plan,
+          maxRequests: _prefetchRemaining < 2 ? _prefetchRemaining : 2,
+          isActive: () =>
+              mounted && _sportsActive && generation == _prefetchGeneration,
+          fetch: (id) async {
+            if (!_prefetchAttempted.add(id)) return;
+            _prefetchRemaining--;
+            repository.diagnostics?.record(
+              '/v1/match-detail',
+              'prefetchAttempt',
+            );
+            if (memory[id]?.available == true) {
+              repository.diagnostics?.record(
+                '/v1/match-detail',
+                'prefetchMemoryHit',
+              );
+              return;
+            }
+            // A match-detail HTTP read can register provider work even with
+            // request=0. Warm only previously persisted data here; the user
+            // opening Match Center owns the explicit remote demand.
+            try {
+              final detail = await repository.readStoredMatchDetail(id);
+              repository.diagnostics?.record(
+                '/v1/match-detail',
+                detail?.available == true
+                    ? 'prefetchDiskHit'
+                    : 'prefetchDiskMiss',
+              );
+              if (detail?.available == true &&
+                  mounted &&
+                  _sportsActive &&
+                  generation == _prefetchGeneration &&
+                  memory[id] == null) {
+                memory[id] = detail!;
+                while (memory.length > matchDetailMemoryLimit) {
+                  memory.remove(memory.keys.first);
+                }
+              }
+            } finally {
+              if ((!mounted ||
+                      !_sportsActive ||
+                      generation != _prefetchGeneration) &&
+                  memory[id]?.available != true) {
+                // Cancellation did not warm this ID. Let the next active
+                // plan retry it within the remaining session read budget.
+                _prefetchAttempted.remove(id);
+              }
+            }
+          },
+        );
+      } finally {
+        _prefetchRunning = false;
+        // Continue the next bounded disk batch while this visible session
+        // still has budget. No unrelated rebuild should be required to warm
+        // the remaining favorite fixtures. A changed generation replans first.
+        if (mounted &&
+            _sportsActive &&
+            (generation != _prefetchGeneration || _prefetchRemaining > 0)) {
+          setState(() {});
+        }
+      }
+    });
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _prefetchGeneration++;
     _dayTransition.dispose();
     super.dispose();
   }
@@ -252,10 +483,15 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     // With no date picked yet the feed shows its own "today" (the anchor).
     final previous = DateUtils.dateOnly(date ?? today);
     final next = DateUtils.dateOnly(value);
+    if (next != previous) {
+      _prefetchGeneration++;
+    }
     setState(() {
       date = value;
-      _collapsed.clear();
-      if (next != previous) _dayDirection = next.isAfter(previous) ? 1 : -1;
+      if (next != previous) {
+        _collapsed.clear();
+        _dayDirection = next.isAfter(previous) ? 1 : -1;
+      }
       // #168: "En vivo" only makes sense today. On any other day it would
       // leave an empty screen although that day has matches.
       filter = matchFilterForDate(filter, next, today);
@@ -271,6 +507,21 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   void _toggleCollapsed(String competitionId) => setState(() {
     if (!_collapsed.remove(competitionId)) _collapsed.add(competitionId);
   });
+
+  Future<void> _retry(DateTime value) async {
+    if (_retrying) return;
+    setState(() => _retrying = true);
+    final repository = ref.read(repositoryProvider);
+    if (repository is ApiRepository) repository.refreshDate(value);
+    ref.invalidate(calendarSnapshotProvider(value));
+    try {
+      await ref.read(calendarSnapshotProvider(value).future);
+    } catch (_) {
+      // The same recoverable state remains visible.
+    } finally {
+      if (mounted) setState(() => _retrying = false);
+    }
+  }
 
   Future<void> _pickDate(BuildContext context, DateTime selected) async {
     final picked = await showDatePicker(
@@ -349,28 +600,59 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
-          final games = dedupeFixtures(data.onDate(selected, effectiveFilter));
+          final allGames = dedupeFixtures(
+            data.onDate(selected, 'Todos'),
+            resolve: data.resolveEntityId,
+          );
+          _warmRelevantMatches(
+            data,
+            allGames,
+            follows,
+            // A detected country alone must not trigger detail reads; an
+            // explicit selection or follow is required for warming.
+            preference?.selectedCountry,
+          );
+          // Filter after deduplication so a stale scheduled/LIVE twin cannot
+          // reappear in a tab when its final result won in Todos.
+          final games = allGames
+              .where(
+                (match) => switch (effectiveFilter) {
+                  'En vivo' => match.isLive,
+                  'Próximos' => match.isUpcoming,
+                  'Finalizados' => match.isFinished,
+                  _ => true,
+                },
+              )
+              .toList();
 
           final followedGames =
               games
-                  .where((match) => _isFollowedTeamMatch(match, follows))
+                  .where(
+                    (match) => isFollowedTeamMatch(
+                      match,
+                      follows,
+                      resolve: data.resolveEntityId,
+                    ),
+                  )
                   .toList()
-                ..sort((a, b) => a.startTime.compareTo(b.startTime));
-          final followedIds = followedGames.map((match) => match.id).toSet();
-          final remainingGames =
-              games.where((match) => !followedIds.contains(match.id)).toList()
-                ..sort((a, b) => a.startTime.compareTo(b.startTime));
+                ..sort(compareFeedKickoffs);
+          // Favorites highlight canonical fixtures without removing them from
+          // their leagues. The day fixtures were deduplicated before grouping.
+          final regularGames = [...games]..sort(compareFeedKickoffs);
 
-          final remainingByCompetition = <String, List<FootballMatch>>{};
-          for (final match in remainingGames) {
-            remainingByCompetition
-                .putIfAbsent(match.competitionId, () => <FootballMatch>[])
+          final regularByCompetition = <String, List<FootballMatch>>{};
+          for (final match in regularGames) {
+            regularByCompetition
+                .putIfAbsent(
+                  data.resolveEntityId(match.competitionId),
+                  () => <FootballMatch>[],
+                )
                 .add(match);
           }
 
           final orderedCompetitions = orderMatchCompetitions(
             data: data,
-            matches: remainingGames,
+            matches: regularGames,
             follows: follows,
             selectedCountry: preference?.selectedCountry,
             detectedCountry: preference?.detectedCountry,
@@ -383,35 +665,63 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             pinnedCompetitionIds:
                 preference?.pinnedCompetitionIds ?? const <String>[],
           );
+
+          // Resolve every regular block and its ad cadence before creating
+          // any section. Cadence decides which section owns an ad; the
+          // section owns the group/ad/next-section layout.
+          final competitionById = {
+            for (final competition in orderedCompetitions)
+              competition.id: competition,
+          };
+          final visibleCompetitions = orderedCompetitions
+              .where(
+                (competition) =>
+                    (regularByCompetition[competition.id]?.isNotEmpty ?? false),
+              )
+              .toList(growable: false);
+          final plannedAdSlots = feedAdSlots(
+            favorites: followedGames.isNotEmpty,
+            groups: visibleCompetitions.length,
+            filter: effectiveFilter,
+          );
           final feedItems = <Widget Function()>[];
 
-          void addCompetition(Entity competition) {
+          AdSlot? adAfter(int ordinal) {
+            final slotIndex = plannedAdSlots.indexOf(ordinal);
+            if (slotIndex < 0) return null;
+            final day = requestDate.toIso8601String().substring(0, 10);
+            return AdSlot(
+              AdPlacement.matchesFeed,
+              key: ValueKey('feed-ad-$day-$slotIndex'),
+            );
+          }
+
+          void addCompetition(Entity competition, int ordinal) {
             final competitionMatches =
-                remainingByCompetition[competition.id] ??
-                const <FootballMatch>[];
+                regularByCompetition[competition.id] ?? const <FootballMatch>[];
             if (competitionMatches.isEmpty) return;
 
             // The live filter always shows its rows.
+            final collapseKey = 'competition:${competition.id}';
             final collapsed =
                 effectiveFilter != 'En vivo' &&
-                _collapsed.contains(competition.id);
+                _collapsed.contains(collapseKey);
             feedItems.add(
-              () => _CompetitionHeader(
-                competition: competition,
-                count: competitionMatches.length,
-                liveCount: competitionMatches.where((m) => m.isLive).length,
-                collapsed: collapsed,
-                onOpen: () => context.push('/competition/${competition.id}'),
-                onToggle: () => _toggleCollapsed(competition.id),
-                canToggle: effectiveFilter != 'En vivo',
+              () => CompetitionFeedSection(
+                key: ValueKey('feed-section-competition-${competition.id}'),
+                group: CompetitionMatchGroupCard(
+                  scope: 'competition',
+                  competition: competition,
+                  matches: competitionMatches,
+                  data: data,
+                  collapsed: collapsed,
+                  onOpen: () => context.push('/competition/${competition.id}'),
+                  onToggle: () => _toggleCollapsed(collapseKey),
+                  canToggle: effectiveFilter != 'En vivo',
+                ),
+                ad: adAfter(ordinal),
               ),
             );
-            if (!collapsed) {
-              for (final match in competitionMatches) {
-                feedItems.add(() => MatchCard(match, data));
-              }
-            }
-            feedItems.add(() => const SizedBox(height: 8));
           }
 
           feedItems
@@ -483,50 +793,147 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             )
             ..add(() => const SizedBox(height: 16));
 
+          if (data.stale && allGames.isNotEmpty && !loading && !failed) {
+            feedItems.add(
+              () =>
+                  const _SavedDataNotice(message: 'Mostrando datos guardados.'),
+            );
+          }
+
           if (loading) {
-            feedItems.add(() => const LinearProgressIndicator());
             if (data.calendarPending) {
               feedItems.add(
-                () => const Padding(
-                  padding: EdgeInsets.only(top: 12),
-                  child: Text('Preparando los partidos de esta fecha…'),
+                () => const _MatchesStatusCard(
+                  key: ValueKey('matches-calendar-pending'),
+                  icon: Icons.calendar_month_outlined,
+                  title: 'Preparando los partidos de esta fecha…',
+                  message: 'El calendario estará disponible en breve.',
+                  loading: true,
                 ),
               );
+            } else {
+              feedItems.add(() => const _MatchesFeedSkeleton());
             }
           } else if (failed) {
-            feedItems.add(() => const Text('No pudimos cargar esta fecha'));
+            final error = ref
+                .read(effectiveCalendarSnapshotProvider(requestDate))
+                .error;
             feedItems.add(
-              () => TextButton(
-                onPressed: () =>
-                    ref.invalidate(calendarSnapshotProvider(requestDate)),
-                child: const Text('Reintentar'),
+              () => _MatchesStatusCard(
+                key: const ValueKey('matches-load-error'),
+                icon: classifyLoadError(error) == LoadFailure.offline
+                    ? Icons.cloud_off_outlined
+                    : Icons.sync_problem_outlined,
+                title: classifyLoadError(error) == LoadFailure.offline
+                    ? 'Sin conexión.'
+                    : 'No pudimos cargar los partidos.',
+                message: 'Puedes cambiar de fecha o intentarlo nuevamente.',
+                actionLabel: _retrying ? 'Reintentando…' : 'Reintentar',
+                onAction: _retrying ? null : () => _retry(requestDate),
+              ),
+            );
+          } else if (allGames.isEmpty &&
+              (data.stale || data.coverage?['partial'] == true)) {
+            feedItems.add(
+              () => _MatchesStatusCard(
+                key: ValueKey(
+                  data.stale ? 'matches-stale-empty' : 'matches-partial-empty',
+                ),
+                icon: Icons.cloud_sync_outlined,
+                title: 'No pudimos confirmar los partidos de este día.',
+                message: data.stale
+                    ? 'La información guardada puede estar incompleta.'
+                    : 'La cobertura del calendario todavía es parcial.',
+                actionLabel: _retrying ? 'Reintentando…' : 'Reintentar',
+                onAction: _retrying ? null : () => _retry(requestDate),
+              ),
+            );
+          } else if (allGames.isEmpty) {
+            feedItems.add(
+              () => _MatchesStatusCard(
+                key: const ValueKey('matches-empty-day'),
+                icon: Icons.event_busy_outlined,
+                title: 'No hay partidos para este día.',
+                message: selected == anchor
+                    ? 'Prueba otra fecha para consultar el calendario.'
+                    : 'Puedes elegir otra fecha o volver a Hoy.',
+                actionLabel: selected == anchor ? null : 'Volver a Hoy',
+                onAction: selected == anchor ? null : () => _setDate(anchor),
               ),
             );
           } else if (games.isEmpty) {
-            feedItems.add(() => const EmptyState('Sin partidos', ''));
+            feedItems.add(
+              () => _MatchesStatusCard(
+                key: ValueKey('matches-empty-filter-$effectiveFilter'),
+                icon: effectiveFilter == 'En vivo'
+                    ? Icons.sensors_outlined
+                    : Icons.filter_alt_off_outlined,
+                title: data.stale
+                    ? 'No hay partidos guardados para este filtro.'
+                    : data.coverage?['partial'] == true
+                    ? 'No pudimos confirmar partidos para este filtro.'
+                    : switch (effectiveFilter) {
+                        'En vivo' => 'No hay partidos en vivo ahora.',
+                        'Próximos' => 'No hay próximos partidos.',
+                        'Finalizados' => 'No hay partidos finalizados.',
+                        _ => 'No hay partidos para este filtro.',
+                      },
+                message: data.stale
+                    ? 'Puedes ver los partidos guardados en Todos.'
+                    : data.coverage?['partial'] == true
+                    ? 'La cobertura del calendario todavía es parcial.'
+                    : 'Los partidos del día siguen disponibles en Todos.',
+                actionLabel: 'Ver todos',
+                onAction: () => setState(() => filter = 'Todos'),
+              ),
+            );
           }
 
           if (followedGames.isNotEmpty) {
             feedItems.add(() => const _FeedHeading(title: 'FAVORITOS'));
+            final favoriteGroups = <String, List<FootballMatch>>{};
             for (final match in followedGames) {
-              feedItems.add(() => MatchCard(match, data));
+              favoriteGroups
+                  .putIfAbsent(
+                    data.resolveEntityId(match.competitionId),
+                    () => <FootballMatch>[],
+                  )
+                  .add(match);
             }
-            feedItems.add(() => const SizedBox(height: 12));
+            final favoriteEntries = favoriteGroups.entries
+                .where((entry) => competitionById.containsKey(entry.key))
+                .toList();
+            for (final (index, entry) in favoriteEntries.indexed) {
+              final competition = competitionById[entry.key];
+              if (competition == null) continue;
+              final collapseKey = 'favorite:${competition.id}';
+              final collapsed =
+                  effectiveFilter != 'En vivo' &&
+                  _collapsed.contains(collapseKey);
+              feedItems.add(
+                () => CompetitionFeedSection(
+                  key: ValueKey('feed-section-favorite-${competition.id}'),
+                  group: CompetitionMatchGroupCard(
+                    scope: 'favorite',
+                    competition: competition,
+                    matches: entry.value,
+                    data: data,
+                    collapsed: collapsed,
+                    onOpen: () =>
+                        context.push('/competition/${competition.id}'),
+                    onToggle: () => _toggleCollapsed(collapseKey),
+                    canToggle: effectiveFilter != 'En vivo',
+                  ),
+                  ad: index == favoriteEntries.length - 1 ? adAfter(0) : null,
+                ),
+              );
+            }
           }
 
-          // Then every competition with its remaining matches. Favourite-team
-          // fixtures were removed above, so every canonical match is rendered
-          // exactly once.
-          var groups = 0;
-          for (final competition in orderedCompetitions) {
-            final before = feedItems.length;
-            addCompetition(competition);
-            // One discreet ad between competition groups (never inside a
-            // match row), not in the LIVE view. Gated by entitlements.
-            if (feedItems.length > before &&
-                feedAdAfterGroup(++groups, effectiveFilter)) {
-              feedItems.add(() => const AdSlot(AdPlacement.matchesFeed));
-            }
+          // All matches, including favorites, stay visible in their competition.
+          for (final (index, competition) in visibleCompetitions.indexed) {
+            final ordinal = index + 1;
+            addCompetition(competition, ordinal);
           }
 
           // Horizontal fling = previous/next day. Vertical scrolling and
@@ -591,6 +998,181 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       ),
     );
   }
+}
+
+class _MatchesFeedSkeleton extends StatelessWidget {
+  const _MatchesFeedSkeleton();
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Cargando partidos',
+    liveRegion: true,
+    child: ExcludeSemantics(
+      child: Container(
+        key: const ValueKey('matches-loading-skeleton'),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: panel,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFF263238)),
+        ),
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SkeletonLine(width: 150, height: 16),
+            SizedBox(height: 14),
+            _SkeletonMatchRow(),
+            Divider(height: 22),
+            _SkeletonMatchRow(),
+            Divider(height: 22),
+            _SkeletonMatchRow(),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _SkeletonMatchRow extends StatelessWidget {
+  const _SkeletonMatchRow();
+
+  @override
+  Widget build(BuildContext context) => const Row(
+    children: [
+      _SkeletonLine(width: 36, height: 36, radius: 18),
+      SizedBox(width: 12),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SkeletonLine(width: 170, height: 12),
+            SizedBox(height: 8),
+            _SkeletonLine(width: 110, height: 10),
+          ],
+        ),
+      ),
+      SizedBox(width: 10),
+      _SkeletonLine(width: 44, height: 22),
+    ],
+  );
+}
+
+class _SkeletonLine extends StatelessWidget {
+  const _SkeletonLine({
+    required this.width,
+    required this.height,
+    this.radius = 6,
+  });
+
+  final double width;
+  final double height;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: width,
+    height: height,
+    decoration: BoxDecoration(
+      color: const Color(0xFF263238),
+      borderRadius: BorderRadius.circular(radius),
+    ),
+  );
+}
+
+class _MatchesStatusCard extends StatelessWidget {
+  const _MatchesStatusCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+    this.loading = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF263238)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: lime, size: 38),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: muted, height: 1.4),
+          ),
+          if (loading) ...[
+            const SizedBox(height: 18),
+            const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+          ],
+          if (actionLabel != null) ...[
+            const SizedBox(height: 18),
+            FilledButton.tonal(onPressed: onAction, child: Text(actionLabel!)),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+class _SavedDataNotice extends StatelessWidget {
+  const _SavedDataNotice({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    child: Container(
+      key: const ValueKey('matches-saved-data-notice'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2429),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_done_outlined, color: muted, size: 18),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: muted, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 /// Logical px/s: a deliberate fling, not a slightly diagonal scroll.
@@ -685,20 +1267,48 @@ class _FeedHeading extends StatelessWidget {
   );
 }
 
-class _CompetitionHeader extends StatelessWidget {
-  const _CompetitionHeader({
+/// A structural feed unit: group, optional ad, then the transition to the
+/// next unit. The ad is a sibling of the card, never part of its surface.
+class CompetitionFeedSection extends StatelessWidget {
+  const CompetitionFeedSection({required this.group, this.ad, super.key});
+
+  final Widget group;
+  final Widget? ad;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    key: const ValueKey('competition-feed-section-layout'),
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      group,
+      ?ad,
+      const SizedBox(
+        key: ValueKey('competition-feed-section-spacing'),
+        height: 12,
+      ),
+    ],
+  );
+}
+
+/// A complete competition block: identity, optional subgroup labels and every
+/// surviving match row.
+class CompetitionMatchGroupCard extends StatelessWidget {
+  const CompetitionMatchGroupCard({
+    required this.scope,
     required this.competition,
-    required this.count,
-    required this.liveCount,
+    required this.matches,
+    required this.data,
     required this.collapsed,
     required this.onOpen,
     required this.onToggle,
     required this.canToggle,
+    super.key,
   });
 
+  final String scope;
   final Entity competition;
-  final int count;
-  final int liveCount;
+  final List<FootballMatch> matches;
+  final Snapshot data;
   final bool collapsed;
   final VoidCallback onOpen;
   final VoidCallback onToggle;
@@ -708,109 +1318,227 @@ class _CompetitionHeader extends StatelessWidget {
   String? get region =>
       competition.country.isEmpty ? null : entityCountryLabel(competition);
 
+  String get _keyPrefix => scope == 'competition' ? 'competition' : scope;
+
   @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(top: 4, bottom: 8),
-    padding: const EdgeInsets.symmetric(horizontal: 12),
-    decoration: BoxDecoration(
+  Widget build(BuildContext context) {
+    final displayCompetition = entityWithCanonicalMedia(
+      data,
+      competition,
+      data.competitions,
+    );
+    final liveCount = matches.where((match) => match.isLive).length;
+    return Card(
+      key: ValueKey('competition-group-$scope-${competition.id}'),
+      clipBehavior: Clip.antiAlias,
       color: const Color(0xFF151D20),
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: const Color(0xFF2A3438)),
-    ),
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 56),
-      child: Row(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFF2A3438)),
+      ),
+      margin: EdgeInsets.zero,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: InkWell(
-              key: ValueKey('competition-open-${competition.id}'),
-              onTap: onOpen,
-              borderRadius: BorderRadius.circular(10),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 48),
-                child: Row(
-                  children: [
-                    EntityAvatar(competition, size: 32),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            competition.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 14,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 56),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      key: ValueKey('$_keyPrefix-open-${competition.id}'),
+                      onTap: onOpen,
+                      borderRadius: BorderRadius.circular(10),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 48),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              key: ValueKey(
+                                'competition-logo-${competition.id}',
+                              ),
+                              child: EntityAvatar(displayCompetition, size: 36),
                             ),
-                          ),
-                          if (region case final label?)
-                            Text(
-                              label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: muted,
-                                fontSize: 11,
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    competition.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  if (region case final label?)
+                                    Text(
+                                      label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: muted,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
+                  ),
+                  if (collapsed && liveCount > 0) ...[
+                    Text(
+                      key: ValueKey('$_keyPrefix-live-${competition.id}'),
+                      '$liveCount en vivo',
+                      style: const TextStyle(
+                        color: lime,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                   ],
-                ),
+                  Text(
+                    '${matches.length}',
+                    key: ValueKey('$_keyPrefix-count-${competition.id}'),
+                    style: const TextStyle(
+                      color: muted,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (canToggle)
+                    Semantics(
+                      expanded: !collapsed,
+                      button: true,
+                      enabled: true,
+                      excludeSemantics: true,
+                      onTap: onToggle,
+                      label: collapsed
+                          ? 'Mostrar partidos de ${competition.name}'
+                          : 'Ocultar partidos de ${competition.name}',
+                      child: IconButton(
+                        key: ValueKey('$_keyPrefix-toggle-${competition.id}'),
+                        tooltip: collapsed
+                            ? 'Mostrar partidos de ${competition.name}'
+                            : 'Ocultar partidos de ${competition.name}',
+                        constraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
+                        onPressed: onToggle,
+                        icon: Icon(
+                          collapsed ? Icons.expand_more : Icons.expand_less,
+                          color: muted,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
-          if (collapsed && liveCount > 0) ...[
-            Text(
-              key: ValueKey('competition-live-${competition.id}'),
-              '$liveCount en vivo',
-              style: const TextStyle(
-                color: lime,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(width: 8),
+          if (!collapsed) ...[
+            const Divider(height: 1, color: Color(0xFF2A3438)),
+            _CompetitionMatchRows(matches: matches, data: data),
           ],
-          Text(
-            '$count',
-            key: ValueKey('competition-count-${competition.id}'),
-            style: const TextStyle(color: muted, fontWeight: FontWeight.w700),
-          ),
-          if (canToggle)
-            Semantics(
-              expanded: !collapsed,
-              button: true,
-              enabled: true,
-              excludeSemantics: true,
-              onTap: onToggle,
-              label: collapsed
-                  ? 'Mostrar partidos de ${competition.name}'
-                  : 'Ocultar partidos de ${competition.name}',
-              child: IconButton(
-                key: ValueKey('competition-toggle-${competition.id}'),
-                tooltip: collapsed
-                    ? 'Mostrar partidos de ${competition.name}'
-                    : 'Ocultar partidos de ${competition.name}',
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                onPressed: onToggle,
-                icon: Icon(
-                  collapsed ? Icons.expand_more : Icons.expand_less,
-                  color: muted,
-                ),
-              ),
-            ),
         ],
       ),
-    ),
-  );
+    );
+  }
 }
 
-/// One-line feed row. Same data rules as [MatchCard] (showKickoff/statusLabel).
+class _CompetitionMatchRows extends StatelessWidget {
+  const _CompetitionMatchRows({required this.matches, required this.data});
+
+  final List<FootballMatch> matches;
+  final Snapshot data;
+
+  @override
+  Widget build(BuildContext context) {
+    final children = <Widget>[];
+    String? previousSubgroup;
+    for (final (index, match) in matches.indexed) {
+      final subgroup = competitionMatchSubgroupLabel(match);
+      if (subgroup != null && subgroup != previousSubgroup) {
+        if (children.isNotEmpty) {
+          children.add(const Divider(height: 8, color: Color(0xFF263034)));
+        }
+        children.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 2),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                subgroup,
+                key: ValueKey('match-subgroup-${match.id}'),
+                style: const TextStyle(
+                  color: muted,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+          ),
+        );
+      } else if (index > 0) {
+        children.add(const Divider(height: 1, color: Color(0xFF263034)));
+      }
+      children.add(
+        FeedMatchRow(match, data, key: ValueKey('match-row-${match.id}')),
+      );
+      previousSubgroup = subgroup;
+    }
+    return Column(mainAxisSize: MainAxisSize.min, children: children);
+  }
+}
+
+/// Returns a subgroup only when the provider supplied explicit, readable
+/// evidence. Unknown or ambiguous values deliberately fail closed.
+String? competitionMatchSubgroupLabel(FootballMatch match) {
+  String? textFor(String key) {
+    final value = match.json[key];
+    if (value is! String) return null;
+    final text = value.trim();
+    return text.isEmpty ? null : text;
+  }
+
+  for (final key in const ['groupName', 'subgroup']) {
+    final value = textFor(key);
+    if (value != null) return value;
+  }
+  final group = textFor('group');
+  if (group != null) {
+    final normalized = group.toLowerCase();
+    return normalized.startsWith('group') || normalized.startsWith('grupo')
+        ? group
+        : 'Grupo $group';
+  }
+  for (final key in const ['stage', 'round']) {
+    final value = textFor(key);
+    if (value == null) continue;
+    final normalized = value.toLowerCase();
+    if (normalized.startsWith('group') ||
+        normalized.startsWith('grupo') ||
+        normalized.startsWith('jornada') ||
+        normalized.startsWith('matchday') ||
+        normalized.startsWith('round')) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/// Group-aware wrapper around the approved, full-size match card. The wrapper
+/// keeps stable feed keys/tests while [MatchCard] remains the single visual
+/// implementation used by grouped and profile feeds.
 class FeedMatchRow extends StatelessWidget {
   const FeedMatchRow(this.match, this.data, {this.caption, super.key});
 
@@ -821,163 +1549,65 @@ class FeedMatchRow extends StatelessWidget {
   final String? caption;
 
   @override
-  Widget build(BuildContext context) {
-    final home = data.team(match.homeId)!;
-    final away = data.team(match.awayId)!;
-    final latestEvent = match.latestEvent;
-    // Past kickoff with no evidence of play: never an upcoming kickoff.
-    final unconfirmed = match.isAwaitingUpdate && !match.hasPlayedEvidence;
-    final status = unconfirmed ? 'Por confirmar' : match.statusLabel;
-    final centre = unconfirmed
-        ? '—'
-        : match.showKickoff
-        ? localTime(context, match.startTime)
-        : match.score;
-    void open() =>
-        context.push('/match/${match.id}', extra: data.forMatch(match.id));
-    const nameStyle = TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600);
-    final second = <Widget>[
-      if (caption != null)
-        Text(
-          caption!,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: muted, fontSize: 10),
-        ),
-      if (match.isLive && latestEvent != null)
-        Text(
-          'Último: ${eventMinuteLabel(latestEvent)} · '
-          '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: lime,
-            fontSize: 10.5,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-    ];
-    final label = StringBuffer(
-      '${home.displayName} contra ${away.displayName}, $centre',
-    );
-    if (status.isNotEmpty) label.write(', $status');
-    if (caption != null) label.write(', $caption');
-    if (match.isLive && latestEvent != null) {
-      label.write(
-        ', Último: ${eventMinuteLabel(latestEvent)} · '
-        '${_feedEventLabel(latestEvent['type'] as String? ?? '')}',
-      );
+  Widget build(BuildContext context) => MatchCard(
+    match,
+    data,
+    caption: caption,
+    preserveStatusCase: true,
+    embeddedInGroup: true,
+  );
+}
+
+/// Keeps the entity's identity/name but borrows VERIFIED media from its
+/// canonical equivalent (or one of its redirected aliases) in this snapshot.
+/// This is intentionally URL-agnostic and fails closed when no verified media
+/// exists; it only repairs sparse calendar rows from already trusted data.
+Entity entityWithCanonicalMedia(
+  Snapshot data,
+  Entity entity,
+  Iterable<Entity> candidates,
+) {
+  if (entity.imageUrl != null) return entity;
+  final canonicalId = data.resolveEntityId(entity.id);
+  for (final candidate in candidates) {
+    if (candidate.imageUrl == null) continue;
+    if (candidate.id != canonicalId &&
+        data.resolveEntityId(candidate.id) != canonicalId) {
+      continue;
     }
-    // The row opens the match; the star (a sibling, never nested) follows it.
-    return Row(
-      children: [
-        Expanded(
-          child: Semantics(
-            button: true,
-            excludeSemantics: true,
-            label: label.toString(),
-            onTap: open,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: open,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 48),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          EntityAvatar(home, size: 22),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              home.displayName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: nameStyle,
-                            ),
-                          ),
-                          SizedBox(
-                            width: 84,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  child: Text(
-                                    centre,
-                                    maxLines: 1,
-                                    style: const TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                                if (status.isNotEmpty)
-                                  FittedBox(
-                                    fit: BoxFit.scaleDown,
-                                    child: Text(
-                                      status,
-                                      maxLines: 1,
-                                      style: TextStyle(
-                                        color: match.isLive ? lime : muted,
-                                        fontSize: 9.5,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          Expanded(
-                            child: Text(
-                              away.displayName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.right,
-                              style: nameStyle,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          EntityAvatar(away, size: 22),
-                        ],
-                      ),
-                      for (final line in second)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: line,
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        FollowButton(
-          'match',
-          match.id,
-          key: ValueKey('feed-follow-${match.id}'),
-          label: '${home.displayName} contra ${away.displayName}',
-          compact: true,
-        ),
-      ],
-    );
+    return Entity({...entity.json, 'media': candidate.json['media']});
   }
+  return entity;
 }
 
 class MatchCard extends StatelessWidget {
-  const MatchCard(this.match, this.data, {super.key});
+  const MatchCard(
+    this.match,
+    this.data, {
+    this.caption,
+    this.preserveStatusCase = false,
+    this.embeddedInGroup = false,
+    super.key,
+  });
 
   final FootballMatch match;
   final Snapshot data;
+  final String? caption;
+  final bool preserveStatusCase;
+  final bool embeddedInGroup;
 
   @override
   Widget build(BuildContext context) {
-    final home = data.team(match.homeId)!;
-    final away = data.team(match.awayId)!;
+    final home = entityWithCanonicalMedia(
+      data,
+      data.team(match.homeId)!,
+      data.teams,
+    );
+    final away = entityWithCanonicalMedia(
+      data,
+      data.team(match.awayId)!,
+      data.teams,
+    );
     final latestEvent = match.latestEvent;
     // A scheduled row whose kickoff already passed without any evidence of
     // play is not allowed to masquerade as an upcoming match.
@@ -998,25 +1628,40 @@ class MatchCard extends StatelessWidget {
 
     return Card(
       key: ValueKey('match-card-${match.id}'),
+      color: embeddedInGroup ? Colors.transparent : null,
+      surfaceTintColor: embeddedInGroup ? Colors.transparent : null,
+      elevation: embeddedInGroup ? 0 : null,
+      margin: embeddedInGroup ? EdgeInsets.zero : null,
+      shape: embeddedInGroup
+          ? const RoundedRectangleBorder(
+              borderRadius: BorderRadius.zero,
+              side: BorderSide.none,
+            )
+          : null,
       child: Semantics(
         key: ValueKey('match-card-action-${match.id}'),
         container: true,
         button: true,
         label: semanticLabel,
         child: InkWell(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: embeddedInGroup
+              ? BorderRadius.zero
+              : BorderRadius.circular(18),
           onTap: open,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 6, 14, 18),
             child: Column(
               children: [
+                LiveFreshnessNotice(match),
                 Row(
                   children: [
                     Expanded(
                       child: status.isEmpty
                           ? const SizedBox.shrink()
                           : Text(
-                              status.toUpperCase(),
+                              preserveStatusCase
+                                  ? status
+                                  : status.toUpperCase(),
                               style: TextStyle(
                                 color: match.isLive ? lime : muted,
                                 fontSize: 10,
@@ -1037,7 +1682,10 @@ class MatchCard extends StatelessWidget {
                     Expanded(
                       child: Column(
                         children: [
-                          EntityAvatar(home),
+                          SizedBox(
+                            key: ValueKey('team-crest-${match.id}-home'),
+                            child: EntityAvatar(home),
+                          ),
                           const SizedBox(height: 9),
                           Text(
                             home.displayName,
@@ -1083,7 +1731,10 @@ class MatchCard extends StatelessWidget {
                     Expanded(
                       child: Column(
                         children: [
-                          EntityAvatar(away),
+                          SizedBox(
+                            key: ValueKey('team-crest-${match.id}-away'),
+                            child: EntityAvatar(away),
+                          ),
                           const SizedBox(height: 9),
                           Text(
                             away.displayName,
@@ -1124,6 +1775,15 @@ class MatchCard extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
+                  ),
+                ],
+                if (caption != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    caption!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: muted, fontSize: 11),
                   ),
                 ],
               ],

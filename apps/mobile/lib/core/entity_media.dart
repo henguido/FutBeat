@@ -34,6 +34,35 @@ class EntityMediaMemory extends ChangeNotifier {
 
   String? imageFor(String id) => _images[id];
 
+  /// Retains verified player media learned from Match Center under the
+  /// canonical FutBeat person id, so the same photo is immediately reusable
+  /// by a later squad, national-team or profile payload.
+  ///
+  /// The match-detail API only exposes `image` after the server has resolved
+  /// a provider row to a canonical player whose stored media is VERIFIED.
+  /// Provider row ids and names are deliberately ignored: neither is an
+  /// identity proof and neither receives a copied photo.
+  void absorbMatchDetail(MatchDetail detail) {
+    final next = {..._images};
+    for (final player in [
+      ...detail.homeStarters,
+      ...detail.homeSubstitutes,
+      ...detail.awayStarters,
+      ...detail.awaySubstitutes,
+    ]) {
+      final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+      if (!canonicalId.startsWith('fb_player_')) continue;
+      final image = playerImage(player);
+      if (image != null) next[canonicalId] = image;
+    }
+    if (next.length == _images.length &&
+        next.entries.every((entry) => _images[entry.key] == entry.value)) {
+      return;
+    }
+    _images = Map.unmodifiable(next);
+    notifyListeners();
+  }
+
   @override
   void dispose() {
     redirects.dispose();
@@ -354,9 +383,23 @@ class _EntityMediaModel extends InheritedModel<String> {
 /// identity shows one image everywhere), else the entity's own verified
 /// media. Null shows initials.
 String? entityImageOf(BuildContext context, Entity entity) {
-  final model = InheritedModel.inheritFrom<_EntityMediaModel>(
+  final canonicalId = entity.json['canonicalId']?.toString().trim() ?? '';
+  final trustedCanonicalId = canonicalId.startsWith('fb_player_')
+      ? canonicalId
+      : '';
+  final directModel = InheritedModel.inheritFrom<_EntityMediaModel>(
     context,
     aspect: entity.id,
   );
-  return model?.images[entity.id] ?? entity.imageUrl;
+  final direct = directModel?.images[entity.id];
+  if (direct != null) return direct;
+  if (trustedCanonicalId.isNotEmpty && trustedCanonicalId != entity.id) {
+    final canonicalModel = InheritedModel.inheritFrom<_EntityMediaModel>(
+      context,
+      aspect: trustedCanonicalId,
+    );
+    final canonical = canonicalModel?.images[trustedCanonicalId];
+    if (canonical != null) return canonical;
+  }
+  return entity.imageUrl;
 }

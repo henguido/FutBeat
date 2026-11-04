@@ -8,15 +8,31 @@ FutBeat release builds are fail-closed: they never fall back to the Android debu
 2. Store the keystore outside the repository in an encrypted, backed-up location.
 3. Copy `apps/mobile/android/key.properties.example` to `apps/mobile/android/key.properties`.
 4. Fill in `storeFile`, `storePassword`, `keyAlias`, and `keyPassword`. The real file and `*.jks`/`*.keystore` files are ignored by Git and must never be shared or committed.
-5. From `apps/mobile`, run `flutter build appbundle --release`.
+5. From `apps/mobile`, run the controlled `flutter build appbundle --release` command with the approved public build configuration. Set Google and Facebook independently as described in [OAuth provider availability](OAUTH-PROVIDER-AVAILABILITY.md); the bare command leaves both disabled.
 6. Enrol the app in Google Play App Signing. The local upload key signs uploads; Google manages the separate app-signing key used for distribution.
 7. Keep a tested, encrypted backup of the upload key and its credentials. Losing it requires Play's upload-key reset process.
 
 Without all four local properties, any release task stops with `Release signing credentials are not configured` and produces no unsigned or debug-signed distribution artifact.
 
-## Current version decision
+## Android 1.0.0+4 candidate
 
-The repository contains no evidence that version code `1` has been uploaded. `version: 0.1.0+1` is therefore retained for the first Internal Testing upload. Confirm this against Play Console before uploading; if code 1 already exists there, increment only the build number.
+The isolated release-preparation branch sets `version: 1.0.0+4`. Play
+Console's complete app-bundle list showed only codes `1` and `2` on
+2026-10-13, so code `4` was unused at that check. Recheck immediately before
+uploading. This preparation does not create an AAB.
+Keep the upload keystore outside Git; the release task must still fail closed
+if the ignored local `android/key.properties` is absent. Do not copy the
+keystore or its passwords into this repository or release documentation.
+
+Pass each public build decision explicitly: the proposed candidate enables
+Google OAuth (`FUTBEAT_OAUTH_GOOGLE_ENABLED=true`) based on the prior Auth QA,
+then tests it on the Play-distributed release. Keep Facebook disabled
+(`FUTBEAT_OAUTH_FACEBOOK_ENABLED=false`) until Meta Live and physical QA.
+Keep Push disabled (`FUTBEAT_PUSH_ENABLED=false`) and omit Premium product IDs
+until separately approved. The AdMob App ID and match
+feed unit must be real production IDs from the same account; test IDs and
+`FUTBEAT_ADMOB_TEST_ADS=true` are rejected for release. Do not infer these
+values from a previous AAB.
 
 ## Local PKIX diagnosis
 

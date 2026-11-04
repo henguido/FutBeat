@@ -1,52 +1,24 @@
 import '../../core/models.dart';
 
-({String snippet, String image, DateTime? expiresAt}) _storyRights(
-  Map<String, dynamic> story,
-  DateTime now,
-) {
-  final raw = story['rights'];
-  if (raw is! Map || raw['version'] != 1) {
-    return (snippet: 'ABSENT', image: 'ABSENT', expiresAt: null);
-  }
-  final checked = DateTime.tryParse(raw['checkedAt']?.toString() ?? '')
-      ?.toUtc();
-  final expires = DateTime.tryParse(raw['expiresAt']?.toString() ?? '')
-      ?.toUtc();
-  if (checked == null ||
-      expires == null ||
-      checked.isAfter(now) ||
-      !expires.isAfter(checked) ||
-      expires.difference(checked) > const Duration(minutes: 1)) {
-    return (snippet: 'UNVERIFIED', image: 'UNVERIFIED', expiresAt: null);
-  }
-  if (!expires.isAfter(now)) {
-    return (snippet: 'EXPIRED', image: 'EXPIRED', expiresAt: null);
-  }
-  String state(Object? value) => switch (value) {
-    'ALLOWED' => 'ALLOWED',
-    'REVOKED' => 'REVOKED',
-    _ => 'UNVERIFIED',
-  };
-  return (
-    snippet: state(raw['snippet']),
-    image: state(raw['image']),
-    expiresAt: expires,
-  );
-}
-
 /// Adapts the optional v2 story feed to the existing v1 Noticias snapshot.
-/// No extra request, persistence or inferred metadata is introduced.
-Json adaptNewsFeed(Json response, {DateTime? now}) {
-  // v1 has no source-level rights attestation. Keep only link-out metadata.
+/// Launch scope is link-out only: protected excerpts and images are omitted
+/// even when the server sends them. This also avoids retaining expired media
+/// in the catalog cache. Rich news requires its separate rights-aware client.
+Json adaptNewsFeed(Json response) {
   if (response['schemaVersion'] == 1) {
+    final news = response['news'];
+    if (news != null && news is! List) {
+      throw const FormatException('Lista de noticias inválida');
+    }
     return {
       ...response,
       'news': [
-        for (final value in (response['news'] as List? ?? const []))
+        for (final value in news as List? ?? const [])
           if (value is Map)
             (Map<String, dynamic>.from(value)
               ..remove('description')
-              ..remove('imageUrl')),
+              ..remove('imageUrl')
+              ..remove('snippet')),
       ],
     };
   }
@@ -57,18 +29,15 @@ Json adaptNewsFeed(Json response, {DateTime? now}) {
   if (updatedAt == null) {
     throw const FormatException('Fecha de noticias inválida');
   }
-  final current = (now ?? DateTime.now()).toUtc();
   final seen = <String>{};
   final articles = <Json>[];
   for (final value in response['stories'] as List) {
     if (value is! Map) continue;
     final story = Map<String, dynamic>.from(value);
-    final rights = _storyRights(story, current);
     final id = story['clusterId']?.toString().trim() ?? '';
     if (id.isEmpty || !seen.add(id)) continue;
     final entities = story['entities'];
     final subjects = <Json>[];
-    final associatedEntities = <String>[];
     if (entities is List) {
       for (final value in entities) {
         if (value is! Map) continue;
@@ -78,12 +47,6 @@ Json adaptNewsFeed(Json response, {DateTime? now}) {
             entityId != null &&
             entityId.startsWith('fb_')) {
           subjects.add({'type': type, 'id': entityId});
-          final name = value['name']?.toString().trim();
-          if (name != null &&
-              name.isNotEmpty &&
-              !associatedEntities.contains(name)) {
-            associatedEntities.add(name);
-          }
         }
       }
     }
@@ -96,26 +59,9 @@ Json adaptNewsFeed(Json response, {DateTime? now}) {
       'title': story['title'],
       'url': story['url'],
       'sourceName': story['sourceName'],
-      if (story['sourceCountryCode'] is String)
-        'sourceCountryCode': story['sourceCountryCode'],
-      if (story['language'] is String) 'language': story['language'],
-      if (story['inSelectedCountry'] is bool)
-        'inSelectedCountry': story['inSelectedCountry'],
-      if (story['storyCountryNames'] is List)
-        'storyCountryNames': story['storyCountryNames'],
       'publishedAt': story['publishedAt'],
-      'snippetRights': rights.snippet,
-      'imageRights': rights.image,
-      if (rights.expiresAt != null &&
-          (rights.snippet == 'ALLOWED' || rights.image == 'ALLOWED'))
-        '_rightsExpiresAt': rights.expiresAt!.toIso8601String(),
-      if (rights.snippet == 'ALLOWED' && story['snippet'] is String)
-        'description': story['snippet'],
-      if (rights.image == 'ALLOWED' && story['imageUrl'] is String)
-        'imageUrl': story['imageUrl'],
       if (provider != null && provider.isNotEmpty) 'provider': provider,
       'subjects': subjects,
-      'associatedEntities': associatedEntities,
       'category': story['category'],
       'storyState': story['storyState'],
       if (story['transferStatus'] is String)

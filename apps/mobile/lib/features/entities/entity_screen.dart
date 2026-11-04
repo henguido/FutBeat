@@ -11,6 +11,8 @@ import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
+import '../matches/match_screen.dart' show PlayerProfileMatchContext;
+import 'competition_profile.dart';
 import 'player_profile.dart';
 import 'standings.dart';
 import 'team_profile.dart';
@@ -94,11 +96,13 @@ class EntityScreen extends ConsumerStatefulWidget {
     required this.id,
     this.competitionId,
     this.season,
+    this.playerMatchContext,
   });
   final String type, id;
 
   /// Initial profile context (opened from a match), when given.
   final String? competitionId, season;
+  final PlayerProfileMatchContext? playerMatchContext;
   @override
   ConsumerState<EntityScreen> createState() => _EntityScreenState();
 }
@@ -281,20 +285,24 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ),
           );
         }
-        final teamId = switch (type) {
+        final rawTeamId = switch (type) {
           'player' => entity.json['teamId']?.toString(),
           'team' => canonicalId,
           _ => null,
         };
+        final teamId = rawTeamId == null
+            ? null
+            : data.resolveEntityId(rawTeamId);
         final team = teamId == null ? null : data.team(teamId);
         final matches = type == 'player'
-            ? playerMatches(data, entity)
+            ? playerProfileMatches(data, entity)
             : (data.matches
                   .where(
                     (m) => type == 'competition'
-                        ? m.competitionId == canonicalId
+                        ? data.resolveEntityId(m.competitionId) == canonicalId
                         : teamId != null &&
-                              (m.homeId == teamId || m.awayId == teamId),
+                              (data.resolveEntityId(m.homeId) == teamId ||
+                                  data.resolveEntityId(m.awayId) == teamId),
                   )
                   .toList()
                 ..sort((a, b) => a.startTime.compareTo(b.startTime)));
@@ -302,10 +310,18 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ? const <Entity>[]
             : orderedTeamCompetitions(data, teamId);
         if (type == 'team') {
-          return _teamView(data, entity, matches, teamCompetitions);
+          final view = _teamView(data, entity, matches, teamCompetitions);
+          return data.stale
+              ? Banner(
+                  message: 'Datos guardados',
+                  location: BannerLocation.topEnd,
+                  color: Colors.deepOrange,
+                  child: view,
+                )
+              : view;
         }
         if (type == 'player') {
-          return PlayerProfileView(
+          final view = PlayerProfileView(
             data: data,
             player: entity,
             team: team,
@@ -313,6 +329,23 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             enriching:
                 data.enrichmentPending &&
                 enrichmentAttempts < profileEnrichmentRetryDelays.length,
+            matchContext: widget.playerMatchContext,
+          );
+          return data.stale
+              ? Banner(
+                  message: 'Datos guardados',
+                  location: BannerLocation.topEnd,
+                  color: Colors.deepOrange,
+                  child: view,
+                )
+              : view;
+        }
+        if (type == 'competition') {
+          return CompetitionProfileView(
+            data: data,
+            competition: entity,
+            matches: matches,
+            teams: competitionTeams(data, canonicalId),
           );
         }
         // Teams and players have dedicated profiles; this is the competition

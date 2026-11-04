@@ -178,6 +178,40 @@ Future<void> _close(WidgetTester tester, ProviderContainer container) async {
 
 void main() {
   group('matchScorerSummary', () {
+    test('transitive player redirect groups club and national-team goals', () {
+      const alias = 'fb_player_synthetic_club';
+      const canonical = 'fb_player_synthetic_person';
+      final raw = _snapshotJson(
+        score: {'home': 2, 'away': 0},
+        events: [
+          {
+            'id': 'goal-a',
+            'type': 'GOAL',
+            'teamId': _home,
+            'minute': 20,
+            'canonicalPlayerId': alias,
+          },
+          {
+            'id': 'goal-b',
+            'type': 'GOAL',
+            'teamId': _home,
+            'minute': 60,
+            'canonicalPlayerId': canonical,
+          },
+        ],
+      );
+      raw['players'] = [
+        {'id': alias, 'name': 'Jugador Parcial', 'teamId': _home},
+        {'id': canonical, 'name': 'Jugador Completo', 'teamId': _away},
+      ];
+      raw['entityRedirects'] = {
+        alias: 'fb_player_synthetic_mid',
+        'fb_player_synthetic_mid': canonical,
+      };
+      final summary = _summary(raw, const []);
+      expect(_labels(summary.home), ['Jugador Completo 20′, 60′']);
+    });
+
     test('A. FT 4-3: names, brace grouped once, stoppage minutes, sides', () {
       final s = _summary(_snapshotJson(score: {'home': 4, 'away': 3}), _ft43);
       expect(_labels(s.home), [

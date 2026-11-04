@@ -1,19 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/entity_media.dart';
+import '../core/live_realtime.dart';
 import '../core/models.dart';
 import '../core/news_links.dart';
 import '../core/providers.dart';
+import '../core/push.dart';
+import '../core/sports_image_cache.dart';
 import '../core/relevance.dart';
 import '../core/theme.dart';
 
+/// Existing verified entity-media identity, used only as a disk-cache key.
+/// A canonical entity keeps precedence over a contradictory alias field.
+String entityImageCacheId(Entity entity) {
+  final raw = entity.json['canonicalId'];
+  final canonical = raw is String ? raw.trim() : '';
+  return !entity.id.startsWith('fb_') && canonical.startsWith('fb_player_')
+      ? canonical
+      : entity.id;
+}
+
 class EntityAvatar extends StatelessWidget {
-  const EntityAvatar(this.entity, {super.key, this.size = 42});
+  const EntityAvatar(this.entity, {super.key, this.size = 42, this.cache});
   final Entity entity;
   final double size;
+  final SportsImageDiskCache? cache;
   @override
   Widget build(BuildContext context) {
     final hex = entity.json['color'] as String?;
@@ -21,6 +36,10 @@ class EntityAvatar extends StatelessWidget {
         ? lime
         : Color(int.parse(hex.replaceFirst('#', 'FF'), radix: 16));
     final image = entityImageOf(context, entity);
+    // Legacy squad rows can already resolve a verified canonical person's
+    // photo through entityImageOf. Keep that same identity as the disk key
+    // instead of falling back to an uncached network image for the alias.
+    final imageId = entityImageCacheId(entity);
     final fallback = Container(
       width: size,
       height: size,
@@ -44,12 +63,27 @@ class EntityAvatar extends StatelessWidget {
       image: true,
       child: image == null
           ? fallback
+          : imageId.startsWith('fb_')
+          ? SportsImage(
+              canonicalId: imageId,
+              url: image,
+              cache: cache,
+              width: size,
+              height: size,
+              cacheWidth:
+                  (size * (MediaQuery.maybeDevicePixelRatioOf(context) ?? 1))
+                      .ceil()
+                      .clamp(1, 1024)
+                      .toInt(),
+              fit: BoxFit.contain,
+              fallback: fallback,
+            )
           : Image.network(
               image,
               width: size,
               height: size,
               fit: BoxFit.contain,
-              errorBuilder: (_, error, stack) => fallback,
+              errorBuilder: (_, _, _) => fallback,
             ),
     );
   }
@@ -114,6 +148,7 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
                     ref.read(entityMediaProvider).redirects,
                     widget.type,
                     widget.id,
+                    onIntent: ref.read(pushServiceProvider).recordFollowIntent,
                   );
                 }
               } catch (_) {
@@ -202,7 +237,7 @@ class DataView extends ConsumerWidget {
       );
 }
 
-class CalendarDataView extends ConsumerWidget {
+class CalendarDataView extends ConsumerStatefulWidget {
   const CalendarDataView({
     super.key,
     required this.date,
@@ -213,8 +248,22 @@ class CalendarDataView extends ConsumerWidget {
   final Widget Function(Snapshot, bool loading, bool failed) builder;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(effectiveCalendarSnapshotProvider(date));
+  ConsumerState<CalendarDataView> createState() => _CalendarDataViewState();
+}
+
+class _CalendarDataViewState extends ConsumerState<CalendarDataView> {
+  LiveRealtimeClient? _liveClient;
+  late final String _scope = 'calendar:${identityHashCode(this)}';
+
+  @override
+  void dispose() {
+    _liveClient?.clearScope(_scope);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(effectiveCalendarSnapshotProvider(widget.date));
     // Before the stream's first event, paint the day already held in memory
     // (no loading flash on a date switch). Only when the repository is live.
     final repository = ref.exists(repositoryProvider)
@@ -223,7 +272,7 @@ class CalendarDataView extends ConsumerWidget {
     final memory = state.hasValue || repository is! ApiRepository
         ? null
         : repository
-              .peekDate(date)
+              .peekDate(widget.date)
               ?.withLiveUpdates(
                 ref.watch(liveMatchUpdatesProvider).asData?.value ??
                     const <String, LiveMatchUpdate>{},
@@ -241,12 +290,21 @@ class CalendarDataView extends ConsumerWidget {
           'matches': [],
           'standings': [],
         });
+    final client = ref.read(liveRealtimeClientProvider);
+    if (!identical(_liveClient, client)) {
+      _liveClient?.clearScope(_scope);
+      _liveClient = client;
+    }
+    final visibleIds = data.matches.map((match) => match.id).toList();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) client.setScope(_scope, visibleIds);
+    });
     // Render the same date controls even on a cold cache miss or error.
     return Column(
       children: [
         if (data.revalidating) const LinearProgressIndicator(minHeight: 2),
         Expanded(
-          child: builder(
+          child: widget.builder(
             data,
             // Loading only without any snapshot to show, or while an empty
             // cached day is being revalidated (never a false "no matches").
@@ -348,28 +406,75 @@ String _contentDateLabel(Object? value) {
 }
 
 class NewsArticleCard extends StatelessWidget {
-  const NewsArticleCard(this.article, {super.key, this.onOpenDetails});
+  const NewsArticleCard(this.article, {super.key, this.openLink});
 
   final Json article;
-  final VoidCallback? onOpenDetails;
+
+  /// Injectable so link behavior is verified without launching a browser.
+  final Future<bool> Function(Uri)? openLink;
+
+  Future<void> _openArticle(BuildContext context, Uri uri) async {
+    var opened = false;
+    try {
+      opened =
+          await (openLink?.call(uri) ??
+              launchUrl(uri, mode: LaunchMode.externalApplication));
+    } catch (_) {
+      // A missing browser is a recoverable UI failure, never a clipboard copy.
+    }
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir el artículo')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final title = article['title']?.toString().trim() ?? '';
-    final description = article['description']?.toString().trim() ?? '';
+    final rights = article['rights'];
+    final mediaRights = rights is Map ? rights : const {};
+    final description = newsMediaAuthorized(mediaRights['snippet'])
+        ? article['description']?.toString().trim() ?? ''
+        : '';
     final source = article['sourceName']?.toString().trim() ?? '';
+    final provider = article['provider']?.toString().trim() ?? '';
+    final author = article['author'] is String
+        ? (article['author'] as String).trim()
+        : '';
     final url = article['url']?.toString().trim() ?? '';
-    final safeUrl = safeNewsUri(url);
+    final articleUri = safeNewsUri(url);
     final date = _contentDateLabel(article['publishedAt']);
+    final image = newsMediaAuthorized(mediaRights['image'])
+        ? safeNewsUri(article['imageUrl'])
+        : null;
 
     return Card(
       child: InkWell(
-        onTap: safeUrl == null ? null : onOpenDetails,
+        onTap: articleUri == null
+            ? null
+            : () => _openArticle(context, articleUri),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Optional source image; one that fails to load takes no space
+              // (the error widget bypasses the frame builder and its spacing).
+              if (image != null)
+                Image.network(
+                  image.toString(),
+                  key: const ValueKey('news-image'),
+                  fit: BoxFit.cover,
+                  frameBuilder: (_, child, _, _) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: AspectRatio(aspectRatio: 16 / 9, child: child),
+                    ),
+                  ),
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
               Text(
                 title,
                 style: const TextStyle(
@@ -393,38 +498,29 @@ class NewsArticleCard extends StatelessWidget {
                     child: Text(
                       [
                         if (source.isNotEmpty) source,
+                        if (provider.isNotEmpty) 'vía $provider',
+                        if (author.isNotEmpty) author,
                         if (date.isNotEmpty) date,
                       ].join(' · '),
                       style: const TextStyle(color: muted, fontSize: 12),
                     ),
                   ),
-                  if (safeUrl != null)
+                  if (articleUri != null)
                     TextButton.icon(
+                      key: const ValueKey('news-copy-link'),
                       onPressed: () async {
-                        if (onOpenDetails != null) {
-                          onOpenDetails!();
-                          return;
-                        }
-                        var opened = false;
-                        try {
-                          opened = await launchUrl(
-                            safeUrl,
-                            mode: LaunchMode.externalApplication,
-                          );
-                        } catch (_) {
-                          // Missing browser is a recoverable navigation failure.
-                        }
+                        await Clipboard.setData(
+                          ClipboardData(text: articleUri.toString()),
+                        );
                         if (!context.mounted) return;
-                        if (!opened) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('No se pudo abrir el artículo'),
-                            ),
-                          );
-                        }
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Enlace de la noticia copiado'),
+                          ),
+                        );
                       },
-                      icon: const Icon(Icons.open_in_new, size: 17),
-                      label: const Text('Leer noticia'),
+                      icon: const Icon(Icons.link, size: 17),
+                      label: const Text('Copiar enlace'),
                     ),
                 ],
               ),
