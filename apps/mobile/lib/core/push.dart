@@ -528,6 +528,10 @@ class _LocalSignOutContext {
   bool serverCleanupStarted = false;
 }
 
+class _AccountDeletionIntent {
+  bool confirmed = false;
+}
+
 class PushService {
   PushService(
     this.config,
@@ -659,6 +663,8 @@ class PushService {
     final before = accountId;
     _session = value;
     final after = accountId;
+    // Only the current account can still need its local deletion guard.
+    _deletionIntents.removeWhere((uid, _) => uid != after);
     if (before != after && !_accountChanges.isClosed) {
       _accountChanges.add(after);
     }
@@ -743,6 +749,8 @@ class PushService {
   Future<void> signOutCleanup = Future.value();
   _LocalSignOutContext? _localSignOutContext;
   Future<void>? _localSignOutPending;
+  Future<void>? _deletionPreparation;
+  final Map<String, _AccountDeletionIntent> _deletionIntents = {};
   bool _localSignOutFailed = false;
 
   /// A failed local close is not a confirmed logout, even when runtime is
@@ -965,6 +973,10 @@ class PushService {
     final targetUser = value['user'] is Map
         ? (value['user'] as Map)['id']?.toString().trim()
         : null;
+    // Preserve a live deletion ACK before local separation drops A's runtime
+    // identity and its scoped in-memory guard.
+    await _resumeConfirmedDeletionPreparation();
+    if (_authenticationStale(attempt)) return;
     if (previousUser != null && targetUser != previousUser) {
       // Persist ownership before another account can reconcile local follows.
       // This is part of the current login, not a newer logout intent.
@@ -974,6 +986,10 @@ class PushService {
       );
       if (_authenticationStale(attempt)) return;
     }
+    // A deletion ACK may become durable while this auth request was in
+    // flight. Recheck after local separation, before accepting B's runtime.
+    await _resumeConfirmedDeletionPreparation();
+    if (_authenticationStale(attempt)) return;
     final oldRotation = rotation;
     rotation = null;
     final generation = ++_generation;
@@ -1020,6 +1036,7 @@ class PushService {
     // authentication, rather than treating an unknown cleanup as success.
     final local = _localSignOutPending;
     if (local != null) await local.timeout(signOutCleanupTimeout);
+    await _resumeConfirmedDeletionPreparation();
     // Remote logout remains best effort and bounded, including offline use.
     await signOutCleanup
         .timeout(signOutCleanupTimeout, onTimeout: () {})
@@ -1246,6 +1263,8 @@ class PushService {
       );
       if (_stale(generation) || _authenticationStale(attempt)) return;
       pendingConfirmationEmail = confirmation;
+      await _resumeConfirmedDeletionPreparation();
+      await _clearConfirmedDeletedCredential();
       saved = await storage.read(key: 'futbeat.push.session');
     } catch (_) {
       if (!_stale(generation) &&
@@ -1411,7 +1430,11 @@ class PushService {
           // Preserve pending account-name ownership if another logout
           // interrupts its profile merge. This uses the same local record.
           final pendingOwner =
-              previous != null && previous.profileUserId != uid;
+              previous != null &&
+              !previous.profileCleared &&
+              previous.profileUserId != uid;
+          final deletedOwner =
+              previous?.deletionConfirmedFor == uid && previous?.userId == uid;
           await storage.write(
             key: leftoverKey,
             value: jsonEncode({
@@ -1421,7 +1444,16 @@ class PushService {
               if (!pendingOwner || previous.hasProfile)
                 'profileDisplayName': pendingOwner
                     ? previous.profileDisplayName
+                    : deletedOwner
+                    ? null
                     : profile.displayName,
+              if (previous?.profileCleared == true &&
+                  previous?.userId == uid &&
+                  profile.displayName == null)
+                'profileCleared': true,
+              if (previous?.deletionConfirmedFor == uid &&
+                  previous?.userId == uid)
+                'accountDeletionConfirmedFor': uid,
             }),
           );
         });
@@ -1642,15 +1674,24 @@ class PushService {
   }
 
   /// Existing local leftover JSON remains readable without the optional
-  /// profileUserId/profileDisplayName/followsAppliedTo fields. They preserve
+  /// profileUserId/profileDisplayName/followsAppliedTo/profileCleared fields. They preserve
   /// a pending account name and local separation progress across restarts;
   /// they neither replace the remote pushed-set ACK nor require a new key,
   /// database schema, migration or service.
+  /// profileCleared acknowledges only a successful local deleted-profile
+  /// clear; absence/legacy is false. It is never account authorization or
+  /// evidence of remote health, and does not clear retained sports favourites.
+  /// accountDeletionConfirmedFor is the exact UID of an acknowledged delete,
+  /// not a replay request or an authorization to delete any other account.
+  /// If its first durable write fails, closure remains NO CONFIRMADO; a crash
+  /// cannot reconstruct that missing acknowledgement from an HTTP 401.
   Future<
     ({
       String userId,
       Set<String> follows,
       bool hasProfile,
+      bool profileCleared,
+      String? deletionConfirmedFor,
       String? profileUserId,
       String? profileDisplayName,
       String? followsAppliedTo,
@@ -1668,6 +1709,10 @@ class PushService {
           userId: decoded['userId'] as String,
           follows: (decoded['follows'] as List).map((v) => '$v').toSet(),
           hasProfile: decoded.containsKey('profileDisplayName'),
+          profileCleared: decoded['profileCleared'] == true,
+          deletionConfirmedFor: decoded['accountDeletionConfirmedFor'] is String
+              ? decoded['accountDeletionConfirmedFor'] as String
+              : null,
           profileUserId: decoded['profileUserId'] is String
               ? decoded['profileUserId'] as String
               : decoded['userId'] as String,
@@ -1739,6 +1784,9 @@ class PushService {
             if (current.hasProfile)
               'profileDisplayName': current.profileDisplayName,
             'followsAppliedTo': uid,
+            if (current.profileCleared) 'profileCleared': true,
+            if (current.deletionConfirmedFor == current.userId)
+              'accountDeletionConfirmedFor': current.deletionConfirmedFor,
           }),
         );
       });
@@ -1926,7 +1974,9 @@ class PushService {
     if (!_stale(generation) && authenticated) {
       final owner = await _readLeftover();
       if (_stale(generation)) return;
-      if (owner != null && owner.profileUserId != userId) {
+      if (owner != null &&
+          !owner.profileCleared &&
+          owner.profileUserId != userId) {
         // A guest form can still carry A's display name in its full snapshot.
         // Reconcile B's identity before sending those device preferences.
         await _queued(() => _reconcileIfDue(generation));
@@ -2075,6 +2125,7 @@ class PushService {
     if (_stale(generation)) return;
     final foreignProfileOwner =
         owner != null &&
+        !owner.profileCleared &&
         (owner.profileUserId != userId ||
             (!owner.hasProfile && owner.userId != userId));
     // Never synced with this account on this device (first sign-in, or the
@@ -2126,6 +2177,7 @@ class PushService {
         foreignProfileOwner: foreignProfileOwner,
         restoreOwnedName:
             owner != null &&
+            !owner.profileCleared &&
             owner.hasProfile &&
             owner.profileUserId == userId &&
             owner.userId != userId,
@@ -2502,7 +2554,186 @@ class PushService {
     );
   }
 
+  /// An explicit local choice is not evidence that its SQL mutation succeeded.
+  /// It only releases these exact canonical/alias keys from an older owner's
+  /// retained set. This must complete before the existing toggle is attempted.
+  Future<void> recordFollowIntent(Set<String> keys) async {
+    if (!accountConfigured || disposed || keys.isEmpty) return;
+    void checkDeletion() {
+      if (authenticated && _deletionIntents.containsKey(userId)) {
+        throw StateError('Account deletion is in progress');
+      }
+    }
+
+    checkDeletion();
+    await _queueProfileStorage(() async {
+      checkDeletion();
+      final raw = await storage.read(key: leftoverKey);
+      checkDeletion();
+      if (raw == null) return;
+      Map<String, dynamic> owner;
+      try {
+        owner = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      } catch (_) {
+        return;
+      }
+      if (owner['userId'] is! String || owner['follows'] is! List) return;
+      if (authenticated &&
+          owner['accountDeletionConfirmedFor'] == userId &&
+          owner['userId'] == userId) {
+        throw StateError('Confirmed account deletion awaits local closure');
+      }
+      if (authenticated && owner['userId'] == userId) return;
+      owner['follows'] =
+          (owner['follows'] as List)
+              .map((value) => '$value')
+              .where((key) => !keys.contains(key))
+              .toList()
+            ..sort();
+      await storage.write(key: leftoverKey, value: jsonEncode(owner));
+    });
+  }
+
+  String? _savedSessionUser(String? raw) {
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      final user = decoded is Map ? decoded['user'] : null;
+      final uid = user is Map ? user['id']?.toString().trim() : null;
+      return uid != null && uid.isNotEmpty ? uid : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Only local preparation is single-flight. An already queued credential
+  /// deletion remains protected by its existing FIFO, not a new auth barrier.
+  Future<void> _resumeConfirmedDeletionPreparation() async {
+    final active = _deletionPreparation;
+    if (active != null) return active;
+    final generation = _generation;
+    // Ordinary login must remain able to supersede an older profile edit;
+    // only an actual pending deletion may wait for the profile storage FIFO.
+    var pendingOwner = await _readLeftover();
+    if (_stale(generation)) return;
+    final uid = userId;
+    if (uid != null &&
+        _deletionIntents[uid]?.confirmed == true &&
+        (pendingOwner?.userId != uid ||
+            pendingOwner?.deletionConfirmedFor != uid)) {
+      // A first proof write may have failed while its ACK is still known in
+      // this live service. Establish that proof locally before accepting B;
+      // a new process has no such evidence and must not infer it from 401.
+      final owned = {
+        for (final row in await database.select(database.follows).get())
+          '${row.entityType}:${row.entityId}',
+      };
+      if (_stale(generation)) return;
+      await _queueProfileStorage(() async {
+        if (_stale(generation)) return;
+        await storage.write(
+          key: leftoverKey,
+          value: jsonEncode({
+            'userId': uid,
+            'follows': owned.toList()..sort(),
+            'profileUserId': uid,
+            'profileDisplayName': null,
+            'profileCleared': false,
+            'accountDeletionConfirmedFor': uid,
+          }),
+        );
+      });
+      pendingOwner = await _readLeftover();
+      if (_stale(generation)) return;
+    }
+    if (pendingOwner == null ||
+        pendingOwner.profileCleared ||
+        pendingOwner.deletionConfirmedFor != pendingOwner.userId) {
+      return;
+    }
+    final started = _deletionPreparation;
+    if (started != null) return started;
+    late final Future<void> operation;
+    operation =
+        _queueProfileStorage(() async {
+          final owner = await _readLeftover();
+          if (_stale(generation) ||
+              owner == null ||
+              owner.profileCleared ||
+              owner.deletionConfirmedFor != owner.userId) {
+            return;
+          }
+          final saved = await storage.read(key: 'futbeat.push.session');
+          final savedUser = _savedSessionUser(saved);
+          if (_stale(generation) ||
+              (savedUser != null && savedUser != owner.userId)) {
+            return;
+          }
+          final raw = await storage.read(key: leftoverKey);
+          if (_stale(generation) || raw == null) return;
+          final record = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          if (record['userId'] != owner.userId ||
+              record['accountDeletionConfirmedFor'] != owner.userId) {
+            return;
+          }
+          _profileWriteVersion++;
+          await _storeLocalProfile(const UserProfileSettings(), dirty: false);
+          if (_stale(generation)) return;
+          record['profileCleared'] = true;
+          record['profileUserId'] = owner.userId;
+          record['profileDisplayName'] = null;
+          await storage.write(key: leftoverKey, value: jsonEncode(record));
+        }).whenComplete(() {
+          if (identical(_deletionPreparation, operation)) {
+            _deletionPreparation = null;
+          }
+        });
+    _deletionPreparation = operation;
+    return operation;
+  }
+
+  Future<void> _clearConfirmedDeletedCredential() async {
+    final generation = _generation;
+    final owner = await _readLeftover();
+    if (_stale(generation) ||
+        owner == null ||
+        !owner.profileCleared ||
+        owner.deletionConfirmedFor != owner.userId) {
+      return;
+    }
+    final saved = await storage.read(key: 'futbeat.push.session');
+    if (_stale(generation) || _savedSessionUser(saved) != owner.userId) return;
+    await Future.wait([_deletePersistedSession(), _persistPushEnabled(false)]);
+  }
+
   Future<void> deleteAccount() async {
+    if (!accountConfigured || !authenticated) {
+      throw StateError('Authentication required');
+    }
+    final uid = userId;
+    final intent = _AccountDeletionIntent();
+    if (uid != null) {
+      intent.confirmed = _deletionIntents[uid]?.confirmed ?? false;
+      _deletionIntents[uid] = intent;
+    }
+    try {
+      await _deleteAccount(
+        locallyConfirmed: intent.confirmed,
+        onConfirmed: () => intent.confirmed = true,
+      );
+    } finally {
+      if (uid != null &&
+          identical(_deletionIntents[uid], intent) &&
+          (!intent.confirmed || userId != uid)) {
+        _deletionIntents.remove(uid);
+      }
+    }
+  }
+
+  Future<void> _deleteAccount({
+    required bool locallyConfirmed,
+    required void Function() onConfirmed,
+  }) async {
     if (!accountConfigured || !authenticated) {
       throw StateError('Authentication required');
     }
@@ -2523,19 +2754,59 @@ class PushService {
     if (_stale(generation)) {
       throw StateError('Account changed during deletion');
     }
+    var confirmed = false;
+    var retainedFollows = const <String>{};
     try {
-      final response = await dio.post<Map<String, dynamic>>(
-        '${config.supabaseUrl}/functions/v1/futbeat-delete-account',
-        options: authHeaders,
-      );
+      final previous = await _readLeftover();
+      final durableProof =
+          deletedUser != null &&
+          previous?.userId == deletedUser &&
+          previous?.deletionConfirmedFor == deletedUser;
+      confirmed = locallyConfirmed || durableProof;
+      if (confirmed) onConfirmed();
+      retainedFollows = durableProof
+          ? previous!.follows
+          : deletedUser == null
+          ? const <String>{}
+          : {
+              for (final row in await database.select(database.follows).get())
+                '${row.entityType}:${row.entityId}',
+            };
       if (_stale(generation)) {
         throw StateError('Account changed during deletion');
       }
-      if (response.data?['deleted'] != true) {
-        throw StateError('Account deletion was not confirmed');
+      if (!confirmed) {
+        final response = await dio.post<Map<String, dynamic>>(
+          '${config.supabaseUrl}/functions/v1/futbeat-delete-account',
+          options: authHeaders,
+        );
+        if (_stale(generation)) {
+          throw StateError('Account changed during deletion');
+        }
+        if (response.data?['deleted'] != true) {
+          throw StateError('Account deletion was not confirmed');
+        }
+        confirmed = true;
+        onConfirmed();
+      }
+      if (!durableProof && deletedUser != null) {
+        await _queueProfileStorage(() async {
+          if (_stale(generation)) return;
+          await storage.write(
+            key: leftoverKey,
+            value: jsonEncode({
+              'userId': deletedUser,
+              'follows': retainedFollows.toList()..sort(),
+              'profileUserId': deletedUser,
+              'profileDisplayName': null,
+              'profileCleared': false,
+              'accountDeletionConfirmedFor': deletedUser,
+            }),
+          );
+        });
       }
     } catch (_) {
-      if (!_stale(generation) && authenticated) {
+      if (!confirmed && !_stale(generation) && authenticated) {
         await _startAccountSync();
         if (!_pushStale(generation, pushAttemptAtIntent) && wasEnabled) {
           enabled = true;
@@ -2543,6 +2814,15 @@ class PushService {
         }
       }
       rethrow;
+    }
+
+    if (deletedUser == null) {
+      await _writeLocalProfile(const UserProfileSettings(), dirty: false);
+    } else {
+      await _resumeConfirmedDeletionPreparation();
+    }
+    if (_stale(generation)) {
+      throw StateError('Account changed during deletion');
     }
 
     final cleanupGeneration = ++_generation;
@@ -2558,10 +2838,9 @@ class PushService {
     // must neither be deleted nor inherit this account's persisted push opt-in.
     await Future.wait([_deletePersistedSession(), _persistPushEnabled(false)]);
     if (_stale(cleanupGeneration)) return;
-    // Leftover follows are guest data now: the next sign-in unions them.
+    // Keep the provenance record: guest additions remain local, but another
+    // account merges only its own cloud follows plus additions made later.
     await storage.delete(key: lastUserKey);
-    if (_stale(cleanupGeneration)) return;
-    await storage.delete(key: leftoverKey);
     if (_stale(cleanupGeneration)) return;
     if (deletedUser != null) {
       await storage.delete(key: pushedKey(deletedUser));
@@ -2569,7 +2848,6 @@ class PushService {
       await storage.delete(key: linkedFlagKey(deletedUser));
       if (_stale(cleanupGeneration)) return;
     }
-    await _writeLocalProfile(const UserProfileSettings(), dirty: false);
   }
 
   void dispose() {
