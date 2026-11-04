@@ -960,12 +960,12 @@ class PushService {
   /// Stores a fresh GoTrue session and starts account sync. A failed first
   /// reconcile (offline) is retried by the renewal tick; the session stays.
   Future<void> _startSession(Map<String, dynamic> value) async {
+    final attempt = _authenticationAttempt;
     final previousUser = userId;
     final targetUser = value['user'] is Map
         ? (value['user'] as Map)['id']?.toString().trim()
         : null;
     if (previousUser != null && targetUser != previousUser) {
-      final attempt = _authenticationAttempt;
       // Persist ownership before another account can reconcile local follows.
       // This is part of the current login, not a newer logout intent.
       await _clearLocalSession(
@@ -1403,10 +1403,28 @@ class PushService {
       if (pushed != null) {
         final local = await context.follows;
         if (_stale(generation)) return;
-        await storage.write(
-          key: leftoverKey,
-          value: jsonEncode({'userId': uid, 'follows': local.toList()..sort()}),
-        );
+        await _queueProfileStorage(() async {
+          if (_stale(generation)) return;
+          final previous = await _readLeftover();
+          final profile = await loadProfileSettings();
+          if (_stale(generation)) return;
+          // Preserve pending account-name ownership if another logout
+          // interrupts its profile merge. This uses the same local record.
+          final pendingOwner =
+              previous != null && previous.profileUserId != uid;
+          await storage.write(
+            key: leftoverKey,
+            value: jsonEncode({
+              'userId': uid,
+              'follows': local.toList()..sort(),
+              'profileUserId': pendingOwner ? previous.profileUserId : uid,
+              if (!pendingOwner || previous.hasProfile)
+                'profileDisplayName': pendingOwner
+                    ? previous.profileDisplayName
+                    : profile.displayName,
+            }),
+          );
+        });
         if (_stale(generation)) return;
       }
     }
@@ -1623,7 +1641,22 @@ class PushService {
     return null;
   }
 
-  Future<({String userId, Set<String> follows})?> _readLeftover() async {
+  /// Existing local leftover JSON remains readable without the optional
+  /// profileUserId/profileDisplayName/followsAppliedTo fields. They preserve
+  /// a pending account name and local separation progress across restarts;
+  /// they neither replace the remote pushed-set ACK nor require a new key,
+  /// database schema, migration or service.
+  Future<
+    ({
+      String userId,
+      Set<String> follows,
+      bool hasProfile,
+      String? profileUserId,
+      String? profileDisplayName,
+      String? followsAppliedTo,
+    })?
+  >
+  _readLeftover() async {
     final raw = await storage.read(key: leftoverKey);
     if (raw == null) return null;
     try {
@@ -1634,6 +1667,16 @@ class PushService {
         return (
           userId: decoded['userId'] as String,
           follows: (decoded['follows'] as List).map((v) => '$v').toSet(),
+          hasProfile: decoded.containsKey('profileDisplayName'),
+          profileUserId: decoded['profileUserId'] is String
+              ? decoded['profileUserId'] as String
+              : decoded['userId'] as String,
+          profileDisplayName: decoded['profileDisplayName'] is String
+              ? decoded['profileDisplayName'] as String
+              : null,
+          followsAppliedTo: decoded['followsAppliedTo'] is String
+              ? decoded['followsAppliedTo'] as String
+              : null,
         );
       }
     } catch (_) {}
@@ -1656,7 +1699,11 @@ class PushService {
     if (_stale(generation)) return;
 
     final Set<String> next;
-    if (uid != null && leftover != null && leftover.userId != uid) {
+    if (uid != null &&
+        leftover != null &&
+        leftover.userId != uid &&
+        pushed == null &&
+        leftover.followsAppliedTo != uid) {
       next = {...local.difference(leftover.follows), ...server};
       final drop = local.difference(next);
       if (drop.isNotEmpty) await database.removeFollows(drop);
@@ -1668,7 +1715,37 @@ class PushService {
     syncedFollows.addAll(missing);
     if (missing.isNotEmpty) await database.addFollows(missing);
     if (_stale(generation)) return;
-    if (leftover != null) await storage.delete(key: leftoverKey);
+    if (uid != null &&
+        leftover != null &&
+        leftover.userId != uid &&
+        leftover.followsAppliedTo != uid) {
+      await _queueProfileStorage(() async {
+        if (_stale(generation)) return;
+        final current = await _readLeftover();
+        if (_stale(generation) ||
+            current == null ||
+            current.userId != leftover.userId) {
+          return;
+        }
+        // Local account separation is distinct from a successful remote push.
+        // A retry must not subtract a new B follow just because its first RPC
+        // failed. Keep A's original set and profile provenance unchanged.
+        await storage.write(
+          key: leftoverKey,
+          value: jsonEncode({
+            'userId': current.userId,
+            'follows': current.follows.toList()..sort(),
+            'profileUserId': current.profileUserId,
+            if (current.hasProfile)
+              'profileDisplayName': current.profileDisplayName,
+            'followsAppliedTo': uid,
+          }),
+        );
+      });
+      if (_stale(generation)) return;
+    }
+    // Account provenance is also needed by profile reconciliation. Keep it
+    // until both follows and profile succeed, including after a retry.
     await storage.delete(key: lastUserKey);
     _mergedGeneration = generation;
     await _pushFollows(next, generation);
@@ -1805,6 +1882,14 @@ class PushService {
     final generation = _generation;
     await _writeLocalProfile(settings, dirty: true);
     if (!_stale(generation) && authenticated) {
+      final owner = await _readLeftover();
+      if (_stale(generation)) return;
+      if (owner != null && owner.profileUserId != userId) {
+        // A guest form can still carry A's display name in its full snapshot.
+        // Reconcile B's identity before sending those device preferences.
+        await _queued(() => _reconcileIfDue(generation));
+        return;
+      }
       await _syncProfileSettings(settings);
     }
   }
@@ -1937,6 +2022,12 @@ class PushService {
 
     final cloud = await _readCloudProfile();
     if (_stale(generation)) return;
+    final owner = await _readLeftover();
+    if (_stale(generation)) return;
+    final foreignProfileOwner =
+        owner != null &&
+        (owner.profileUserId != userId ||
+            (!owner.hasProfile && owner.userId != userId));
     // Never synced with this account on this device (first sign-in, or the
     // first after a sign-out): guest choices are linked, never replaced.
     final firstLink = await _readPushedSafe(userId) == null;
@@ -1973,11 +2064,33 @@ class PushService {
       }
     }
 
-    await step('follows', () => _mergeFollows(cloud['follows'], generation));
-    await step(
-      'profile',
-      () => _reconcileProfile(cloudPreferences, firstLink: firstLink),
-    );
+    var followsSucceeded = false;
+    var profileSucceeded = false;
+    await step('follows', () async {
+      await _mergeFollows(cloud['follows'], generation);
+      followsSucceeded = true;
+    });
+    await step('profile', () async {
+      profileSucceeded = await _reconcileProfile(
+        cloudPreferences,
+        firstLink: firstLink,
+        foreignProfileOwner: foreignProfileOwner,
+        restoreOwnedName:
+            owner != null &&
+            owner.hasProfile &&
+            owner.profileUserId == userId &&
+            owner.userId != userId,
+        ownedDisplayName: owner?.profileDisplayName,
+      );
+    });
+    if (!_stale(generation) &&
+        owner != null &&
+        followsSucceeded &&
+        profileSucceeded) {
+      await _queueProfileStorage(() async {
+        if (!_stale(generation)) await storage.delete(key: leftoverKey);
+      });
+    }
     if (cloudPreferences is Map) {
       await step(
         'country',
@@ -1990,6 +2103,7 @@ class PushService {
     if (_stale(generation)) return;
     final error = failure;
     if (error != null) Error.throwWithStackTrace(error, failureStack!);
+    if (!profileSucceeded) return;
     _lastReconcile = clock();
   }
 
@@ -2001,23 +2115,45 @@ class PushService {
     }
   }
 
-  Future<void> _reconcileProfile(
+  Future<bool> _reconcileProfile(
     Object? cloudPreferences, {
     required bool firstLink,
+    bool foreignProfileOwner = false,
+    bool restoreOwnedName = false,
+    String? ownedDisplayName,
   }) async {
     final generation = _generation;
     final localVersion = _profileWriteVersion;
     final dirty = await _flag('futbeat.profile.dirty');
-    final localProfile = await loadProfileSettings();
-    if (_stale(generation) || localVersion != _profileWriteVersion) return;
+    var localProfile = await loadProfileSettings();
+    if (_stale(generation) || localVersion != _profileWriteVersion) {
+      return false;
+    }
+    if (restoreOwnedName) {
+      localProfile = localProfile.copyWith(
+        displayName: ownedDisplayName,
+        clearDisplayName: ownedDisplayName == null,
+      );
+    }
     if (cloudPreferences is! Map) {
+      if (foreignProfileOwner) {
+        localProfile = localProfile.copyWith(clearDisplayName: true);
+        await _writeLocalProfile(localProfile, dirty: true);
+        if (_stale(generation)) return false;
+      }
       await _syncProfileSettings(localProfile);
-      return;
+      return !_stale(generation) && !await _flag('futbeat.profile.dirty');
     }
     final cloudProfile = UserProfileSettings.fromJson(
       Map<String, dynamic>.from(cloudPreferences),
     );
-    if (firstLink) {
+    if (foreignProfileOwner) {
+      localProfile = localProfile.copyWith(
+        displayName: cloudProfile.displayName,
+        clearDisplayName: cloudProfile.displayName == null,
+      );
+    }
+    if (firstLink || foreignProfileOwner) {
       final merged = mergeFirstLinkProfile(
         local: localProfile,
         cloud: cloudProfile,
@@ -2026,18 +2162,19 @@ class PushService {
       if (jsonEncode(merged.toJson()) == jsonEncode(cloudProfile.toJson())) {
         // Nothing of the guest's to keep: the account's profile as is.
         await _writeLocalProfile(merged, dirty: false);
-        return;
+        return !_stale(generation) && !await _flag('futbeat.profile.dirty');
       }
       // Dirty until the server has the merged profile.
       await _writeLocalProfile(merged, dirty: true);
       await _syncProfileSettings(merged);
-      return;
+      return !_stale(generation) && !await _flag('futbeat.profile.dirty');
     }
     if (!dirty) {
       await _writeLocalProfile(cloudProfile, dirty: false);
     } else {
       await _syncProfileSettings(localProfile);
     }
+    return !_stale(generation) && !await _flag('futbeat.profile.dirty');
   }
 
   Future<void> _reconcileCountries(
