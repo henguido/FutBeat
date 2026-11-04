@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/models.dart';
 import '../../core/news_links.dart';
@@ -73,22 +76,147 @@ List<Json> newsForSection(
   return shown;
 }
 
+void showNewsDetails(BuildContext context, Json article) {
+  final uri = safeNewsUri(article['url']);
+  if (uri == null) return;
+  final title = article['title']?.toString().trim() ?? '';
+  final source = article['sourceName']?.toString().trim() ?? '';
+  final published = DateTime.tryParse(article['publishedAt']?.toString() ?? '');
+  final names = (article['associatedEntities'] as List? ?? const [])
+      .whereType<String>()
+      .where((name) => name.trim().isNotEmpty)
+      .toList();
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(sheetContext).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            Text(
+              [
+                source,
+                if (published != null)
+                  '${published.toLocal().day}/${published.toLocal().month}/${published.toLocal().year}',
+              ].where((part) => part.isNotEmpty).join(' · '),
+            ),
+            if (names.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(names.join(' · ')),
+            ],
+            const SizedBox(height: 16),
+            const Text('Lee el contenido completo en la fuente original.'),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () async {
+                var opened = false;
+                try {
+                  opened = await launchUrl(
+                    uri,
+                    mode: LaunchMode.externalApplication,
+                  );
+                } catch (_) {
+                  /* Browser unavailable. */
+                }
+                if (!opened && sheetContext.mounted) {
+                  ScaffoldMessenger.of(sheetContext).showSnackBar(
+                    const SnackBar(
+                      content: Text('No se pudo abrir el artículo'),
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Leer noticia original'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 /// Noticias: real stored articles (followed teams, players and competitions
 /// first, then the country) and real roster changes. Nothing is invented:
 /// with no articles the screen says so.
-class NewsScreen extends ConsumerWidget {
+class NewsScreen extends ConsumerStatefulWidget {
   const NewsScreen({super.key});
 
   /// Roster changes shown before "Ver más".
   static const transfersPreview = 10;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<NewsScreen> createState() => _NewsScreenState();
+}
+
+class _NewsScreenState extends ConsumerState<NewsScreen> {
+  Snapshot? _lastFeed;
+  Timer? _rightsExpiry;
+
+  void _scrubProtected(Snapshot? snapshot) {
+    if (snapshot == null) return;
+    for (final article in snapshot.news) {
+      final imageUrl = Uri.tryParse(article['imageUrl']?.toString() ?? '');
+      if (imageUrl?.scheme == 'https' && imageUrl?.host.isNotEmpty == true) {
+        NetworkImage(imageUrl.toString()).evict();
+      }
+      article.remove('description');
+      article.remove('imageUrl');
+      article.remove('_rightsExpiresAt');
+    }
+  }
+
+  void _scheduleExpiry(Snapshot? snapshot) {
+    _rightsExpiry?.cancel();
+    if (snapshot == null) return;
+    final expiries =
+        snapshot.news
+            .map(
+              (article) => DateTime.tryParse(
+                article['_rightsExpiresAt']?.toString() ?? '',
+              ),
+            )
+            .whereType<DateTime>()
+            .toList()
+          ..sort();
+    if (expiries.isEmpty) return;
+    final remaining = expiries.first.difference(DateTime.now());
+    _rightsExpiry = Timer(remaining.isNegative ? Duration.zero : remaining, () {
+      if (!mounted || !identical(_lastFeed, snapshot)) return;
+      _scrubProtected(snapshot);
+      setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _rightsExpiry?.cancel();
+    _scrubProtected(_lastFeed);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final feed = ref.watch(newsFeedProvider);
-    final data = feed.asData?.value;
+    final data = feed.isLoading || feed.hasError ? null : feed.asData?.value;
+    if (!identical(data, _lastFeed)) {
+      _scrubProtected(_lastFeed);
+      _lastFeed = data;
+      _scheduleExpiry(data);
+    }
     final follows =
         ref.watch(followsProvider).asData?.value ?? const <String>{};
-    Future<void> refresh() => ref.refresh(newsFeedProvider.future);
+    Future<void> refresh() async {
+      _rightsExpiry?.cancel();
+      _scrubProtected(_lastFeed);
+      _lastFeed = null;
+      await ref.refresh(newsFeedProvider.future);
+    }
 
     final children = <Widget>[
       if (feed.isLoading && data == null)
@@ -265,14 +393,22 @@ class _NewsFeedContentState extends State<NewsFeedContent> {
         ),
         if (featured.isNotEmpty) ...[
           heading(context, 'Destacados'),
-          for (final article in featured) NewsArticleCard(article),
+          for (final article in featured)
+            NewsArticleCard(
+              article,
+              onOpenDetails: () => showNewsDetails(context, article),
+            ),
         ],
         if (regular.isNotEmpty) ...[
           heading(
             context,
             selected == NewsSection.forYou ? 'Noticias' : selected.label,
           ),
-          for (final article in regular) NewsArticleCard(article),
+          for (final article in regular)
+            NewsArticleCard(
+              article,
+              onOpenDetails: () => showNewsDetails(context, article),
+            ),
         ],
         if (selected == NewsSection.transfers ||
             selected == NewsSection.forYou) ...[

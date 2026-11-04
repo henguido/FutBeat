@@ -406,12 +406,18 @@ String _contentDateLabel(Object? value) {
 }
 
 class NewsArticleCard extends StatelessWidget {
-  const NewsArticleCard(this.article, {super.key, this.openLink});
+  const NewsArticleCard(
+    this.article, {
+    super.key,
+    this.openLink,
+    this.onOpenDetails,
+  });
 
   final Json article;
 
   /// Injectable so link behavior is verified without launching a browser.
   final Future<bool> Function(Uri)? openLink;
+  final VoidCallback? onOpenDetails;
 
   Future<void> _openArticle(BuildContext context, Uri uri) async {
     var opened = false;
@@ -434,7 +440,13 @@ class NewsArticleCard extends StatelessWidget {
     final title = article['title']?.toString().trim() ?? '';
     final rights = article['rights'];
     final mediaRights = rights is Map ? rights : const {};
-    final description = newsMediaAuthorized(mediaRights['snippet'])
+    final expiry = DateTime.tryParse(
+      article['_rightsExpiresAt']?.toString() ?? '',
+    );
+    final hasCurrentAttestation =
+        expiry != null && expiry.isAfter(DateTime.now());
+    final description =
+        (hasCurrentAttestation || newsMediaAuthorized(mediaRights['snippet']))
         ? article['description']?.toString().trim() ?? ''
         : '';
     final source = article['sourceName']?.toString().trim() ?? '';
@@ -445,7 +457,8 @@ class NewsArticleCard extends StatelessWidget {
     final url = article['url']?.toString().trim() ?? '';
     final articleUri = safeNewsUri(url);
     final date = _contentDateLabel(article['publishedAt']);
-    final image = newsMediaAuthorized(mediaRights['image'])
+    final image =
+        (hasCurrentAttestation || newsMediaAuthorized(mediaRights['image']))
         ? safeNewsUri(article['imageUrl'])
         : null;
 
@@ -453,7 +466,7 @@ class NewsArticleCard extends StatelessWidget {
       child: InkWell(
         onTap: articleUri == null
             ? null
-            : () => _openArticle(context, articleUri),
+            : onOpenDetails ?? () => _openArticle(context, articleUri),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -505,9 +518,16 @@ class NewsArticleCard extends StatelessWidget {
                       style: const TextStyle(color: muted, fontSize: 12),
                     ),
                   ),
-                  if (articleUri != null)
-                    TextButton.icon(
+                  if (articleUri != null) ...[
+                    TextButton(
+                      onPressed:
+                          onOpenDetails ??
+                          () => _openArticle(context, articleUri),
+                      child: const Text('Leer noticia'),
+                    ),
+                    IconButton(
                       key: const ValueKey('news-copy-link'),
+                      tooltip: 'Copiar enlace',
                       onPressed: () async {
                         await Clipboard.setData(
                           ClipboardData(text: articleUri.toString()),
@@ -520,8 +540,8 @@ class NewsArticleCard extends StatelessWidget {
                         );
                       },
                       icon: const Icon(Icons.link, size: 17),
-                      label: const Text('Copiar enlace'),
                     ),
+                  ],
                 ],
               ),
             ],

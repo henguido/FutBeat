@@ -525,9 +525,6 @@ void main() {
     tester,
   ) async {
     final payload = _payload(team: false);
-    for (final match in payload['matches'] as List) {
-      match['events'] = <dynamic>[];
-    }
     await _pumpPlayer(tester, payload);
     expect(find.byType(Image), findsNothing);
     expect(find.text('DE'), findsOneWidget);

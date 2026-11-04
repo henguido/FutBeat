@@ -35,23 +35,6 @@ List<String> playerTeamIds(Entity player) {
   return ids;
 }
 
-/// Matches of any of [player]'s teams, plus matches where the player has an
-/// event of their own, oldest first. Never matched by name.
-List<FootballMatch> playerMatches(Snapshot data, Entity player) {
-  final teams = playerTeamIds(player).map(data.resolveEntityId).toSet();
-  bool own(FootballMatch match) => match.events.any(
-    (event) =>
-        event['playerId']?.toString() == player.id ||
-        event['assistPlayerId']?.toString() == player.id,
-  );
-  return data.matches
-      .where(
-        (m) => teams.contains(m.homeId) || teams.contains(m.awayId) || own(m),
-      )
-      .toList()
-    ..sort((a, b) => a.startTime.compareTo(b.startTime));
-}
-
 /// First present, non-empty value among [keys] of [json].
 Object? _pick(Json json, List<String> keys) {
   for (final key in keys) {
@@ -315,8 +298,11 @@ bool _profileEventBelongsToPlayer(
   String playerId, {
   bool assist = false,
 }) {
-  final canonical = event[assist ? 'canonicalAssistPlayerId' : 'canonicalPlayerId']
-      ?.toString().trim() ?? '';
+  final canonical =
+      event[assist ? 'canonicalAssistPlayerId' : 'canonicalPlayerId']
+          ?.toString()
+          .trim() ??
+      '';
   final id = canonical.isNotEmpty
       ? canonical
       : event[assist ? 'assistPlayerId' : 'playerId']?.toString().trim() ?? '';
@@ -344,7 +330,12 @@ List<(FootballMatch, Json, bool)> playerRecentEvents(
     for (final event in match.events) {
       if (_profileEventBelongsToPlayer(data, event, playerId)) {
         result.add((match, event, false));
-      } else if (_profileEventBelongsToPlayer(data, event, playerId, assist: true)) {
+      } else if (_profileEventBelongsToPlayer(
+        data,
+        event,
+        playerId,
+        assist: true,
+      )) {
         // Canonical substitutions use the secondary player field for the
         // incoming player. It is participation, never a goal assist.
         if (event['type'] == 'SUBSTITUTION') {
@@ -373,20 +364,7 @@ List<(FootballMatch, Json, bool)> playerRecentEvents(
 /// evidence. Never infer a membership from names or nationality.
 List<FootballMatch> playerProfileMatches(Snapshot data, Entity player) {
   final playerId = data.resolveEntityId(player.id);
-  final teamIds = <String>{};
-  void addTeam(Object? value) {
-    final id = value?.toString().trim() ?? '';
-    if (id.isNotEmpty) teamIds.add(data.resolveEntityId(id));
-  }
-
-  final served = player.json['teamIds'];
-  if (served is List) {
-    for (final id in served) {
-      addTeam(id);
-    }
-  }
-  addTeam(player.json['teamId']);
-  addTeam(player.json['nationalTeamId']);
+  final teamIds = playerTeamIds(player).map(data.resolveEntityId).toSet();
   final byId = <String, FootballMatch>{};
   for (final match in _profileMatchRevisions(data)) {
     final currentTeamMatch =
@@ -395,8 +373,13 @@ List<FootballMatch> playerProfileMatches(Snapshot data, Entity player) {
     final explicitActivity = match.events.any((event) {
       return _profileEventBelongsToPlayer(data, event, playerId) ||
           ((event['type'] == 'SUBSTITUTION' ||
-              (event['type'] == 'GOAL' && event['ownGoal'] != true)) &&
-              _profileEventBelongsToPlayer(data, event, playerId, assist: true));
+                  (event['type'] == 'GOAL' && event['ownGoal'] != true)) &&
+              _profileEventBelongsToPlayer(
+                data,
+                event,
+                playerId,
+                assist: true,
+              ));
     });
     if (currentTeamMatch || explicitActivity) {
       byId.putIfAbsent(match.id, () => match);

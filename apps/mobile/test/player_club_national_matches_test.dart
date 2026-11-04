@@ -56,8 +56,10 @@ Snapshot _snapshot(Map<String, dynamic> player) => Snapshot({
   ],
 });
 
-List<String> _ids(Snapshot data) =>
-    playerMatches(data, data.player('fb_player')!).map((m) => m.id).toList();
+List<String> _ids(Snapshot data) => playerProfileMatches(
+  data,
+  data.player('fb_player')!,
+).map((m) => m.id).toList();
 
 void main() {
   test('server teamIds: club and national-team matches, oldest first', () {
@@ -82,7 +84,10 @@ void main() {
     final data = _snapshot({'teamId': 'fb_club'});
     expect(_ids(data), isNot(contains('other')));
     expect(
-      playerMatches(data, data.player('fb_homonym')!).map((m) => m.id).toList(),
+      playerProfileMatches(
+        data,
+        data.player('fb_homonym')!,
+      ).map((m) => m.id).toList(),
       ['event_only', 'other'],
     );
   });
