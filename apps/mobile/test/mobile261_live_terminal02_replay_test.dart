@@ -9,9 +9,16 @@ import 'live_bootstrap_test.dart' show FakeSupabase, liveRow;
 import 'mobile260_live_delete_replay_test.dart' show until;
 
 void main() {
-  for (final transport in ['realtime', 'rest', 'resume']) {
+  for (final (transport, primaryKeyDelete) in [
+    ('realtime', false),
+    ('rest', false),
+    ('resume', false),
+    ('realtime', true),
+    ('resume', true),
+  ]) {
+    final removal = primaryKeyDelete ? 'PK-only DELETE' : 'complete absence';
     test(
-      'terminal version does not revive from $transport replay after complete absence on resume',
+      'terminal version does not revive from $transport replay after $removal',
       () async {
         const id = 'fb_match_terminal02';
         final now = DateTime.now().toUtc();
@@ -65,14 +72,28 @@ void main() {
           await until(() => latest[id]?.status == 'VERIFIED');
           // The overlay row can leave the hot table once its terminal snapshot is stored.
           server.rows.clear();
-          final beforeAbsent = count;
-          await client.refreshOnResume();
-          await until(() => count > beforeAbsent);
+          if (primaryKeyDelete) {
+            server.sockets.last.add(
+              jsonEncode({
+                'event': 'postgres_changes',
+                'payload': {
+                  'data': {
+                    'type': 'DELETE',
+                    'old_record': {'match_id': id},
+                  },
+                },
+              }),
+            );
+            await until(() => !latest.containsKey(id));
+          } else {
+            final beforeAbsent = count;
+            await client.refreshOnResume();
+            await until(() => count > beforeAbsent);
+          }
           expect(
             latest,
             isNot(contains(id)),
-            reason:
-                'Complete absence remains authoritative for overlay removal',
+            reason: '$removal remains authoritative for overlay removal',
           );
           if (transport == 'realtime') {
             final before = count;

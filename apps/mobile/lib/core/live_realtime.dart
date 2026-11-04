@@ -6,8 +6,8 @@ import 'package:dio/dio.dart';
 
 import 'models.dart';
 
-// A DELETE with only the primary key cannot establish an ordering fence.
-// Full records can reject an older replay, without preventing a genuinely
+// A DELETE with only the primary key carries no ordering evidence of its own.
+// A known version can reject an older replay, without preventing a genuinely
 // newer incarnation (whose revision may restart) or a new provider.
 bool _predatesLiveDeletion(LiveMatchUpdate update, Json deleted) {
   final changedAt = DateTime.tryParse(deleted['changed_at'] as String? ?? '');
@@ -493,6 +493,19 @@ class LiveRealtimeClient {
       }
     }
 
+    void rememberRetiredTerminal(LiveMatchUpdate? previous) {
+      if (previous == null ||
+          (previous.status != 'VERIFIED' &&
+              previous.status != 'FINISHED_PENDING_VERIFICATION')) {
+        return;
+      }
+      rememberVersionFence(previous.matchId, {
+        'changed_at': previous.changedAt.toIso8601String(),
+        'provider': previous.provider,
+        'revision': previous.revision,
+      });
+    }
+
     Future<void> stopWatch() async {
       if (disposed) return;
       disposed = true;
@@ -612,15 +625,8 @@ class LiveRealtimeClient {
         // canonical snapshot is stored. Forget the overlay, not its ordering
         // evidence: an older REST/socket replay is not a new incarnation.
         for (final entry in state.entries) {
-          final previous = entry.value;
-          if (!reconciled.containsKey(entry.key) &&
-              (previous.status == 'VERIFIED' ||
-                  previous.status == 'FINISHED_PENDING_VERIFICATION')) {
-            rememberVersionFence(entry.key, {
-              'changed_at': previous.changedAt.toIso8601String(),
-              'provider': previous.provider,
-              'revision': previous.revision,
-            });
+          if (!reconciled.containsKey(entry.key)) {
+            rememberRetiredTerminal(entry.value);
           }
         }
         state
@@ -811,6 +817,10 @@ class LiveRealtimeClient {
                     'provider': row['provider'],
                     'revision': row['revision'],
                   });
+                } else {
+                  // A PK-only removal must not discard terminal evidence we
+                  // already observed for this match.
+                  rememberRetiredTerminal(previous);
                 }
                 if (matchId is String) bootstrapDeletes?.add(matchId);
               } else if (data['record'] is Map) {
