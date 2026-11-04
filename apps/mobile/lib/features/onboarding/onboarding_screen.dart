@@ -479,16 +479,26 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
-  Future<void> _saveSettings(UserProfileSettings next) async {
-    if (settingsBusy) return;
+  Future<void> _saveSettings(
+    UserProfileSettings Function(UserProfileSettings current) update,
+  ) async {
+    final current = settings;
+    if (settingsBusy || current == null) return;
+    final next = update(current);
     setState(() {
       settings = next;
       settingsBusy = true;
       message = null;
     });
+    final service = ref.read(pushServiceProvider);
+    UserProfileSettings? applied;
+    String? appliedUserId;
     final saved = await saveOnboardingSettings(
       settings: next,
-      save: ref.read(pushServiceProvider).saveProfileSettings,
+      save: (_) => service.updateProfileSettings((latest) {
+        appliedUserId = service.userId;
+        return applied = update(latest);
+      }),
       invalidate: () {
         if (mounted) ref.invalidate(profileSettingsProvider);
       },
@@ -496,6 +506,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (mounted) {
       setState(() {
         settingsBusy = false;
+        if (saved && applied != null && service.userId == appliedUserId) {
+          settings = applied;
+        }
         if (!saved) {
           message = 'Guardado sin conexión';
         }
@@ -1453,7 +1466,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     value: option.value(value),
                     onChanged: settingsBusy
                         ? null
-                        : (next) => _saveSettings(option.update(value, next)),
+                        : (next) => _saveSettings(
+                            (current) => option.update(current, next),
+                          ),
                   ),
               ],
             ),
