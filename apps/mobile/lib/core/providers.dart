@@ -853,9 +853,6 @@ class ApiRepository implements FootballRepository {
           entry.key: entry.value,
     };
     if (terminal.isEmpty) return Future<void>.value();
-    _snapshotCache.updateAll(
-      (_, snapshot) => snapshot.withLiveUpdates(terminal),
-    );
     terminal.removeWhere((_, update) {
       final rejected = _containsPrivateCacheField(update.events);
       if (rejected) {
@@ -864,6 +861,9 @@ class ApiRepository implements FootballRepository {
       return rejected;
     });
     if (terminal.isEmpty) return Future<void>.value();
+    _snapshotCache.updateAll(
+      (_, snapshot) => snapshot.withLiveUpdates(terminal),
+    );
     final db = database;
     if (db == null) return Future<void>.value();
     late final Future<void> write;
@@ -917,7 +917,7 @@ class ApiRepository implements FootballRepository {
 
   void _persist(String value, Json raw) {
     final db = database;
-    if (db == null) return;
+    if (db == null || _containsPrivateCacheField(raw)) return;
     // Never delays showing fresh data: memory already holds the snapshot.
     late final Future<void> write;
     write = db
@@ -1228,6 +1228,7 @@ class ApiRepository implements FootballRepository {
         '/v1/entity',
         queryParameters: {'type': type, 'id': id},
       );
+      raw = _canonicalNetworkSnapshot(raw);
     } catch (error, stack) {
       final cached = _snapshotCache[key];
       if (cached != null) return cached.asStale();
@@ -1616,7 +1617,7 @@ class ApiRepository implements FootballRepository {
       cancelToken: cancelToken,
       maxAttempts: 1,
     );
-    final raw = adapt?.call(response) ?? response;
+    final raw = _canonicalNetworkSnapshot(adapt?.call(response) ?? response);
     final snapshot = _canonical(raw);
     _remember(key, snapshot);
     _catalogFetchedAt.removeWhere(
