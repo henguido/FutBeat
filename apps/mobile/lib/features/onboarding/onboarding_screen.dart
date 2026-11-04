@@ -145,10 +145,26 @@ class SecureOnboardingProgressStore implements OnboardingProgressStore {
   const SecureOnboardingProgressStore();
   static const _key = 'futbeat.onboarding.step';
   static const _storage = FlutterSecureStorage();
+  // Multiple route instances still write the same secure-storage key. Keep
+  // invocation order so an earlier slow save cannot undo a later step/clear.
+  static Future<void> _pendingMutation = Future<void>.value();
+
+  Future<void> _mutate(Future<void> Function() action) {
+    final next = _pendingMutation.then((_) async {
+      try {
+        await action();
+      } catch (_) {
+        // Progress is best effort; one failed write must not block later ones.
+      }
+    });
+    _pendingMutation = next;
+    return next;
+  }
 
   @override
   Future<int?> read() async {
     try {
+      await _pendingMutation;
       return int.tryParse(await _storage.read(key: _key) ?? '');
     } catch (_) {
       return null;
@@ -156,18 +172,11 @@ class SecureOnboardingProgressStore implements OnboardingProgressStore {
   }
 
   @override
-  Future<void> write(int step) async {
-    try {
-      await _storage.write(key: _key, value: '$step');
-    } catch (_) {}
-  }
+  Future<void> write(int step) =>
+      _mutate(() => _storage.write(key: _key, value: '$step'));
 
   @override
-  Future<void> clear() async {
-    try {
-      await _storage.delete(key: _key);
-    } catch (_) {}
-  }
+  Future<void> clear() => _mutate(() => _storage.delete(key: _key));
 }
 
 final onboardingProgressStoreProvider = Provider<OnboardingProgressStore>(
@@ -467,19 +476,43 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       ref.read(entityMediaProvider).redirects,
       type,
       id,
+      onIntent: ref.read(pushServiceProvider).recordFollowIntent,
     );
   }
 
-  Future<void> _saveSettings(UserProfileSettings next) async {
-    if (settingsBusy) return;
+  Future<void> _toggleChoices(
+    String type,
+    String canonicalId,
+    Set<String> ids,
+  ) async {
+    final db = ref.read(databaseProvider);
+    await ref.read(pushServiceProvider).recordFollowIntent({
+      '$type:$canonicalId',
+      for (final id in ids) '$type:$id',
+    });
+    await db.toggleAny(type, canonicalId, ids);
+  }
+
+  Future<void> _saveSettings(
+    UserProfileSettings Function(UserProfileSettings current) update,
+  ) async {
+    final current = settings;
+    if (settingsBusy || current == null) return;
+    final next = update(current);
     setState(() {
       settings = next;
       settingsBusy = true;
       message = null;
     });
+    final service = ref.read(pushServiceProvider);
+    UserProfileSettings? applied;
+    String? appliedUserId;
     final saved = await saveOnboardingSettings(
       settings: next,
-      save: ref.read(pushServiceProvider).saveProfileSettings,
+      save: (_) => service.updateProfileSettings((latest) {
+        appliedUserId = service.userId;
+        return applied = update(latest);
+      }),
       invalidate: () {
         if (mounted) ref.invalidate(profileSettingsProvider);
       },
@@ -487,6 +520,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (mounted) {
       setState(() {
         settingsBusy = false;
+        if (saved && applied != null && service.userId == appliedUserId) {
+          settings = applied;
+        }
         if (!saved) {
           message = 'Guardado sin conexión';
         }
@@ -556,26 +592,39 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Future<void> _selectCountry(String? value) async {
     if (countryBusy) return;
-    setState(() => countryBusy = true);
+    setState(() {
+      countryBusy = true;
+      message = null;
+    });
     // Capture provider-owned objects before the first await. The route can be
     // dismissed while Drift is saving, after which WidgetRef is no longer safe.
     final database = ref.read(databaseProvider);
     final service = ref.read(pushServiceProvider);
-    await database.saveSelectedCountry(value);
-    final current = await database.watchPreference().first;
-    await service.markSelectedCountryDirty();
-    if (service.authenticated) {
-      try {
-        await service.syncCountries(
-          current.detectedCountry,
-          value,
-          updateDetected: false,
-        );
-      } catch (_) {
-        // Drift remains authoritative offline; the normal reconcile can retry.
+    try {
+      await database.saveSelectedCountry(value);
+      final current = await database.watchPreference().first;
+      await service.markSelectedCountryDirty();
+      if (service.authenticated) {
+        try {
+          await service.syncCountries(
+            current.detectedCountry,
+            value,
+            updateDetected: false,
+          );
+        } catch (_) {
+          // Drift remains authoritative offline; normal reconciliation retries.
+        }
       }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          message =
+              'No pudimos completar el cambio de país. Inténtalo nuevamente.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => countryBusy = false);
     }
-    if (mounted) setState(() => countryBusy = false);
   }
 
   /// Sign in / create the account in place: the onboarding stays on the
@@ -659,7 +708,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         searchState,
       ),
       OnboardingStep.players => _playerStep(
-        data,
+        searchState == null || rawSearch != null ? data : null,
         follows,
         catalogState,
         searchState,
@@ -1206,16 +1255,24 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         .toSet();
     // Real squad players (followed teams, country, global clubs) first;
     // the catalog's own players after them (deduplicated below).
-    final suggested =
-        ref
-            .watch(playerSuggestionsProvider(followedTeamsKey(follows)))
-            .asData
-            ?.value ??
-        const <Entity>[];
+    final suggested = searchState == null
+        ? ref
+                  .watch(playerSuggestionsProvider(followedTeamsKey(follows)))
+                  .asData
+                  ?.value ??
+              const <Entity>[]
+        : const <Entity>[];
     final source = [...suggested, ...?data?.players];
     final country = ref.read(preferenceProvider).asData?.value.effectiveCountry;
     final sections = query.length >= 2
-        ? [(label: '', players: source.take(30).toList())]
+        ? [
+            (
+              label: '',
+              players: {for (final player in source) player.id: player}.values
+                  .take(30)
+                  .toList(),
+            ),
+          ]
         : onboardingPlayerSuggestions(source, selectedTeams, country);
     final players = [for (final section in sections) ...section.players];
     final selected = follows.where((f) => f.startsWith('player:')).length;
@@ -1329,9 +1386,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           borderRadius: BorderRadius.circular(18),
           onTap: () => ids == null || ids.length < 2
               ? _toggle(type, entity.id)
-              : ref
-                    .read(databaseProvider)
-                    .toggleAny(type, canonicalId ?? entity.id, ids),
+              : _toggleChoices(type, canonicalId ?? entity.id, {
+                  ...ids,
+                  entity.id,
+                }),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
@@ -1396,7 +1454,22 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Widget _alertsStep() {
     final value = settings;
-    if (value == null) return const LinearProgressIndicator();
+    if (value == null) {
+      if (ref.watch(profileSettingsProvider).hasError) {
+        return Column(
+          children: [
+            const Text(
+              'No pudimos cargar tus preferencias. Inténtalo nuevamente.',
+            ),
+            TextButton(
+              onPressed: () => ref.invalidate(profileSettingsProvider),
+              child: const Text('Reintentar'),
+            ),
+          ],
+        );
+      }
+      return const LinearProgressIndicator();
+    }
     final any = value.anyNotification;
     final service = ref.watch(pushServiceProvider);
     return Column(
@@ -1416,7 +1489,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     value: option.value(value),
                     onChanged: settingsBusy
                         ? null
-                        : (next) => _saveSettings(option.update(value, next)),
+                        : (next) => _saveSettings(
+                            (current) => option.update(current, next),
+                          ),
                   ),
               ],
             ),

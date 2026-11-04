@@ -162,7 +162,7 @@ void main() {
       addTearDown(image.body.close);
       final png = Uint8List.fromList(
         base64Decode(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==',
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
         ),
       );
       image.body.add(png);
@@ -227,7 +227,10 @@ void main() {
       statusCode: 200,
       headers: _FixtureHeaders(contentType: ContentType('image', 'png')),
     );
-    final bytes = Uint8List.fromList([1, 2, 3]);
+    // The successful retry must carry a decoder-valid image, not arbitrary bytes.
+    final bytes = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+    );
     image.body.add(bytes);
     unawaited(image.body.close());
     final retryClient = _FixtureClient([image]);

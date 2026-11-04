@@ -9,6 +9,7 @@ import '../core/live_realtime.dart';
 import '../core/models.dart';
 import '../core/news_links.dart';
 import '../core/providers.dart';
+import '../core/push.dart';
 import '../core/sports_image_cache.dart';
 import '../core/relevance.dart';
 import '../core/theme.dart';
@@ -147,6 +148,7 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
                     ref.read(entityMediaProvider).redirects,
                     widget.type,
                     widget.id,
+                    onIntent: ref.read(pushServiceProvider).recordFollowIntent,
                   );
                 }
               } catch (_) {

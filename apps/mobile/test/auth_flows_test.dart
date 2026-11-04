@@ -213,11 +213,15 @@ class _Http {
       calls.where((c) => c.path.contains(suffix)).length;
   bool called(String suffix) => count(suffix) > 0;
 
-  Future<void> waitFor(String suffix) async {
-    for (var i = 0; i < 200 && !called(suffix); i++) {
+  Future<void> waitFor(String suffix, {int count = 1}) async {
+    for (var i = 0; i < 200 && this.count(suffix) < count; i++) {
       await Future<void>.delayed(Duration.zero);
     }
-    expect(called(suffix), isTrue, reason: 'waiting for $suffix');
+    expect(
+      this.count(suffix),
+      greaterThanOrEqualTo(count),
+      reason: 'waiting for $suffix',
+    );
   }
 }
 
@@ -227,23 +231,27 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
   Set<String> server = const {},
   _Http? http,
   Duration cleanupTimeout = const Duration(seconds: 5),
+  OAuthBrowser? oauthBrowser,
+  FlutterSecureStorage? secureStorage,
 }) async {
   FlutterSecureStorage.setMockInitialValues(Map.of(storage));
   final db = AppDatabase(NativeDatabase.memory());
   await db.addFollows(local);
   final fake = http ?? _Http();
   if (server.isNotEmpty) fake.server['user-a'] = {...server};
-  final service = PushService(
+  final service = _ServiceWithStorage(
     const LiveRealtimeConfig(
       supabaseUrl: 'https://supabase.test',
       publicKey: 'publishable-test-key',
     ),
     db,
     _Tokens(),
+    secureStorage: secureStorage ?? const FlutterSecureStorage(),
     dio: fake.dio,
     clock: () => fake.now,
     signOutCleanupTimeout: cleanupTimeout,
     oauthEnabled: true,
+    oauthBrowser: oauthBrowser,
     oauthAllowedProviders: const {OAuthProvider.google, OAuthProvider.facebook},
   );
   addTearDown(() async {
@@ -251,6 +259,102 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
     await db.close();
   });
   return (service: service, db: db, http: fake);
+}
+
+/// Controls storage timing without changing the production storage adapter.
+class _ServiceWithStorage extends PushService {
+  _ServiceWithStorage(
+    super.config,
+    super.database,
+    super.tokens, {
+    required this.secureStorage,
+    super.dio,
+    super.clock,
+    super.signOutCleanupTimeout,
+    super.oauthEnabled,
+    super.oauthAllowedProviders,
+    super.oauthBrowser,
+  });
+
+  final FlutterSecureStorage secureStorage;
+
+  @override
+  FlutterSecureStorage get storage => secureStorage;
+}
+
+class _HeldSessionRead extends FlutterSecureStorage {
+  _HeldSessionRead({this.heldKey = 'futbeat.push.session', this.hold = true});
+
+  final String heldKey;
+  bool hold;
+  final captured = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final value = await super.read(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+    if (hold && key == heldKey && !captured.isCompleted) {
+      captured.complete();
+      await release.future;
+    }
+    return value;
+  }
+}
+
+class _HeldSessionWrite extends FlutterSecureStorage {
+  _HeldSessionWrite({this.hold = true, this.failHeldWrite = false});
+
+  bool hold;
+  bool failHeldWrite;
+  final captured = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == 'futbeat.push.session' && hold && !captured.isCompleted) {
+      captured.complete();
+      await release.future;
+      if (failHeldWrite) {
+        failHeldWrite = false;
+        throw StateError('synthetic storage failure');
+      }
+    }
+    await super.write(
+      key: key,
+      value: value,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
 }
 
 /// A service whose storage already holds a valid session for user-a.
@@ -343,6 +447,55 @@ Future<void> _scrollTo(WidgetTester tester, Finder finder) => tester
     .scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
 
 void main() {
+  test('account deletion requires a known user ID before dispatch', () async {
+    final value = await _service();
+    value.http.routes['grant_type=password'] = (_) =>
+        value.http.issue('user-a')..remove('user');
+    value.http.routes['futbeat-delete-account'] = (_) => {'deleted': true};
+    await value.service.signIn('user@example.com', 'password-test');
+    expect(value.service.authenticated, isTrue);
+    expect(value.service.userId, isNull);
+    final saved = await _read('futbeat.push.session');
+    expect(saved, isNotNull);
+
+    await expectLater(value.service.deleteAccount(), throwsStateError);
+
+    expect(value.http.count('futbeat-delete-account'), 0);
+    expect(value.service.authenticated, isTrue);
+    expect(await _read('futbeat.push.session'), saved);
+  });
+  test('a concurrent account deletion does not send another POST', () async {
+    final value = await _service();
+    value.service.session = value.http.issue('user-a');
+    final dispatched = Completer<void>();
+    final release = Completer<void>();
+    var calls = 0;
+    value.http.routes['futbeat-delete-account'] = (_) async {
+      if (++calls == 1) {
+        dispatched.complete();
+        await release.future;
+      }
+      return {'deleted': true};
+    };
+    final first = value.service.deleteAccount().then<Object?>(
+      (_) => null,
+      onError: (Object error) => error,
+    );
+    await dispatched.future;
+    Object? duplicateError;
+    try {
+      await value.service.deleteAccount();
+    } catch (error) {
+      duplicateError = error;
+    } finally {
+      release.complete();
+    }
+    expect(await first, isNull);
+    expect(calls, 1);
+    expect(duplicateError, isA<StateError>());
+    expect(value.service.authenticated, isFalse);
+  });
+
   group('authErrorMessage', () {
     final cases = <String, (Object, String)>{
       'invalid_credentials': (
@@ -612,7 +765,319 @@ void main() {
     );
   });
 
+  group('authentication intent lifecycle', () {
+    test('a delayed session write cannot survive a later sign out', () async {
+      final storage = _HeldSessionWrite();
+      final value = await _service(secureStorage: storage);
+      final signingIn = value.service.signIn(
+        'user@example.com',
+        'password-test',
+      );
+      await storage.captured.future;
+      final signingOut = value.service.signOut();
+      expect(value.service.authenticated, isFalse);
+      await Future<void>.delayed(Duration.zero);
+      storage.release.complete();
+      await Future.wait([signingIn, signingOut]);
+      expect(await _read('futbeat.push.session'), isNull);
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test(
+      'a delayed old session write cannot replace a newer account',
+      () async {
+        final storage = _HeldSessionWrite();
+        final value = await _service(secureStorage: storage);
+        final a = value.service.signIn('user@example.com', 'password-test');
+        await storage.captured.future;
+        final b = value.service.signIn('b@example.com', 'password-test');
+        await value.http.waitFor('grant_type=password', count: 2);
+        await Future<void>.delayed(Duration.zero);
+        storage.release.complete();
+        await Future.wait([a, b]);
+        expect(value.service.userId, 'user-b');
+        expect(
+          jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+          'user-b',
+        );
+      },
+    );
+
+    test('a delayed refresh write cannot replace a newer account', () async {
+      final storage = _HeldSessionWrite(hold: false);
+      final value = await _service(secureStorage: storage);
+      await value.service.signIn('user@example.com', 'password-test');
+      storage.hold = true;
+      final refreshing = value.service.refreshSession();
+      await storage.captured.future;
+      final b = value.service.signIn('b@example.com', 'password-test');
+      await value.http.waitFor('grant_type=password', count: 2);
+      await Future<void>.delayed(Duration.zero);
+      storage.release.complete();
+      await Future.wait([refreshing, b]);
+      expect(value.service.userId, 'user-b');
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
+    test('a failed session write does not poison the next sign-in', () async {
+      final storage = _HeldSessionWrite(failHeldWrite: true);
+      final value = await _service(secureStorage: storage);
+      final a = value.service.signIn('user@example.com', 'password-test');
+      await storage.captured.future;
+      final failed = expectLater(a, throwsStateError);
+      storage.release.complete();
+      await failed;
+      await value.service.signIn('b@example.com', 'password-test');
+      expect(value.service.userId, 'user-b');
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
+    test(
+      'sign out discards an email sign-in response already in flight',
+      () async {
+        final value = await _service(local: {'team:guest'});
+        final gate = value.http.hold('grant_type=password');
+        final signingIn = value.service.signIn(
+          'user@example.com',
+          'password-test',
+        );
+        await value.http.waitFor('grant_type=password');
+
+        await value.service.signOut();
+        gate.complete();
+        await signingIn;
+        await _settle(value.service);
+
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(value.http.called('futbeat_read_user_profile'), isFalse);
+        expect(await value.db.watchFollows().first, {'team:guest'});
+      },
+    );
+
+    test(
+      'the latest sign-in intent wins even when its response is slower',
+      () async {
+        final value = await _service();
+        final first = Completer<void>();
+        final second = Completer<void>();
+        value.http.routes['grant_type=password'] = (options) async {
+          final email = (options.data as Map)['email'];
+          await (email == 'user@example.com' ? first.future : second.future);
+          return value.http.signInRoute(options);
+        };
+        final a = value.service.signIn('user@example.com', 'password-test');
+        await value.http.waitFor('grant_type=password');
+        final b = value.service.signIn('b@example.com', 'password-test');
+        await value.http.waitFor('grant_type=password', count: 2);
+
+        first.complete();
+        await a;
+        final staleResponseAuthenticated = value.service.authenticated;
+        second.complete();
+        await b;
+
+        expect(staleResponseAuthenticated, isFalse);
+        expect(value.service.userId, 'user-b');
+        expect(
+          jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+          'user-b',
+        );
+      },
+    );
+
+    test('an older email sign-in cannot replace the newer account', () async {
+      final value = await _service();
+      final first = Completer<void>();
+      value.http.routes['grant_type=password'] = (options) async {
+        if ((options.data as Map)['email'] == 'user@example.com') {
+          await first.future;
+        }
+        return value.http.signInRoute(options);
+      };
+      final a = value.service.signIn('user@example.com', 'password-test');
+      await value.http.waitFor('grant_type=password');
+      await value.service.signIn('b@example.com', 'password-test');
+      first.complete();
+      await a;
+      expect(value.service.userId, 'user-b');
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
+    test('sign out discards a sign-up session already in flight', () async {
+      final value = await _service();
+      value.http.routes['/auth/v1/signup'] = (_) => value.http.issue('user-a');
+      final gate = value.http.hold('/auth/v1/signup');
+      final signup = value.service.signUp('user@example.com', 'password-test');
+      await value.http.waitFor('/auth/v1/signup');
+      await value.service.signOut();
+      gate.complete();
+      await signup;
+      expect(value.service.authenticated, isFalse);
+      expect(await _read('futbeat.push.session'), isNull);
+    });
+
+    for (final provider in OAuthProvider.values) {
+      test(
+        'sign out during ${provider.id} browser cancels its code exchange',
+        () async {
+          final callback = Completer<String>();
+          final opened = Completer<void>();
+          final value = await _service(
+            oauthBrowser: (_, _) {
+              opened.complete();
+              return callback.future;
+            },
+          );
+          value.http.routes['grant_type=pkce'] = (_) =>
+              value.http.issue('user-a');
+          final signingIn = value.service.signInWithOAuth(provider);
+          await opened.future;
+          await value.service.signOut();
+          callback.complete(
+            'com.futbeat.futbeat://login-callback?code=local-code',
+          );
+          await signingIn;
+          expect(value.service.authenticated, isFalse);
+          expect(value.http.called('grant_type=pkce'), isFalse);
+        },
+      );
+    }
+
+    test('sign out discards password recovery completion in flight', () async {
+      final value = await _service();
+      value.http.routes['/auth/v1/verify'] = (_) => value.http.issue('user-a');
+      value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+      await value.service.beginPasswordRecovery(
+        Uri.parse(
+          'https://futbeat.com/auth/reset?token_hash=local-hash&type=recovery',
+        ),
+      );
+      final gate = value.http.hold('/auth/v1/user');
+      final completing = value.service.completePasswordRecovery(
+        'password-next',
+      );
+      await value.http.waitFor('/auth/v1/user');
+      await value.service.signOut();
+      gate.complete();
+      await completing;
+      expect(value.service.authenticated, isFalse);
+      expect(await _read('futbeat.push.session'), isNull);
+    });
+  });
+
   group('restore', () {
+    test(
+      'a captured storage read cannot restore an account after sign out',
+      () async {
+        final http = _Http();
+        final storage = _HeldSessionRead();
+        final value = await _service(
+          http: http,
+          secureStorage: storage,
+          storage: {'futbeat.push.session': jsonEncode(http.issue('user-a'))},
+          local: {'team:guest'},
+        );
+        final restoring = value.service.restore();
+        await storage.captured.future;
+        await value.service.signOut();
+        storage.release.complete();
+        await restoring;
+        expect(value.service.authenticated, isFalse);
+        expect(value.http.called('grant_type=refresh_token'), isFalse);
+        expect(value.http.called('futbeat_read_user_profile'), isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(await value.db.watchFollows().first, {'team:guest'});
+      },
+    );
+
+    test(
+      'late confirmation metadata cannot replace a newer sign-up intent',
+      () async {
+        final storage = _HeldSessionRead(
+          heldKey: 'futbeat.auth.pendingConfirmationEmail',
+        );
+        final value = await _service(
+          secureStorage: storage,
+          storage: {'futbeat.auth.pendingConfirmationEmail': 'old@example.com'},
+        );
+        value.http.routes['/auth/v1/signup'] = (_) => {
+          'user': {
+            'id': 'user-b',
+            'identities': [
+              <String, dynamic>{'provider': 'email'},
+            ],
+          },
+        };
+        final restoring = value.service.restore();
+        await storage.captured.future;
+        await value.service.signUp('b@example.com', 'password-test');
+        storage.release.complete();
+        await restoring;
+        expect(value.service.pendingConfirmationEmail, 'b@example.com');
+      },
+    );
+
+    test(
+      'captured storage cannot authenticate while a newer sign-in is pending',
+      () async {
+        final http = _Http();
+        final storage = _HeldSessionRead();
+        final value = await _service(
+          http: http,
+          secureStorage: storage,
+          storage: {'futbeat.push.session': jsonEncode(http.issue('user-a'))},
+        );
+        final restoring = value.service.restore();
+        await storage.captured.future;
+        final gate = value.http.hold('grant_type=password');
+        final signingIn = value.service.signIn(
+          'b@example.com',
+          'password-test',
+        );
+        await value.http.waitFor('grant_type=password');
+        storage.release.complete();
+        await restoring;
+        final authenticatedBeforeCurrentResponse = value.service.authenticated;
+        final refreshes = value.http.count('grant_type=refresh_token');
+        gate.complete();
+        await signingIn;
+        expect(authenticatedBeforeCurrentResponse, isFalse);
+        expect(refreshes, 0);
+        expect(value.service.userId, 'user-b');
+      },
+    );
+
+    test('captured storage preserves a newer completed sign-in', () async {
+      final http = _Http();
+      final storage = _HeldSessionRead();
+      final value = await _service(
+        http: http,
+        secureStorage: storage,
+        storage: {'futbeat.push.session': jsonEncode(http.issue('user-a'))},
+      );
+      final restoring = value.service.restore();
+      await storage.captured.future;
+      await value.service.signIn('b@example.com', 'password-test');
+      storage.release.complete();
+      await restoring;
+      expect(value.service.userId, 'user-b');
+      expect(value.http.called('grant_type=refresh_token'), isFalse);
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
     test(
       'keeps the stored session on a network error, then recovers',
       () async {
@@ -879,6 +1344,69 @@ void main() {
       },
     );
 
+    test(
+      'a rejected replacement link cannot reuse an older recovery session',
+      () async {
+        final value = await _service();
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+        await value.service.beginPasswordRecovery(link);
+        expect(value.service.passwordRecoveryPending, isTrue);
+
+        final replacement = link.replace(
+          queryParameters: {
+            'token_hash': 'replacement-token',
+            'type': 'recovery',
+          },
+        );
+        await expectLater(
+          value.service.beginPasswordRecovery(replacement),
+          throwsA(isA<RecoveryLinkInvalid>()),
+        );
+        await expectLater(
+          value.service.completePasswordRecovery('nueva-clave-8'),
+          throwsA(isA<RecoveryLinkInvalid>()),
+        );
+        expect(value.service.passwordRecoveryPending, isFalse);
+        expect(value.service.authenticated, isFalse);
+      },
+    );
+    test(
+      'a replacement after PUT prevents the previous session from committing',
+      () async {
+        final storage = _HeldSessionRead(
+          heldKey: PushService.leftoverKey,
+          hold: false,
+        );
+        final value = await _service(secureStorage: storage);
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) {
+          storage.hold = true;
+          return <String, dynamic>{};
+        };
+        await value.service.beginPasswordRecovery(link);
+        final completing = value.service.completePasswordRecovery(
+          'nueva-clave-8',
+        );
+        await storage.captured.future;
+        expect(value.http.count('/auth/v1/user'), 1);
+        expect(value.service.authenticated, isFalse);
+        value.http.routes['/auth/v1/verify'] = (_) =>
+            value.http.issue('user-b');
+        try {
+          await value.service.beginPasswordRecovery(link);
+        } finally {
+          storage.release.complete();
+        }
+        await completing;
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(value.service.passwordRecoveryPending, isTrue);
+
+        await value.service.completePasswordRecovery('nueva-clave-9');
+        expect(value.service.userId, 'user-b');
+      },
+    );
     test('cancel drops the recovery session', () async {
       final value = await _service();
       verifyOnce(value.http);
@@ -889,6 +1417,49 @@ void main() {
         value.service.completePasswordRecovery('nueva-clave-8'),
         throwsA(isA<RecoveryLinkInvalid>()),
       );
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test('cancel discards a recovery verification already in flight', () async {
+      final value = await _service();
+      verifyOnce(value.http);
+      final gate = value.http.hold('/auth/v1/verify');
+      final verifying = value.service.beginPasswordRecovery(link);
+      await value.http.waitFor('/auth/v1/verify');
+      value.service.cancelPasswordRecovery();
+      gate.complete();
+      await verifying;
+      expect(value.service.passwordRecoveryPending, isFalse);
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test(
+      'cancel prevents automatic login after a pending password update',
+      () async {
+        final value = await _service();
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+        await value.service.beginPasswordRecovery(link);
+        final gate = value.http.hold('/auth/v1/user');
+        final completing = value.service.completePasswordRecovery(
+          'password-next',
+        );
+        await value.http.waitFor('/auth/v1/user');
+        value.service.cancelPasswordRecovery();
+        gate.complete();
+        await completing;
+        expect(value.service.passwordRecoveryPending, isFalse);
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+      },
+    );
+
+    test('sign out drops a verified recovery session', () async {
+      final value = await _service();
+      verifyOnce(value.http);
+      await value.service.beginPasswordRecovery(link);
+      await value.service.signOut();
+      expect(value.service.passwordRecoveryPending, isFalse);
       expect(value.service.authenticated, isFalse);
     });
 

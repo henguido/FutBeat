@@ -131,9 +131,11 @@ String? teamTableCompetitionId(Snapshot data, Entity team) {
         standingsTableFor(data, id),
         data,
         focusTeamIds: {team.id},
-      )?.any((group) => group.rows.any((row) => row['teamId'] == team.id)) ==
+      )?.any((group) => group.rows.any((row) =>
+          data.resolveEntityId(row['teamId']?.toString() ?? '') ==
+          data.resolveEntityId(team.id))) ==
       true;
-  final main = team.json['competitionId']?.toString() ?? '';
+  final main = data.resolveEntityId(team.json['competitionId']?.toString() ?? '');
   if (main.isNotEmpty && shows(main)) return main;
   final candidates = {
     for (final table in data.standings)

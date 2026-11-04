@@ -62,6 +62,7 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
   }
 
   Future<void> _run(Future<void> Function() work) async {
+    if (busy || !mounted) return;
     setState(() {
       busy = true;
       message = null;
@@ -112,6 +113,7 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
   });
 
   Future<void> _submit() async {
+    if (busy || !mounted) return;
     final nextEmail = validateEmail(email.text);
     final nextPassword = validatePassword(password.text, signUp: signup);
     setState(() {

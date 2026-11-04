@@ -44,7 +44,11 @@ bool isQaStoredDetailAbsent(Object error) {
       error.requestOptions.path != '/v1/qa-stored/match-detail') {
     return false;
   }
-  final acknowledgment = error.response!.headers['x-futbeat-qa-stored'];
+  return _hasStoredAcknowledgment(error.response!.headers);
+}
+
+bool _hasStoredAcknowledgment(Headers headers) {
+  final acknowledgment = headers['x-futbeat-qa-stored'];
   return acknowledgment?.length == 1 && acknowledgment!.single == 'v1';
 }
 
@@ -165,7 +169,7 @@ class QaStoredReadInterceptor extends Interceptor {
   void onResponse(Response response, ResponseInterceptorHandler handler) {
     _settle(response.requestOptions);
     if (!clock().isBefore(_expiresAt) ||
-        response.headers.value('x-futbeat-qa-stored') != 'v1') {
+        !_hasStoredAcknowledgment(response.headers)) {
       close();
       handler.reject(
         DioException(
@@ -182,8 +186,8 @@ class QaStoredReadInterceptor extends Interceptor {
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
     _settle(err.requestOptions);
-    if (err.response != null &&
-        err.response!.headers.value('x-futbeat-qa-stored') != 'v1') {
+    final response = err.response;
+    if (response != null && !_hasStoredAcknowledgment(response.headers)) {
       close();
     }
     handler.next(err);

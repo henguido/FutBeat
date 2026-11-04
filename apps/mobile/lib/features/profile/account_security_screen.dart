@@ -18,7 +18,9 @@ class AccountSecurityScreen extends ConsumerStatefulWidget {
 
 class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
   final name = TextEditingController();
-  UserProfileSettings settings = const UserProfileSettings();
+  UserProfileSettings? settings;
+  String? loadedAccountId;
+  bool loading = true;
   bool busy = false;
   String? message;
 
@@ -35,17 +37,40 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
   }
 
   Future<void> _load() async {
-    final service = ref.read(pushServiceProvider);
-    await service.restore();
-    final value = await service.loadProfileSettings();
     if (!mounted) return;
+    final service = ref.read(pushServiceProvider);
     setState(() {
-      settings = value;
-      name.text = value.displayName ?? '';
+      loading = true;
+      settings = null;
+      message = null;
     });
+    try {
+      await service.restore();
+      if (!mounted) return;
+      final accountId = service.userId;
+      final value = await service.loadProfileSettings();
+      if (!mounted) return;
+      if (service.userId != accountId) {
+        throw StateError('Account changed while loading profile');
+      }
+      setState(() {
+        loadedAccountId = accountId;
+        settings = value;
+        name.text = value.displayName ?? '';
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => message = 'No pudimos cargar tu perfil. Inténtalo nuevamente.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
   }
 
   Future<void> _action(Future<void> Function() work, String success) async {
+    if (busy || !mounted) return;
     setState(() {
       busy = true;
       message = null;
@@ -61,13 +86,30 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
   }
 
   Future<void> _saveName() async {
+    final current = settings;
+    if (current == null || loading || busy) return;
+    final service = ref.read(pushServiceProvider);
+    final accountId = loadedAccountId;
+    if (accountId == null || service.userId != accountId) {
+      setState(
+        () => message = 'La cuenta cambió. Vuelve a abrir esta pantalla.',
+      );
+      return;
+    }
     final text = name.text.trim();
-    final next = settings.copyWith(
+    final next = current.copyWith(
       displayName: text.isEmpty ? null : text,
       clearDisplayName: text.isEmpty,
     );
     await _action(() async {
-      await ref.read(pushServiceProvider).saveProfileSettings(next);
+      await service.updateProfileSettings(
+        (current) => current.copyWith(
+          displayName: text.isEmpty ? null : text,
+          clearDisplayName: text.isEmpty,
+        ),
+        expectedUserId: accountId,
+      );
+      if (!mounted) return;
       ref.invalidate(profileSettingsProvider);
       settings = next;
     }, 'Perfil actualizado.');
@@ -112,34 +154,54 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          if (loading) const LinearProgressIndicator(),
+          if (!loading && settings == null)
+            TextButton(onPressed: _load, child: const Text('Reintentar')),
           if (!service.authenticated)
             ProfileSection(
               title: 'Tu cuenta',
               children: [
                 ListTile(
-                  title: const Text('Sin sesión iniciada'),
-                  subtitle: const Text(
-                    'Inicia sesión para sincronizar tus datos.',
+                  title: Text(
+                    service.hasUnconfirmedSignOut
+                        ? 'Cierre de sesión no confirmado'
+                        : 'Sin sesión iniciada',
+                  ),
+                  subtitle: Text(
+                    service.hasUnconfirmedSignOut
+                        ? 'Intenta cerrar la sesión nuevamente antes de cambiar de cuenta.'
+                        : 'Inicia sesión para sincronizar tus datos.',
                   ),
                 ),
-                ListTile(
-                  key: const ValueKey('account-login'),
-                  title: const Text('Iniciar sesión'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    await showAuthSheet(context, AuthMode.login);
-                    await _load();
-                  },
-                ),
-                ListTile(
-                  key: const ValueKey('account-signup'),
-                  title: const Text('Crear cuenta'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    await showAuthSheet(context, AuthMode.signup);
-                    await _load();
-                  },
-                ),
+                if (service.hasUnconfirmedSignOut)
+                  ListTile(
+                    key: const ValueKey('account-logout'),
+                    title: const Text('Reintentar cierre de sesión'),
+                    trailing: const Icon(Icons.logout),
+                    onTap: busy
+                        ? null
+                        : () => _action(service.signOut, 'Sesión cerrada.'),
+                  )
+                else ...[
+                  ListTile(
+                    key: const ValueKey('account-login'),
+                    title: const Text('Iniciar sesión'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () async {
+                      await showAuthSheet(context, AuthMode.login);
+                      await _load();
+                    },
+                  ),
+                  ListTile(
+                    key: const ValueKey('account-signup'),
+                    title: const Text('Crear cuenta'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () async {
+                      await showAuthSheet(context, AuthMode.signup);
+                      await _load();
+                    },
+                  ),
+                ],
               ],
             )
           else ...[
@@ -164,7 +226,7 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
                       TextField(
                         key: const ValueKey('account-name'),
                         controller: name,
-                        enabled: !busy,
+                        enabled: !busy && !loading && settings != null,
                         maxLength: 80,
                         decoration: const InputDecoration(
                           labelText: 'Nombre',
@@ -176,7 +238,9 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
                         width: double.infinity,
                         child: FilledButton.tonal(
                           key: const ValueKey('account-name-save'),
-                          onPressed: busy ? null : _saveName,
+                          onPressed: busy || loading || settings == null
+                              ? null
+                              : _saveName,
                           child: const Text('Guardar nombre'),
                         ),
                       ),

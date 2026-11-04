@@ -56,7 +56,12 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
   @override
   void didUpdateWidget(TeamMatchesTab old) {
     super.didUpdateWidget(old);
-    if (_filtered && old.contextOption?.key != widget.contextOption?.key) {
+    if (old.team.id != widget.team.id) {
+      // A reused route must not attach the previous team's pages or pending
+      // answers to this identity. The new profile starts with all matches.
+      _reset(filtered: false);
+    } else if (_filtered &&
+        old.contextOption?.key != widget.contextOption?.key) {
       _reset(filtered: widget.contextOption != null);
     }
   }

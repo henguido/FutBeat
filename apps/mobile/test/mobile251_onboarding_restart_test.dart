@@ -15,11 +15,12 @@ import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
 import 'package:futbeat/features/onboarding/onboarding_screen.dart';
 import 'package:futbeat/features/profile/personalization_screen.dart';
+import 'package:futbeat/features/profile/notification_options.dart';
 import 'package:futbeat/features/explore/explore_screen.dart';
 import 'package:futbeat/main.dart';
 import 'package:go_router/go_router.dart';
 
-import 'onboarding_test.dart' show catalog;
+import 'onboarding_test.dart' show catalog, catalogJson;
 
 class _NoTokens251 implements PushTokenSource {
   @override
@@ -115,6 +116,9 @@ class _App251 {
           const LiveRealtimeConfig(supabaseUrl: '', publicKey: ''),
         ),
         liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
+        searchSnapshotProvider.overrideWith(
+          (ref, request) async => Snapshot({...catalogJson(), 'players': []}),
+        ),
         playerSuggestionsProvider.overrideWith(
           (ref, teams) async => catalog().players,
         ),
@@ -418,21 +422,34 @@ void main() {
         find.byKey(const ValueKey('onboarding-competition-competition_cr')),
       );
       await next();
-      await _tap(
-        tester,
-        find.byKey(const ValueKey('onboarding-player-player_cr')),
-      );
+      final player = find.byKey(const ValueKey('onboarding-player-player_cr'));
+      expect(player, findsOneWidget);
+      final search = find.byType(TextField);
+      await tester.enterText(search, 'sin coincidencias');
+      await _flush(tester);
+      expect(player, findsNothing);
+      expect(find.text('Sin resultados'), findsOneWidget);
+      await tester.enterText(search, '');
+      await _flush(tester);
+      await _tap(tester, player);
       await next();
-      final goals = find.widgetWithText(
-        SwitchListTile,
-        'Avísame cuando haya un gol',
-      );
-      final newGoalPreference = !tester.widget<SwitchListTile>(goals).value;
-      await _tap(tester, goals);
-      expect(
-        (await tester.runAsync(app.service.loadProfileSettings))!.notifyGoals,
-        newGoalPreference,
-      );
+      final alertKeys = {
+        'notify_kickoff',
+        'notify_goals',
+        'notify_final',
+        'notify_red_cards',
+        'notify_player_starter',
+        'notify_player_bench',
+      };
+      final expectedAlerts = <NotificationOption, bool>{};
+      for (final option in notificationOptions.where(
+        (o) => alertKeys.contains(o.serverKey),
+      )) {
+        final tile = find.widgetWithText(SwitchListTile, option.title);
+        expectedAlerts[option] = !tester.widget<SwitchListTile>(tile).value;
+        await _tap(tester, tile);
+      }
+      expect(expectedAlerts.length, 6);
       await next();
       expect(
         find.byKey(const ValueKey('onboarding-account-login')),
@@ -490,10 +507,16 @@ void main() {
         await tester.runAsync(() => app!.db.watchFollows().first),
         expected,
       );
-      expect(
-        (await tester.runAsync(app.service.loadProfileSettings))!.notifyGoals,
-        newGoalPreference,
-      );
+      final restoredAlerts = (await tester.runAsync(
+        app.service.loadProfileSettings,
+      ))!;
+      for (final entry in expectedAlerts.entries) {
+        expect(
+          entry.key.value(restoredAlerts),
+          entry.value,
+          reason: entry.key.serverKey,
+        );
+      }
       expect(app.service.authenticated, isFalse);
       await _tap(
         tester,
@@ -531,14 +554,11 @@ void main() {
         expect(find.byType(PersonalizationScreen), findsOneWidget);
       }
       await _tap(tester, find.byKey(const ValueKey('personalize-alerts')));
-      expect(
-        tester
-            .widget<SwitchListTile>(
-              find.widgetWithText(SwitchListTile, 'Avísame cuando haya un gol'),
-            )
-            .value,
-        newGoalPreference,
-      );
+      for (final entry in expectedAlerts.entries) {
+        final tile = find.widgetWithText(SwitchListTile, entry.key.title);
+        await tester.scrollUntilVisible(tile, 180);
+        expect(tester.widget<SwitchListTile>(tile).value, entry.value);
+      }
       app.router.pop();
       await _flush(tester);
       expect(app.requests, isEmpty);

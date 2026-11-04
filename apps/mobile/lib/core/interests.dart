@@ -86,7 +86,9 @@ Future<void> recordTemporaryInterest(
   String type,
   String id,
 ) async {
+  if (!ref.context.mounted) return;
   await ref.read(databaseProvider).touchInterest(type, id);
+  if (!ref.context.mounted) return;
   // Server interests belong to the account, not to push: a signed-in user
   // syncs them even in builds without push (touchInterest is a no-op for
   // guests).

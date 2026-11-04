@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
@@ -619,6 +620,38 @@ void main() {
       });
     }
 
+    testWidgets(
+      'queued keyboard and CTA submissions share one auth operation',
+      (tester) async {
+        final gate = Completer<void>();
+        final value = _FakeAuth(db)..signInWait = gate.future;
+        await open(tester, value, AuthMode.login);
+        await tester.enterText(
+          find.byKey(const ValueKey('auth-email')),
+          'user@example.com',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('auth-password')),
+          'secreta-1',
+        );
+        final keyboard = tester
+            .widget<TextField>(find.byKey(const ValueKey('auth-password')))
+            .onSubmitted!;
+        final button = tester
+            .widget<FilledButton>(find.byKey(const ValueKey('auth-submit')))
+            .onPressed!;
+        keyboard('secreta-1');
+        button();
+        await tester.pump();
+        final requests = value.signIns.length;
+        gate.complete();
+        await tester.pumpAndSettle();
+        expect(requests, 1);
+        expect(tester.takeException(), isNull);
+        expect(find.byType(AuthSheet), findsNothing);
+      },
+    );
+
     testWidgets('email sign-in closes with a session', (tester) async {
       final value = _FakeAuth(db);
       bool? result;
@@ -805,6 +838,7 @@ class _FakeAuth extends PushService {
   String? rejectSignIn;
   bool cancelOAuth = false;
   bool existingAccount = false;
+  Future<void>? signInWait;
   OAuthProviderAvailability availability;
   int availabilityRequests = 0;
 
@@ -817,6 +851,8 @@ class _FakeAuth extends PushService {
   @override
   Future<void> signIn(String email, String password) async {
     signIns.add(email.trim());
+    final waiting = signInWait;
+    if (waiting != null) await waiting;
     final code = rejectSignIn;
     if (code != null) {
       final options = RequestOptions(path: '/auth/v1/token');

@@ -21,29 +21,72 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
   DeviceNotificationPermission permission =
       DeviceNotificationPermission.unknown;
   bool busy = false;
+  int _saveGeneration = 0;
+  int _loadGeneration = 0;
+  String? _settingsUserId;
+  StreamSubscription<void>? _profileSubscription;
   String? actionError;
 
   @override
   void initState() {
     super.initState();
+    final service = ref.read(pushServiceProvider);
+    _settingsUserId = service.userId;
+    _profileSubscription = service.profileChanges.listen((_) {
+      // A UID change can precede reconciliation. Reload when the new
+      // profile is written, without disrupting edits to the same profile.
+      if (mounted && _settingsUserId != service.userId) unawaited(_load());
+    });
     unawaited(_load());
   }
 
+  @override
+  void dispose() {
+    unawaited(_profileSubscription?.cancel());
+    super.dispose();
+  }
+
   Future<void> _load() async {
-    final service = ref.read(pushServiceProvider);
-    final loaded = await service.loadProfileSettings();
     if (!mounted) return;
-    setState(() => settings = loaded);
+    final service = ref.read(pushServiceProvider);
+    final owner = service.userId;
+    final generation = ++_loadGeneration;
+    final saveGeneration = _saveGeneration;
+    bool isCurrent() =>
+        mounted &&
+        generation == _loadGeneration &&
+        saveGeneration == _saveGeneration &&
+        service.userId == owner;
+
+    setState(() => actionError = null);
+    final UserProfileSettings loaded;
+    try {
+      loaded = await service.loadProfileSettings();
+    } catch (_) {
+      if (isCurrent()) {
+        setState(
+          () => actionError =
+              'No pudimos cargar tus preferencias. Inténtalo nuevamente.',
+        );
+      }
+      return;
+    }
+    if (!isCurrent()) return;
+    setState(() {
+      settings = loaded;
+      _settingsUserId = owner;
+    });
     final devicePermission = service.pushConfigured
         ? await service.notificationPermission()
         : DeviceNotificationPermission.unknown;
-    if (!mounted) return;
+    if (!isCurrent()) return;
     setState(() => permission = devicePermission);
   }
 
   Future<void> _save(NotificationOption option, bool enabled) async {
     final current = settings;
     if (current == null) return;
+    final generation = ++_saveGeneration;
     final next = option.update(current, enabled);
     setState(() {
       settings = next;
@@ -51,11 +94,35 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
     });
     final service = ref.read(pushServiceProvider);
     try {
-      await service.saveProfileSettings(next);
+      UserProfileSettings? applied;
+      String? appliedUserId;
+      await service.updateProfileSettings((current) {
+        appliedUserId = service.userId;
+        return applied = option.update(current, enabled);
+      });
+      if (!mounted || generation != _saveGeneration) return;
+      // The queued edit read the active account's latest profile. Keep the
+      // other switches consistent with that saved value, rather than the
+      // snapshot this screen held before an account change.
+      if (applied != null && service.userId == appliedUserId) {
+        setState(() => settings = applied);
+      }
       ref.invalidate(profileSettingsProvider);
     } catch (_) {
-      final local = await service.loadProfileSettings();
-      if (!mounted) return;
+      if (!mounted || generation != _saveGeneration) return;
+      final UserProfileSettings local;
+      try {
+        local = await service.loadProfileSettings();
+      } catch (_) {
+        if (mounted && generation == _saveGeneration) {
+          setState(
+            () => actionError =
+                'No pudimos comprobar el cambio. Inténtalo nuevamente.',
+          );
+        }
+        return;
+      }
+      if (!mounted || generation != _saveGeneration) return;
       final savedLocally = option.value(local) == enabled;
       setState(() {
         settings = savedLocally ? local : current;
@@ -119,7 +186,20 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
     return Scaffold(
       appBar: AppBar(title: const Text('Notificaciones')),
       body: value == null
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: actionError == null
+                  ? const CircularProgressIndicator()
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _InlineMessage(message: actionError!),
+                        TextButton(
+                          onPressed: _load,
+                          child: const Text('Reintentar'),
+                        ),
+                      ],
+                    ),
+            )
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
               children: [

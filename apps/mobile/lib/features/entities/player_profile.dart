@@ -275,35 +275,62 @@ List<(String, String)> playerFacts(Entity player) {
   ];
 }
 
+bool _profileEventBelongsToPlayer(
+  Snapshot data,
+  Json event,
+  String playerId, {
+  bool assist = false,
+}) {
+  final canonical = event[assist ? 'canonicalAssistPlayerId' : 'canonicalPlayerId']
+      ?.toString().trim() ?? '';
+  final id = canonical.isNotEmpty
+      ? canonical
+      : event[assist ? 'assistPlayerId' : 'playerId']?.toString().trim() ?? '';
+  return id.isNotEmpty &&
+      data.resolveEntityId(id) == data.resolveEntityId(playerId);
+}
+
+List<FootballMatch> _profileMatchRevisions(Snapshot data) {
+  final revisions = <String, List<FootballMatch>>{};
+  for (final match in data.matches) {
+    revisions.putIfAbsent(match.id, () => []).add(match);
+  }
+  // Reuse the feed's revision selection, only within an exact canonical ID.
+  // Distinct fixtures are not joined by team names, dates or provider guesses.
+  return [for (final rows in revisions.values) dedupeFixtures(rows).single];
+}
+
 /// Stored events where this player scored, assisted or was booked/subbed.
 List<(FootballMatch, Json, bool)> playerRecentEvents(
   Snapshot data,
   String playerId,
 ) {
   final result = <(FootballMatch, Json, bool)>[];
-  final canonicalPlayerId = data.resolveEntityId(playerId);
-  bool belongsToPlayer(Object? rawId) {
-    final id = rawId?.toString();
-    return id != null &&
-        id.isNotEmpty &&
-        data.resolveEntityId(id) == canonicalPlayerId;
-  }
-
-  for (final match in data.matches) {
+  for (final match in _profileMatchRevisions(data)) {
     for (final event in match.events) {
-      if (belongsToPlayer(event['playerId'])) {
+      if (_profileEventBelongsToPlayer(data, event, playerId)) {
         result.add((match, event, false));
-      } else if (belongsToPlayer(event['assistPlayerId']) &&
-          event['type'] == 'GOAL' &&
-          event['ownGoal'] != true) {
-        result.add((match, event, true));
+      } else if (_profileEventBelongsToPlayer(data, event, playerId, assist: true)) {
+        // Canonical substitutions use the secondary player field for the
+        // incoming player. It is participation, never a goal assist.
+        if (event['type'] == 'SUBSTITUTION') {
+          result.add((match, event, false));
+        } else if (event['type'] == 'GOAL' && event['ownGoal'] != true) {
+          result.add((match, event, true));
+        }
       }
     }
   }
   result.sort((a, b) {
     final byDate = b.$1.startTime.compareTo(a.$1.startTime);
     if (byDate != 0) return byDate;
-    return (b.$2['minute'] as int? ?? 0).compareTo(a.$2['minute'] as int? ?? 0);
+    final byMinute = (b.$2['minute'] as int? ?? 0).compareTo(
+      a.$2['minute'] as int? ?? 0,
+    );
+    if (byMinute != 0) return byMinute;
+    return (b.$2['extraMinute'] as int? ?? 0).compareTo(
+      a.$2['extraMinute'] as int? ?? 0,
+    );
   });
   return result;
 }
@@ -327,22 +354,15 @@ List<FootballMatch> playerProfileMatches(Snapshot data, Entity player) {
   addTeam(player.json['teamId']);
   addTeam(player.json['nationalTeamId']);
   final byId = <String, FootballMatch>{};
-  for (final match in data.matches) {
+  for (final match in _profileMatchRevisions(data)) {
     final currentTeamMatch =
         teamIds.contains(data.resolveEntityId(match.homeId)) ||
         teamIds.contains(data.resolveEntityId(match.awayId));
     final explicitActivity = match.events.any((event) {
-      bool belongsToPlayer(Object? value) {
-        final raw = value?.toString();
-        return raw != null &&
-            raw.isNotEmpty &&
-            data.resolveEntityId(raw) == playerId;
-      }
-
-      return belongsToPlayer(event['playerId']) ||
-          (event['type'] == 'GOAL' &&
-              event['ownGoal'] != true &&
-              belongsToPlayer(event['assistPlayerId']));
+      return _profileEventBelongsToPlayer(data, event, playerId) ||
+          ((event['type'] == 'SUBSTITUTION' ||
+              (event['type'] == 'GOAL' && event['ownGoal'] != true)) &&
+              _profileEventBelongsToPlayer(data, event, playerId, assist: true));
     });
     if (currentTeamMatch || explicitActivity) {
       byId.putIfAbsent(match.id, () => match);

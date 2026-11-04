@@ -943,8 +943,8 @@ void main() {
       expect(find.text('TUS COMPETICIONES'), findsNothing);
       // Competitions follow "Favoritos" directly (no extra heading).
       expect(find.text('TODOS LOS PARTIDOS'), findsNothing);
-      // MOBILE239: the followed fixture has one visible group, Favoritos.
-      expect(find.text('Marathón'), findsOneWidget);
+      // #220: highlight the fixture and also retain it in its league.
+      expect(find.text('Marathón'), findsNWidgets(2));
       expect(find.text('Equipo X'), findsOneWidget);
       expect(find.text('Equipo Y'), findsOneWidget);
       expect(find.text('Real Betis'), findsOneWidget);

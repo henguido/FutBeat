@@ -379,6 +379,19 @@ void main() {
       reads,
       reason: 'the view switch never makes a request',
     );
+    await tester.tap(find.byKey(const ValueKey('standings-show-full')));
+    await _settle(tester);
+    expect(find.text('Tabla completa'), findsOneWidget);
+    expect(find.byKey(const ValueKey('standings-view-full')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('standings-view-full')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('standings-full')), findsOneWidget);
+    expect((server.contextReads, server.detailReads), reads);
+    await tester.pageBack();
+    await _settle(tester);
+    expect(_selectedTab(tester), 'Tabla');
+    expect(find.byKey(const ValueKey('standings-show-full')), findsOneWidget);
+    expect((server.contextReads, server.detailReads), reads);
     expect(tester.takeException(), isNull);
     await _close(tester, container);
   });

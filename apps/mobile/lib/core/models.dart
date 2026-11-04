@@ -3,6 +3,11 @@ import 'player_display_identity.dart';
 
 typedef Json = Map<String, dynamic>;
 
+/// Local cache provenance, never provider evidence. A terminal learned from a
+/// LIVE overlay can accept a later terminal correction; a canonical HTTP final
+/// remains absorbing. Network readers remove this local-only annotation.
+const localTerminalObservationKey = '_futbeatLocalTerminalObservation';
+
 String? safePlayerImage(dynamic value) {
   if (value is! String) return null;
   final uri = Uri.tryParse(value.trim());
@@ -507,10 +512,16 @@ class LiveMatchUpdate {
       'ABANDONED',
       'CANCELLED',
     };
-    // A terminal snapshot is absorbing (#120): realtime is an overlay and can
-    // never downgrade or rewrite it, however late its changedAt. Corrections
-    // after the final arrive as a new canonical snapshot, not through here.
-    if (terminalStatuses.contains(match['status'] as String?)) return match;
+    // A canonical terminal snapshot is absorbing (#120). A terminal derived
+    // locally from an overlay is not canonical evidence: later terminal
+    // corrections still use the same ordering guards below. Even that local
+    // result cannot be resumed by a LIVE overlay; only canonical HTTP can do so.
+    if (terminalStatuses.contains(match['status'] as String?)) {
+      if (match[localTerminalObservationKey] != true ||
+          !terminalStatuses.contains(status)) {
+        return match;
+      }
+    }
     // A result overlay dated before this fixture's kickoff is contradictory
     // provisional evidence (or an incorrectly matched provider row). A new
     // canonical VERIFIED snapshot was accepted above, even if its kickoff is
@@ -533,6 +544,27 @@ class LiveMatchUpdate {
         (match['liveRevision'] as int? ?? 0) > revision) {
       return match;
     }
+    if (match['liveProvider'] == provider &&
+        match['liveRevision'] == revision &&
+        previousAt != null &&
+        changedAt.isAtSameMomentAs(previousAt)) {
+      final previousObserved =
+          DateTime.tryParse(match['liveObservedAt'] as String? ?? '') ??
+          previousAt;
+      final observation = observedAt ?? changedAt;
+      if (observation.isBefore(previousObserved)) return match;
+      // Identical content/observation can arrive again from an older REST
+      // response. Keep the later device-clock freshness already persisted.
+      if (observation.isAtSameMomentAs(previousObserved)) {
+        final previousDevice = DateTime.tryParse(
+          match['liveObservationDeviceAt'] as String? ?? '',
+        );
+        final incomingDevice = receivedAt ?? observedAt ?? changedAt;
+        if (previousDevice != null && incomingDevice.isBefore(previousDevice)) {
+          return match;
+        }
+      }
+    }
     // P0-A: latest_events is the provider's complete, already reconciled
     // list (corrections, annulled goals, deleted cards). It REPLACES that
     // provider's events: never a union, so a row it no longer sends is gone.
@@ -540,7 +572,18 @@ class LiveMatchUpdate {
     // copies) the list neither re-sends nor owns. Owned by this provider:
     // its labelled rows and the synthetic score goals (GOAL feed only).
     final current = (match['events'] as List? ?? []).cast<Json>();
-    final latestIds = {for (final event in events) event['id']};
+    // Reject foreign rows before they can claim an existing event's ID.
+    // A discarded row must not erase another provider's retained event.
+    final latest = events.where((event) {
+      return event['id'] is String &&
+          (event['matchId'] == null || event['matchId'] == matchId) &&
+          (event['teamId'] == null ||
+              [
+                match['homeTeamId'],
+                match['awayTeamId'],
+              ].contains(event['teamId']));
+    }).toList();
+    final latestIds = {for (final event in latest) event['id']};
     bool ownedByThisFeed(Json event) {
       final label = event['provider'];
       if (label != null) return label == provider;
@@ -556,7 +599,7 @@ class LiveMatchUpdate {
         )
       else
         ...current,
-      ...events,
+      ...latest,
     ]) {
       final id = event['id'];
       if (id is! String) continue;
@@ -581,6 +624,11 @@ class LiveMatchUpdate {
       ..['liveObservationDeviceAt'] = (receivedAt ?? observedAt ?? changedAt)
           .toUtc()
           .toIso8601String();
+    if (terminalStatuses.contains(status)) {
+      result[localTerminalObservationKey] = true;
+    } else {
+      result.remove(localTerminalObservationKey);
+    }
     if (homeScore != null && awayScore != null) {
       result['score'] = {'home': homeScore, 'away': awayScore};
     }

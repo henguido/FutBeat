@@ -210,6 +210,7 @@ Future<ProviderContainer> _open(
   _Server server, {
   double width = 360,
   bool storedOnly = false,
+  Snapshot? initialData,
 }) async {
   tester.view.physicalSize = Size(width, 780);
   tester.view.devicePixelRatio = 1;
@@ -242,7 +243,9 @@ Future<ProviderContainer> _open(
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(home: MatchScreen(id: _match)),
+      child: MaterialApp(
+        home: MatchScreen(id: _match, initialData: initialData),
+      ),
     ),
   );
   await tester.pump();
@@ -456,6 +459,49 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Partido no encontrado'), findsOneWidget);
     await _close(tester, container);
+  });
+
+  testWidgets('incomplete context keeps the already visible exact match', (
+    tester,
+  ) async {
+    final server = _Server(
+      detail: (_) => _detail(),
+      context: (read) => {
+        ..._context(),
+        'teams': [
+          {'id': 'fb_team_mc_h', 'name': 'Local Sintético'},
+          if (read > 0) {'id': 'fb_team_mc_a', 'name': 'Visita Actualizada'},
+        ],
+      },
+    );
+    final container = await _open(
+      tester,
+      server,
+      initialData: Snapshot(_context()),
+    );
+    try {
+      expect(server.contextReads, 1);
+      expect(
+        container.read(matchContextSnapshotProvider(_match)).asData,
+        isNotNull,
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.text('Partido no encontrado'), findsNothing);
+      expect(find.text('Visita Sintética'), findsWidgets);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is Banner && w.message == 'Datos guardados',
+        ),
+        findsOneWidget,
+      );
+      container.invalidate(matchContextSnapshotProvider(_match));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(server.contextReads, 2);
+      expect(find.text('Visita Actualizada'), findsWidgets);
+    } finally {
+      await _close(tester, container);
+    }
   });
 
   testWidgets('21. lineup that arrives later appears in place; tab kept', (
