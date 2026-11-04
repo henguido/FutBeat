@@ -76,13 +76,17 @@ fun releaseRuntimeProblems(defines: Map<String, String> = dartDefines()): List<S
     }
     // An omitted override keeps the application's existing HTTPS default.
     // If explicitly supplied, never silently fall back from an invalid value.
-    defines["FUTBEAT_API_URL"]?.let { value ->
+    for ((key, originOnly) in listOf("FUTBEAT_API_URL" to false, "FUTBEAT_SUPABASE_URL" to true)) {
+        val value = defines[key] ?: continue
         val uri = runCatching { URI(value) }.getOrNull()
-        if (uri == null || uri.scheme != "https" || uri.host.isNullOrBlank() ||
+        val host = uri?.host?.trimEnd('.')?.lowercase()
+        if (uri == null || uri.scheme != "https" || host.isNullOrBlank() ||
             uri.userInfo != null || uri.fragment != null || uri.query != null ||
-            uri.host.equals("localhost", ignoreCase = true) ||
-            uri.host.startsWith("127.") || uri.host == "[::1]" || uri.host == "::1") {
-            problems += "FUTBEAT_API_URL must be a non-loopback HTTPS base URL without credentials, query or fragment"
+            host == "localhost" || host.startsWith("127.") ||
+            host == "[::1]" || host == "::1" ||
+            (originOnly && uri.rawPath !in listOf("", "/"))) {
+            val target = if (originOnly) "origin" else "base URL"
+            problems += "$key must be a non-loopback HTTPS $target without credentials, query or fragment"
         }
     }
     return problems

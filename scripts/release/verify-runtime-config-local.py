@@ -18,7 +18,7 @@ def artifact_snapshot(android):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java', help='Existing JDK executable; never downloads a JDK')
-    parser.add_argument('--case', action='append', choices=['unsafe', 'safe', 'empty-api', 'credential-api', 'release-graph', 'secret-token', 'privileged-jwt', 'anon-keys'])
+    parser.add_argument('--case', action='append', choices=['unsafe', 'safe', 'empty-api', 'credential-api', 'release-graph', 'secret-token', 'privileged-jwt', 'anon-keys', 'unsafe-auth-origin', 'auth-path', 'safe-auth-origin'])
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     java = args.java
@@ -42,6 +42,9 @@ def main():
         ('unsafe', ['FUTBEAT_USE_DEMO=true', 'FUTBEAT_QA_LOCAL_CACHE_ONLY=true', 'FUTBEAT_QA_DIAGNOSTICS=true', 'FUTBEAT_API_URL=http://127.0.0.1:9'], ['validateReleaseRuntimeConfig'], qa_messages + [url_message]),
         ('safe', ['FUTBEAT_USE_DEMO=false', 'FUTBEAT_QA_LOCAL_CACHE_ONLY=false', 'FUTBEAT_QA_DIAGNOSTICS=false', 'FUTBEAT_API_URL=https://api.example.test/v1'], ['validateReleaseRuntimeConfig'], []),
         ('empty-api', ['FUTBEAT_API_URL='], ['validateReleaseRuntimeConfig'], [url_message]),
+        ('unsafe-auth-origin', ['FUTBEAT_SUPABASE_URL=http://127.0.0.1:9'], ['validateReleaseRuntimeConfig'], ['FUTBEAT_SUPABASE_URL must be a non-loopback HTTPS origin']),
+        ('auth-path', ['FUTBEAT_SUPABASE_URL=https://auth.example.test/not-an-origin'], ['validateReleaseRuntimeConfig'], ['FUTBEAT_SUPABASE_URL must be a non-loopback HTTPS origin']),
+        ('safe-auth-origin', ['FUTBEAT_SUPABASE_URL=https://auth.example.test/'], ['validateReleaseRuntimeConfig'], []),
         ('credential-api', ['FUTBEAT_API_URL=https://fixture:synthetic@api.example.test/v1'], ['validateReleaseRuntimeConfig'], [url_message]),
         # Strict dry-run: validates the real release graph, never its actions.
         ('release-graph', ['FUTBEAT_USE_DEMO=true', 'FUTBEAT_ADS_DISABLED=true'], [':app:bundleRelease', '--dry-run'], ['Release runtime configuration:', 'FUTBEAT_USE_DEMO is QA-only']),
