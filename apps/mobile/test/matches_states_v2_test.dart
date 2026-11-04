@@ -198,6 +198,30 @@ void main() {
     expect(find.byKey(const ValueKey('match-row-match')), findsOneWidget);
   });
 
+  testWidgets('empty LIVE filter distinguishes partial and complete coverage', (
+    tester,
+  ) async {
+    final controller = StreamController<Snapshot>();
+    addTearDown(controller.close);
+    await _pump(tester, () => controller.stream);
+
+    controller.add(_data(status: 'SCHEDULED', partial: true));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('No pudimos confirmar partidos para este filtro.'),
+      findsOneWidget,
+    );
+    expect(find.text('No hay partidos en vivo ahora.'), findsNothing);
+    expect(find.text('Ver todos'), findsOneWidget);
+
+    controller.add(_data(status: 'SCHEDULED'));
+    await tester.pumpAndSettle();
+    expect(find.text('No hay partidos en vivo ahora.'), findsOneWidget);
+  });
+
   testWidgets('error without cache uses generic copy and retry recovers', (
     tester,
   ) async {

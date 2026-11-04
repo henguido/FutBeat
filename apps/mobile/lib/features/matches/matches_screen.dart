@@ -868,6 +868,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                     : Icons.filter_alt_off_outlined,
                 title: data.stale
                     ? 'No hay partidos guardados para este filtro.'
+                    : data.coverage?['partial'] == true
+                    ? 'No pudimos confirmar partidos para este filtro.'
                     : switch (effectiveFilter) {
                         'En vivo' => 'No hay partidos en vivo ahora.',
                         'Próximos' => 'No hay próximos partidos.',
@@ -876,6 +878,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                       },
                 message: data.stale
                     ? 'Puedes ver los partidos guardados en Todos.'
+                    : data.coverage?['partial'] == true
+                    ? 'La cobertura del calendario todavía es parcial.'
                     : 'Los partidos del día siguen disponibles en Todos.',
                 actionLabel: 'Ver todos',
                 onAction: () => setState(() => filter = 'Todos'),
