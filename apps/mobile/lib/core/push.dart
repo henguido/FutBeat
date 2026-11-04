@@ -529,6 +529,7 @@ class _LocalSignOutContext {
 }
 
 class _AccountDeletionIntent {
+  bool inFlight = true;
   bool confirmed = false;
 }
 
@@ -663,8 +664,10 @@ class PushService {
     final before = accountId;
     _session = value;
     final after = accountId;
-    // Only the current account can still need its local deletion guard.
-    _deletionIntents.removeWhere((uid, _) => uid != after);
+    // Keep in-flight requests guarded even if the user switches accounts.
+    _deletionIntents.removeWhere(
+      (uid, intent) => uid != after && !intent.inFlight,
+    );
     if (before != after && !_accountChanges.isClosed) {
       _accountChanges.add(after);
     }
@@ -2713,9 +2716,13 @@ class PushService {
       throw StateError('Authentication required');
     }
     final uid = userId;
+    final previous = _deletionIntents[uid];
+    if (previous?.inFlight == true) {
+      throw StateError('Account deletion is in progress');
+    }
     final intent = _AccountDeletionIntent();
     if (uid != null) {
-      intent.confirmed = _deletionIntents[uid]?.confirmed ?? false;
+      intent.confirmed = previous?.confirmed ?? false;
       _deletionIntents[uid] = intent;
     }
     try {
@@ -2724,6 +2731,7 @@ class PushService {
         onConfirmed: () => intent.confirmed = true,
       );
     } finally {
+      intent.inFlight = false;
       if (uid != null &&
           identical(_deletionIntents[uid], intent) &&
           (!intent.confirmed || userId != uid)) {

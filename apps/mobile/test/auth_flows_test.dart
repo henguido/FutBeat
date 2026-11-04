@@ -446,6 +446,38 @@ Future<void> _scrollTo(WidgetTester tester, Finder finder) => tester
     .scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
 
 void main() {
+  test('a concurrent account deletion does not send another POST', () async {
+    final value = await _service();
+    value.service.session = value.http.issue('user-a');
+    final dispatched = Completer<void>();
+    final release = Completer<void>();
+    var calls = 0;
+    value.http.routes['futbeat-delete-account'] = (_) async {
+      if (++calls == 1) {
+        dispatched.complete();
+        await release.future;
+      }
+      return {'deleted': true};
+    };
+    final first = value.service.deleteAccount().then<Object?>(
+      (_) => null,
+      onError: (Object error) => error,
+    );
+    await dispatched.future;
+    Object? duplicateError;
+    try {
+      await value.service.deleteAccount();
+    } catch (error) {
+      duplicateError = error;
+    } finally {
+      release.complete();
+    }
+    expect(await first, isNull);
+    expect(calls, 1);
+    expect(duplicateError, isA<StateError>());
+    expect(value.service.authenticated, isFalse);
+  });
+
   group('authErrorMessage', () {
     final cases = <String, (Object, String)>{
       'invalid_credentials': (
