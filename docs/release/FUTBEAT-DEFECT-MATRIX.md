@@ -192,3 +192,35 @@ Correcciones raíz adicionales: f3720b66/16a56ad0/6dfdec2b (perfil y ACK),6f661a
 | D260-R10 / N08/A09 | Register true tardío o error de delete revierte disable | RESUELTO LOCAL | 6303b0f | 2FAIL antes;144focalesPASS; FCM real no probado |
 
 Corte E260:1737PASS/goldens y analyze limpio sobre8ce170d;20issues abiertos (2P0release,10P1,8P2),0cierres remotos. Los fixes locales no acreditan datos productivos ni QA física.
+
+## MOBILE261 — requisitos locales, sin cierres remotos
+
+Estas unidades son defectos/regresiones de código, no issues nuevos de GitHub.
+No se suman las suites focales porque se solapan. Aceptación real sigue pendiente.
+
+| Unidad / requisito | Defecto demostrado | Commit integrado | Estado / evidencia |
+|---|---|---|---|
+| D261-D1 / S03,S07 | Observación LIVE atrasada con igual revisión reemplaza la más reciente | f4272a43 | LOCAL_PASS; 2 FAIL antes, 34 focales PASS |
+| D261-B1 / M02,M03 | Pausa deja el ID de precarga local marcado y sin datos | 9a0f301a | LOCAL_PASS; 2 FAIL antes; conserva límites de 8 lecturas/sesión y 2 simultáneas, 0 HTTP |
+| D261-C1 / M09 | Jugador entrante omitido en participación | b9e85f6d | LOCAL_PASS; regresión falla antes |
+| D261-C2 / M04,M09 | Orden incorrecto del tiempo añadido | 895916ab | LOCAL_PASS; regresión falla antes |
+| D261-C3 / M04,M09 | Panel no reutiliza redirect canónico inverso explícito | 32ca336d | LOCAL_PASS; 56 focales, incluidos alias ambiguos y homónimos |
+| D261-C4 / M04,M09 | Perfil revive un gol al conservar dos revisiones del mismo fixture | 9b2bac40 | LOCAL_PASS; 2 FAIL antes, IDs distintos preservados |
+| D261-A1 / A07,A09,N08 | Fallo de lectura se trata como perfil vacío | 24df0b60 | LOCAL_PASS; 4 FAIL antes, 263 focales |
+| D261-A2 / A07 | Fallo de lectura dirty autoriza importación destructiva | 2d7adfca | LOCAL_PASS; 4 FAIL antes, 169 focales |
+| D261-A3 / A07 | Valor se persiste sin dirty cuando falla la segunda escritura | 1e046501 | LOCAL_PASS; 1 FAIL antes, 172 focales |
+| D261-A4 / A09 | Fallo transitorio de almacenamiento memoiza invitado indefinidamente | 063a90cf | LOCAL_PASS; 5 FAIL antes; guardia de logout 4c16a9d8 |
+| D261-D2 / M03 | Evicción elimina la nueva entrada al empatar timestamp | a0bcb336 | LOCAL_PASS; 3 FAIL antes |
+| D261-D3 / M03 | Escritura/poda concurrentes exceden los límites de caché | ad4e6fff | LOCAL_PASS; 3 FAIL antes, límites 32/8/64 conservados |
+| D261-D4 / M03 | Limpieza de lectura vencida elimina un refresh concurrente | 80228b2b | LOCAL_PASS; 1 FAIL antes, 49 focales |
+| D261-D5 / M03,M09 | Contexto de otra entidad contamina identidad y caché | 5533ba27 | LOCAL_PASS; 8 FAIL antes, 76 focales |
+| D261-A5/A6 / A09,M02 | Error de cierre local permite cruce de cuentas y oculta reintento | f221ba3e | LOCAL_PASS; 335 focales; revocación remota NOT VERIFIED |
+| D261-A7 / A09 | Cambio directo A→B conserva favoritos de A | 41d5c14c | LOCAL_PASS; regresiones de cambio de cuenta y precedencia |
+| D261-A8 / A09 | Guardia de integración: cierre explícito omite intento remoto durante cambio interno | 4a683dd0 | LOCAL_PASS; 344 focales. No cuenta como defecto inicial adicional |
+| D261-A9 / A09,A07 | Nombre de A heredado por B tras edición de preferencias de invitado | — | IN_PROGRESS; 3 fallos iniciales reproducidos, revisión concurrente pendiente |
+
+Suite completa del código `cf2987f7`: **1859 PASS**, goldens incluidos, 123 s;
+analyze limpio en 10,2 s. Evidencia: `artifacts/mobile261/full-batch04.log` y
+`analyze-batch04.log`. A9 y el recorrido extendido aún no están integrados en ese corte.
+PR Draft244/CI Linux corresponde exclusivamente a MOBILE260/1719ecb.
+Ningún PNG, binario Android, backend o entorno productivo se modificó.
