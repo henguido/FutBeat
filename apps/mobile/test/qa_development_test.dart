@@ -211,4 +211,33 @@ void main() {
     expect(adapter.paths, ['/v1/qa-stored/calendar']);
     dio.close();
   });
+  for (final status in [200, 404]) {
+    test(
+      'ambiguous stored acknowledgment on HTTP $status seals the session',
+      () async {
+        final adapter = _Adapter(
+          (_) async => ResponseBody.fromString(
+            '{}',
+            status,
+            headers: {'x-futbeat-qa-stored': ['v1', 'v2']},
+          ),
+        );
+        final dio = Dio(BaseOptions(baseUrl: base))..httpClientAdapter = adapter;
+        final policy = QaStoredReadInterceptor(origin: Uri.parse(base));
+        dio.interceptors.add(policy);
+        addTearDown(() {
+          policy.close();
+          dio.close(force: true);
+        });
+
+        await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+        await expectLater(
+          dio.get('/v1/match-detail'),
+          throwsA(isA<DioException>()),
+        );
+        expect(adapter.paths, ['/v1/qa-stored/calendar']);
+        expect(policy.counters['active'], 0);
+      },
+    );
+  }
 }
