@@ -276,3 +276,13 @@ LOCAL_PASS únicamente; sin nuevas lecturas/HTTP, build, CI remoto o QA real.
 ### E264 — consolidación local
 
 La rama codex/mobile-264-integration verifica por ascendencia los nueve commits programados de MOBILE261 y conserva los parches equivalentes de MOBILE262 y MOBILE263. A06/A07/A09, M03 y S01/S02/S07/N08 tienen regresiones locales por SHA. La matriz completa y las limitaciones quedan en FUTBEAT-MOBILE-264-CONSOLIDATION.md. R05 sigue NO CONFIRMADO si se pierde la confirmación antes de persistirla. El candidato permanece NO-GO hasta verificar R01–R05 y R08–R10 en las superficies autorizadas. CI Linux se solicita en borrador contra codex/mobile-252-release.
+
+### E266 — guardas locales de la candidata
+
+- **R05**: 7e3b940 bloquea solicitudes de borrado solapadas para el mismo UID. 6ffda74 exige una identidad de cuenta antes del POST. Las dos regresiones fallaron antes y pasan después. Se mantiene NO CONFIRMADO cuando se pierde la respuesta antes de persistir el recibo. El handoff de recibo durable continúa pendiente de backend.
+- **A09**: eb079f5 vuelve a verificar la generación de recuperación antes de instalar sesión, incluso tras la respuesta del cambio de contraseña. La prueba con barrera local reproduce y descarta una sesión anterior.
+- **R10**: 6e498f6 cierra la sesión pasiva local si la cabecera de confirmación contiene valores múltiples. Las pruebas de loopback verifican cero solicitud siguiente. El adaptador sigue desactivado y el contrato desplegado sigue pendiente.
+- **R01/R02**: el inventario de Play mostró 1, 2 y 4. El código 5 sigue propuesto. Dos AAB históricos comparten firmante C9:D4…4F:4F. Falta comparar con el certificado de subida activo de Play y acreditar el firmante disponible.
+- **R03/R04/R08/R09**: procedimiento de configuración, empaquetado y QA preparado. El CI verde de PR #245 corresponde a bb79bf70. Los commits posteriores requieren CI propio. RC NO-GO.
+
+Validación E266 sobre f92b5b6: 109 focales, 1941 pruebas completas con goldens y analyze sin incidencias. Las dos pruebas exitosas de borrado ahora incluyen un UID sintético. Evidencia local en artifacts/mobile266; el código nuevo sigue pendiente de CI Linux propio.
