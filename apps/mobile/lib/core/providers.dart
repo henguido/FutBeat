@@ -2418,14 +2418,23 @@ Future<void> toggleFollow(
   AppDatabase database,
   EntityRedirectMemory redirects,
   String type,
-  String id,
-) async {
-  if (type == 'match') return database.toggle(type, id);
+  String id, {
+  Future<void> Function(Set<String> keys)? onIntent,
+}) async {
+  if (type == 'match') {
+    await onIntent?.call(Set.unmodifiable({'match:$id'}));
+    return database.toggle(type, id);
+  }
   final canonical = redirects.resolve(id);
   final aliases = {
     for (final alias in redirects.redirects.keys)
       if (redirects.resolve(alias) == canonical) alias,
   };
+  await onIntent?.call(
+    Set.unmodifiable({
+      for (final controlled in {canonical, id, ...aliases}) '$type:$controlled',
+    }),
+  );
   // No alias known for this entity: the plain toggle.
   if (canonical == id && aliases.isEmpty) return database.toggle(type, id);
   await database.toggleAny(type, canonical, {id, ...aliases});
