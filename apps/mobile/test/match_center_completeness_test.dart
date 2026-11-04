@@ -504,6 +504,47 @@ void main() {
     }
   });
 
+  testWidgets('deep link keeps its last complete context after partial refresh', (
+    tester,
+  ) async {
+    final server = _Server(
+      detail: (_) => _detail(),
+      context: (read) => {
+        ..._context(),
+        'teams': [
+          {'id': 'fb_team_mc_h', 'name': 'Local Sintético'},
+          if (read != 1) {'id': 'fb_team_mc_a', 'name': 'Visita $read'},
+        ],
+      },
+    );
+    final container = await _open(tester, server);
+    try {
+      expect(server.contextReads, 1);
+      expect(find.text('Visita 0'), findsWidgets);
+
+      container.invalidate(matchContextSnapshotProvider(_match));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(server.contextReads, 2);
+      expect(find.text('Partido no encontrado'), findsNothing);
+      expect(find.text('Visita 0'), findsWidgets);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is Banner && w.message == 'Datos guardados',
+        ),
+        findsOneWidget,
+      );
+
+      container.invalidate(matchContextSnapshotProvider(_match));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(server.contextReads, 3);
+      expect(find.text('Visita 2'), findsWidgets);
+    } finally {
+      await _close(tester, container);
+    }
+  });
+
   testWidgets('21. lineup that arrives later appears in place; tab kept', (
     tester,
   ) async {

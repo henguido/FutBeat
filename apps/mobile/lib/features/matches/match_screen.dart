@@ -113,6 +113,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   bool _lineupPending = false;
   bool _standingsPending = false;
   bool _liveStale = false;
+  Snapshot? _lastMatchContext;
 
   @override
   void initState() {
@@ -157,6 +158,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     _lineupPending = false;
     _standingsPending = false;
     _liveStale = false;
+    _lastMatchContext = null;
     _recordedTeamInterests.clear();
     _liveClient?.clearScope(_liveScope);
     _tabs.index = 0;
@@ -336,15 +338,15 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final refreshed = watchesContext
         ? ref.watch(matchContextSnapshotProvider(widget.id)).value
         : null;
-    final routeSnapshot = widget.initialData;
-    // A context without the requested fixture does not replace the match
-    // already opened from the feed. Keep its exact route snapshot as stale.
+    if (refreshed?.match(widget.id) != null) _lastMatchContext = refreshed;
+    final fallback = _lastMatchContext ?? widget.initialData;
+    // A partial refresh must not replace the last visible exact fixture.
     final source =
         refreshed != null &&
             refreshed.match(widget.id) == null &&
-            routeSnapshot?.match(widget.id) != null
-        ? routeSnapshot!.asStale()
-        : refreshed ?? routeSnapshot;
+            fallback?.match(widget.id) != null
+        ? fallback!.asStale()
+        : refreshed ?? fallback;
     final initialData = source == null
         ? null
         : presentSnapshotForSession(ref, source);
