@@ -290,3 +290,9 @@ Validación E266 sobre f92b5b6: 109 focales, 1941 pruebas completas con goldens 
 ### E269 — consolidación local
 
 Correcciones A09 (9408ed6b), S01/S07 (2971be1d), M03 (88a47254) y A03/A07 (fd0c3b2b) integradas con regresiones reproducidas y patch-id idéntico. R03/R06: 11 guardas Gradle, firma faltante bloqueada en dry-run y manifiesto local 1.0.0 (5) verificado. Ver FUTBEAT-MOBILE-269-CANDIDATE.md. R05 BLOCKED_BACKEND, R09 pendiente de CI Linux del candidato; R02/R08/R10 pendientes. RC NO-GO.
+
+## MOBILE278 — Preview pasiva
+
+- **R10 / S01 / S02 / S09** — preparación local en `codex/mobile-278-integration`, código `3cdd5e84`. La variante `com.futbeat.futbeat.preview.connected` está desactivada por defecto. El cliente bloquea rutas ajenas al contrato, exige ambos acuses de lectura pasiva y aplica límites de 30 consultas en 15 minutos, 8 por minuto y 2 simultáneas. Conserva SQLite y muestra contenido guardado cuando falla la lectura.
+- **R05** — BLOCKED_BACKEND. La interrupción de recuperación de contraseña queda cubierta localmente. La confirmación de borrado sigue dependiendo de un recibo durable y una consulta de estado.
+- **R08 / R09 / R10** — faltan CI Linux de este código, verificación del APK exacto y aceptación conectada en A32. El GO requiere evidencia del despliegue y autorización de activación. La RC oficial continúa NO-GO.

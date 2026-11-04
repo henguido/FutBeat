@@ -27,11 +27,17 @@ class LoopbackAdapter implements HttpClientAdapter {
     );
     final request = await client.getUrl(uri);
     request.followRedirects = options.followRedirects;
-    options.headers.forEach(request.headers.set);
+    options.headers.forEach(
+      (name, value) => request.headers.set(name, value.toString()),
+    );
     final response = await request.close();
     final headers = <String, List<String>>{};
     response.headers.forEach((name, values) => headers[name] = values);
-    return ResponseBody(response.map(Uint8List.fromList), response.statusCode, headers: headers);
+    return ResponseBody(
+      response.map(Uint8List.fromList),
+      response.statusCode,
+      headers: headers,
+    );
   }
 
   @override
@@ -39,33 +45,52 @@ class LoopbackAdapter implements HttpClientAdapter {
 }
 
 void main() {
-  test('API276 wire fixture: passive read, rate limit and sticky revoke', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(() => server.close(force: true));
-    final requests = <String>[];
-    final statuses = [200, 429, 403];
-    server.listen((request) async {
-      requests.add('${request.method} ${request.uri}');
-      request.response
-        ..statusCode = statuses[requests.length - 1]
-        ..headers.contentType = ContentType.json
-        ..headers.set('x-futbeat-passive', 'v1')
-        ..headers.set('x-futbeat-qa-stored', 'v1')
-        ..write('{}');
-      await request.response.close();
-    });
-    final base = Uri.parse('https://fixture.invalid/functions/v1/futbeat-passive-api');
-    final transport = PassivePreviewTransport(baseUri: base);
-    final dio = Dio(BaseOptions(baseUrl: base.toString()))
-      ..httpClientAdapter = LoopbackAdapter(server.port)
-      ..interceptors.add(transport);
-    addTearDown(() => dio.close(force: true));
-    expect((await dio.get('/v1/calendar')).statusCode, 200);
-    await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()
-      .having((e) => e.response?.statusCode, 'status', 429)));
-    await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
-    await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
-    await expectLater(dio.get('/v1/snapshot'), throwsA(isA<DioException>()));
-    expect(requests, List.filled(3, 'GET /functions/v1/futbeat-passive-api/v1/qa-stored/calendar'));
-  });
+  test(
+    'API276 wire fixture: passive read, rate limit and sticky revoke',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final requests = <String>[];
+      final statuses = [200, 429, 403];
+      server.listen((request) async {
+        requests.add('${request.method} ${request.uri}');
+        request.response
+          ..statusCode = statuses[requests.length - 1]
+          ..headers.contentType = ContentType.json
+          ..headers.set('x-futbeat-passive', 'v1')
+          ..headers.set('x-futbeat-qa-stored', 'v1')
+          ..write('{}');
+        await request.response.close();
+      });
+      final base = Uri.parse(
+        'https://fixture.invalid/functions/v1/futbeat-passive-api',
+      );
+      final transport = PassivePreviewTransport(baseUri: base);
+      final dio = Dio(BaseOptions(baseUrl: base.toString()))
+        ..httpClientAdapter = LoopbackAdapter(server.port)
+        ..interceptors.add(transport);
+      addTearDown(() => dio.close(force: true));
+      expect((await dio.get('/v1/calendar')).statusCode, 200);
+      await expectLater(
+        dio.get('/v1/calendar'),
+        throwsA(
+          isA<DioException>().having(
+            (e) => e.response?.statusCode,
+            'status',
+            429,
+          ),
+        ),
+      );
+      await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+      await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+      await expectLater(dio.get('/v1/snapshot'), throwsA(isA<DioException>()));
+      expect(
+        requests,
+        List.filled(
+          3,
+          'GET /functions/v1/futbeat-passive-api/v1/qa-stored/calendar',
+        ),
+      );
+    },
+  );
 }
