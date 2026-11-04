@@ -1165,6 +1165,9 @@ class PushService {
     if (!accountConfigured) {
       throw StateError('Account service is not configured');
     }
+    // A replacement link must not leave the previous account usable.
+    final attempt = ++_recoveryAttempt;
+    _recoverySession = null;
     final params = _redirectParams(link);
     final error = params['error_code'] ?? params['error'];
     if (error != null) throw RecoveryLinkInvalid(error);
@@ -1174,7 +1177,6 @@ class PushService {
         params['type'] != 'recovery') {
       throw const RecoveryLinkInvalid('missing_token');
     }
-    final attempt = ++_recoveryAttempt;
     final Response<dynamic> result;
     try {
       result = await dio.post<dynamic>(

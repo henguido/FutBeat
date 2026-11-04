@@ -1294,6 +1294,33 @@ void main() {
       },
     );
 
+    test(
+      'a rejected replacement link cannot reuse an older recovery session',
+      () async {
+        final value = await _service();
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+        await value.service.beginPasswordRecovery(link);
+        expect(value.service.passwordRecoveryPending, isTrue);
+
+        final replacement = link.replace(
+          queryParameters: {
+            'token_hash': 'replacement-token',
+            'type': 'recovery',
+          },
+        );
+        await expectLater(
+          value.service.beginPasswordRecovery(replacement),
+          throwsA(isA<RecoveryLinkInvalid>()),
+        );
+        await expectLater(
+          value.service.completePasswordRecovery('nueva-clave-8'),
+          throwsA(isA<RecoveryLinkInvalid>()),
+        );
+        expect(value.service.passwordRecoveryPending, isFalse);
+        expect(value.service.authenticated, isFalse);
+      },
+    );
     test('cancel drops the recovery session', () async {
       final value = await _service();
       verifyOnce(value.http);
