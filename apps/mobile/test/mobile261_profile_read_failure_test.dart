@@ -33,6 +33,7 @@ class _NoTokens implements PushTokenSource {
 class _ReadFailure extends FlutterSecureStorage {
   bool fail = true;
   bool failWrite = false;
+  int additionalReadFailures = 0;
   @override
   Future<void> write({
     required String key,
@@ -70,7 +71,11 @@ class _ReadFailure extends FlutterSecureStorage {
     WindowsOptions? wOptions,
   }) async {
     if (key == 'futbeat.profile.settings' && fail) {
-      fail = false;
+      if (additionalReadFailures > 0) {
+        additionalReadFailures--;
+      } else {
+        fail = false;
+      }
       throw PlatformException(code: 'synthetic-storage-locked');
     }
     return super.read(
@@ -280,6 +285,7 @@ void main() {
     await tester.pump();
     storage.failWrite = true;
     storage.fail = true;
+    storage.additionalReadFailures = 1;
     await tester.tap(find.byKey(const ValueKey('notification-notify_goals')));
     await _flush(tester);
     expect(
@@ -328,6 +334,7 @@ void main() {
       );
       storage.failWrite = true;
       storage.fail = true;
+      storage.additionalReadFailures = 1;
       tester.widget<DropdownButtonFormField<String>>(field).onChanged!('12h');
       await _flush(tester);
       expect(tester.state<FormFieldState<String>>(field).value, '24h');

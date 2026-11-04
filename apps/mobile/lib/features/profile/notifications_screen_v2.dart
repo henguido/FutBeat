@@ -66,7 +66,9 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
     });
     final service = ref.read(pushServiceProvider);
     try {
-      await service.saveProfileSettings(next);
+      await service.updateProfileSettings(
+        (current) => option.update(current, enabled),
+      );
       if (!mounted || generation != _saveGeneration) return;
       ref.invalidate(profileSettingsProvider);
     } catch (_) {

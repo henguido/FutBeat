@@ -31,6 +31,12 @@ class _DelayedSave extends PushService {
   final completion = Completer<void>();
   int loads = 0;
   int saves = 0;
+  UserProfileSettings get currentProfile => const UserProfileSettings();
+  @override
+  Future<void> updateProfileSettings(
+    UserProfileSettings Function(UserProfileSettings) update, {
+    String? expectedUserId,
+  }) => saveProfileSettings(update(currentProfile));
   @override
   Future<UserProfileSettings> loadProfileSettings() async {
     loads++;
@@ -48,6 +54,8 @@ class _DelayedRecovery extends _DelayedSave {
   _DelayedRecovery(super.db, super.dio);
   final recovery = Completer<UserProfileSettings>();
   UserProfileSettings persisted = const UserProfileSettings();
+  @override
+  UserProfileSettings get currentProfile => persisted;
   @override
   Future<UserProfileSettings> loadProfileSettings() async {
     loads++;

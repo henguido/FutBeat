@@ -224,8 +224,8 @@ class _HourFormatPreferenceState extends ConsumerState<_HourFormatPreference> {
     if (value == null || _restoring) return;
     final service = ref.read(pushServiceProvider);
     try {
-      await service.saveProfileSettings(
-        widget.settings.copyWith(hourFormat: value),
+      await service.updateProfileSettings(
+        (current) => current.copyWith(hourFormat: value),
       );
     } catch (_) {
       // Account sync may fail after the preference was saved locally.

@@ -54,6 +54,11 @@ class _LoadingAccount extends PushService {
   @override
   Future<void> saveProfileSettings(UserProfileSettings settings) async =>
       writes.add(settings);
+  @override
+  Future<void> updateProfileSettings(
+    UserProfileSettings Function(UserProfileSettings) update, {
+    String? expectedUserId,
+  }) async => saveProfileSettings(update(await loadProfileSettings()));
 }
 
 void main() {
@@ -106,9 +111,9 @@ void main() {
       overrides: [pushServiceProvider.overrideWithValue(service)],
     );
     addTearDown(() async {
-        if (!service.initialRestore.isCompleted) {
+      if (!service.initialRestore.isCompleted) {
         service.initialRestore.complete();
-        }
+      }
       service.dispose();
       container.dispose();
       dio.close(force: true);

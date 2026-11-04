@@ -19,6 +19,7 @@ class AccountSecurityScreen extends ConsumerStatefulWidget {
 class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
   final name = TextEditingController();
   UserProfileSettings? settings;
+  String? loadedAccountId;
   bool loading = true;
   bool busy = false;
   String? message;
@@ -46,9 +47,14 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
     try {
       await service.restore();
       if (!mounted) return;
+      final accountId = service.userId;
       final value = await service.loadProfileSettings();
       if (!mounted) return;
+      if (service.userId != accountId) {
+        throw StateError('Account changed while loading profile');
+      }
       setState(() {
+        loadedAccountId = accountId;
         settings = value;
         name.text = value.displayName ?? '';
       });
@@ -82,13 +88,27 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
   Future<void> _saveName() async {
     final current = settings;
     if (current == null || loading || busy) return;
+    final service = ref.read(pushServiceProvider);
+    final accountId = loadedAccountId;
+    if (accountId == null || service.userId != accountId) {
+      setState(
+        () => message = 'La cuenta cambió. Vuelve a abrir esta pantalla.',
+      );
+      return;
+    }
     final text = name.text.trim();
     final next = current.copyWith(
       displayName: text.isEmpty ? null : text,
       clearDisplayName: text.isEmpty,
     );
     await _action(() async {
-      await ref.read(pushServiceProvider).saveProfileSettings(next);
+      await service.updateProfileSettings(
+        (current) => current.copyWith(
+          displayName: text.isEmpty ? null : text,
+          clearDisplayName: text.isEmpty,
+        ),
+        expectedUserId: accountId,
+      );
       if (!mounted) return;
       ref.invalidate(profileSettingsProvider);
       settings = next;

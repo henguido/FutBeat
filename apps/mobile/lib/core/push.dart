@@ -1881,6 +1881,48 @@ class PushService {
   Future<void> saveProfileSettings(UserProfileSettings settings) async {
     final generation = _generation;
     await _writeLocalProfile(settings, dirty: true);
+    await _syncSavedProfile(settings, generation);
+  }
+
+  /// Applies only the caller's edit to the latest stored profile. Device
+  /// preference forms may stay mounted across account changes; their old
+  /// snapshot must never become the identity or other preferences of B.
+  Future<void> updateProfileSettings(
+    UserProfileSettings Function(UserProfileSettings current) update, {
+    String? expectedUserId,
+  }) async {
+    UserProfileSettings? saved;
+    var generation = _generation;
+    void checkAccount() {
+      if (expectedUserId != null &&
+          (!authenticated || userId != expectedUserId || _stale(generation))) {
+        throw StateError('Account changed before profile edit completed');
+      }
+    }
+
+    checkAccount();
+    _profileWriteVersion++;
+    await _queueProfileStorage(() async {
+      if (disposed) return;
+      generation = _generation;
+      checkAccount();
+      final current = await loadProfileSettings();
+      checkAccount();
+      if (disposed) return;
+      final next = update(current);
+      await _storeLocalProfile(next, dirty: true);
+      saved = next;
+    });
+    checkAccount();
+    final next = saved;
+    if (next != null) await _syncSavedProfile(next, generation);
+    checkAccount();
+  }
+
+  Future<void> _syncSavedProfile(
+    UserProfileSettings settings,
+    int generation,
+  ) async {
     if (!_stale(generation) && authenticated) {
       final owner = await _readLeftover();
       if (_stale(generation)) return;
@@ -1901,23 +1943,30 @@ class PushService {
     // The intent changes before the platform write begins. A reconcile that
     // was reading the old profile must not import its cloud snapshot over it.
     _profileWriteVersion++;
-    return _queueProfileStorage(() async {
-      // Mark intent before exposing its new value. If this marker fails, do
-      // not leave a new profile under the old clean flag for cloud import.
-      // A failed value write may leave the previous value dirty; that is a
-      // conservative retry, not permission to discard a persisted edit.
-      if (dirty) {
-        await storage.write(key: 'futbeat.profile.dirty', value: 'true');
-      }
-      await storage.write(
-        key: 'futbeat.profile.settings',
-        value: jsonEncode(settings.toJson()),
-      );
-      if (!dirty) {
-        await storage.write(key: 'futbeat.profile.dirty', value: 'false');
-      }
-      if (!_profileChanges.isClosed) _profileChanges.add(null);
-    });
+    return _queueProfileStorage(
+      () => _storeLocalProfile(settings, dirty: dirty),
+    );
+  }
+
+  Future<void> _storeLocalProfile(
+    UserProfileSettings settings, {
+    required bool dirty,
+  }) async {
+    // Mark intent before exposing its new value. If this marker fails, do
+    // not leave a new profile under the old clean flag for cloud import.
+    // A failed value write may leave the previous value dirty; that is a
+    // conservative retry, not permission to discard a persisted edit.
+    if (dirty) {
+      await storage.write(key: 'futbeat.profile.dirty', value: 'true');
+    }
+    await storage.write(
+      key: 'futbeat.profile.settings',
+      value: jsonEncode(settings.toJson()),
+    );
+    if (!dirty) {
+      await storage.write(key: 'futbeat.profile.dirty', value: 'false');
+    }
+    if (!_profileChanges.isClosed) _profileChanges.add(null);
   }
 
   /// Platform writes may finish out of order. Profile data and its dirty
