@@ -23,6 +23,8 @@ val releaseArtifactTaskPrefixes =
     listOf("assemble", "bundle", "package", "sign", "validateSigning")
 val appProjectPath = project.path
 val offlinePreview = System.getenv("FUTBEAT_OFFLINE_PREVIEW") == "true"
+val passivePreview = System.getenv("FUTBEAT_PASSIVE_PREVIEW") == "true"
+check(!(offlinePreview && passivePreview)) { "Preview modes are mutually exclusive." }
 
 // --- Release ads configuration (fail closed) ------------------------------
 // A release (Play) build must carry FutBeat's production AdMob App ID and ad
@@ -194,13 +196,19 @@ android {
 
     if (offlinePreview) {
         sourceSets.getByName("debug").manifest.srcFile("src/preview/AndroidManifest.xml")
+    } else if (passivePreview) {
+        sourceSets.getByName("debug").manifest.srcFile("src/passivePreview/AndroidManifest.xml")
     }
 
     buildTypes {
         debug {
             // Opt-in QA install alongside the Play-signed app. Never changes
             // the normal debug or release package when the flag is absent.
-            if (offlinePreview) {
+            if (passivePreview) {
+                applicationIdSuffix = ".preview.connected"
+                manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.preview.connected"
+                manifestPlaceholders["futbeatAppLinkHost"] = "preview.invalid"
+            } else if (offlinePreview) {
                 applicationIdSuffix = ".preview"
                 manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.preview"
                 manifestPlaceholders["futbeatAppLinkHost"] = "preview.invalid"
@@ -241,13 +249,30 @@ gradle.taskGraph.whenReady(
                         }
                 }
 
-            if (offlinePreview && releaseArtifactRequested) {
+            val defines = dartDefines()
+            if ((offlinePreview || passivePreview || defines["FUTBEAT_PASSIVE_PREVIEW"] == "true" ||
+                defines["FUTBEAT_PASSIVE_PREVIEW_ENABLED"] == "true") && releaseArtifactRequested) {
                 throw GradleException("FutBeat Preview is available only as an isolated debug artifact.")
+            }
+            if (taskGraph.allTasks.any { it.project.path == appProjectPath && it.name == "assembleDebug" }) {
+                check(passivePreview == (defines["FUTBEAT_PASSIVE_PREVIEW"] == "true")) {
+                    "Passive Preview build and Dart flags must match."
+                }
+                check(passivePreview || defines["FUTBEAT_PASSIVE_PREVIEW_ENABLED"] != "true") {
+                    "Passive Preview activation requires the isolated package."
+                }
+                if (passivePreview) {
+                    val disabled = listOf("FUTBEAT_QA_LOCAL_CACHE_ONLY", "FUTBEAT_OFFLINE_PREVIEW",
+                        "FUTBEAT_USE_DEMO", "FUTBEAT_PUSH_ENABLED", "FUTBEAT_OAUTH_GOOGLE_ENABLED",
+                        "FUTBEAT_OAUTH_FACEBOOK_ENABLED")
+                    check(defines["FUTBEAT_ADS_DISABLED"] == "true" && disabled.none { defines[it] == "true" }) {
+                        "Passive Preview requires Ads/OAuth/Push/DEMO off."
+                    }
+                }
             }
             if (offlinePreview && taskGraph.allTasks.any {
                     it.project.path == appProjectPath && it.name == "assembleDebug"
                 }) {
-                val defines = dartDefines()
                 if (defines["FUTBEAT_OFFLINE_PREVIEW"] != "true" ||
                     defines["FUTBEAT_QA_LOCAL_CACHE_ONLY"] != "true" ||
                     defines["FUTBEAT_ADS_DISABLED"] != "true" ||

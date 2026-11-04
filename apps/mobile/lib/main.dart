@@ -38,6 +38,7 @@ import 'features/profile/password_reset_sheet.dart';
 
 Future<void> main() async {
   installQaLocalCachePolicy();
+  installPassivePreviewPolicy();
   WidgetsFlutterBinding.ensureInitialized();
   await loadDeviceRegion();
   runApp(const ProviderScope(child: FutBeatApp()));

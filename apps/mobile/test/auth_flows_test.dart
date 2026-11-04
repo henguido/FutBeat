@@ -1622,8 +1622,9 @@ void main() {
     for (var turn = 0; turn < 100; turn++) {
       await tester.pump(const Duration(milliseconds: 10));
       if (result != null ||
-          find.text('La recuperación se interrumpió.').evaluate().isNotEmpty)
+          find.text('La recuperación se interrumpió.').evaluate().isNotEmpty) {
         break;
+      }
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 5)),
       );

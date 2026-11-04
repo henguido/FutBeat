@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,7 @@ import 'entity_media.dart';
 import 'interests.dart';
 import 'live_realtime.dart';
 import 'models.dart';
+import 'passive_preview_transport.dart';
 import 'player_display_identity.dart';
 import 'profile_context.dart';
 import 'qa_diagnostics.dart';
@@ -359,9 +361,11 @@ class ApiRepository implements FootballRepository {
 
   /// Only the explicit stored-read adapter disables demand-related refreshes.
   /// Optional response metadata is not an authorization signal.
-  bool get storedReadsOnly => dio.interceptors.any(
-    (interceptor) => interceptor is QaStoredReadInterceptor,
-  );
+  bool get storedReadsOnly =>
+      passivePreview ||
+      dio.interceptors.any(
+        (interceptor) => interceptor is QaStoredReadInterceptor,
+      );
 
   final AppDatabase? database;
   final CalendarCachePolicy calendarPolicy;
@@ -438,6 +442,7 @@ class ApiRepository implements FootballRepository {
   }
 
   bool _retryable(Object error) {
+    if (passivePreview) return false;
     if (error is! DioException) return false;
     final status = error.response?.statusCode;
     if (status == 502 || status == 503 || status == 504) return true;
@@ -807,7 +812,11 @@ class ApiRepository implements FootballRepository {
   }
 
   @override
-  Future<Snapshot> load() => _loadSnapshot('snapshot', '/v1/snapshot');
+  Future<Snapshot> load() async {
+    if (!passivePreview) return _loadSnapshot('snapshot', '/v1/snapshot');
+    final stored = await _readStored(_dateParam(DateTime.now()));
+    return stored?.asStale() ?? Snapshot(const {'schemaVersion': 1});
+  }
 
   bool _freshDate(String value) {
     if (_forcedDates.contains(value)) return false;
@@ -1068,7 +1077,7 @@ class ApiRepository implements FootballRepository {
           value,
           cancelToken: cancelToken,
         ).timeout(remaining);
-        if (snapshot.calendarPending) {
+        if (!passivePreview && snapshot.calendarPending) {
           // The server is materializing this day: show the preparing state
           // (only without data) and poll on its hint, within the deadline.
           if (cached == null) yield snapshot;
@@ -1130,6 +1139,7 @@ class ApiRepository implements FootballRepository {
   /// D+2, D-2, ...), only inside the window around today. A newer visible date
   /// supersedes the previous chain; missing and expired days are both fetched.
   void _prefetchAround(DateTime anchor) {
+    if (passivePreview) return;
     if (!_appActive) return;
     final generation = ++_prefetchGeneration;
     final now = costaRicaNow();
@@ -1818,8 +1828,8 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
   if (useDemo) return DemoRepository();
   final dio = Dio(
     BaseOptions(
-      baseUrl: baseUrl,
-      headers: publicToken.isEmpty
+      baseUrl: passivePreview ? 'https://preview.invalid' : baseUrl,
+      headers: passivePreview || publicToken.isEmpty
           ? null
           : {'Authorization': 'Bearer $publicToken'},
       connectTimeout: const Duration(seconds: 6),
@@ -1827,6 +1837,25 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
     ),
   );
 
+  if (passivePreview && passivePreviewEnabled) {
+    final baseUri = Uri.parse(
+      const String.fromEnvironment('FUTBEAT_PASSIVE_API_URL'),
+    );
+    const clientKey = String.fromEnvironment('FUTBEAT_PASSIVE_CLIENT_KEY');
+    if (clientKey.isEmpty) {
+      throw StateError('Passive Preview client key missing');
+    }
+    final transport = PassivePreviewTransport(
+      baseUri: baseUri,
+      clientKey: clientKey,
+    );
+    dio.options.baseUrl = baseUri.toString();
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: createPassivePreviewHttpClient,
+    );
+    dio.interceptors.add(transport);
+    ref.onDispose(transport.close);
+  }
   ref.onDispose(() => dio.close(force: true));
   return ApiRepository(
     dio,
@@ -1946,7 +1975,7 @@ final calendarSnapshotProvider = StreamProvider.autoDispose
           // Revalidate only a date that has data, with backoff after failures.
           // A date that never got a snapshot ends in an error with Retry: it
           // is not restarted on a timer (no endless loading loop).
-          if (!disposed && active.value && hasData) {
+          if (!passivePreview && !disposed && active.value && hasData) {
             timer = Timer(
               repository.calendarRevalidateDelay(date),
               ref.invalidateSelf,
@@ -2652,7 +2681,7 @@ final matchDetailProvider = StreamProvider.autoDispose
     });
 
 final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(
-  (ref) => (ref.watch(demoModeProvider) || qaLocalCacheOnly)
+  (ref) => (ref.watch(demoModeProvider) || qaLocalCacheOnly || passivePreview)
       ? const LiveRealtimeConfig(supabaseUrl: '', publicKey: '')
       : LiveRealtimeConfig.fromEnvironment(),
 );
@@ -2675,7 +2704,7 @@ final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
 });
 
 final liveMatchUpdatesProvider = StreamProvider<Map<String, LiveMatchUpdate>>(
-  (ref) => (ref.watch(demoModeProvider) || qaLocalCacheOnly)
+  (ref) => (ref.watch(demoModeProvider) || qaLocalCacheOnly || passivePreview)
       ? Stream.value(const <String, LiveMatchUpdate>{})
       : ref.watch(liveRealtimeClientProvider).watch().map((updates) {
           final repository = ref.read(repositoryProvider);

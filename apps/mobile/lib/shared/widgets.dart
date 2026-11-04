@@ -421,7 +421,7 @@ class NewsArticleCard extends StatelessWidget {
   final VoidCallback? onOpenDetails;
 
   Future<void> _openArticle(BuildContext context, Uri uri) async {
-    if (offlinePreview) return;
+    if (isolatedPreview) return;
     var opened = false;
     try {
       opened =

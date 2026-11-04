@@ -7,6 +7,35 @@ import 'package:flutter/foundation.dart';
 /// Staged QA227 policy. Ordinary builds keep all existing behavior.
 const qaLocalCacheOnly = bool.fromEnvironment('FUTBEAT_QA_LOCAL_CACHE_ONLY');
 const offlinePreview = bool.fromEnvironment('FUTBEAT_OFFLINE_PREVIEW');
+const passivePreview = bool.fromEnvironment('FUTBEAT_PASSIVE_PREVIEW');
+const passivePreviewEnabled = bool.fromEnvironment(
+  'FUTBEAT_PASSIVE_PREVIEW_ENABLED',
+);
+const isolatedPreview = offlinePreview || passivePreview;
+
+class _PassivePreviewHttpOverrides extends HttpOverrides {}
+
+/// Only the guarded API transport gets a client outside the global block.
+HttpClient createPassivePreviewHttpClient() =>
+    HttpOverrides.runWithHttpOverrides(
+      HttpClient.new,
+      _PassivePreviewHttpOverrides(),
+    );
+
+void installPassivePreviewPolicy() {
+  if (!passivePreview) return;
+  if (!kDebugMode ||
+      qaLocalCacheOnly ||
+      offlinePreview ||
+      const bool.fromEnvironment('FUTBEAT_USE_DEMO') ||
+      !const bool.fromEnvironment('FUTBEAT_ADS_DISABLED') ||
+      const bool.fromEnvironment('FUTBEAT_PUSH_ENABLED') ||
+      const bool.fromEnvironment('FUTBEAT_OAUTH_GOOGLE_ENABLED') ||
+      const bool.fromEnvironment('FUTBEAT_OAUTH_FACEBOOK_ENABLED')) {
+    throw StateError('Invalid passive Preview configuration');
+  }
+  HttpOverrides.global = QaOfflineHttpOverrides();
+}
 
 class QaOfflineHttpOverrides extends HttpOverrides {
   static int blockedClients = 0;

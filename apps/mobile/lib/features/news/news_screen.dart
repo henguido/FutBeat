@@ -112,13 +112,13 @@ void showNewsDetails(BuildContext context, Json article) {
             ],
             const SizedBox(height: 16),
             const Text(
-              offlinePreview
+              isolatedPreview
                   ? 'Enlace externo no disponible sin conexión.'
                   : 'Lee el contenido completo en la fuente original.',
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
-              onPressed: offlinePreview
+              onPressed: isolatedPreview
                   ? null
                   : () async {
                       var opened = false;

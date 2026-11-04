@@ -330,7 +330,7 @@ class PlayBillingEntitlementSource implements EntitlementSource {
 /// Store gateway, or null when billing is off (not Android or no product
 /// ids configured).
 final billingGatewayProvider = Provider<BillingGateway?>((ref) {
-  if (offlinePreview ||
+  if (isolatedPreview ||
       !Platform.isAndroid ||
       PremiumProducts.configured.isEmpty) {
     return null;

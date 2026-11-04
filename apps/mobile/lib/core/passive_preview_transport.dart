@@ -129,8 +129,9 @@ class PassivePreviewTransport extends Interceptor {
     options.headers
       ..clear()
       ..['accept'] = 'application/json';
-    if (_clientKey != null)
+    if (_clientKey != null) {
       options.headers['x-futbeat-client-key'] = _clientKey;
+    }
     options.followRedirects = false;
     options.validateStatus = (status) => status == 200;
     options.cancelToken ??= CancelToken();
@@ -175,14 +176,14 @@ class PassivePreviewTransport extends Interceptor {
   }
 
   @override
-  void onError(DioException error, ErrorInterceptorHandler handler) {
-    _settle(error.requestOptions);
-    final response = error.response;
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    _settle(err.requestOptions);
+    final response = err.response;
     if (response != null && !_accepted(response)) {
       close();
-      handler.reject(_blockedRequest(error.requestOptions));
+      handler.reject(_blockedRequest(err.requestOptions));
       return;
     }
-    handler.next(error);
+    handler.next(err);
   }
 }
