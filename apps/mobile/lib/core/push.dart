@@ -1392,7 +1392,7 @@ class PushService {
       if (_stale(generation)) return;
       if (userSessionAccess ? _expiredRefresh(error) : isAuthRejection(error)) {
         if (userSessionAccess) {
-          await _invalidatePublicIdentity();
+          await _invalidatePublicIdentity(generation);
         } else {
           await _clearLocalSession();
         }
@@ -2520,7 +2520,7 @@ class PushService {
             ? _expiredRefresh(error)
             : isAuthRejection(error)) {
           if (userSessionAccess) {
-            await _invalidatePublicIdentity();
+            await _invalidatePublicIdentity(generation);
           } else {
             await _clearLocalSession();
           }

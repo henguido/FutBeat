@@ -63,6 +63,18 @@ The first full run detected two legacy account-race failures caused by an added
 no-op asynchronous boundary. The call is now conditional on the rollout mode;
 the original assertions were preserved. No golden reference was changed.
 
+Final safety regression: a late definitive refresh rejection from the previous
+guest could invalidate the newly signed-in account. Both the proactive and 401
+refresh paths now bind invalidation to the original session generation, including
+checks after asynchronous local snapshots. Two new tests failed before the fix
+and passed afterward (`public-late-refresh-before.log` and
+`public-late-refresh-after-final.log`). Static analysis passed. The subsequent
+complete suite is recorded in `public-model-full-tests-verified.log`; the final
+rollout-config tests are in `public-model-wiring-verified.log`. An interim local
+run exhausted host worker threads; only its own failed test process tree was
+stopped and validation was repeated with reduced concurrency. The preliminary
+`c14c9090` test APK is superseded and must not be installed.
+
 Auth, merge, rate-limit and two-installation tests use local doubles. They do not
 prove production OAuth, backend activation, notification delivery, or two physical
 devices. Linux CI must be associated with the new exact published HEAD; the old

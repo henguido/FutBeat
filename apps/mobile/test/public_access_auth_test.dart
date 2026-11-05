@@ -348,6 +348,39 @@ void main() {
     },
   );
 
+  for (final onRejectedRequest in [false, true]) {
+    test(
+      'late rejected guest refresh preserves the newer account (401=$onRejectedRequest)',
+      () async {
+        await service.ensureUserSession();
+        await settle();
+        final rejected = service.session!['access_token'] as String;
+        if (!onRejectedRequest) {
+          service.session!['expires_at'] =
+              server.now.millisecondsSinceEpoch ~/ 1000 - 1;
+        }
+        server.refreshBarrier = Completer<void>();
+        server.refreshFailure = 'refresh_token_already_used';
+        final operation = onRejectedRequest
+            ? service.apiSession(rejectedToken: rejected).then<void>((_) {})
+            : service.ensureUserSession();
+        // A stale refresh may fail to its original caller; it cannot log out B.
+        final observed = operation.catchError((_) {});
+        await server.refreshSeen.future;
+        await service.signIn('account@fixture.invalid', 'synthetic-password');
+        await settle();
+        expect(service.userId, 'account');
+        server.refreshBarrier!.complete();
+        await observed;
+        await settle();
+        expect(service.userId, 'account');
+        expect(service.registered, isTrue);
+        expect(await db.watchFollows().first, contains('team:fb_team_account'));
+        expect(server.signups, 1);
+      },
+    );
+  }
+
   for (final fallback in [false, true]) {
     test(
       'guest login uses ticket and keeps account preferences (fallback=$fallback)',

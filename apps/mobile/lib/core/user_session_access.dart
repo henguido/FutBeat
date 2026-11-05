@@ -45,11 +45,13 @@ extension UserSessionAccess on PushService {
     if (authenticated) {
       if (_publicSessionNeedsPersistence) await _persistSession();
       if (_expiresSoon(clock())) {
+        final generation = _generation;
         try {
           await refreshSession();
         } catch (error) {
+          if (_stale(generation)) return;
           if (!_expiredRefresh(error)) rethrow;
-          await _invalidatePublicIdentity();
+          await _invalidatePublicIdentity(generation);
         }
       }
       if (authenticated) return;
@@ -109,10 +111,13 @@ extension UserSessionAccess on PushService {
     await ensureUserSession();
     if (!authenticated || disposed || userId == null) return null;
     if (rejectedToken != null && session?['access_token'] == rejectedToken) {
+      final generation = _generation;
       try {
         await refreshSession();
       } catch (error) {
-        if (_expiredRefresh(error)) await _invalidatePublicIdentity();
+        if (!_stale(generation) && _expiredRefresh(error)) {
+          await _invalidatePublicIdentity(generation);
+        }
         rethrow;
       }
     }
@@ -122,7 +127,8 @@ extension UserSessionAccess on PushService {
         : null;
   }
 
-  Future<void> _invalidatePublicIdentity() async {
+  Future<void> _invalidatePublicIdentity(int expectedGeneration) async {
+    if (_stale(expectedGeneration)) return;
     final keepGuest = isAnonymous;
     final local = keepGuest
         ? await database.watchFollows().first
@@ -131,6 +137,7 @@ extension UserSessionAccess on PushService {
     final country = keepGuest
         ? (await database.watchPreference().first).selectedCountry
         : null;
+    if (_stale(expectedGeneration)) return;
     await _clearLocalSession();
     final generation = _generation;
     if (authenticated || disposed || _interactiveAuth.isNotEmpty) return;
