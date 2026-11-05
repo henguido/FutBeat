@@ -7,7 +7,13 @@ import { validateSnapshot } from '../providers/core/snapshot.mjs';
 
 const known = { 'competition:4815': 'fb_comp_cr', 'team:139705': 'fb_team_car', 'team:139703': 'fb_team_lda' };
 
-export async function openDatabase(directory) {
+/**
+ * [navigationDemands]: the 1.0 migration ships browsing as passive (no
+ * provider demand). Suites written for the demand lane keep exercising it,
+ * so tests turn the switch on unless they pass `false`, or `null` to keep
+ * the migrated value.
+ */
+export async function openDatabase(directory, { navigationDemands = true } = {}) {
   const db = await PGlite.create(directory, { extensions: { pg_trgm } });
   // Supabase creates these roles before project migrations. Mirror that
   // prerequisite so permission migrations are exercised locally as written.
@@ -29,6 +35,9 @@ export async function openDatabase(directory) {
       await tx.exec(await readFile(new URL(name, folder), 'utf8'));
       await tx.query('insert into public.futbeat_migrations values ($1)', [name]);
     });
+  }
+  if (navigationDemands !== null && (await db.query("select to_regclass('futbeat_private.api_access_policy') t")).rows[0].t) {
+    await db.query('update futbeat_private.api_access_policy set navigation_demands=$1', [navigationDemands]);
   }
   return db;
 }
