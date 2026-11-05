@@ -1,0 +1,86 @@
+# Reviewed one-shot inspection. No checkout, build, signing or artifact upload.
+name: Inspect existing upload certificate only
+on:
+  push:
+    branches: [codex/inspect-upload-cert-once-20261105]
+    paths: ['.github/workflows/inspect-upload-certificate-once.yml']
+permissions: {}
+jobs:
+  certificate:
+    if: github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      INSPECTION_DIR: ${{ runner.temp }}/futbeat-upload-certificate-${{ github.run_id }}
+    steps:
+      - name: Inspect public certificate of existing signing alias
+        timeout-minutes: 1
+        shell: bash
+        env:
+          UPLOAD_KEYSTORE_B64: ${{ secrets.FUTBEAT_UPLOAD_KEYSTORE_B64 }}
+          UPLOAD_STORE_PASSWORD: ${{ secrets.FUTBEAT_UPLOAD_STORE_PASSWORD }}
+        run: |
+          set +x
+          python3 - <<'PY'
+          import base64, hashlib, os, pathlib, re, shutil, subprocess, sys
+          folder = pathlib.Path(os.environ['INSPECTION_DIR'])
+          try:
+              os.umask(0o077)
+              folder.mkdir(mode=0o700)
+              path = folder / 'existing.jks'
+              encoded = os.environ.pop('UPLOAD_KEYSTORE_B64')
+              path.write_bytes(base64.b64decode(''.join(encoded.split()), validate=True))
+              del encoded
+              result = subprocess.run(['keytool', '-J-Duser.language=en', '-J-Duser.country=US',
+                  '-list', '-rfc', '-alias', 'futbeat-upload', '-keystore', str(path),
+                  '-storepass:env', 'UPLOAD_STORE_PASSWORD'],
+                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+              os.environ.pop('UPLOAD_STORE_PASSWORD', None)
+              if result.returncode:
+                  raise ValueError('inspection failed')
+              blocks = re.findall(rb'-----BEGIN CERTIFICATE-----\s*(.*?)\s*-----END CERTIFICATE-----', result.stdout, re.S)
+              if not blocks:
+                  raise ValueError('no public certificate')
+              der = base64.b64decode(blocks[0])
+              certificate = folder / 'public.der'
+              certificate.write_bytes(der)
+              metadata = subprocess.run(['keytool', '-J-Duser.language=en', '-J-Duser.country=US',
+                  '-printcert', '-file', str(certificate)],
+                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+              if metadata.returncode:
+                  raise ValueError('public metadata unavailable')
+              text = metadata.stdout.decode('utf-8', errors='replace')
+              algorithm = re.search(r'^Signature algorithm name: ([A-Za-z0-9_-]+)\s*$', text, re.M)
+              validity = re.search(r'^Valid from: ([A-Za-z0-9 :+-]+) until: ([A-Za-z0-9 :+-]+)\s*$', text, re.M)
+              key_algorithm = re.search(r'^Subject Public Key Algorithm: ([A-Za-z0-9 _-]+)\s*$', text, re.M)
+              digest = hashlib.sha256(der).hexdigest().upper()
+              print('PUBLIC_CERT_SHA256=' + ':'.join(digest[i:i+2] for i in range(0,64,2)))
+              print('SIGNING_ALIAS=futbeat-upload')
+              if algorithm:
+                  print('SIGNATURE_ALGORITHM=' + algorithm.group(1).strip())
+              if key_algorithm:
+                  print('PUBLIC_KEY_ALGORITHM=' + key_algorithm.group(1).strip())
+              if validity:
+                  print('VALID_FROM=' + validity.group(1).strip())
+                  print('VALID_UNTIL=' + validity.group(2).strip())
+          except Exception:
+              print('Certificate inspection unavailable; no credential output.', file=sys.stderr)
+              sys.exit(1)
+          finally:
+              os.environ.pop('UPLOAD_STORE_PASSWORD', None)
+              if folder.exists():
+                  shutil.rmtree(folder)
+          PY
+      - name: Remove owned inspection temporaries even after failure
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, shutil
+          folder = pathlib.Path(os.environ['INSPECTION_DIR'])
+          if folder.exists():
+              shutil.rmtree(folder)
+          if folder.exists():
+              raise SystemExit('Temporary cleanup incomplete')
+          print('TEMPORARY_FILES_REMOVED=true')
+          PY
