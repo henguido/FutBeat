@@ -2,7 +2,11 @@ name: FutBeat checks
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - codex/news117-v1-ci
+      - codex/news117-v2-ci
+      - codex/news117-rights-ci
 
 concurrency:
   group: futbeat-ci-${{ github.event.pull_request.number || github.ref }}
@@ -14,7 +18,7 @@ permissions:
 jobs:
   contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,6 +55,15 @@ jobs:
 
       - run: npm run check
         if: steps.changes.outputs.run == 'true'
+
+      - uses: denoland/setup-deno@v2
+        if: steps.changes.outputs.run == 'true'
+        with:
+          deno-version: v2.9.6
+
+      - name: Check News Edge Function types
+        if: steps.changes.outputs.run == 'true'
+        run: deno check supabase/functions/_shared/news_pipeline.ts supabase/functions/_shared/news_collector.ts supabase/functions/futbeat-news-collect/index.ts
 
   mobile:
     runs-on: ubuntu-latest

@@ -427,6 +427,7 @@ declare
   item jsonb; v_id text; v_ext text; v_url text; v_key text; v_title text; v_published timestamptz;
   v_host text; v_role text; v_snippet text; v_image text; v_transfer text; v_cluster text;
   v_hash text; existing futbeat_private.news_articles; touched text[]:=array[]::text[];
+  pruned_clusters text[];
   n_inserted integer:=0; n_updated integer:=0; n_unchanged integer:=0; n_skipped integer:=0;
 begin
   select * into cfg from futbeat_private.news_provider_config where provider=p_provider;
@@ -534,11 +535,25 @@ begin
       fetched_at=excluded.fetched_at,article_count=excluded.article_count;
   end if;
 
-  -- Retention (35 days), only when something new arrived.
+  -- Retention belongs to v2 only. The v1 NewsData path shares this table,
+  -- and old v1 rows must not be deleted by a v2 store. Keep each write
+  -- bounded; clean up only clusters affected by the pruned rows.
   if n_inserted>0 then
-    delete from futbeat_private.news_articles where published_at<now()-interval '35 days';
-    delete from futbeat_private.news_clusters c where not exists(
-      select 1 from futbeat_private.news_articles a where a.cluster_id=c.cluster_id);
+    with expired as (
+      select id from futbeat_private.news_articles
+      where contract_version=2 and published_at<now()-interval '35 days'
+      order by published_at,id limit 100
+    ), pruned as (
+      delete from futbeat_private.news_articles a using expired e
+      where a.id=e.id returning a.cluster_id
+    )
+    select array_agg(distinct cluster_id) into pruned_clusters from pruned
+      where cluster_id is not null;
+    if cardinality(pruned_clusters)>0 then
+      delete from futbeat_private.news_clusters c
+      where c.cluster_id=any(pruned_clusters)
+        and not exists(select 1 from futbeat_private.news_articles a where a.cluster_id=c.cluster_id);
+    end if;
   end if;
 
   return jsonb_build_object('items',jsonb_array_length(p_articles),'inserted',n_inserted,
@@ -552,8 +567,8 @@ end $$;
 -- p_tab: for_you | latest | country | transfers. p_follows: [{type,id}]
 -- from the app's own follows (no upstream call). p_country: ISO alpha-2.
 create or replace function futbeat_private.futbeat_read_news_feed(
-  p_tab text,p_country text default null,p_follows jsonb default '[]'::jsonb,
-  p_offset integer default 0,p_limit integer default 20
+  p_tab text,p_country text,p_follows jsonb,
+  p_offset integer,p_limit integer
 ) returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare
   v_country text:=upper(nullif(btrim(p_country),''));
@@ -589,16 +604,12 @@ begin
       coalesce((select max(case when f.t='team' then 100 when f.t='player' then 90 else 70 end)
         from entities e join follows f on f.t=e.subject_type and f.id=e.id
         where e.cluster_id=c.cluster_id),0) follow_score,
-      -- A tagged team/competition of the country decides; the publisher's
-      -- country only when the story tags no team or competition.
+      -- Only a tagged canonical team/competition establishes story country.
+      -- Publisher country and feed coverage are not evidence about the story.
       (v_country is not null and (
         exists(select 1 from entities e join futbeat_private.entities x on x.id=e.id
           where e.cluster_id=c.cluster_id and e.subject_type in ('team','competition')
-            and lower(coalesce(x.payload->>'country','')) = any(v_country_names))
-        or (not exists(select 1 from entities e where e.cluster_id=c.cluster_id
-              and e.subject_type in ('team','competition'))
-          and exists(select 1 from members m join futbeat_private.news_sources s on s.domain=m.source_domain
-            where m.cluster_id=c.cluster_id and s.country_code=v_country)))) in_country
+            and lower(coalesce(x.payload->>'country','')) = any(v_country_names)))) in_country
     from clusters c
   ), filtered as (
     select s.*,
@@ -616,10 +627,16 @@ begin
   select coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
       'clusterId',p.cluster_id,
       'title',card.title,'url',card.url,'sourceName',card.source_name,'sourceDomain',card.source_domain,
-      'sourceRole',card.source_role,'publishedAt',card.published_at,'updatedAt',p.last_published_at,
+      'sourceRole',card.source_role,'sourceCountryCode',src.country_code,
+      'language',card.language,'inSelectedCountry',p.in_country,
+      'publishedAt',card.published_at,'updatedAt',p.last_published_at,
       'snippet',card.description,'imageUrl',card.image_url,'attribution',card.attribution,
       'category',p.category,'storyState',p.story_state,'transferStatus',p.transfer_status,
       'memberCount',p.member_count,
+      'storyCountryNames',coalesce((select jsonb_agg(distinct x.payload->>'country')
+        from entities e join futbeat_private.entities x on x.id=e.id
+        where e.cluster_id=p.cluster_id and e.subject_type in ('team','competition')
+          and nullif(x.payload->>'country','') is not null),'[]'::jsonb),
       'entities',coalesce((select jsonb_agg(jsonb_build_object('type',e.subject_type,'id',e.id,
           'name',x.payload->>'name') order by e.subject_type,e.id)
         from entities e join futbeat_private.entities x on x.id=e.id where e.cluster_id=p.cluster_id),'[]'::jsonb),
@@ -635,7 +652,8 @@ begin
     -- The card shows the most trusted member (official > media > ...),
     -- earliest first among equals.
     select m.* from members m where m.cluster_id=p.cluster_id order by m.rk,m.published_at,m.id limit 1
-  ) card;
+  ) card
+  left join futbeat_private.news_sources src on src.domain=card.source_domain;
 
   return jsonb_build_object('schemaVersion',2,'tab',p_tab,'country',v_country,
     'updatedAt',now(),'offset',p_offset,'hasMore',p_offset+p_limit<coalesce(total,0),
@@ -664,8 +682,8 @@ $$;
 
 -- Public wrappers (service_role only), same convention as v1.
 create or replace function public.futbeat_read_news_feed(
-  p_tab text,p_country text default null,p_follows jsonb default '[]'::jsonb,
-  p_offset integer default 0,p_limit integer default 20
+  p_tab text,p_country text,p_follows jsonb,
+  p_offset integer,p_limit integer
 ) returns jsonb language sql stable security definer set search_path='' as $$
   select futbeat_private.futbeat_read_news_feed(p_tab,p_country,p_follows,p_offset,p_limit)
 $$;

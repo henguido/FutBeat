@@ -37,15 +37,18 @@ declare
   v_comp text:=nullif(p_item->>'competitionId','');
   v_home text:=nullif(p_item->>'homeTeamId','');
   v_away text:=nullif(p_item->>'awayTeamId','');
+  v_redirect_context boolean;
   v_kickoff timestamptz:=futbeat_private.try_timestamptz(p_item->>'startTime');
   v_rank text:=futbeat_private.fixture_display_rank(p_item);
   v_final text:=futbeat_private.fixture_final_score(p_item);
   v_ghost boolean:=futbeat_private.fixture_is_ghost(p_item);
-  x record; xi jsonb; x_kickoff timestamptz;
+  x record; xi jsonb; x_kickoff timestamptz; v_level text;
 begin
   if v_comp is null or v_home is null or v_away is null or v_home=v_away or v_kickoff is null then
     return null;
   end if;
+  v_redirect_context:=cardinality(futbeat_private.team_identity_ids(v_home))>1
+    or cardinality(futbeat_private.team_identity_ids(v_away))>1;
   for x in
     select e.id,e.payload from futbeat_private.entities e
     where e.kind='match' and e.id<>v_id
@@ -58,14 +61,20 @@ begin
     xi:=futbeat_private.match_read_model_core(x.payload,false);
     continue when xi->>'competitionId' is distinct from v_comp;
     x_kickoff:=futbeat_private.try_timestamptz(xi->>'startTime');
-    if futbeat_private.same_fixture_level(v_id,v_comp,v_home,v_away,v_kickoff,v_final,
-         x.id,v_comp,xi->>'homeTeamId',xi->>'awayTeamId',x_kickoff,futbeat_private.fixture_final_score(xi)) is not null
+    v_level:=futbeat_private.same_fixture_level(v_id,v_comp,v_home,v_away,v_kickoff,v_final,
+      x.id,v_comp,xi->>'homeTeamId',xi->>'awayTeamId',x_kickoff,futbeat_private.fixture_final_score(xi));
+    if v_level is not null
+       -- A loose time/evidence match is safe here only after a reviewed team
+       -- redirect made two stored identities canonical. Redirect registration
+       -- rewrites historical match payloads, so the alias set is the durable
+       -- evidence; without it two real fixtures can be a few hours apart.
+       and (v_level='exact_kickoff' or v_redirect_context)
        and (futbeat_private.fixture_display_rank(xi),x.id)<(v_rank,v_id) then
       return x.id;
     end if;
     -- A scheduled ghost whose time passed before a played twin (never a
     -- later scheduled game: that can be a real second game).
-    if v_ghost and x_kickoff>v_kickoff
+    if v_ghost and v_redirect_context and x_kickoff>v_kickoff
        and xi->>'status' in ('VERIFIED','FINISHED_PENDING_VERIFICATION','LIVE','HALFTIME','EXTRA_TIME','PENALTIES') then
       return x.id;
     end if;

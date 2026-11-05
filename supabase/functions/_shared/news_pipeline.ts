@@ -354,12 +354,16 @@ export function normalizeFeed(
   xml: string,
   feed: { provider?: string; sourceName: string; sourceUrl?: string },
 ): RawArticle[] {
+  const declaredLanguage = plainText(tag(xml, "language")) || attr(xml, "feed", "xml:lang");
+  const validLanguage = (value: string) => /^[a-z]{2}(?:-[a-z]{2})?$/i.test(value)
+    ? value.toLowerCase()
+    : "";
   const items = [
     ...xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi),
     ...xml.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi),
   ].slice(0, 50);
   const out: RawArticle[] = [];
-  for (const [, body] of items) {
+  for (const [whole, body] of items) {
     const link = plainText(tag(body, "link")) || attr(body, "link", "href");
     const guid = plainText(tag(body, "guid")) || plainText(tag(body, "id"));
     out.push({
@@ -369,6 +373,12 @@ export function normalizeFeed(
       url: link,
       sourceName: feed.sourceName,
       sourceUrl: feed.sourceUrl,
+      // Publisher location is not language. Use only a declared item/feed
+      // language; leave it unknown if the XML provides no trustworthy tag.
+      language: validLanguage(
+        attr(whole, "item", "xml:lang") || attr(whole, "entry", "xml:lang") ||
+          plainText(tag(body, "dc:language")) || declaredLanguage,
+      ),
       publishedAt: isoTime(
         plainText(tag(body, "pubDate")) || plainText(tag(body, "published")) ||
           plainText(tag(body, "updated")) || plainText(tag(body, "dc:date")),

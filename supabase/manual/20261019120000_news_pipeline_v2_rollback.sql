@@ -2,7 +2,9 @@
 -- migration). Undeploy futbeat-news-collect and the /v1/news route first.
 -- Removes ONLY v2 data: articles stored by the v2 store (contract_version=2)
 -- and, through ON DELETE CASCADE, their news_subjects / entity rows. v1
--- NewsData articles and their subjects are untouched. Notifications already
+-- NewsData articles and their subjects are untouched. The contract_version
+-- column remains because the safe v1 writer filters on it; a later schema
+-- cleanup requires a separate replacement of that writer. Notifications already
 -- queued stay in notification_outbox (push dispatch is not touched).
 begin;
 set local lock_timeout = '5s';
@@ -48,7 +50,7 @@ alter table futbeat_private.news_articles
   drop column if exists category, drop column if exists transfer_status,
   drop column if exists cluster_id, drop column if exists title_tokens,
   drop column if exists name_tokens, drop column if exists content_hash,
-  drop column if exists attribution, drop column if exists contract_version,
+  drop column if exists attribution,
   drop column if exists updated_at;
 notify pgrst, 'reload schema';
 commit;

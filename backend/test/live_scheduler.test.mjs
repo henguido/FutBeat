@@ -394,7 +394,7 @@ test('global catalog workflow uses only its three-hour schedule and low-priority
  assert.match(workflow,/action = "global-quota-plan"/);
  assert.match(workflow,/\$quotaReserve = 350/);
  assert.doesNotMatch(workflow,/Invoke-TeamSquadHydration|squad-reserve|\/teams\/.*\/players/);
- assert.match(workflow,/\$calendarRequestBudget = 180/);
+ assert.match(workflow,/\$calendarRequestBudget = 90/);
 });
 
 

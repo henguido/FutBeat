@@ -13,6 +13,7 @@ import 'models.dart';
 import 'player_display_identity.dart';
 import 'profile_context.dart';
 import 'team_matches.dart';
+import '../features/news/news_feed_adapter.dart';
 
 abstract interface class FootballRepository {
   Future<Snapshot> load();
@@ -947,6 +948,37 @@ class ApiRepository implements FootballRepository {
     );
   }
 
+  /// Stored news and confirmed roster changes. Never persists this response.
+  Future<Snapshot> loadNewsFeed(
+    Iterable<String> subjects,
+    String? country, {
+    CancelToken? cancelToken,
+  }) async {
+    final keys = (subjects.toSet().toList()..sort())
+        .where(
+          (key) =>
+              RegExp(r'^(team|player|competition):fb_[A-Za-z0-9_-]{3,120}$')
+                  .hasMatch(key),
+        )
+        .take(50)
+        .toList();
+    final code = exploreCountry(country);
+    // News rights can change between reads: bypass the generic catalog cache.
+    final response = await _getJson(
+      '/v1/news',
+      queryParameters: {
+        'tab': 'for_you',
+        'limit': 40,
+        if (keys.isNotEmpty) 'follows': keys.join(','),
+        if (keys.isNotEmpty) 'subjects': keys.join(','),
+        'country': ?code,
+      },
+      cancelToken: cancelToken,
+      maxAttempts: 1,
+    );
+    return _canonical(adaptNewsFeed(response));
+  }
+
   Future<Snapshot> loadFavorites(List<String> keys) {
     final normalizedKeys = [...keys]..sort();
     return _loadSnapshot(
@@ -1237,6 +1269,25 @@ final searchSnapshotProvider = FutureProvider.autoDispose
       }
       return repository.load();
     });
+
+const newsSubjectKinds = ['team:', 'player:', 'competition:'];
+
+final newsFeedProvider = FutureProvider.autoDispose<Snapshot>((ref) async {
+  final repository = ref.watch(repositoryProvider);
+  final follows = await ref.watch(followsProvider.future);
+  final country = await ref
+      .watch(preferenceProvider.selectAsync((p) => p.effectiveCountry))
+      .timeout(const Duration(seconds: 2))
+      .then<String?>((value) => value, onError: (Object _) => null);
+  if (repository is! ApiRepository) return repository.load();
+  final token = CancelToken();
+  ref.onDispose(() => token.cancel('Noticias closed'));
+  return repository.loadNewsFeed(
+    follows.where((key) => newsSubjectKinds.any(key.startsWith)),
+    country,
+    cancelToken: token,
+  );
+});
 
 final favoritesSnapshotProvider = FutureProvider.family<Snapshot, String>((
   ref,

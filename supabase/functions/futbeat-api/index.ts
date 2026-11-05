@@ -120,6 +120,20 @@ const replyNoStore = async (status: number, data: unknown) =>
     },
   });
 
+// Legacy news has no per-source rights attestation. Preserve link-out
+// metadata but never serve stored third-party excerpts or images.
+const withoutLegacyNewsExcerpts = (snapshot: Record<string, unknown>) => ({
+  ...snapshot,
+  news: Array.isArray(snapshot.news)
+    ? snapshot.news.map((item: unknown) => {
+      const safe = { ...asRecord(item) };
+      delete safe.description;
+      delete safe.imageUrl;
+      return safe;
+    })
+    : snapshot.news,
+});
+
 const validDate = (value: string | null) =>
   value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value);
 
@@ -241,9 +255,9 @@ export default {
       if (enrichmentPending) {
         // Partial profile now; the app refreshes once enrichment lands.
         snapshot.coverage = { ...asRecord(snapshot.coverage), enrichmentPending: true };
-        return replyNoStore(200, snapshot);
+        return replyNoStore(200, withoutLegacyNewsExcerpts(snapshot));
       }
-      return reply(200, snapshot);
+      return reply(200, withoutLegacyNewsExcerpts(snapshot));
     }
 
     // Profile context (#161): the team's real (competition, season)
@@ -364,6 +378,7 @@ export default {
     }
 
     if (path.endsWith('/futbeat-api/v1/search')) {
+      // Search and news remain independent: news never invokes a provider.
       const query = (requestUrl.searchParams.get('q') ?? '').trim();
       const country = (requestUrl.searchParams.get('country') ?? '').trim();
       if (query.length > 80 || country.length > 8) {
@@ -393,17 +408,33 @@ export default {
       return reply(200, snapshot);
     }
 
-    // News v2 (#104): one card per story from the central collector; the
-    // app's own follows only reorder the feed (no per-user upstream call).
+    // Clients without `tab` keep the legacy v1 response; v2 is opt-in.
+    if (path.endsWith('/futbeat-api/v1/news') && !requestUrl.searchParams.has('tab')) {
+      const country = (requestUrl.searchParams.get('country') ?? '').trim().toUpperCase();
+      const subjects = (requestUrl.searchParams.get('subjects') ?? '')
+        .split(',')
+        .map((key) => key.trim())
+        .filter((key) => /^(team|player|competition):fb_[A-Za-z0-9_]{1,64}$/.test(key))
+        .slice(0, 50);
+      const { data: snapshot, error } = await db.rpc('futbeat_read_news_feed', {
+        p_subjects: subjects,
+        p_country: /^[A-Z]{2}$/.test(country) ? country : null,
+      });
+      if (error || !snapshot || snapshot.schemaVersion !== 1 || snapshot.demo !== false) {
+        return replyNoStore(503, { error: 'Noticias temporalmente no disponibles' });
+      }
+      return replyNoStore(200, withoutLegacyNewsExcerpts(snapshot));
+    }
+
     if (path.endsWith('/futbeat-api/v1/news')) {
-      const tab = requestUrl.searchParams.get('tab') ?? 'for_you';
+      const tab = requestUrl.searchParams.get('tab');
       const country = requestUrl.searchParams.get('country');
       const offset = Number(requestUrl.searchParams.get('offset') ?? '0');
       const limit = Number(requestUrl.searchParams.get('limit') ?? '20');
       const rawFollows = (requestUrl.searchParams.get('follows') ?? '').trim();
       const follows = rawFollows.length === 0 ? [] : rawFollows.split(',');
       if (
-        !['for_you', 'latest', 'country', 'transfers'].includes(tab) ||
+        !['for_you', 'latest', 'country', 'transfers'].includes(tab ?? '') ||
         (country !== null && !/^[A-Z]{2}$/.test(country)) ||
         (tab === 'country' && country === null) ||
         !Number.isInteger(offset) || offset < 0 || offset > 200 ||
@@ -426,9 +457,9 @@ export default {
         p_limit: limit,
       });
       if (error || !feed || feed.schemaVersion !== 2) {
-        return reply(503, { error: 'Noticias temporalmente no disponibles' });
+        return replyNoStore(503, { error: 'Noticias temporalmente no disponibles' });
       }
-      return reply(200, feed);
+      return replyNoStore(200, feed);
     }
 
     // Match summary (contract futbeat.match-summary v1): deterministic,
