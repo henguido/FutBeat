@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      INSPECTION_DIR: ${{ runner.temp }}/futbeat-upload-certificate-${{ github.run_id }}
+      INSPECTION_DIR: futbeat-upload-certificate-${{ github.run_id }}
     steps:
       - name: Inspect public certificate of existing signing alias
         timeout-minutes: 1
@@ -23,7 +23,7 @@ jobs:
           set +x
           python3 - <<'PY'
           import base64, hashlib, os, pathlib, re, shutil, subprocess, sys
-          folder = pathlib.Path(os.environ['INSPECTION_DIR'])
+          folder = pathlib.Path(os.environ['RUNNER_TEMP']) / os.environ['INSPECTION_DIR']
           try:
               os.umask(0o077)
               folder.mkdir(mode=0o700)
@@ -77,7 +77,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, pathlib, shutil
-          folder = pathlib.Path(os.environ['INSPECTION_DIR'])
+          folder = pathlib.Path(os.environ['RUNNER_TEMP']) / os.environ['INSPECTION_DIR']
           if folder.exists():
               shutil.rmtree(folder)
           if folder.exists():
