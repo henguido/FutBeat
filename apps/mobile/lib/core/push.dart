@@ -539,6 +539,7 @@ class PushService {
     this.database,
     this.tokens, {
     Dio? dio,
+    FlutterSecureStorage? secureStorage,
     DateTime Function()? clock,
     this.signOutCleanupTimeout = const Duration(seconds: 5),
     bool? pushConfigured,
@@ -546,7 +547,8 @@ class PushService {
     bool? oauthEnabled,
     Set<OAuthProvider>? oauthAllowedProviders,
     this.oauthSettingsTimeout = const Duration(seconds: 3),
-  }) : clock = clock ?? DateTime.now,
+  }) : storage = secureStorage ?? const FlutterSecureStorage(),
+       clock = clock ?? DateTime.now,
        oauthBrowser = oauthBrowser ?? _customTabBrowser,
        oauthEnabled = oauthEnabled ?? oauthConfigured,
        oauthAllowedProviders = Set.unmodifiable(
@@ -653,7 +655,7 @@ class PushService {
   /// `futbeat_sync_user_profile_v3` answered "not found" on this
   /// server; later saves go straight to the legacy RPC.
   bool _preferencesRpcMissing = false;
-  final storage = const FlutterSecureStorage();
+  final FlutterSecureStorage storage;
 
   Map<String, dynamic>? _session;
   Map<String, dynamic>? get session => _session;

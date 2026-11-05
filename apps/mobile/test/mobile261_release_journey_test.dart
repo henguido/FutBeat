@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -411,7 +412,207 @@ class _App {
   }
 }
 
+// Each simulated installation owns its secure storage as well as its SQLite
+// file. A global secure-storage mock would make two clients share a session.
+class _InstallStorage extends FlutterSecureStorage {
+  final values = <String, String>{};
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => values[key];
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    values.remove(key);
+  }
+}
+
+class _IndependentInstall {
+  _IndependentInstall(this.db, this.service, this.tokens);
+  final AppDatabase db;
+  final PushService service;
+  final _NoPush tokens;
+  bool closed = false;
+  static Future<_IndependentInstall> open(
+    File file,
+    _InstallStorage storage,
+    _Cloud cloud,
+  ) async {
+    final db = AppDatabase(NativeDatabase(file));
+    await db.customSelect('SELECT 1').get();
+    final dio = Dio();
+    cloud.attach(dio);
+    final tokens = _NoPush();
+    final service = PushService(
+      const LiveRealtimeConfig(
+        supabaseUrl: 'https://fixture.invalid',
+        publicKey: 'synthetic-public',
+      ),
+      db,
+      tokens,
+      dio: dio,
+      secureStorage: storage,
+      pushConfigured: false,
+      oauthEnabled: false,
+    );
+    await service.restore();
+    return _IndependentInstall(db, service, tokens);
+  }
+
+  Future<void> close() async {
+    if (closed) return;
+    closed = true;
+    await service.pending;
+    await service.countryPending;
+    service.dispose();
+    await db.close();
+  }
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test('same public config, two simultaneous installations retain separate sessions and guest preferences', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'futbeat-two-installs-',
+    );
+    final cloud = _Cloud();
+    final storageA = _InstallStorage();
+    final storageB = _InstallStorage();
+    final fileA = File.fromUri(directory.uri.resolve('a.sqlite'));
+    final fileB = File.fromUri(directory.uri.resolve('b.sqlite'));
+    final installs = <_IndependentInstall>[];
+    addTearDown(() async {
+      for (final install in installs) {
+        await install.close();
+      }
+      final path = await directory.resolveSymbolicLinks();
+      final tempRoot = await Directory.systemTemp.resolveSymbolicLinks();
+      if (!path.startsWith(tempRoot + Platform.pathSeparator)) {
+        throw StateError('Unsafe fixture cleanup');
+      }
+      await directory.delete(recursive: true);
+    });
+    var a = await _IndependentInstall.open(fileA, storageA, cloud);
+    installs.add(a);
+    var b = await _IndependentInstall.open(fileB, storageB, cloud);
+    installs.add(b);
+    expect(a.service.authenticated, isFalse);
+    expect(b.service.authenticated, isFalse);
+    expect(
+      cloud.paths,
+      isEmpty,
+      reason: 'local guest must not create an Auth account implicitly',
+    );
+    const guestA = {'team:fb_team_guest_A', 'player:fb_player_guest_A'};
+    const guestB = {'team:fb_team_guest_B', 'competition:fb_comp_guest_B'};
+    await Future.wait([
+      a.db.addFollows(guestA),
+      b.db.addFollows(guestB),
+      a.db.savePreference(detectedCountry: 'CR', selectedCountry: 'CR'),
+      b.db.savePreference(detectedCountry: 'ES', selectedCountry: 'ES'),
+      a.service.saveProfileSettings(
+        const UserProfileSettings(hourFormat: '24h', notifyGoals: false),
+      ),
+      b.service.saveProfileSettings(
+        const UserProfileSettings(hourFormat: '12h', notifyFinal: false),
+      ),
+    ]);
+    await Future.wait([
+      a.service.markSelectedCountryDirty(),
+      b.service.markSelectedCountryDirty(),
+    ]);
+    await Future.wait([
+      a.service.signIn('a@fixture.invalid', 'synthetic-password'),
+      b.service.signIn('b@fixture.invalid', 'synthetic-password'),
+    ]);
+    await Future.wait([
+      a.service.pending,
+      b.service.pending,
+      a.service.countryPending,
+      b.service.countryPending,
+    ]);
+    final ownedA = {...guestA, ..._accountFollows('A')};
+    final ownedB = {...guestB, ..._accountFollows('B')};
+    expect(await a.db.watchFollows().first, ownedA);
+    expect(await b.db.watchFollows().first, ownedB);
+    expect(cloud.follows['A'], ownedA);
+    expect(cloud.follows['B'], ownedB);
+    expect(
+      a.service.session!['access_token'],
+      isNot(b.service.session!['access_token']),
+    );
+    expect(
+      jsonDecode(storageA.values['futbeat.push.session']!)['user']['id'],
+      'A',
+    );
+    expect(
+      jsonDecode(storageB.values['futbeat.push.session']!)['user']['id'],
+      'B',
+    );
+    await Future.wait([a.close(), b.close()]);
+    a = await _IndependentInstall.open(fileA, storageA, cloud);
+    installs.add(a);
+    b = await _IndependentInstall.open(fileB, storageB, cloud);
+    installs.add(b);
+    await Future.wait([
+      a.service.pending,
+      b.service.pending,
+      a.service.countryPending,
+      b.service.countryPending,
+    ]);
+    expect(a.service.userId, 'A');
+    expect(b.service.userId, 'B');
+    expect(await a.db.watchFollows().first, ownedA);
+    expect(await b.db.watchFollows().first, ownedB);
+    expect((await a.db.watchPreference().first).selectedCountry, 'CR');
+    expect((await b.db.watchPreference().first).selectedCountry, 'ES');
+    expect((await a.service.loadProfileSettings()).notifyGoals, isFalse);
+    expect((await b.service.loadProfileSettings()).notifyFinal, isFalse);
+    await a.service.signOut();
+    await a.service.signOutCleanup;
+    expect(a.service.authenticated, isFalse);
+    expect(b.service.userId, 'B');
+    expect(
+      jsonDecode(storageB.values['futbeat.push.session']!)['user']['id'],
+      'B',
+    );
+    expect(await b.db.watchFollows().first, ownedB);
+    expect(cloud.unknown, isEmpty);
+    expect(a.tokens.requests + b.tokens.requests, 0);
+    await Future.wait([a.close(), b.close()]);
+  });
+
   testWidgets(
     'guest to account A reopen logout guest edit account B reopen preserves ownership',
     (tester) async {
