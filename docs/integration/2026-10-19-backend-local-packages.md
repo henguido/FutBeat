@@ -159,11 +159,11 @@ sobre los mismos principios.
 | | |
 |---|---|
 | Commit | `bd41ab1` |
-| Migración | `20261019130000_match_summary_cache.sql` |
+| Migración | `20261105090000_match_summary_cache.sql` |
 | Código | `_shared/match_summary.ts`, ruta `/v1/match-summary` |
 | Contrato | `packages/contracts/match-summary-v1.md` |
 | Pruebas | `match_summary_contract.test.mjs` (11), `match_summary_cache.test.mjs` (3) |
-| Rollback | `supabase/manual/20261019130000_match_summary_cache_rollback.sql` |
+| Rollback | `supabase/manual/20261105090000_match_summary_cache_rollback.sql` |
 
 Garantías: sin goleador si los eventos de gol no cuadran con el marcador;
 nunca goles sintéticos; asistencias solo en finales verificados; sin

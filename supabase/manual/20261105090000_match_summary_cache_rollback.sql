@@ -1,4 +1,4 @@
--- Rollback of 20261019130000_match_summary_cache.sql (manual, NOT a
+-- Rollback of 20261105090000_match_summary_cache.sql (manual, NOT a
 -- migration). Undeploy the /v1/match-summary route first. The cache holds
 -- only derived data (rebuilt on demand), so dropping it loses nothing.
 begin;
