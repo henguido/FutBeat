@@ -80,6 +80,25 @@ fun releaseRuntimeProblems(defines: Map<String, String> = dartDefines()): List<S
     if (!defines["FUTBEAT_PASSIVE_CLIENT_KEY"].isNullOrBlank()) {
         problems += "Preview client keys are not allowed in the official release"
     }
+    if (defines["FUTBEAT_USER_SESSION_ACCESS"]?.trim()?.lowercase() == "true") {
+        if (!defines["FUTBEAT_API_PUBLIC_TOKEN"].isNullOrBlank()) {
+            problems += "User-session access must not contain a fixed API token"
+        }
+        val key = defines["FUTBEAT_SUPABASE_PUBLISHABLE_KEY"].orEmpty()
+        if (!Regex("^sb_publishable_[A-Za-z0-9_-]+$").matches(key)) {
+            problems += "User-session access requires an explicit publishable key"
+        }
+        val origin = defines["FUTBEAT_SUPABASE_URL"].orEmpty().trimEnd('/')
+        val uri = runCatching { URI(origin) }.getOrNull()
+        if (uri == null || uri.scheme != "https" || uri.host.isNullOrBlank() ||
+            uri.userInfo != null || uri.query != null || uri.fragment != null ||
+            uri.port !in listOf(-1, 443) || uri.rawPath !in listOf("", "/")) {
+            problems += "User-session access requires an explicit HTTPS Auth origin"
+        }
+        if (origin.isBlank() || defines["FUTBEAT_API_URL"] != "$origin/functions/v1/futbeat-api") {
+            problems += "User-session API must match its Auth project and central endpoint"
+        }
+    }
     // An omitted override keeps the application's existing HTTPS default.
     // If explicitly supplied, never silently fall back from an invalid value.
     for ((key, originOnly) in listOf("FUTBEAT_API_URL" to false, "FUTBEAT_SUPABASE_URL" to true)) {

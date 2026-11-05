@@ -69,6 +69,13 @@ void installQaLocalCachePolicy() {
 /// pending provider work. Never infer that meaning from an ordinary endpoint,
 /// disabled reader (no ACK), forbidden response, write or another stored route.
 bool isQaStoredDetailAbsent(Object error) {
+  if (error is DioException &&
+      error.response?.statusCode == 404 &&
+      error.requestOptions.method == 'GET' &&
+      error.requestOptions.path == '/v1/match-detail' &&
+      error.requestOptions.extra['publicReadContract'] == true) {
+    return true;
+  }
   if (error is! DioException ||
       error.response?.statusCode != 404 ||
       error.requestOptions.method != 'GET' ||

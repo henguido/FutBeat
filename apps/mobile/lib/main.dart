@@ -12,6 +12,7 @@ import 'core/billing.dart';
 import 'core/database.dart';
 import 'core/entity_media.dart';
 import 'core/models.dart';
+import 'core/live_realtime.dart';
 import 'core/password_reset_links.dart';
 import 'core/providers.dart';
 import 'core/qa_development.dart';
@@ -120,7 +121,7 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
           AppShell(location: state.uri.path, child: child),
       routes: [
         GoRoute(path: '/matches', builder: (_, state) => const MatchesScreen()),
-        if (!passivePreview)
+        if (!passivePreview && !userSessionAccessEnabled)
           GoRoute(path: '/news', builder: (_, state) => const NewsScreen()),
         GoRoute(
           path: '/explore',
@@ -407,7 +408,7 @@ class AppShell extends ConsumerStatefulWidget {
   final Widget child;
   static const paths = [
     '/matches',
-    if (!passivePreview) '/news',
+    if (!passivePreview && !userSessionAccessEnabled) '/news',
     '/explore',
     '/favorites',
     '/profile',
@@ -459,7 +460,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             icon: Icon(Icons.sports_soccer),
             label: 'Partidos',
           ),
-          if (!passivePreview)
+          if (!passivePreview && !userSessionAccessEnabled)
             NavigationDestination(
               icon: Icon(Icons.article_outlined),
               label: 'Noticias',

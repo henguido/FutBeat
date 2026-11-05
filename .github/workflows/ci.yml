@@ -138,6 +138,16 @@ jobs:
           find test -type f -name '*_test.dart' ! -name 'visual_test.dart' -print0 |
             xargs -0 flutter test
 
+      - name: Verify public user-session configuration offline
+        if: steps.changes.outputs.run == 'true'
+        run: >-
+          flutter test test/public_access_auth_test.dart
+          test/public_access_transport_test.dart test/public_access_wiring_test.dart
+          --dart-define=FUTBEAT_USER_SESSION_ACCESS=true
+          --dart-define=FUTBEAT_SUPABASE_URL=https://fixture.invalid
+          --dart-define=FUTBEAT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture
+          --dart-define=FUTBEAT_API_URL=https://fixture.invalid/functions/v1/futbeat-api
+
       - name: Upload Flutter golden failures
         if: failure() && steps.changes.outputs.run == 'true'
         uses: actions/upload-artifact@v4

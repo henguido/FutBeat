@@ -879,7 +879,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final service = ref.read(pushServiceProvider);
     if (step == OnboardingStep.account &&
         service.accountConfigured &&
-        !service.authenticated) {
+        !service.registered) {
       return 'Continuar sin cuenta';
     }
     return 'Continuar';
@@ -993,7 +993,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 ),
                 const SizedBox(height: 10),
                 if (ref.watch(pushServiceProvider).accountConfigured &&
-                    !ref.watch(pushServiceProvider).authenticated)
+                    !ref.watch(pushServiceProvider).registered)
                   SizedBox(
                     height: 52,
                     child: OutlinedButton(
@@ -1543,7 +1543,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (!service.accountConfigured) {
       return const Text('Cuenta no disponible');
     }
-    if (service.authenticated) {
+    if (service.registered) {
       return Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(

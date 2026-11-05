@@ -13,6 +13,7 @@ import 'interests.dart';
 import 'live_realtime.dart';
 import 'models.dart';
 import 'passive_preview_transport.dart';
+import 'push.dart';
 import 'player_display_identity.dart';
 import 'profile_context.dart';
 import 'qa_diagnostics.dart';
@@ -364,7 +365,10 @@ class ApiRepository implements FootballRepository {
   bool get storedReadsOnly =>
       passivePreview ||
       dio.interceptors.any(
-        (interceptor) => interceptor is QaStoredReadInterceptor,
+        (interceptor) =>
+            interceptor is QaStoredReadInterceptor ||
+            (interceptor is PassivePreviewTransport &&
+                interceptor.usesUserSession),
       );
 
   final AppDatabase? database;
@@ -1837,7 +1841,24 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
     ),
   );
 
-  if (passivePreview && passivePreviewEnabled) {
+  if (userSessionAccessEnabled && !passivePreview && !qaLocalCacheOnly) {
+    final service = ref.watch(pushServiceProvider);
+    if (publicToken.isNotEmpty ||
+        const String.fromEnvironment('FUTBEAT_PASSIVE_CLIENT_KEY').isNotEmpty ||
+        baseUrl != '${service.config.supabaseUrl}/functions/v1/futbeat-api') {
+      throw StateError('Invalid user-session API configuration');
+    }
+    dio.options.headers.clear();
+    final transport = PassivePreviewTransport(
+      baseUri: Uri.parse(baseUrl),
+      publishableKey: service.config.publicKey,
+      userSession: service.apiSession,
+      currentScope: () => service.userSessionScope,
+      retryClient: dio,
+    );
+    dio.interceptors.add(transport);
+    ref.onDispose(transport.close);
+  } else if (passivePreview && passivePreviewEnabled) {
     const passiveEndpoint =
         'https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-passive-api';
     if (baseUrl != passiveEndpoint) {
@@ -2699,7 +2720,9 @@ final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
   );
   ref.onDispose(() => dio.close(force: true));
   final client = LiveRealtimeClient(
-    ref.watch(liveRealtimeConfigProvider),
+    userSessionAccessEnabled
+        ? const LiveRealtimeConfig(supabaseUrl: '', publicKey: '')
+        : ref.watch(liveRealtimeConfigProvider),
     dio,
     scopedRealtime: true,
   );
@@ -2708,7 +2731,11 @@ final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
 });
 
 final liveMatchUpdatesProvider = StreamProvider<Map<String, LiveMatchUpdate>>(
-  (ref) => (ref.watch(demoModeProvider) || qaLocalCacheOnly || passivePreview)
+  (ref) =>
+      (ref.watch(demoModeProvider) ||
+          qaLocalCacheOnly ||
+          passivePreview ||
+          userSessionAccessEnabled)
       ? Stream.value(const <String, LiveMatchUpdate>{})
       : ref.watch(liveRealtimeClientProvider).watch().map((updates) {
           final repository = ref.read(repositoryProvider);

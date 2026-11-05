@@ -18,6 +18,8 @@ import 'database.dart';
 import 'live_realtime.dart';
 import 'providers.dart';
 
+part 'user_session_access.dart';
+
 String? reconcileSelectedCountry({
   required String? local,
   required String? cloud,
@@ -540,6 +542,7 @@ class PushService {
     this.tokens, {
     Dio? dio,
     FlutterSecureStorage? secureStorage,
+    this.userSessionAccess = false,
     DateTime Function()? clock,
     this.signOutCleanupTimeout = const Duration(seconds: 5),
     bool? pushConfigured,
@@ -563,6 +566,13 @@ class PushService {
                receiveTimeout: const Duration(seconds: 10),
              ),
            );
+
+  final bool userSessionAccess;
+  Future<void>? _anonymousBootstrap;
+  DateTime? _anonymousRetryAfter;
+  final _interactiveAuth = <int>{};
+  _GuestTransfer? _guestTransfer;
+  bool _publicSessionNeedsPersistence = false;
 
   final LiveRealtimeConfig config;
   final AppDatabase database;
@@ -786,6 +796,11 @@ class PushService {
 
   bool get accountConfigured => config.isConfigured;
   bool get authenticated => session?['access_token'] != null;
+  bool get isAnonymous =>
+      session?['user'] is Map &&
+      (session!['user'] as Map)['is_anonymous'] == true;
+  bool get registered => authenticated && !isAnonymous;
+  String get userSessionScope => '${userId ?? 'guest'}:$_generation';
 
   String? get userId {
     final user = session?['user'];
@@ -850,17 +865,25 @@ class PushService {
       throw StateError('Account service is not configured');
     }
     final attempt = ++_authenticationAttempt;
-    await _awaitSignOutCleanup();
-    if (_authenticationStale(attempt)) return;
-    final result = await dio.post<dynamic>(
-      '${config.supabaseUrl}/auth/v1/token?grant_type=password',
-      data: {'email': email.trim(), 'password': password},
-      options: Options(headers: {'apikey': config.publicKey}),
-    );
-    if (_authenticationStale(attempt)) return;
-    final next = _validSession(result.data);
-    if (next == null) throw _invalidSession(result.requestOptions);
-    await _startSession(next);
+    _interactiveAuth.add(attempt);
+    try {
+      await _awaitSignOutCleanup();
+      if (_authenticationStale(attempt)) return;
+      if (userSessionAccess) await _prepareGuestTransfer(attempt);
+      if (_authenticationStale(attempt)) return;
+      final result = await dio.post<dynamic>(
+        '${config.supabaseUrl}/auth/v1/token?grant_type=password',
+        data: {'email': email.trim(), 'password': password},
+        options: Options(headers: {'apikey': config.publicKey}),
+      );
+      if (_authenticationStale(attempt)) return;
+      final next = _validSession(result.data);
+      if (next == null) throw _invalidSession(result.requestOptions);
+      await _startSession(next);
+    } finally {
+      _interactiveAuth.remove(attempt);
+      if (_guestTransfer?.attempt == attempt) _guestTransfer = null;
+    }
   }
 
   Set<OAuthProvider> get buildOAuthProviders =>
@@ -925,38 +948,46 @@ class PushService {
       throw StateError('Social sign-in is not configured');
     }
     final attempt = ++_authenticationAttempt;
-    await _awaitSignOutCleanup();
-    if (_authenticationStale(attempt)) return;
-    final (:verifier, :challenge) = _pkcePair();
-    final url = Uri.parse('${config.supabaseUrl}/auth/v1/authorize').replace(
-      queryParameters: {
-        'provider': provider.id,
-        'redirect_to': oauthRedirect,
-        'code_challenge': challenge,
-        'code_challenge_method': 's256',
-      },
-    );
-    final callback = Uri.parse(await oauthBrowser(url, oauthCallbackScheme));
-    if (_authenticationStale(attempt)) return;
-    // GoTrue reports failures in the query or, for implicit errors, the
-    // fragment.
-    final params = _redirectParams(callback);
-    final error = params['error_code'] ?? params['error'];
-    if (error != null) {
-      if (error == 'access_denied') throw const OAuthCancelled();
-      throw OAuthFailed(error);
+    _interactiveAuth.add(attempt);
+    try {
+      await _awaitSignOutCleanup();
+      if (_authenticationStale(attempt)) return;
+      if (userSessionAccess) await _prepareGuestTransfer(attempt);
+      if (_authenticationStale(attempt)) return;
+      final (:verifier, :challenge) = _pkcePair();
+      final url = Uri.parse('${config.supabaseUrl}/auth/v1/authorize').replace(
+        queryParameters: {
+          'provider': provider.id,
+          'redirect_to': oauthRedirect,
+          'code_challenge': challenge,
+          'code_challenge_method': 's256',
+        },
+      );
+      final callback = Uri.parse(await oauthBrowser(url, oauthCallbackScheme));
+      if (_authenticationStale(attempt)) return;
+      // GoTrue reports failures in the query or, for implicit errors, the
+      // fragment.
+      final params = _redirectParams(callback);
+      final error = params['error_code'] ?? params['error'];
+      if (error != null) {
+        if (error == 'access_denied') throw const OAuthCancelled();
+        throw OAuthFailed(error);
+      }
+      final code = params['code'];
+      if (code == null || code.isEmpty) throw const OAuthFailed('missing_code');
+      final result = await dio.post<dynamic>(
+        '${config.supabaseUrl}/auth/v1/token?grant_type=pkce',
+        data: {'auth_code': code, 'code_verifier': verifier},
+        options: Options(headers: {'apikey': config.publicKey}),
+      );
+      if (_authenticationStale(attempt)) return;
+      final next = _validSession(result.data);
+      if (next == null) throw _invalidSession(result.requestOptions);
+      await _startSession(next);
+    } finally {
+      _interactiveAuth.remove(attempt);
+      if (_guestTransfer?.attempt == attempt) _guestTransfer = null;
     }
-    final code = params['code'];
-    if (code == null || code.isEmpty) throw const OAuthFailed('missing_code');
-    final result = await dio.post<dynamic>(
-      '${config.supabaseUrl}/auth/v1/token?grant_type=pkce',
-      data: {'auth_code': code, 'code_verifier': verifier},
-      options: Options(headers: {'apikey': config.publicKey}),
-    );
-    if (_authenticationStale(attempt)) return;
-    final next = _validSession(result.data);
-    if (next == null) throw _invalidSession(result.requestOptions);
-    await _startSession(next);
   }
 
   /// Provider of the current session ('email', 'google', 'facebook'), from
@@ -981,6 +1012,15 @@ class PushService {
         _authenticationStale(attempt) ||
         (recoveryAttempt != null && _recoveryStale(recoveryAttempt));
     final previousUser = userId;
+    final transfer = userSessionAccess && _guestTransfer?.attempt == attempt
+        ? _guestTransfer
+        : null;
+    if (transfer != null) {
+      _guestTransfer = null;
+      await _redeemGuestTransfer(transfer, value);
+      if (stale()) return false;
+    }
+    if (userSessionAccess) _normalizeUserExpiry(value);
     final targetUser = value['user'] is Map
         ? (value['user'] as Map)['id']?.toString().trim()
         : null;
@@ -1001,6 +1041,21 @@ class PushService {
     // flight. Recheck after local separation, before accepting B's runtime.
     await _resumeConfirmedDeletionPreparation();
     if (stale()) return false;
+    if (userSessionAccess &&
+        targetUser != null &&
+        value['user'] is Map &&
+        (value['user'] as Map)['is_anonymous'] != true &&
+        (transfer != null ||
+            previousUser != null && previousUser != targetUser)) {
+      await storage.write(key: _publicPreferenceOwnerKey, value: targetUser);
+      if (stale()) return false;
+    }
+    if (transfer != null && targetUser != null) {
+      await storage.delete(key: leftoverKey);
+      if (stale()) return false;
+      await database.addFollows(transfer.localFollows);
+      if (stale()) return false;
+    }
     final oldRotation = rotation;
     rotation = null;
     final generation = ++_generation;
@@ -1081,35 +1136,45 @@ class PushService {
     }
     final normalized = email.trim();
     final attempt = ++_authenticationAttempt;
-    await _awaitSignOutCleanup();
-    if (_authenticationStale(attempt)) return;
-    final response = await dio.post<dynamic>(
-      '${config.supabaseUrl}/auth/v1/signup',
-      data: {'email': normalized, 'password': password},
-      options: Options(headers: {'apikey': config.publicKey}),
-    );
-    if (_authenticationStale(attempt)) return;
-    final data = response.data;
-    // With "Confirm email" disabled GoTrue returns a full session.
-    final next = _validSession(data);
-    if (next != null) {
-      await _startSession(next);
-      return;
+    _interactiveAuth.add(attempt);
+    try {
+      await _awaitSignOutCleanup();
+      if (_authenticationStale(attempt)) return;
+      if (userSessionAccess && isAnonymous) {
+        await _linkGuestEmail(normalized, password, attempt);
+        return;
+      }
+      final response = await dio.post<dynamic>(
+        '${config.supabaseUrl}/auth/v1/signup',
+        data: {'email': normalized, 'password': password},
+        options: Options(headers: {'apikey': config.publicKey}),
+      );
+      if (_authenticationStale(attempt)) return;
+      final data = response.data;
+      // With "Confirm email" disabled GoTrue returns a full session.
+      final next = _validSession(data);
+      if (next != null) {
+        await _startSession(next);
+        return;
+      }
+      if (data is Map && data['access_token'] != null) {
+        throw _invalidSession(response.requestOptions);
+      }
+      final user = data is Map && data['user'] is Map ? data['user'] : data;
+      if (user is Map &&
+          user['identities'] is List &&
+          (user['identities'] as List).isEmpty) {
+        throw const AccountAlreadyExists();
+      }
+      pendingConfirmationEmail = normalized;
+      await storage.write(
+        key: 'futbeat.auth.pendingConfirmationEmail',
+        value: normalized,
+      );
+    } finally {
+      _interactiveAuth.remove(attempt);
+      if (_guestTransfer?.attempt == attempt) _guestTransfer = null;
     }
-    if (data is Map && data['access_token'] != null) {
-      throw _invalidSession(response.requestOptions);
-    }
-    final user = data is Map && data['user'] is Map ? data['user'] : data;
-    if (user is Map &&
-        user['identities'] is List &&
-        (user['identities'] as List).isEmpty) {
-      throw const AccountAlreadyExists();
-    }
-    pendingConfirmationEmail = normalized;
-    await storage.write(
-      key: 'futbeat.auth.pendingConfirmationEmail',
-      value: normalized,
-    );
   }
 
   /// Signed out, [emailAddress] (e.g. a sign-in refused with "confirm your
@@ -1219,29 +1284,39 @@ class PushService {
     if (verified == null) throw const RecoveryLinkInvalid('no_recovery');
     final recoveryAttempt = _recoveryAttempt;
     final attempt = ++_authenticationAttempt;
-    await _awaitSignOutCleanup();
-    if (_authenticationStale(attempt) ||
-        _recoveryStale(recoveryAttempt) ||
-        !identical(_recoverySession, verified)) {
-      return false;
+    _interactiveAuth.add(attempt);
+    try {
+      await _awaitSignOutCleanup();
+      if (_authenticationStale(attempt) ||
+          _recoveryStale(recoveryAttempt) ||
+          !identical(_recoverySession, verified)) {
+        return false;
+      }
+      if (userSessionAccess) await _prepareGuestTransfer(attempt);
+      if (_authenticationStale(attempt) || _recoveryStale(recoveryAttempt)) {
+        return false;
+      }
+      await dio.put<dynamic>(
+        '${config.supabaseUrl}/auth/v1/user',
+        data: {'password': newPassword},
+        options: Options(
+          headers: {
+            'apikey': config.publicKey,
+            'Authorization': 'Bearer ${verified['access_token']}',
+          },
+        ),
+      );
+      if (_authenticationStale(attempt) ||
+          _recoveryStale(recoveryAttempt) ||
+          !identical(_recoverySession, verified)) {
+        return false;
+      }
+      _recoverySession = null;
+      return await _startSession(verified, recoveryAttempt: recoveryAttempt);
+    } finally {
+      _interactiveAuth.remove(attempt);
+      if (_guestTransfer?.attempt == attempt) _guestTransfer = null;
     }
-    await dio.put<dynamic>(
-      '${config.supabaseUrl}/auth/v1/user',
-      data: {'password': newPassword},
-      options: Options(
-        headers: {
-          'apikey': config.publicKey,
-          'Authorization': 'Bearer ${verified['access_token']}',
-        },
-      ),
-    );
-    if (_authenticationStale(attempt) ||
-        _recoveryStale(recoveryAttempt) ||
-        !identical(_recoverySession, verified)) {
-      return false;
-    }
-    _recoverySession = null;
-    return _startSession(verified, recoveryAttempt: recoveryAttempt);
   }
 
   /// Leaving the new-password screen drops the recovery session.
@@ -1257,6 +1332,9 @@ class PushService {
     late final Future<void> operation;
     operation = _restore().whenComplete(() {
       _markAccountKnown();
+      if (userSessionAccess && !disposed) {
+        unawaited(ensureUserSession().catchError((_) {}));
+      }
       // Only a failed platform read is retryable here. A completed guest,
       // rejected token, logout or successful restoration stays memoized.
       if (_restoreStorageRetryNeeded && identical(_restoreFuture, operation)) {
@@ -1299,6 +1377,7 @@ class PushService {
     try {
       final decoded = jsonDecode(saved);
       session = decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+      if (userSessionAccess && session != null) _normalizeUserExpiry(session!);
     } catch (_) {
       session = null;
     }
@@ -1311,8 +1390,12 @@ class PushService {
       await refreshSession();
     } catch (error) {
       if (_stale(generation)) return;
-      if (isAuthRejection(error)) {
-        await _clearLocalSession();
+      if (userSessionAccess ? _expiredRefresh(error) : isAuthRejection(error)) {
+        if (userSessionAccess) {
+          await _invalidatePublicIdentity();
+        } else {
+          await _clearLocalSession();
+        }
         return;
       }
       // Offline/timeout/5xx/invalid body: keep the stored session; the
@@ -1493,7 +1576,8 @@ class PushService {
       // final flag write is pending. Flag IO must not prevent credential
       // deletion once ownership is durable; its error still remains visible.
       if (!_stale(generation) && context.deleteRequired) {
-        await _deletePersistedSession();
+        if (userSessionAccess) await _resetPublicGuestData(generation);
+        if (!_stale(generation)) await _deletePersistedSession();
       }
     }
   }
@@ -1504,6 +1588,7 @@ class PushService {
   Future<void> resume() {
     if (disposed) return Future.value();
     if (!authenticated) {
+      if (userSessionAccess) return ensureUserSession().catchError((_) {});
       return _restoreStorageRetryNeeded ? restore() : Future.value();
     }
     final operation = pending
@@ -1534,7 +1619,18 @@ class PushService {
     return operation;
   }
 
-  Future<void> _persistSession() => _writeSessionStorage(jsonEncode(session));
+  Future<void> _persistSession() async {
+    final value = jsonEncode(session);
+    try {
+      await _writeSessionStorage(value);
+      if (value == jsonEncode(session)) _publicSessionNeedsPersistence = false;
+    } catch (_) {
+      if (userSessionAccess && value == jsonEncode(session)) {
+        _publicSessionNeedsPersistence = true;
+      }
+      rethrow;
+    }
+  }
 
   Future<void> _deletePersistedSession() => _writeSessionStorage(null);
 
@@ -1577,6 +1673,11 @@ class PushService {
     final next = _validSession(result.data);
     if (next == null) throw _invalidSession(result.requestOptions);
     next['user'] ??= session?['user'];
+    if (userSessionAccess &&
+        (next['user'] is! Map || (next['user'] as Map)['id'] != userId)) {
+      throw _invalidSession(result.requestOptions);
+    }
+    if (userSessionAccess) _normalizeUserExpiry(next);
     session = next;
     await _persistSession();
   }
@@ -2146,6 +2247,10 @@ class PushService {
     // Never synced with this account on this device (first sign-in, or the
     // first after a sign-out): guest choices are linked, never replaced.
     final firstLink = await _readPushedSafe(userId) == null;
+    final preferAccount =
+        userSessionAccess &&
+        await storage.read(key: _publicPreferenceOwnerKey) == userId;
+    if (_stale(generation)) return;
     final cloudPreferences = cloud['preferences'];
     final cloudFollows = cloud['follows'];
     accountHadData =
@@ -2189,6 +2294,7 @@ class PushService {
       profileSucceeded = await _reconcileProfile(
         cloudPreferences,
         firstLink: firstLink,
+        preferAccount: preferAccount,
         foreignProfileOwner: foreignProfileOwner,
         restoreOwnedName:
             owner != null &&
@@ -2213,6 +2319,7 @@ class PushService {
         () => _reconcileCountries(
           Map<String, dynamic>.from(cloudPreferences),
           firstLink: firstLink,
+          preferAccount: preferAccount,
         ),
       );
     }
@@ -2220,6 +2327,10 @@ class PushService {
     final error = failure;
     if (error != null) Error.throwWithStackTrace(error, failureStack!);
     if (!profileSucceeded) return;
+    if (preferAccount && cloudPreferences is Map) {
+      await storage.delete(key: _publicPreferenceOwnerKey);
+      if (_stale(generation)) return;
+    }
     _lastReconcile = clock();
   }
 
@@ -2234,6 +2345,7 @@ class PushService {
   Future<bool> _reconcileProfile(
     Object? cloudPreferences, {
     required bool firstLink,
+    bool preferAccount = false,
     bool foreignProfileOwner = false,
     bool restoreOwnedName = false,
     String? ownedDisplayName,
@@ -2263,6 +2375,10 @@ class PushService {
     final cloudProfile = UserProfileSettings.fromJson(
       Map<String, dynamic>.from(cloudPreferences),
     );
+    if (preferAccount) {
+      await _writeLocalProfile(cloudProfile, dirty: false);
+      return !_stale(generation);
+    }
     if (foreignProfileOwner) {
       localProfile = localProfile.copyWith(
         displayName: cloudProfile.displayName,
@@ -2296,6 +2412,7 @@ class PushService {
   Future<void> _reconcileCountries(
     Map<String, dynamic> values, {
     required bool firstLink,
+    bool preferAccount = false,
   }) async {
     final generation = _generation;
     final localVersion = _countryWriteVersion;
@@ -2312,7 +2429,16 @@ class PushService {
     final cloudSelected = values['selectedCountry']?.toString();
     final String? detected;
     final String? selected;
-    if (firstLink) {
+    if (preferAccount) {
+      detected = cloudDetected ?? current.detectedCountry;
+      selected = cloudSelected ?? current.selectedCountry;
+      detectedDirty = detected != cloudDetected;
+      selectedDirty = selected != cloudSelected;
+      await storage.delete(key: 'futbeat.country.detected.dirty');
+      await storage.delete(key: 'futbeat.country.selected.dirty');
+      await storage.delete(key: 'futbeat.country.dirty');
+      if (_stale(generation)) return;
+    } else if (firstLink) {
       // The device region is this device's fact; the choice follows the
       // first-link rule. Whatever differs is then written to the account.
       detected = current.detectedCountry ?? cloudDetected;
@@ -2390,8 +2516,14 @@ class PushService {
         await refreshSession();
       } catch (error) {
         if (_stale(generation)) return;
-        if (isAuthRejection(error)) {
-          await _clearLocalSession();
+        if (userSessionAccess
+            ? _expiredRefresh(error)
+            : isAuthRejection(error)) {
+          if (userSessionAccess) {
+            await _invalidatePublicIdentity();
+          } else {
+            await _clearLocalSession();
+          }
           return;
         }
         rethrow;
@@ -2519,6 +2651,7 @@ class PushService {
     final context = _localSignOutContext!;
     _startServerSignOut(context);
     await local;
+    if (userSessionAccess) unawaited(ensureUserSession().catchError((_) {}));
   }
 
   void _startServerSignOut(_LocalSignOutContext context) {
@@ -2883,6 +3016,7 @@ final pushServiceProvider = Provider<PushService>((ref) {
     ref.watch(liveRealtimeConfigProvider),
     ref.watch(databaseProvider),
     FirebasePushTokens(),
+    userSessionAccess: userSessionAccessEnabled,
   );
   ref.onDispose(service.dispose);
   unawaited(service.restore());

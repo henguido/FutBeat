@@ -102,13 +102,18 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
   }
 
   void _closeIfSignedIn() {
-    if (mounted && ref.read(pushServiceProvider).authenticated) {
+    if (mounted && ref.read(pushServiceProvider).registered) {
       Navigator.pop(context, true);
     }
   }
 
   Future<void> _oauth(OAuthProvider provider) => _run(() async {
-    await ref.read(pushServiceProvider).signInWithOAuth(provider);
+    final service = ref.read(pushServiceProvider);
+    if (signup && service.userSessionAccess && service.isAnonymous) {
+      await service.linkAnonymousIdentity(provider);
+    } else {
+      await service.signInWithOAuth(provider);
+    }
     _closeIfSignedIn();
   });
 
@@ -130,7 +135,7 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
         await service.signIn(email.text, password.text);
       }
       password.clear();
-      if (!service.authenticated && signup) {
+      if (!service.registered && signup) {
         setState(() => confirmationEmail = email.text.trim());
       }
       _closeIfSignedIn();

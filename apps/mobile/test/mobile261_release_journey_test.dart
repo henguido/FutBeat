@@ -8,6 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/install_secure_storage.dart';
+
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/interests.dart';
@@ -412,52 +415,6 @@ class _App {
   }
 }
 
-// Each simulated installation owns its secure storage as well as its SQLite
-// file. A global secure-storage mock would make two clients share a session.
-class _InstallStorage extends FlutterSecureStorage {
-  final values = <String, String>{};
-  @override
-  Future<String?> read({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async => values[key];
-  @override
-  Future<void> write({
-    required String key,
-    required String? value,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    if (value == null) {
-      values.remove(key);
-    } else {
-      values[key] = value;
-    }
-  }
-
-  @override
-  Future<void> delete({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    AppleOptions? mOptions,
-    WindowsOptions? wOptions,
-  }) async {
-    values.remove(key);
-  }
-}
-
 class _IndependentInstall {
   _IndependentInstall(this.db, this.service, this.tokens);
   final AppDatabase db;
@@ -466,7 +423,7 @@ class _IndependentInstall {
   bool closed = false;
   static Future<_IndependentInstall> open(
     File file,
-    _InstallStorage storage,
+    InstallSecureStorage storage,
     _Cloud cloud,
   ) async {
     final db = AppDatabase(NativeDatabase(file));
@@ -507,8 +464,8 @@ void main() {
       'futbeat-two-installs-',
     );
     final cloud = _Cloud();
-    final storageA = _InstallStorage();
-    final storageB = _InstallStorage();
+    final storageA = InstallSecureStorage();
+    final storageB = InstallSecureStorage();
     final fileA = File.fromUri(directory.uri.resolve('a.sqlite'));
     final fileB = File.fromUri(directory.uri.resolve('b.sqlite'));
     final installs = <_IndependentInstall>[];

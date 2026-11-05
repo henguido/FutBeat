@@ -37,6 +37,11 @@ bool _olderLiveObservation(LiveMatchUpdate update, LiveMatchUpdate previous) {
       update.receivedAt!.isBefore(previous.receivedAt!);
 }
 
+/// Explicit rollout switch; shared public configuration, never a per-device key.
+const userSessionAccessEnabled = bool.fromEnvironment(
+  'FUTBEAT_USER_SESSION_ACCESS',
+);
+
 /// [serverNow] is the REST response's server time (HTTP `Date`) and
 /// [deviceNow] the device time it arrived; together they give every row a
 /// skew-free receipt time (#120: an old LIVE row never looks fresh).

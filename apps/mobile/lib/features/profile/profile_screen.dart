@@ -152,13 +152,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             ],
           ),
           ProfileSection(
-            title: service.authenticated ? 'Cuenta y ayuda' : 'Ayuda',
+            title: service.registered ? 'Cuenta y ayuda' : 'Ayuda',
             children: [
-              if (service.authenticated || service.accountConfigured)
+              if (service.registered || service.accountConfigured)
                 ProfileDestinationTile(
                   icon: Icons.manage_accounts_outlined,
                   title: 'Cuenta y seguridad',
-                  subtitle: service.authenticated
+                  subtitle: service.registered
                       ? '$provider · ${service.emailVerified == true ? 'Correo verificado' : 'Cuenta conectada'}'
                       : 'Inicia sesión o crea una cuenta',
                   onTap: () => context.push('/profile/account'),
@@ -230,15 +230,15 @@ class _ProfileHeader extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      service.authenticated
+                      service.registered
                           ? service.email ?? 'Cuenta conectada'
                           : 'Invitado',
                     ),
-                    if (!service.authenticated)
+                    if (!service.registered)
                       const Text(
                         'Tus favoritos se guardan en este dispositivo.',
                       ),
-                    if (service.authenticated)
+                    if (service.registered)
                       Text(
                         '$provider · ${premium ? 'Premium' : 'Plan Gratis'}',
                       ),
@@ -250,7 +250,7 @@ class _ProfileHeader extends StatelessWidget {
               if (premium) const Chip(label: Text('PREMIUM')),
             ],
           ),
-          if (!service.authenticated && service.accountConfigured) ...[
+          if (!service.registered && service.accountConfigured) ...[
             const SizedBox(height: 16),
             FilledButton(
               key: const ValueKey('profile-login'),
@@ -264,7 +264,7 @@ class _ProfileHeader extends StatelessWidget {
               child: const Text('Crear cuenta'),
             ),
           ],
-          if (!service.accountConfigured && !service.authenticated) ...[
+          if (!service.accountConfigured && !service.registered) ...[
             const SizedBox(height: 12),
             const Text('Inicio de sesión no disponible.'),
           ],

@@ -1,5 +1,20 @@
 # FutBeat Android 1.0 — roadmap único de lanzamiento
 
+## Actualización de acceso oficial — 2026-11-05
+
+La rama existente `codex/android-1-release-candidate` integra el contrato de usuario
+`b46d83b6`: invitado anónimo automático, JWT individual, vinculación de cuenta,
+merge-ticket y transporte central limitado. Reutiliza sesiones, favoritos, SQLite
+y experiencia deportiva existentes. Evidencia local: 2.027 pruebas Flutter
+aprobadas (incluidos goldens), 30 pruebas adicionales con el rollout habilitado,
+analyze limpio y cuatro guardas Gradle aprobadas. No se cambiaron goldens.
+
+No cambia la aceptación final a DONE: falta activar el contrato por Claude y
+validar el artefacto exacto en dos dispositivos. R05 durable y verificación oficial
+de Upload Key siguen bloqueando el AAB. Detalle y procedimiento en
+`FUTBEAT-1.0-USER-SESSION-CLIENT.md`; el CI anterior de PR #248 corresponde a
+`f255404d`, no acredita los nuevos cambios. No hubo modificaciones productivas.
+
 Corte MOBILE252: 2026-11-02, America/Costa_Rica (registros técnicos UTC pueden indicar 02-nov). Responsable de release: propietario; Flutter/Android: Codex; backend productivo: Claude. Documento de trabajo, no autorización de conexión, firma, subida o publicación.
 
 ## Decisión y medición

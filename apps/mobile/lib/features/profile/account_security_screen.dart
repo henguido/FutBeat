@@ -174,7 +174,7 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
           if (loading) const LinearProgressIndicator(),
           if (!loading && settings == null)
             TextButton(onPressed: _load, child: const Text('Reintentar')),
-          if (!service.authenticated)
+          if (!service.registered)
             ProfileSection(
               title: 'Tu cuenta',
               children: [

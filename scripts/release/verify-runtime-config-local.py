@@ -18,7 +18,7 @@ def artifact_snapshot(android):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java', help='Existing JDK executable; never downloads a JDK')
-    parser.add_argument('--case', action='append', choices=['unsafe', 'safe', 'empty-api', 'credential-api', 'release-graph', 'secret-token', 'privileged-jwt', 'anon-keys', 'unsafe-auth-origin', 'auth-path', 'safe-auth-origin', 'preview-key', 'preview-flags'])
+    parser.add_argument('--case', action='append', choices=['unsafe', 'safe', 'empty-api', 'credential-api', 'release-graph', 'secret-token', 'privileged-jwt', 'anon-keys', 'unsafe-auth-origin', 'auth-path', 'safe-auth-origin', 'preview-key', 'preview-flags', 'user-session-safe', 'user-session-fixed-token', 'user-session-wrong-origin', 'user-session-missing-key'])
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     java = args.java
@@ -55,6 +55,13 @@ def main():
         ('preview-key', ['FUTBEAT_PASSIVE_CLIENT_KEY=fixture-preview-read-key'], ['validateReleaseRuntimeConfig'], ['Preview client keys are not allowed in the official release']),
         ('preview-flags', ['FUTBEAT_PASSIVE_PREVIEW=true', 'FUTBEAT_PASSIVE_PREVIEW_ENABLED=true', 'FUTBEAT_OFFLINE_PREVIEW=true'], ['validateReleaseRuntimeConfig'], ['FUTBEAT_PASSIVE_PREVIEW is QA-only', 'FUTBEAT_PASSIVE_PREVIEW_ENABLED is QA-only', 'FUTBEAT_OFFLINE_PREVIEW is QA-only']),
         ('anon-keys', ['FUTBEAT_API_PUBLIC_TOKEN=' + fixture_jwt('anon'), 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture_only'], ['validateReleaseRuntimeConfig'], []),
+    ])
+    public = ['FUTBEAT_USER_SESSION_ACCESS=true', 'FUTBEAT_SUPABASE_URL=https://auth.example.test', 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture', 'FUTBEAT_API_URL=https://auth.example.test/functions/v1/futbeat-api']
+    cases.extend([
+        ('user-session-safe', public, ['validateReleaseRuntimeConfig'], []),
+        ('user-session-fixed-token', public + ['FUTBEAT_API_PUBLIC_TOKEN=sb_publishable_fixture'], ['validateReleaseRuntimeConfig'], ['User-session access must not contain a fixed API token']),
+        ('user-session-wrong-origin', public + ['FUTBEAT_API_URL=https://other.example.test/functions/v1/futbeat-api'], ['validateReleaseRuntimeConfig'], ['User-session API must match its Auth project and central endpoint']),
+        ('user-session-missing-key', public + ['FUTBEAT_SUPABASE_PUBLISHABLE_KEY='], ['validateReleaseRuntimeConfig'], ['User-session access requires an explicit publishable key']),
     ])
     if args.case:
         cases = [case for case in cases if case[0] in args.case]

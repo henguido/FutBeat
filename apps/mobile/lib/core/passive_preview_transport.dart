@@ -1,8 +1,14 @@
 import 'dart:async';
+import 'dart:io' show HttpDate;
 
 import 'package:dio/dio.dart';
 
-/// Bounded, fail-closed transport for the dedicated API277 Preview function.
+typedef UserApiSession = ({String accessToken, String scope});
+typedef UserApiSessionReader = Future<UserApiSession?> Function({
+  String? rejectedToken,
+});
+
+/// Shared bounded stored-read transport: API277 Preview or user-session API.
 /// Construct on a dedicated Dio before it can send any request.
 class PassivePreviewTransport extends Interceptor {
   PassivePreviewTransport({
@@ -12,14 +18,26 @@ class PassivePreviewTransport extends Interceptor {
     this.sessionLimit = 30,
     this.minuteLimit = 8,
     this.concurrentLimit = 2,
+    this.userSession,
+    this.currentScope,
+    this.retryClient,
+    this.publishableKey,
   }) : _clock = clock ?? DateTime.now,
        _clientKey = clientKey {
     if (baseUri.scheme != 'https' ||
         baseUri.host.isEmpty ||
+        baseUri.port != 443 ||
         baseUri.authority.contains('@') ||
         baseUri.hasQuery ||
         baseUri.hasFragment ||
-        baseUri.path != '/functions/v1/futbeat-passive-api' ||
+        (userSession == null
+            ? baseUri.path != '/functions/v1/futbeat-passive-api'
+            : baseUri.path != '/functions/v1/futbeat-api' ||
+                  clientKey != null ||
+                  currentScope == null ||
+                  retryClient == null ||
+                  !RegExp(r'^sb_publishable_[A-Za-z0-9_-]+$')
+                      .hasMatch(publishableKey ?? '')) ||
         (clientKey != null &&
             RegExp(r'^[!-~]{16,200}$').stringMatch(clientKey) != clientKey) ||
         sessionLimit < 1 ||
@@ -36,6 +54,12 @@ class PassivePreviewTransport extends Interceptor {
   final DateTime Function() _clock;
   final String? _clientKey;
   final int sessionLimit, minuteLimit, concurrentLimit;
+  final UserApiSessionReader? userSession;
+  final String Function()? currentScope;
+  final Dio? retryClient;
+  final String? publishableKey;
+  bool get usesUserSession => userSession != null;
+  final _usedTokens = <RequestOptions, String>{};
   bool _closed = false;
   DateTime? _retryAfter;
   final _cache = <String, ({DateTime expires, Response<dynamic> response})>{};
@@ -91,8 +115,10 @@ class PassivePreviewTransport extends Interceptor {
     _active.clear();
     for (final request in pending) {
       request.headers.remove('x-futbeat-client-key');
+      request.headers.remove('Authorization');
       request.cancelToken?.cancel('Passive Preview session closed');
     }
+    _usedTokens.clear();
     _releaseWaiters();
   }
 
@@ -129,9 +155,28 @@ class PassivePreviewTransport extends Interceptor {
       return;
     }
 
-    options.path = path.replaceFirst('/v1/', '/v1/qa-stored/');
+    options.path = usesUserSession
+        ? path
+        : path.replaceFirst('/v1/', '/v1/qa-stored/');
     options.queryParameters = params;
+    options.extra['_userScope'] = currentScope?.call();
     if (_serveCached(options, handler)) return;
+    UserApiSession? identity;
+    if (usesUserSession) {
+      try {
+        identity = await userSession!();
+      } catch (_) {}
+      if (identity == null ||
+          identity.scope != currentScope!() ||
+          options.cancelToken!.isCancelled ||
+          _closed) {
+        _blocked++;
+        handler.reject(_blockedRequest(options));
+        return;
+      }
+      options.extra['_userScope'] = identity.scope;
+      options.extra['publicReadContract'] = true;
+    }
     if (!await _waitForSlot(options)) {
       _blocked++;
       handler.reject(_blockedRequest(options));
@@ -159,6 +204,16 @@ class PassivePreviewTransport extends Interceptor {
     if (_clientKey != null) {
       options.headers['x-futbeat-client-key'] = _clientKey;
     }
+    if (identity != null) {
+      if (identity.scope != currentScope!()) {
+        _settle(options);
+        handler.reject(_blockedRequest(options));
+        return;
+      }
+      options.headers['apikey'] = publishableKey;
+      options.headers['Authorization'] = 'Bearer ${identity.accessToken}';
+      _usedTokens[options] = identity.accessToken;
+    }
     options.followRedirects = false;
     options.validateStatus = (status) => status == 200;
     options.connectTimeout = const Duration(seconds: 8);
@@ -169,7 +224,11 @@ class PassivePreviewTransport extends Interceptor {
   }
 
   bool _serveCached(RequestOptions options, RequestInterceptorHandler handler) {
-    if (_closed || options.cancelToken!.isCancelled) return false;
+    if (_closed ||
+        options.cancelToken!.isCancelled ||
+        (usesUserSession && options.extra['_userScope'] != currentScope!())) {
+      return false;
+    }
     final now = _clock();
     _cache.removeWhere((_, entry) => !now.isBefore(entry.expires));
     final cached = _cache[_cacheKey(options)];
@@ -230,10 +289,12 @@ class PassivePreviewTransport extends Interceptor {
   String _cacheKey(RequestOptions options) {
     final query = options.uri.queryParametersAll;
     final keys = query.keys.toList()..sort();
-    return Uri(
-      path: options.uri.path,
-      queryParameters: {for (final key in keys) key: query[key]},
-    ).toString();
+    final scope = usesUserSession ? '${options.extra['_userScope']}|' : '';
+    return scope +
+        Uri(
+          path: options.uri.path,
+          queryParameters: {for (final key in keys) key: query[key]},
+        ).toString();
   }
 
   void _remember(Response<dynamic> response) {
@@ -241,14 +302,23 @@ class PassivePreviewTransport extends Interceptor {
     final status = response.statusCode;
     if (status == 429 || status == 503) {
       final values = response.headers['retry-after'];
-      final seconds = values?.length == 1 ? int.tryParse(values!.single) : null;
-      final deadline = now.add(
-        Duration(
-          seconds: seconds != null && seconds > 0
-              ? seconds
-              : (status == 429 ? 60 : 2),
-        ),
-      );
+      final raw = values?.length == 1 ? values!.single : null;
+      final seconds = int.tryParse(raw ?? "");
+      DateTime? date;
+      if (seconds == null && raw != null) {
+        try {
+          date = HttpDate.parse(raw);
+        } catch (_) {}
+      }
+      final deadline = date?.isAfter(now) == true
+          ? date!
+          : now.add(
+              Duration(
+                seconds: seconds != null && seconds > 0
+                    ? seconds
+                    : (status == 429 ? 60 : 2),
+              ),
+            );
       if (_retryAfter?.isAfter(deadline) != true) _retryAfter = deadline;
       return;
     }
@@ -281,11 +351,21 @@ class PassivePreviewTransport extends Interceptor {
   void _settle(RequestOptions options) {
     if (_active.remove(options)) {
       options.headers.remove('x-futbeat-client-key');
+      options.headers.remove('Authorization');
+      _usedTokens.remove(options);
       _releaseWaiters();
     }
   }
 
   bool _accepted(Response<dynamic> response) {
+    if (usesUserSession) {
+      final status = response.statusCode ?? 0;
+      return !_closed &&
+          response.requestOptions.extra['_userScope'] == currentScope!() &&
+          (status == 200 || status >= 400) &&
+          status != 401 &&
+          status != 403;
+    }
     final stored = response.headers['x-futbeat-qa-stored'];
     final passive = response.headers['x-futbeat-passive'];
     final status = response.statusCode ?? 0;
@@ -309,17 +389,45 @@ class PassivePreviewTransport extends Interceptor {
       _remember(response);
       handler.next(response);
     } else {
-      close();
+      if (!usesUserSession) close();
       handler.reject(_blockedRequest(response.requestOptions));
     }
   }
 
   @override
-  void onError(DioException err, ErrorInterceptorHandler handler) {
-    _settle(err.requestOptions);
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    final options = err.requestOptions;
+    final rejectedToken = _usedTokens[options];
+    _settle(options);
     final response = err.response;
+    if (usesUserSession &&
+        response?.statusCode == 401 &&
+        options.extra['_retriedUserSession'] != true &&
+        rejectedToken != null &&
+        options.extra['_userScope'] == currentScope!() &&
+        !options.cancelToken!.isCancelled &&
+        !_closed) {
+      try {
+        final renewed = await userSession!(rejectedToken: rejectedToken);
+        if (renewed != null &&
+            renewed.scope == options.extra['_userScope'] &&
+            renewed.scope == currentScope!() &&
+            !options.cancelToken!.isCancelled &&
+            !_closed) {
+          final retry = options.copyWith(
+            headers: <String, dynamic>{},
+            extra: {...options.extra, '_retriedUserSession': true},
+          );
+          final answer = await retryClient!.fetch<dynamic>(retry);
+          handler.resolve(answer);
+          return;
+        }
+      } catch (_) {}
+      handler.reject(_blockedRequest(options));
+      return;
+    }
     if (response != null && !_accepted(response)) {
-      close();
+      if (!usesUserSession) close();
       handler.reject(_blockedRequest(err.requestOptions));
       return;
     }
