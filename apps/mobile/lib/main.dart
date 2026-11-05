@@ -407,7 +407,7 @@ class AppShell extends ConsumerStatefulWidget {
   final Widget child;
   static const paths = [
     '/matches',
-    '/news',
+    if (!passivePreview) '/news',
     '/explore',
     '/favorites',
     '/profile',
@@ -459,10 +459,11 @@ class _AppShellState extends ConsumerState<AppShell> {
             icon: Icon(Icons.sports_soccer),
             label: 'Partidos',
           ),
-          NavigationDestination(
-            icon: Icon(Icons.article_outlined),
-            label: 'Noticias',
-          ),
+          if (!passivePreview)
+            NavigationDestination(
+              icon: Icon(Icons.article_outlined),
+              label: 'Noticias',
+            ),
           NavigationDestination(icon: Icon(Icons.search), label: 'Explorar'),
           NavigationDestination(
             icon: Icon(Icons.star_border),

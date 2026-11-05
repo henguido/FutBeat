@@ -296,3 +296,7 @@ Correcciones A09 (9408ed6b), S01/S07 (2971be1d), M03 (88a47254) y A03/A07 (fd0c3
 - **R10 / S01 / S02 / S09** — preparación local en `codex/mobile-278-integration`, código `3cdd5e84`. La variante `com.futbeat.futbeat.preview.connected` está desactivada por defecto. El cliente bloquea rutas ajenas al contrato, exige ambos acuses de lectura pasiva y aplica límites de 30 consultas en 15 minutos, 8 por minuto y 2 simultáneas. Conserva SQLite y muestra contenido guardado cuando falla la lectura.
 - **R05** — BLOCKED_BACKEND. La interrupción de recuperación de contraseña queda cubierta localmente. La confirmación de borrado sigue dependiendo de un recibo durable y una consulta de estado.
 - **R08 / R09 / R10** — faltan CI Linux de este código, verificación del APK exacto y aceptación conectada en A32. El GO requiere evidencia del despliegue y autorización de activación. La RC oficial continúa NO-GO.
+
+## Candidata Android 1.0 — cierre posterior a Preview conectada
+
+Evidencia consolidada en `FUTBEAT-ANDROID-1.0-CANDIDATE.md`. S01/S02/M03: corregido rechazo del contexto inicial con cola cancelable acotada, navegación Noticias pasiva oculta y descarga estática HTTPS permitida con caché existente. R03: guardas impiden clave/banderas Preview en release oficial. No se marca DONE conectado por mocks. Se conserva la aceptación física de la base 7e7834b; la aceptación del nuevo binario sigue separada. R02/R03/R05/R08/R10 mantienen bloqueadores de firma, configuración, borrado durable, artefacto y contrato oficial; RC NO-GO.

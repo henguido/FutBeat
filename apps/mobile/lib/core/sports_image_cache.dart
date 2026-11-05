@@ -7,6 +7,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'qa_development.dart';
+
 typedef SportsImageFetch = Future<Uint8List> Function(Uri uri);
 
 /// Private, bounded cache for verified sports entity media. A file belongs to
@@ -72,6 +74,19 @@ class SportsImageDiskCache {
         ? uri
         : null;
   }
+
+  /// Static media paths observed in verified entity records. Provider API
+  /// routes, credentials and arbitrary redirects never enter this channel.
+  static bool allowedRemoteUri(Uri uri) =>
+      uri.scheme == 'https' &&
+      uri.host == 'media.goal-api.com' &&
+      uri.port == 443 &&
+      uri.userInfo.isEmpty &&
+      !uri.hasQuery &&
+      !uri.hasFragment &&
+      RegExp(
+        r'^/badges/(players|teams|tournaments)/[A-Za-z0-9_-]+\.(png|jpg|jpeg|webp)$',
+      ).hasMatch(uri.path);
 
   Future<File?> resolve({required String canonicalId, required String? url}) {
     final uri = validUri(url);
@@ -282,7 +297,12 @@ class SportsImageDiskCache {
   }
 
   static Future<Uint8List> _fetchImage(Uri uri, Duration deadline) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    if (!allowedRemoteUri(uri)) {
+      throw const HttpException('Image origin is not permitted');
+    }
+    final client =
+        (passivePreview ? createPassivePreviewHttpClient() : HttpClient())
+          ..connectionTimeout = const Duration(seconds: 5);
     Future<Uint8List> download() async {
       var target = uri;
       for (var redirect = 0; redirect <= 3; redirect++) {
@@ -299,7 +319,9 @@ class SportsImageDiskCache {
           // Discarded bodies may never finish (or be unbounded). Cancel
           // the subscription rather than draining provider bytes we cannot use.
           await response.listen(null).cancel();
-          if (next == null) throw const HttpException('Unsafe image redirect');
+          if (next == null || !allowedRemoteUri(next)) {
+            throw const HttpException('Unsafe image redirect');
+          }
           target = next;
           continue;
         }

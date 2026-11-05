@@ -100,6 +100,50 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  for (final url in [
+    'https://media.goal-api.com.evil.test/badges/players/player.png',
+    'https://media.goal-api.com/api/v1/fixtures',
+    'https://media.goal-api.com:8443/badges/players/player.png',
+    'https://media.goal-api.com/badges/players/player.png?token=fixture',
+    'https://127.0.0.1/badges/players/player.png',
+  ]) {
+    test('unapproved image URL never opens HTTP: $url', () async {
+      final client = _FixtureClient([]);
+      final file = await HttpOverrides.runZoned(
+        () =>
+            SportsImageDiskCache(directory: directory)
+                .resolve(canonicalId: 'fb_player_fixture244', url: url),
+        createHttpClient: (_) => client,
+      );
+      expect(file, isNull);
+      expect(client.requests, isEmpty);
+      expect(directory.listSync(), isEmpty);
+    });
+  }
+
+  test(
+    'a cross-host HTTPS redirect cannot leave the static media paths',
+    () async {
+      final redirect = _FixtureResponse(
+        statusCode: 302,
+        headers: _FixtureHeaders(location: 'https://other.invalid/photo.png'),
+        isRedirect: true,
+      );
+      addTearDown(redirect.body.close);
+      final client = _FixtureClient([redirect]);
+      final file = await HttpOverrides.runZoned(
+        () => SportsImageDiskCache(directory: directory).resolve(
+          canonicalId: 'fb_player_fixture244',
+          url: 'https://media.goal-api.com/badges/players/photo.png',
+        ),
+        createHttpClient: (_) => client,
+      );
+      expect(file, isNull);
+      expect(client.requests, hasLength(1));
+      expect(redirect.cancelled, isTrue);
+    },
+  );
+
   for (final rejected in [
     'status',
     'content-type',
@@ -133,7 +177,7 @@ void main() {
         final file = await HttpOverrides.runZoned(
           () => cache.resolve(
             canonicalId: 'fb_player_fixture244',
-            url: 'https://media.example.test/photo.png',
+            url: 'https://media.goal-api.com/badges/players/photo.png',
           ),
           createHttpClient: (_) => client,
         ).timeout(const Duration(seconds: 1));
@@ -151,7 +195,7 @@ void main() {
     () async {
       final redirect = _FixtureResponse(
         statusCode: 302,
-        headers: _FixtureHeaders(location: '/canonical.png'),
+        headers: _FixtureHeaders(location: '/badges/players/canonical.png'),
         isRedirect: true,
       );
       final image = _FixtureResponse(
@@ -172,7 +216,7 @@ void main() {
       final file = await HttpOverrides.runZoned(
         () => cache.resolve(
           canonicalId: 'fb_player_fixture244',
-          url: 'https://media.example.test/photo.png',
+          url: 'https://media.goal-api.com/badges/players/photo.png',
         ),
         createHttpClient: (_) => client,
       ).timeout(const Duration(seconds: 1));
@@ -180,8 +224,8 @@ void main() {
       expect(await file!.readAsBytes(), png);
       expect(redirect.cancelled, isTrue);
       expect(client.requests.map((uri) => uri.path), [
-        '/photo.png',
-        '/canonical.png',
+        '/badges/players/photo.png',
+        '/badges/players/canonical.png',
       ]);
       expect(client.closed, isTrue);
     },
@@ -211,7 +255,7 @@ void main() {
     final file = await HttpOverrides.runZoned(
       () => cache.resolve(
         canonicalId: 'fb_player_deadline244',
-        url: 'https://media.example.test/drip.png',
+        url: 'https://media.goal-api.com/badges/players/drip.png',
       ),
       createHttpClient: (_) => client,
     ).timeout(const Duration(seconds: 5));
@@ -237,7 +281,7 @@ void main() {
     final retried = await HttpOverrides.runZoned(
       () => cache.resolve(
         canonicalId: 'fb_player_deadline244',
-        url: 'https://media.example.test/drip.png',
+        url: 'https://media.goal-api.com/badges/players/drip.png',
       ),
       createHttpClient: (_) => retryClient,
     ).timeout(const Duration(seconds: 5));

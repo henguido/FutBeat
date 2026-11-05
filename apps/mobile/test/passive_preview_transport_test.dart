@@ -48,6 +48,102 @@ Dio _client(PassivePreviewTransport transport, _FixtureAdapter adapter) {
 }
 
 void main() {
+  test('cancelled queued context never reaches the network', () async {
+    final held = Completer<ResponseBody>();
+    final entered = Completer<void>();
+    var sent = 0;
+    final transport = PassivePreviewTransport(
+      baseUri: _base,
+      concurrentLimit: 1,
+    );
+    final dio = _client(
+      transport,
+      _FixtureAdapter((_) {
+        sent++;
+        entered.complete();
+        return held.future;
+      }),
+    );
+    final active = dio.get('/v1/match-detail');
+    await entered.future;
+    final token = CancelToken();
+    final cancelled = expectLater(
+      dio.get('/v1/match-context', cancelToken: token),
+      throwsA(isA<DioException>()),
+    );
+    await Future<void>.delayed(Duration.zero);
+    token.cancel();
+    await cancelled;
+    held.complete(_response(200));
+    await active;
+    expect(sent, 1);
+  });
+
+  test('fresh transport cache is immediate even while the network slot is occupied', () async {
+    final held = Completer<ResponseBody>();
+    final entered = Completer<void>();
+    final transport = PassivePreviewTransport(
+      baseUri: _base,
+      concurrentLimit: 1,
+    );
+    var sent = 0;
+    final dio = _client(
+      transport,
+      _FixtureAdapter((options) {
+        sent++;
+        if (options.path.endsWith('calendar')) {
+          return _response(200)..headers['cache-control'] = ['max-age=30'];
+        }
+        entered.complete();
+        return held.future;
+      }),
+    );
+    await dio.get('/v1/calendar');
+    final active = dio.get('/v1/match-detail');
+    await entered.future;
+    expect((await dio.get('/v1/calendar')).statusCode, 200);
+    expect(sent, 2);
+    held.complete(_response(200));
+    await active;
+  });
+
+  test(
+    'initial context waits for two concurrent detail reads instead of failing',
+    () async {
+      final first = Completer<ResponseBody>();
+      final second = Completer<ResponseBody>();
+      final occupied = Completer<void>();
+      final paths = <String>[];
+      final transport = PassivePreviewTransport(baseUri: _base);
+      final dio = _client(
+        transport,
+        _FixtureAdapter((options) {
+          paths.add(options.path);
+          if (paths.length == 2) occupied.complete();
+          if (options.path.endsWith('match-detail')) return first.future;
+          if (options.path.endsWith('match-preview')) return second.future;
+          return _response(200);
+        }),
+      );
+      final detail = dio.get('/v1/match-detail');
+      final preview = dio.get('/v1/match-preview');
+      await occupied.future;
+      final context = dio.get('/v1/match-context');
+      final accepted = expectLater(
+        context,
+        completion(isA<Response<dynamic>>()),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(paths, hasLength(2));
+      first.complete(_response(200));
+      await accepted;
+      second.complete(_response(200));
+      await Future.wait([detail, preview]);
+      expect(paths.where((p) => p.endsWith('match-context')), hasLength(1));
+      expect(transport.counters['active'], 0);
+    },
+  );
+
   test(
     'replays fresh and absent results without network until their TTL',
     () async {
@@ -268,11 +364,15 @@ void main() {
       throwsA(isA<DioException>()),
     );
     await entered.future;
-    await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
+    final queued = expectLater(
+      dio.get('/v1/match-context'),
+      throwsA(isA<DioException>()),
+    );
+    await Future<void>.delayed(Duration.zero);
     expect(transport.counters['active'], 1);
     transport.close();
     held.complete(_response(200));
-    await pending;
+    await Future.wait([pending, queued]);
     expect(transport.counters, {'requests': 1, 'active': 0, 'blocked': 1});
   });
 }

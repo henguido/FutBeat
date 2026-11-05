@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 
 /// Bounded, fail-closed transport for the dedicated API277 Preview function.
@@ -41,6 +43,8 @@ class PassivePreviewTransport extends Interceptor {
   int _used = 0, _blocked = 0;
   final _recent = <DateTime>[];
   final _active = <RequestOptions>{};
+  final _waiting = <RequestOptions>{};
+  var _slotChanged = Completer<void>();
   static const _budgetWindow = Duration(minutes: 15);
   static const _queryKeys = {
     'id',
@@ -83,12 +87,13 @@ class PassivePreviewTransport extends Interceptor {
   void close() {
     _closed = true;
     _cache.clear();
-    final pending = _active.toList();
+    final pending = [..._active, ..._waiting];
     _active.clear();
     for (final request in pending) {
       request.headers.remove('x-futbeat-client-key');
       request.cancelToken?.cancel('Passive Preview session closed');
     }
+    _releaseWaiters();
   }
 
   DioException _blockedRequest(RequestOptions options) => DioException(
@@ -98,12 +103,11 @@ class PassivePreviewTransport extends Interceptor {
   );
 
   @override
-  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    final now = _clock();
-    _recent.removeWhere((time) => now.difference(time) >= _budgetWindow);
-    final minuteRequests = _recent
-        .where((time) => now.difference(time) < const Duration(minutes: 1))
-        .length;
+  void onRequest(
+    RequestOptions options,
+    RequestInterceptorHandler handler,
+  ) async {
+    options.cancelToken ??= CancelToken();
     final path = options.path;
     final params = Map<String, dynamic>.of(options.queryParameters);
     // Ordinary detail reads pass request=0 to opt out of hydration. The
@@ -127,9 +131,50 @@ class PassivePreviewTransport extends Interceptor {
 
     options.path = path.replaceFirst('/v1/', '/v1/qa-stored/');
     options.queryParameters = params;
+    if (_serveCached(options, handler)) return;
+    if (!await _waitForSlot(options)) {
+      _blocked++;
+      handler.reject(_blockedRequest(options));
+      return;
+    }
+    final now = _clock();
+    _recent.removeWhere((time) => now.difference(time) >= _budgetWindow);
+    final minuteRequests = _recent
+        .where((time) => now.difference(time) < const Duration(minutes: 1))
+        .length;
+    if (_serveCached(options, handler)) return;
+    if (_closed ||
+        options.cancelToken!.isCancelled ||
+        _retryAfter?.isAfter(now) == true ||
+        _recent.length >= sessionLimit ||
+        minuteRequests >= minuteLimit) {
+      _settle(options);
+      _blocked++;
+      handler.reject(_blockedRequest(options));
+      return;
+    }
+    options.headers
+      ..clear()
+      ..['accept'] = 'application/json';
+    if (_clientKey != null) {
+      options.headers['x-futbeat-client-key'] = _clientKey;
+    }
+    options.followRedirects = false;
+    options.validateStatus = (status) => status == 200;
+    options.connectTimeout = const Duration(seconds: 8);
+    options.receiveTimeout = const Duration(seconds: 8);
+    _used++;
+    _recent.add(now);
+    handler.next(options);
+  }
+
+  bool _serveCached(RequestOptions options, RequestInterceptorHandler handler) {
+    if (_closed || options.cancelToken!.isCancelled) return false;
+    final now = _clock();
     _cache.removeWhere((_, entry) => !now.isBefore(entry.expires));
     final cached = _cache[_cacheKey(options)];
     if (cached != null) {
+      _settle(options);
       final response = Response<dynamic>(
         requestOptions: options,
         statusCode: cached.response.statusCode,
@@ -147,31 +192,39 @@ class PassivePreviewTransport extends Interceptor {
       } else {
         handler.resolve(response);
       }
-      return;
+      return true;
     }
-    if (_retryAfter?.isAfter(now) == true ||
-        _recent.length >= sessionLimit ||
-        minuteRequests >= minuteLimit ||
-        _active.length >= concurrentLimit) {
-      _blocked++;
-      handler.reject(_blockedRequest(options));
-      return;
+    return false;
+  }
+
+  Future<bool> _waitForSlot(RequestOptions options) async {
+    if (_waiting.length >= sessionLimit) return false;
+    final elapsed = Stopwatch()..start();
+    _waiting.add(options);
+    try {
+      while (_active.length >= concurrentLimit) {
+        if (_closed || options.cancelToken!.isCancelled) return false;
+        final remaining = const Duration(seconds: 8) - elapsed.elapsed;
+        if (remaining <= Duration.zero) return false;
+        await Future.any<void>([
+          _slotChanged.future,
+          options.cancelToken!.whenCancel.then((_) {}),
+        ]).timeout(remaining);
+      }
+      if (_closed || options.cancelToken!.isCancelled) return false;
+      _active.add(options);
+      return true;
+    } on TimeoutException {
+      return false;
+    } finally {
+      _waiting.remove(options);
     }
-    options.headers
-      ..clear()
-      ..['accept'] = 'application/json';
-    if (_clientKey != null) {
-      options.headers['x-futbeat-client-key'] = _clientKey;
-    }
-    options.followRedirects = false;
-    options.validateStatus = (status) => status == 200;
-    options.cancelToken ??= CancelToken();
-    options.connectTimeout = const Duration(seconds: 8);
-    options.receiveTimeout = const Duration(seconds: 8);
-    _used++;
-    _recent.add(now);
-    _active.add(options);
-    handler.next(options);
+  }
+
+  void _releaseWaiters() {
+    final signal = _slotChanged;
+    _slotChanged = Completer<void>();
+    signal.complete();
   }
 
   String _cacheKey(RequestOptions options) {
@@ -226,7 +279,10 @@ class PassivePreviewTransport extends Interceptor {
   }
 
   void _settle(RequestOptions options) {
-    if (_active.remove(options)) options.headers.remove('x-futbeat-client-key');
+    if (_active.remove(options)) {
+      options.headers.remove('x-futbeat-client-key');
+      _releaseWaiters();
+    }
   }
 
   bool _accepted(Response<dynamic> response) {

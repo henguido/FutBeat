@@ -18,7 +18,7 @@ def artifact_snapshot(android):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java', help='Existing JDK executable; never downloads a JDK')
-    parser.add_argument('--case', action='append', choices=['unsafe', 'safe', 'empty-api', 'credential-api', 'release-graph', 'secret-token', 'privileged-jwt', 'anon-keys', 'unsafe-auth-origin', 'auth-path', 'safe-auth-origin'])
+    parser.add_argument('--case', action='append', choices=['unsafe', 'safe', 'empty-api', 'credential-api', 'release-graph', 'secret-token', 'privileged-jwt', 'anon-keys', 'unsafe-auth-origin', 'auth-path', 'safe-auth-origin', 'preview-key', 'preview-flags'])
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     java = args.java
@@ -52,6 +52,8 @@ def main():
     cases.extend([
         ('secret-token', ['FUTBEAT_API_PUBLIC_TOKEN=sb_secret_fixture_only', 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY=sb_secret_fixture_alias'], ['validateReleaseRuntimeConfig'], ['FUTBEAT_API_PUBLIC_TOKEN ' + token_error, 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY ' + token_error]),
         ('privileged-jwt', ['FUTBEAT_API_PUBLIC_TOKEN=' + fixture_jwt('service_role'), 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY=' + fixture_jwt('authenticated')], ['validateReleaseRuntimeConfig'], ['FUTBEAT_API_PUBLIC_TOKEN ' + token_error, 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY ' + token_error]),
+        ('preview-key', ['FUTBEAT_PASSIVE_CLIENT_KEY=fixture-preview-read-key'], ['validateReleaseRuntimeConfig'], ['Preview client keys are not allowed in the official release']),
+        ('preview-flags', ['FUTBEAT_PASSIVE_PREVIEW=true', 'FUTBEAT_PASSIVE_PREVIEW_ENABLED=true', 'FUTBEAT_OFFLINE_PREVIEW=true'], ['validateReleaseRuntimeConfig'], ['FUTBEAT_PASSIVE_PREVIEW is QA-only', 'FUTBEAT_PASSIVE_PREVIEW_ENABLED is QA-only', 'FUTBEAT_OFFLINE_PREVIEW is QA-only']),
         ('anon-keys', ['FUTBEAT_API_PUBLIC_TOKEN=' + fixture_jwt('anon'), 'FUTBEAT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture_only'], ['validateReleaseRuntimeConfig'], []),
     ])
     if args.case:
@@ -66,7 +68,7 @@ def main():
             result = subprocess.run(command, cwd=android, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf8', errors='replace', timeout=180)
             log = result.stdout
             passed = (result.returncode == 0 and 'Release runtime configuration OK' in log and 'BUILD SUCCESSFUL' in log) if not messages else (result.returncode != 0 and 'BUILD FAILED' in log and all(message in log for message in messages))
-            if name in {'secret-token', 'privileged-jwt'}:
+            if name in {'secret-token', 'privileged-jwt', 'preview-key'}:
                 # Synthetic values only. Even rejected credentials must never
                 # be echoed by the validation error.
                 passed = passed and all(value.split('=', 1)[1] not in log for value in defines)

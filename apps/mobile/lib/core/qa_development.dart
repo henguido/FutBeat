@@ -15,7 +15,8 @@ const isolatedPreview = offlinePreview || passivePreview;
 
 class _PassivePreviewHttpOverrides extends HttpOverrides {}
 
-/// Only the guarded API transport gets a client outside the global block.
+/// Dedicated callers must validate their API or static-media allowlist before
+/// using a client outside the global Preview network block.
 HttpClient createPassivePreviewHttpClient() =>
     HttpOverrides.runWithHttpOverrides(
       HttpClient.new,
