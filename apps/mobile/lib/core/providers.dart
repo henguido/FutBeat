@@ -633,6 +633,7 @@ class ApiRepository implements FootballRepository {
     return switch (parameters?['type']) {
       'team' => snapshot.team(canonical) != null,
       'player' => snapshot.player(canonical) != null,
+      'competition' => snapshot.competition(canonical) != null,
       _ => false,
     };
   }
@@ -2123,7 +2124,9 @@ final entitySnapshotProvider =
         }
         yield snapshot;
       }
-    });
+      // The repository already bounds request retries. Repeating failed
+      // streams here hides the offline error behind loading and burns quota.
+    }, retry: (_, _) => null);
 
 /// Called when a profile screen is (re-)entered: an answer already held for
 /// [request] that is at least [entityRevalidateAfter] old is refreshed in

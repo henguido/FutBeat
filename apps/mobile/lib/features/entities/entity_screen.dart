@@ -254,9 +254,11 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const EmptyState(
+              EmptyState(
                 'No pudimos cargar este perfil',
-                'Revisa tu conexión e intenta nuevamente.',
+                type == 'competition'
+                    ? 'No hay datos guardados para mostrar. Conéctate e intenta nuevamente.'
+                    : 'Revisa tu conexión e intenta nuevamente.',
                 icon: Icons.cloud_off,
               ),
               FilledButton(
@@ -341,12 +343,20 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
               : view;
         }
         if (type == 'competition') {
-          return CompetitionProfileView(
+          final view = CompetitionProfileView(
             data: data,
             competition: entity,
             matches: matches,
             teams: competitionTeams(data, canonicalId),
           );
+          return data.stale
+              ? Banner(
+                  message: 'Datos guardados',
+                  location: BannerLocation.topEnd,
+                  color: Colors.deepOrange,
+                  child: view,
+                )
+              : view;
         }
         // Teams and players have dedicated profiles; this is the competition
         // profile.

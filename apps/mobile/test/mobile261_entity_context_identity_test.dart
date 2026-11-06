@@ -132,10 +132,6 @@ void main() {
         final persisted = await f.db.readPublicSnapshot(
           'public:entity:$type:$requested',
         );
-        if (type == 'competition') {
-          expect(persisted, isNull);
-          return;
-        }
         expect(persisted, isNotNull);
         expect(
           (jsonDecode(persisted!.payload) as Map)['updatedAt'],
@@ -181,8 +177,32 @@ void main() {
         await f.repository.settleBackground();
         expect(
           await f.db.readPublicSnapshot('public:entity:$type:$requested'),
-          type == 'competition' ? isNull : isNotNull,
+          isNotNull,
         );
+        final offline = Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (request, handler) {
+                handler.reject(
+                  DioException(
+                    requestOptions: request,
+                    type: DioExceptionType.connectionError,
+                  ),
+                );
+              },
+            ),
+          );
+        try {
+          final restored = await ApiRepository(
+            offline,
+            f.db,
+          ).watchPublicEntity(type, requested).first;
+          expect(restored.stale, isTrue);
+          expect(restored.resolveEntityId(requested), foreign);
+          expect(target(restored)?.id, foreign);
+        } finally {
+          offline.close();
+        }
       },
     );
     test(
