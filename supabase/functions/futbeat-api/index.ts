@@ -1,4 +1,17 @@
-import { withSupabase } from 'npm:@supabase/server';
+import { fromSupabaseUrl, withSupabase } from 'npm:@supabase/server@1.8.0';
+import {
+  accessMode,
+  authOption,
+  clientIp,
+  ipHash,
+  isKnownRoute,
+  IsolateLimiter,
+  requestIdentity,
+  routeCost,
+  throttled,
+  unauthorized,
+  withoutLegacyProjectToken,
+} from '../_shared/api_access.ts';
 import { calendarCacheControl } from '../_shared/calendar_cache.ts';
 import {
   asRecord,
@@ -133,10 +146,67 @@ const validSeasonKey = (value: string | null) =>
   value === null || value === '-' ||
   /^[\p{L}\p{N}][\p{L}\p{N} ._/-]{0,39}$/u.test(value);
 
-export default {
-  fetch: withSupabase({ auth: 'none' }, async (request, ctx) => {
+// Public access contract (FutBeat 1.0, see _shared/api_access.ts and
+// packages/contracts/public-api-access-v1.md). Nothing changes until the
+// deployment sets FUTBEAT_API_ACCESS_MODE (open | dual | user) and/or
+// FUTBEAT_API_ADMISSION=on: unset, the function is exactly the open API it
+// was. Admission counts every known route in futbeat_api_admit; if that RPC
+// fails the request is still served under a per-isolate limit.
+const readEnv = (name: string) =>
+  (globalThis as { Deno?: { env: { get(key: string): string | undefined } } }).Deno?.env.get(name);
+const configuredMode = readEnv('FUTBEAT_API_ACCESS_MODE')?.trim() ?? '';
+const admissionEnabled = readEnv('FUTBEAT_API_ADMISSION') === 'on';
+const accessGated = configuredMode !== '' || admissionEnabled;
+const mode = accessGated ? accessMode(configuredMode) : 'open';
+const supabaseUrl = readEnv('SUPABASE_URL') ?? '';
+const fallbackLimiter = accessGated ? new IsolateLimiter(120) : null;
+
+async function admitRequest(
+  request: Request,
+  path: string,
+  ctx: { authMode?: string; jwtClaims?: Record<string, unknown> | null; supabaseAdmin: { rpc: (fn: string, args?: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> } },
+): Promise<Response | null> {
+  const identity = requestIdentity(ctx);
+  if (mode === 'user' && identity.kind === 'none') return unauthorized();
+  if (!admissionEnabled) return null;
+  const hash = await ipHash(clientIp(request), readEnv('FUTBEAT_RATE_SALT'));
+  const cost = routeCost(path);
+  try {
+    const { data, error } = await ctx.supabaseAdmin.rpc('futbeat_api_admit', {
+      p_subject: identity.subject,
+      p_kind: identity.kind,
+      p_ip_hash: hash,
+      p_cost: cost,
+    });
+    if (error) throw error;
+    const verdict = asRecord(data);
+    if (verdict.allowed === false) {
+      return throttled(Number(verdict.retryAfterSeconds ?? 60), cleanText(verdict.reason) || 'limit');
+    }
+    return null;
+  } catch {
+    console.warn('admission unavailable; isolate limit applied');
+    const key = identity.subject ?? hash ?? 'unknown';
+    return fallbackLimiter!.take(key, cost) ? null : throttled(60, 'isolate_minute');
+  }
+}
+
+const handle = withSupabase(accessGated
+    ? {
+      auth: authOption(mode),
+      ...(mode !== 'open' && supabaseUrl ? { issuer: fromSupabaseUrl(supabaseUrl) } : {}),
+    }
+    : { auth: 'none' }, async (request, ctx) => {
     if (request.method !== 'GET') {
       return reply(405, { error: 'Method not allowed' });
+    }
+
+    if (accessGated) {
+      const path = new URL(request.url).pathname;
+      // Unknown paths never reach the database (no counter write either).
+      if (!isKnownRoute(path)) return reply(404, { error: 'Not found' });
+      const denied = await admitRequest(request, path, ctx);
+      if (denied) return denied;
     }
 
     // Every read goes through `db`: the national-team map loads concurrently
@@ -717,5 +787,10 @@ export default {
     }
 
     return reply(404, { error: 'Not found' });
-  }),
+  });
+
+export default {
+  // dual/user: a legacy project bearer (old APKs) is "no credential", not an
+  // invalid JWT. open (unset): the request is untouched, exactly as v43.
+  fetch: (request: Request) => handle(mode === 'open' ? request : withoutLegacyProjectToken(request)),
 };
