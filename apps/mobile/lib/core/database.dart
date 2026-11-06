@@ -483,6 +483,16 @@ class AppDatabase extends _$AppDatabase {
     return row;
   }
 
+  /// Bounded public catalogs only; never reads or restores personal follows.
+  Future<List<CatalogSnapshot>> readPublicFavoriteCatalogs() async {
+    await _pruneExpiredPublicSnapshots();
+    return (select(catalogSnapshots)
+          ..where((row) => row.cacheKey.like('public:favorites:%'))
+          ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
+          ..limit(maxPublicSnapshots))
+        .get();
+  }
+
   Future<void> _pruneExpiredPublicSnapshots() async {
     final now = DateTime.now().toUtc();
     if (_lastPublicPruneAt != null &&

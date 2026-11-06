@@ -585,6 +585,40 @@ class ApiRepository implements FootballRepository {
     Snapshot snapshot,
     Map<String, dynamic>? parameters,
   ) {
+    if (key.startsWith('favorites:')) {
+      final encoded = parameters?['keys'];
+      if (encoded is! String ||
+          encoded.isEmpty ||
+          key != 'favorites:$encoded' ||
+          snapshot.demo) {
+        return false;
+      }
+      final keys = encoded.split(',');
+      if (keys.any(
+        (value) =>
+            !RegExp(r'^(team|player|competition|match):fb_[A-Za-z0-9_-]+$')
+                .hasMatch(value),
+      )) {
+        return false;
+      }
+      // Bulk reads can legitimately omit unavailable entities. Do not accept
+      // a nonempty answer containing none of the requested identities.
+      return keys.any((value) {
+            final separator = value.indexOf(':');
+            final id = snapshot.resolveEntityId(value.substring(separator + 1));
+            return switch (value.substring(0, separator)) {
+              'team' => snapshot.team(id) != null,
+              'player' => snapshot.player(id) != null,
+              'competition' => snapshot.competition(id) != null,
+              'match' => snapshot.match(id) != null,
+              _ => false,
+            };
+          }) ||
+          (snapshot.teams.isEmpty &&
+              snapshot.players.isEmpty &&
+              snapshot.competitions.isEmpty &&
+              snapshot.matches.isEmpty);
+    }
     final id = parameters?['id'];
     if (id is! String || !id.startsWith('fb_')) {
       return false;
@@ -617,6 +651,23 @@ class ApiRepository implements FootballRepository {
         .whenComplete(() => _diskWrites.remove(write));
     _diskWrites.add(write);
   }
+
+  Json _favoritePublicJson(Json raw) => {
+    // Public presentation only. Selection/order/account settings remain in
+    // their existing stores. Keep related fixtures for aggregated favorites.
+    for (final field in [
+      'schemaVersion',
+      'demo',
+      'updatedAt',
+      'freshness',
+      'coverage',
+      'entityRedirects',
+    ])
+      if (raw.containsKey(field)) field: raw[field],
+    for (final field in ['teams', 'players', 'competitions', 'matches'])
+      field: raw[field],
+    'standings': <Json>[],
+  };
 
   static const _privateCacheFields = {
     'accesstoken',
@@ -659,16 +710,43 @@ class ApiRepository implements FootballRepository {
 
   Future<Snapshot?> _readPublicSnapshot(
     String key,
-    Map<String, dynamic>? parameters,
-  ) async {
+    Map<String, dynamic>? parameters, {
+    bool allowFavoriteSubset = true,
+  }) async {
     try {
       final row = await database?.readPublicSnapshot('public:$key');
+      if (row == null && allowFavoriteSubset && key.startsWith('favorites:')) {
+        final encoded = parameters?['keys'];
+        if (encoded is! String ||
+            encoded.isEmpty ||
+            key != 'favorites:$encoded') {
+          return null;
+        }
+        final requested = encoded.split(',').toSet();
+        // Removing a favorite offline must not require downloading a new
+        // catalog. The hub still filters by the current personal follows.
+        for (final entry
+            in await database?.readPublicFavoriteCatalogs() ??
+                <CatalogSnapshot>[]) {
+          final storedKey = entry.cacheKey.substring('public:'.length);
+          if (storedKey == key) continue;
+          final storedKeys = storedKey.substring('favorites:'.length);
+          if (!storedKeys.split(',').toSet().containsAll(requested)) continue;
+          final cached = await _readPublicSnapshot(storedKey, {
+            'keys': storedKeys,
+          }, allowFavoriteSubset: false);
+          if (cached != null) return cached;
+        }
+      }
       if (row == null ||
           DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
               publicSnapshotRetention) {
         return null;
       }
       final raw = jsonDecode(row.payload) as Json;
+      if (key.startsWith('favorites:') && _containsPrivateCacheField(raw)) {
+        return null;
+      }
       final candidate = Snapshot(raw);
       if (!_publicSnapshotMatches(key, candidate, parameters)) {
         return null;
@@ -760,7 +838,10 @@ class ApiRepository implements FootballRepository {
       final snapshot = _canonical(raw, prepared: checkedEntity);
       _remember(key, snapshot);
       if (_publicSnapshotMatches(key, snapshot, queryParameters)) {
-        _persistPublicJson(key, raw);
+        _persistPublicJson(
+          key,
+          key.startsWith('favorites:') ? _favoritePublicJson(raw) : raw,
+        );
       }
       return _snapshotCache[key]!;
     } catch (error, stack) {
