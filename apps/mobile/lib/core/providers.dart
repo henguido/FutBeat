@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -10,10 +12,232 @@ import 'entity_media.dart';
 import 'interests.dart';
 import 'live_realtime.dart';
 import 'models.dart';
+import 'passive_preview_transport.dart';
+import 'push.dart';
 import 'player_display_identity.dart';
 import 'profile_context.dart';
+import 'qa_diagnostics.dart';
+import 'qa_development.dart';
 import 'team_matches.dart';
 import '../features/news/news_feed_adapter.dart';
+
+const _persistedTerminalStatuses = {
+  'FINISHED_PENDING_VERIFICATION',
+  'VERIFIED',
+  'POSTPONED',
+  'SUSPENDED',
+  'ABANDONED',
+  'CANCELLED',
+};
+
+LiveMatchUpdate? _storedTerminalObservation(Json match) {
+  return _persistedTerminalStatuses.contains(match['status'])
+      ? _storedSportingObservation(match)
+      : null;
+}
+
+LiveMatchUpdate? _storedSportingObservation(Json match) {
+  if (match['id'] is! String ||
+      match['status'] is! String ||
+      match['liveProvider'] is! String ||
+      match['liveRevision'] is! int) {
+    return null;
+  }
+  final changed = DateTime.tryParse(match['liveChangedAt']?.toString() ?? '');
+  if (changed == null) return null;
+  final score = match['score'];
+  return LiveMatchUpdate(
+    matchId: match['id'] as String,
+    provider: match['liveProvider'] as String,
+    externalMatchId: '',
+    status: match['status'] as String,
+    minute: match['minute'] as int?,
+    homeScore: score is Map ? score['home'] as int? : null,
+    awayScore: score is Map ? score['away'] as int? : null,
+    revision: match['liveRevision'] as int,
+    eventCount: (match['events'] as List? ?? const []).length,
+    changedAt: changed,
+    observedAt: DateTime.tryParse(match['liveObservedAt']?.toString() ?? ''),
+    receivedAt: DateTime.tryParse(
+      match['liveObservationDeviceAt']?.toString() ?? '',
+    ),
+    events: [
+      for (final row in match['events'] as List? ?? const [])
+        if (row is Map) Map<String, dynamic>.from(row),
+    ],
+    hasEventList: match['events'] is List,
+  );
+}
+
+String? _overlayStoredTerminals(
+  String payload,
+  Map<String, LiveMatchUpdate> updates,
+) {
+  try {
+    final raw = jsonDecode(payload) as Json;
+    if (raw['demo'] == true || raw['matches'] is! List) return null;
+    var changed = false;
+    final matches = [
+      for (final row in raw['matches'] as List)
+        if (row is Map)
+          () {
+            final match = Map<String, dynamic>.from(row);
+            final observation = updates[match['id']];
+            final next = observation?.applyTo(match) ?? match;
+            if (!identical(next, match)) changed = true;
+            return next;
+          }()
+        else
+          row,
+    ];
+    return changed ? jsonEncode({...raw, 'matches': matches}) : null;
+  } catch (_) {
+    return null; // A malformed cache row is not evidence of a final result.
+  }
+}
+
+String _preserveStoredTerminals(String? previous, String incoming) {
+  if (previous == null) return incoming;
+  try {
+    final raw = jsonDecode(previous) as Json;
+    final updates = <String, LiveMatchUpdate>{};
+    for (final row in raw['matches'] as List? ?? const []) {
+      if (row is! Map) continue;
+      final update = _storedTerminalObservation(Map<String, dynamic>.from(row));
+      if (update != null) updates[update.matchId] = update;
+    }
+    final next = jsonDecode(incoming) as Json;
+    if (next['demo'] == true || next['matches'] is! List) return incoming;
+    final previousMatches = {
+      for (final row in raw['matches'] as List? ?? const [])
+        if (row is Map && updates.containsKey(row['id'])) row['id']: row,
+    };
+    next['matches'] = [
+      for (final row in next['matches'] as List)
+        if (row is Map && previousMatches.containsKey(row['id']))
+          () {
+            final current = Map<String, dynamic>.from(row);
+            final before = updates[row['id']]!;
+            final candidate = _storedSportingObservation(current);
+            // Envelope generation/request times are not sporting observations.
+            // A provider revision may advance only without moving changedAt back;
+            // otherwise require a strictly later explicit sporting observation.
+            final newer =
+                candidate != null &&
+                !candidate.changedAt.isBefore(before.changedAt) &&
+                (candidate.provider != before.provider ||
+                    candidate.revision >= before.revision) &&
+                (candidate.changedAt.isAfter(before.changedAt) ||
+                    (candidate.provider == before.provider &&
+                        candidate.revision > before.revision) ||
+                    (candidate.observedAt ?? candidate.changedAt).isAfter(
+                      before.observedAt ?? before.changedAt,
+                    ));
+            if (newer) return current;
+            final known = previousMatches[row['id']]!;
+            return {
+              ...current,
+              for (final key in [
+                'status',
+                'minute',
+                'score',
+                'events',
+                'liveRevision',
+                'liveProvider',
+                'liveChangedAt',
+                'liveObservedAt',
+                'liveObservationDeviceAt',
+                localTerminalObservationKey,
+              ])
+                if (known.containsKey(key)) key: known[key],
+            };
+          }()
+        else
+          row,
+    ];
+    final present = {
+      for (final row in next['matches'] as List)
+        if (row is Map) row['id'],
+    };
+    final missing = [
+      for (final row in raw['matches'] as List? ?? const [])
+        if (row is Map &&
+            updates.containsKey(row['id']) &&
+            !present.contains(row['id']))
+          row,
+    ];
+    if (missing.isNotEmpty) {
+      next['matches'] = [...next['matches'] as List, ...missing];
+      next['freshness'] = {
+        if (next['freshness'] is Map) ...next['freshness'] as Map,
+        'stale': true,
+      };
+      // The retained fixture still needs its exact entities. New API rows win
+      // by ID; neither names nor an empty page establish identity/deletion.
+      final needed = <String, Set<String>>{
+        'teams': {
+          for (final match in missing)
+            for (final key in ['homeTeamId', 'awayTeamId'])
+              if (match[key] is String) match[key] as String,
+        },
+        'competitions': {
+          for (final match in missing)
+            if (match['competitionId'] is String)
+              match['competitionId'] as String,
+        },
+        'players': {
+          for (final match in missing)
+            for (final event in match['events'] as List? ?? const [])
+              if (event is Map)
+                for (final key in [
+                  'playerId',
+                  'canonicalPlayerId',
+                  'assistPlayerId',
+                  'canonicalAssistPlayerId',
+                ])
+                  if (event[key] is String) event[key] as String,
+        },
+      };
+      final redirects = <dynamic, dynamic>{
+        if (next['entityRedirects'] is Map) ...next['entityRedirects'] as Map,
+      };
+      final oldRedirects = raw['entityRedirects'] is Map
+          ? raw['entityRedirects'] as Map
+          : const {};
+      for (final ids in needed.values) {
+        final pending = ids.toList();
+        for (var index = 0; index < pending.length; index++) {
+          final id = pending[index];
+          // An explicit new key (including a cleared/revoked redirect) wins.
+          if (!redirects.containsKey(id) && oldRedirects.containsKey(id)) {
+            redirects[id] = oldRedirects[id];
+          }
+          final canonical = redirects[id];
+          if (canonical is String && ids.add(canonical)) pending.add(canonical);
+        }
+      }
+      for (final kind in ['teams', 'competitions', 'players']) {
+        final entities = <String, dynamic>{};
+        for (final row in raw[kind] as List? ?? const []) {
+          if (row is Map && needed[kind]!.contains(row['id'])) {
+            entities[row['id'] as String] = row;
+          }
+        }
+        for (final row in next[kind] as List? ?? const []) {
+          if (row is Map && row['id'] is String) {
+            entities[row['id'] as String] = row;
+          }
+        }
+        next[kind] = entities.values.toList();
+      }
+      next['entityRedirects'] = redirects;
+    }
+    final serialized = jsonEncode(next);
+    return _overlayStoredTerminals(serialized, updates) ?? serialized;
+  } catch (_) {
+    return incoming;
+  }
+}
 
 abstract interface class FootballRepository {
   Future<Snapshot> load();
@@ -131,8 +355,22 @@ class ApiRepository implements FootballRepository {
     this.database,
     this.calendarPolicy = const CalendarCachePolicy(),
     this.media,
+    this.diagnostics,
   ]);
+  final QaDiagnostics? diagnostics;
   final Dio dio;
+
+  /// Only the explicit stored-read adapter disables demand-related refreshes.
+  /// Optional response metadata is not an authorization signal.
+  bool get storedReadsOnly =>
+      passivePreview ||
+      dio.interceptors.any(
+        (interceptor) =>
+            interceptor is QaStoredReadInterceptor ||
+            (interceptor is PassivePreviewTransport &&
+                interceptor.usesUserSession),
+      );
+
   final AppDatabase? database;
   final CalendarCachePolicy calendarPolicy;
 
@@ -144,8 +382,10 @@ class ApiRepository implements FootballRepository {
   final Map<String, int> _calendarFailures = {};
   final Map<String, _CalendarFlight> _calendarInFlight = {};
   final Set<Future<void>> _diskWrites = {};
+  final Map<String, Future<void>> _detailDiskWrites = {};
   Future<void> _prefetchTask = Future<void>.value();
   int _prefetchGeneration = 0;
+  bool _appActive = true;
   final Set<String> _forcedDates = {};
   final Map<String, DateTime> _catalogFetchedAt = {};
   final Set<String> _detailRequested = {};
@@ -153,16 +393,45 @@ class ApiRepository implements FootballRepository {
 
   final Map<String, Snapshot> _snapshotCache = <String, Snapshot>{};
 
+  /// Stops background calendar warming and cancels in-flight date reads.
+  /// The visible screen revalidates its date when the app resumes.
+  void setAppActive(bool active) {
+    if (_appActive == active) return;
+    _appActive = active;
+    diagnostics?.record('/v1/calendar', active ? 'resumed' : 'paused');
+    if (active) {
+      // A failed local terminal write can retry on resume without an HTTP read.
+      unawaited(
+        persistTerminalObservations({
+          for (final snapshot in _snapshotCache.values)
+            for (final match in snapshot.matches)
+              ...?switch (_storedTerminalObservation(match.json)) {
+                final update? => {update.matchId: update},
+                _ => null,
+              },
+        }),
+      );
+    }
+    if (!active) {
+      _prefetchGeneration++;
+      for (final flight in _calendarInFlight.values) {
+        flight.token.cancel('App backgrounded');
+      }
+    }
+  }
+
   static String _dateParam(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'
       '${date.month.toString().padLeft(2, '0')}-'
       '${date.day.toString().padLeft(2, '0')}';
 
-  Snapshot _canonical(Json json) {
-    final snapshot = Snapshot(
-      json,
-      blockedAliasIds: media?.revokedDisplayAliases ?? const {},
-    );
+  Snapshot _canonical(Json json, {Snapshot? prepared}) {
+    final snapshot =
+        prepared ??
+        Snapshot(
+          json,
+          blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+        );
     if (snapshot.demo) {
       throw StateError('Cloud endpoint returned demo data');
     }
@@ -177,6 +446,7 @@ class ApiRepository implements FootballRepository {
   }
 
   bool _retryable(Object error) {
+    if (passivePreview) return false;
     if (error is! DioException) return false;
     final status = error.response?.statusCode;
     if (status == 502 || status == 503 || status == 504) return true;
@@ -201,6 +471,7 @@ class ApiRepository implements FootballRepository {
     StackTrace? lastStack;
 
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      final stopwatch = Stopwatch()..start();
       try {
         final response = await dio.get<Json>(
           path,
@@ -219,8 +490,17 @@ class ApiRepository implements FootballRepository {
         if (data == null) {
           throw const FormatException('Cloud endpoint returned no data');
         }
+        diagnostics?.record(
+          path,
+          'httpSuccess',
+          elapsed: stopwatch.elapsed,
+          bytes: response.headers.value('content-length') == null
+              ? null
+              : int.tryParse(response.headers.value('content-length')!),
+        );
         return data;
       } catch (error, stack) {
+        diagnostics?.record(path, 'httpError', elapsed: stopwatch.elapsed);
         lastError = error;
         lastStack = stack;
         if (attempt + 1 < maxAttempts && _retryable(error)) {
@@ -235,6 +515,24 @@ class ApiRepository implements FootballRepository {
   }
 
   void _remember(String key, Snapshot snapshot) {
+    final previous = _snapshotCache[key];
+    if (previous != null) {
+      if (snapshot.matches.isEmpty &&
+          previous.matches.any(
+            (match) => _storedTerminalObservation(match.json) != null,
+          )) {
+        // An empty/partial answer does not retract an explicitly observed
+        // result. Preserve its complete context, conservatively marked stale.
+        snapshot = previous.asStale();
+      }
+      snapshot = snapshot.withLiveUpdates({
+        for (final match in previous.matches)
+          ...?switch (_storedTerminalObservation(match.json)) {
+            final update? => {update.matchId: update},
+            _ => null,
+          },
+      });
+    }
     _snapshotCache.remove(key);
     _snapshotCache[key] = snapshot;
     while (_snapshotCache.length > 64) {
@@ -246,44 +544,385 @@ class ApiRepository implements FootballRepository {
     }
   }
 
+  Json _carryMemoryTerminals(String key, Json incoming) {
+    final previous = _snapshotCache[key];
+    if (previous == null ||
+        !previous.matches.any(
+          (m) => _storedTerminalObservation(m.json) != null,
+        )) {
+      return incoming;
+    }
+    return jsonDecode(
+      _preserveStoredTerminals(
+        jsonEncode({
+          'matches': [for (final match in previous.matches) match.json],
+          'teams': [for (final entity in previous.teams) entity.json],
+          'competitions': [
+            for (final entity in previous.competitions) entity.json,
+          ],
+          'players': [for (final entity in previous.players) entity.json],
+          'entityRedirects': previous.entityRedirects,
+        }),
+        jsonEncode(incoming),
+      ),
+    ) as Json;
+  }
+
+  Json _canonicalNetworkSnapshot(Json raw) => {
+    ...raw,
+    if (raw['matches'] is List)
+      'matches': [
+        for (final row in raw['matches'] as List)
+          if (row is Map)
+            Map<String, dynamic>.from(row)..remove(localTerminalObservationKey)
+          else
+            row,
+      ],
+  };
+
+  bool _publicSnapshotMatches(
+    String key,
+    Snapshot snapshot,
+    Map<String, dynamic>? parameters,
+  ) {
+    if (key.startsWith('favorites:')) {
+      final encoded = parameters?['keys'];
+      if (encoded is! String ||
+          encoded.isEmpty ||
+          key != 'favorites:$encoded' ||
+          snapshot.demo) {
+        return false;
+      }
+      final keys = encoded.split(',');
+      if (keys.any(
+        (value) =>
+            !RegExp(r'^(team|player|competition|match):fb_[A-Za-z0-9_-]+$')
+                .hasMatch(value),
+      )) {
+        return false;
+      }
+      // Bulk reads can legitimately omit unavailable entities. Do not accept
+      // a nonempty answer containing none of the requested identities.
+      return keys.any((value) {
+            final separator = value.indexOf(':');
+            final id = snapshot.resolveEntityId(value.substring(separator + 1));
+            return switch (value.substring(0, separator)) {
+              'team' => snapshot.team(id) != null,
+              'player' => snapshot.player(id) != null,
+              'competition' => snapshot.competition(id) != null,
+              'match' => snapshot.match(id) != null,
+              _ => false,
+            };
+          }) ||
+          (snapshot.teams.isEmpty &&
+              snapshot.players.isEmpty &&
+              snapshot.competitions.isEmpty &&
+              snapshot.matches.isEmpty);
+    }
+    final id = parameters?['id'];
+    if (id is! String || !id.startsWith('fb_')) {
+      return false;
+    }
+    if (key != 'match-context:$id' &&
+        key != 'entity:${parameters?['type']}:$id') {
+      return false;
+    }
+    final canonical = snapshot.resolveEntityId(id);
+    if (key.startsWith('match-context:')) return snapshot.match(id) != null;
+    if (!key.startsWith('entity:')) return false;
+    return switch (parameters?['type']) {
+      'team' => snapshot.team(canonical) != null,
+      'player' => snapshot.player(canonical) != null,
+      'competition' => snapshot.competition(canonical) != null,
+      _ => false,
+    };
+  }
+
+  void _persistPublicJson(String key, Json raw) {
+    final db = database;
+    if (db == null || _containsPrivateCacheField(raw)) return;
+    late final Future<void> write;
+    write = db
+        .savePublicSnapshot(
+          'public:$key',
+          jsonEncode(raw),
+          merge: _preserveStoredTerminals,
+        )
+        .catchError((Object _) {})
+        .whenComplete(() => _diskWrites.remove(write));
+    _diskWrites.add(write);
+  }
+
+  Json _favoritePublicJson(Json raw) => {
+    // Public presentation only. Selection/order/account settings remain in
+    // their existing stores. Keep related fixtures for aggregated favorites.
+    for (final field in [
+      'schemaVersion',
+      'demo',
+      'updatedAt',
+      'freshness',
+      'coverage',
+      'entityRedirects',
+    ])
+      if (raw.containsKey(field)) field: raw[field],
+    for (final field in ['teams', 'players', 'competitions', 'matches'])
+      field: raw[field],
+    'standings': <Json>[],
+  };
+
+  static const _privateCacheFields = {
+    'accesstoken',
+    'refreshtoken',
+    'idtoken',
+    'token',
+    'tokenhash',
+    'providertoken',
+    'providerrefreshtoken',
+    'apikey',
+    'servicekey',
+    'password',
+    'secret',
+    'authorization',
+    'cookie',
+    'session',
+    'userid',
+    'email',
+    'follows',
+    'preferences',
+  };
+
+  bool _containsPrivateCacheField(Object? value) {
+    if (value is Map) {
+      for (final entry in value.entries) {
+        final key = entry.key.toString().toLowerCase().replaceAll(
+          RegExp('[^a-z0-9]'),
+          '',
+        );
+        if (_privateCacheFields.contains(key) ||
+            _containsPrivateCacheField(entry.value)) {
+          return true;
+        }
+      }
+    } else if (value is List) {
+      return value.any(_containsPrivateCacheField);
+    }
+    return false;
+  }
+
+  Future<Snapshot?> _readPublicSnapshot(
+    String key,
+    Map<String, dynamic>? parameters, {
+    bool allowFavoriteSubset = true,
+  }) async {
+    try {
+      final row = await database?.readPublicSnapshot('public:$key');
+      if (row == null && allowFavoriteSubset && key.startsWith('favorites:')) {
+        final encoded = parameters?['keys'];
+        if (encoded is! String ||
+            encoded.isEmpty ||
+            key != 'favorites:$encoded') {
+          return null;
+        }
+        final requested = encoded.split(',').toSet();
+        // Removing a favorite offline must not require downloading a new
+        // catalog. The hub still filters by the current personal follows.
+        for (final entry
+            in await database?.readPublicFavoriteCatalogs() ??
+                <CatalogSnapshot>[]) {
+          final storedKey = entry.cacheKey.substring('public:'.length);
+          if (storedKey == key) continue;
+          final storedKeys = storedKey.substring('favorites:'.length);
+          if (!storedKeys.split(',').toSet().containsAll(requested)) continue;
+          final cached = await _readPublicSnapshot(storedKey, {
+            'keys': storedKeys,
+          }, allowFavoriteSubset: false);
+          if (cached != null) return cached;
+        }
+      }
+      if (row == null ||
+          DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
+              publicSnapshotRetention) {
+        return null;
+      }
+      final raw = jsonDecode(row.payload) as Json;
+      if (key.startsWith('favorites:') && _containsPrivateCacheField(raw)) {
+        return null;
+      }
+      final candidate = Snapshot(raw);
+      if (!_publicSnapshotMatches(key, candidate, parameters)) {
+        return null;
+      }
+      return _canonical(raw).asStale();
+    } catch (_) {
+      // Corrupt or obsolete entries cannot hide the original network error.
+      return null;
+    }
+  }
+
   Future<Snapshot> _loadSnapshot(
     String key,
     String path, {
     Map<String, dynamic>? queryParameters,
+    CancelToken? cancelToken,
   }) async {
     try {
-      final snapshot = _canonical(
-        await _getJson(path, queryParameters: queryParameters),
+      var raw = await _getJson(
+        path,
+        queryParameters: queryParameters,
+        cancelToken: cancelToken,
       );
+      raw = _canonicalNetworkSnapshot(raw);
+      final requestedId = queryParameters?['id'];
+      final contextMatches = raw['matches'];
+      if (requestedId is String &&
+          requestedId.startsWith('fb_') &&
+          key == 'match-context:$requestedId' &&
+          contextMatches is List &&
+          contextMatches.isNotEmpty &&
+          !contextMatches.whereType<Map>().any(
+            (match) => match['id'] == requestedId,
+          )) {
+        // Reject a foreign context before it can update redirects, media or
+        // the requested cache key. Empty/no-data contexts remain legitimate.
+        throw const FormatException('Match context identity mismatch');
+      }
+      Snapshot? checkedEntity;
+      final requestedType = queryParameters?['type'];
+      final contextEntities = switch (requestedType) {
+        'team' => raw['teams'],
+        'player' => raw['players'],
+        'competition' => raw['competitions'],
+        _ => null,
+      };
+      if (requestedId is String &&
+          requestedId.startsWith('fb_') &&
+          key == 'entity:$requestedType:$requestedId' &&
+          contextEntities is List &&
+          contextEntities.isNotEmpty) {
+        checkedEntity = Snapshot(
+          raw,
+          blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+        );
+        final belongs = switch (requestedType) {
+          'team' => checkedEntity.team(requestedId) != null,
+          'player' => checkedEntity.player(requestedId) != null,
+          'competition' => checkedEntity.competition(requestedId) != null,
+          _ => false,
+        };
+        if (!belongs) {
+          // Related entities and explicit canonical redirects are valid;
+          // a foreign target is not. Validate before absorbing shared media,
+          // redirects or the requested in-memory observation timestamp.
+          throw const FormatException('Entity context identity mismatch');
+        }
+      }
+      final previous = _snapshotCache[key];
+      final beforeTerminalCarry = raw;
+      raw = _carryMemoryTerminals(key, raw);
+      if (!identical(raw, beforeTerminalCarry)) checkedEntity = null;
+      if (previous != null &&
+          (key.startsWith('match-context:') || key.startsWith('entity:'))) {
+        // Decide freshness before _canonical absorbs media and redirects into
+        // shared memory. A rejected late snapshot must not roll those back
+        // while the visible Match Center correctly keeps its newer data.
+        final candidate =
+            checkedEntity ??
+            Snapshot(
+              raw,
+              blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+            );
+        if (_publicSnapshotMatches(key, candidate, queryParameters) &&
+            candidate.updatedAt.isBefore(previous.updatedAt)) {
+          return previous.asStale();
+        }
+      }
+      final snapshot = _canonical(raw, prepared: checkedEntity);
       _remember(key, snapshot);
-      return snapshot;
+      if (_publicSnapshotMatches(key, snapshot, queryParameters)) {
+        _persistPublicJson(
+          key,
+          key.startsWith('favorites:') ? _favoritePublicJson(raw) : raw,
+        );
+      }
+      return _snapshotCache[key]!;
     } catch (error, stack) {
+      if (cancelToken?.isCancelled == true) {
+        Error.throwWithStackTrace(error, stack);
+      }
       final cached = _snapshotCache[key];
       if (cached != null) return cached.asStale();
+      final stored = await _readPublicSnapshot(key, queryParameters);
+      if (stored != null) {
+        _remember(key, stored);
+        return stored;
+      }
       Error.throwWithStackTrace(error, stack);
     }
   }
 
+  Stream<Snapshot> watchPublicEntity(String type, String id) async* {
+    final key = 'entity:$type:$id';
+    final stored =
+        _snapshotCache[key] ??
+        await _readPublicSnapshot(key, {'type': type, 'id': id});
+    if (stored != null) {
+      _remember(key, stored);
+      yield stored.asStale();
+    }
+    final answer = await loadEntity(type, id);
+    if (stored == null || !answer.stale) yield answer;
+  }
+
+  Stream<Snapshot> watchPublicMatchContext(
+    String id, {
+    CancelToken? cancelToken,
+  }) async* {
+    final key = 'match-context:$id';
+    final stored =
+        _snapshotCache[key] ?? await _readPublicSnapshot(key, {'id': id});
+    if (stored != null) {
+      _remember(key, stored);
+      yield stored.asStale();
+    }
+    if (cancelToken?.isCancelled == true) return;
+    try {
+      final answer = await loadMatchContext(id, cancelToken: cancelToken);
+      if (cancelToken?.isCancelled != true &&
+          (stored == null || !answer.stale)) {
+        yield answer;
+      }
+    } catch (_) {
+      if (cancelToken?.isCancelled == true) return;
+      rethrow;
+    }
+  }
+
   @override
-  Future<Snapshot> load() => _loadSnapshot('snapshot', '/v1/snapshot');
+  Future<Snapshot> load() async {
+    if (!passivePreview) return _loadSnapshot('snapshot', '/v1/snapshot');
+    final stored = await _readStored(_dateParam(DateTime.now()));
+    return stored?.asStale() ?? Snapshot(const {'schemaVersion': 1});
+  }
 
   bool _freshDate(String value) {
     if (_forcedDates.contains(value)) return false;
     final fetched = _calendarFetchedAt[value];
     if (fetched == null) return false;
     final snapshot = _snapshotCache['calendar:$value'];
+    final today = _dateParam(costaRicaNow());
+    final calendarCoverage = snapshot?.coverage?['calendar'];
+    final completeHistorical =
+        value.compareTo(today) < 0 &&
+        calendarCoverage is Map &&
+        calendarCoverage['complete'] == true;
     // Partial, stale or still-live days (e.g. yesterday just after midnight)
     // revalidate on the short TTL.
     final recovering =
         snapshot?.coverage?['partial'] == true ||
         snapshot?.stale == true ||
-        snapshot?.revalidating == true ||
+        (snapshot?.revalidating == true && !completeHistorical) ||
         (snapshot?.matches.any((match) => match.isLive) ?? false);
-    final ttl = calendarPolicy.ttl(
-      value,
-      _dateParam(costaRicaNow()),
-      recovering: recovering,
-    );
+    final ttl = calendarPolicy.ttl(value, today, recovering: recovering);
     return DateTime.now().toUtc().difference(fetched) < ttl;
   }
 
@@ -298,12 +937,68 @@ class ApiRepository implements FootballRepository {
     await Future.wait([..._diskWrites]);
   }
 
+  /// Persist only explicitly observed terminal states. The UI never waits for
+  /// disk: a failed write is reported and can retry from bounded memory on resume.
+  Future<void> persistTerminalObservations(
+    Map<String, LiveMatchUpdate> updates,
+  ) {
+    final terminal = {
+      for (final entry in updates.entries)
+        if (_persistedTerminalStatuses.contains(entry.value.status))
+          entry.key: entry.value,
+    };
+    if (terminal.isEmpty) return Future<void>.value();
+    terminal.removeWhere((_, update) {
+      final rejected = _containsPrivateCacheField(update.events);
+      if (rejected) {
+        diagnostics?.record('/local/terminal', 'sqliteWriteRejected');
+      }
+      return rejected;
+    });
+    if (terminal.isEmpty) return Future<void>.value();
+    _snapshotCache.updateAll(
+      (_, snapshot) => snapshot.withLiveUpdates(terminal),
+    );
+    final db = database;
+    if (db == null) return Future<void>.value();
+    late final Future<void> write;
+    write =
+        Future<void>.sync(
+              () => db.rewriteStoredSportingSnapshots(
+                (payload) => _overlayStoredTerminals(payload, terminal),
+              ),
+            )
+            .then((_) {
+              diagnostics?.record('/local/terminal', 'sqliteWrite');
+            })
+            .catchError((Object _) {
+              diagnostics?.record('/local/terminal', 'sqliteWriteError');
+            })
+            .whenComplete(() => _diskWrites.remove(write));
+    _diskWrites.add(write);
+    return write;
+  }
+
   Future<Snapshot?> _readStored(String value) async {
     final key = 'calendar:$value';
     final memory = _snapshotCache[key];
-    if (memory != null) return memory;
+    if (memory != null) {
+      diagnostics?.record('/v1/calendar', 'memoryHit');
+      return memory;
+    }
     try {
+      final stopwatch = Stopwatch()..start();
       final stored = await database?.readCalendarEntry(value);
+      diagnostics?.record(
+        '/v1/calendar',
+        stored == null ? 'sqliteMiss' : 'sqliteHit',
+        elapsed: stopwatch.elapsed,
+      );
+      // A network response may have landed while Drift was reading. The
+      // already painted answer wins, even if this disk read captured an older
+      // row before the response was persisted.
+      final landed = _snapshotCache[key];
+      if (landed != null) return landed;
       if (stored == null) return null;
       final snapshot = _canonical(jsonDecode(stored.payload) as Json);
       _remember(key, snapshot);
@@ -317,11 +1012,15 @@ class ApiRepository implements FootballRepository {
 
   void _persist(String value, Json raw) {
     final db = database;
-    if (db == null) return;
+    if (db == null || _containsPrivateCacheField(raw)) return;
     // Never delays showing fresh data: memory already holds the snapshot.
     late final Future<void> write;
     write = db
-        .saveCalendarSnapshot(value, jsonEncode(raw))
+        .saveCalendarSnapshot(
+          value,
+          jsonEncode(raw),
+          merge: _preserveStoredTerminals,
+        )
         .catchError((Object _) {})
         .whenComplete(() => _diskWrites.remove(write));
     _diskWrites.add(write);
@@ -331,16 +1030,24 @@ class ApiRepository implements FootballRepository {
     final flight = _CalendarFlight();
     flight.future = () async {
       try {
-        final raw = await _getJson(
+        var raw = await _getJson(
           '/v1/calendar',
           queryParameters: {'date': value, 'timezone': 'America/Costa_Rica'},
           cancelToken: flight.token,
           maxAttempts: 1,
           receiveTimeout: calendarPolicy.receiveTimeout,
         );
+        raw = _canonicalNetworkSnapshot(raw);
+        raw = _carryMemoryTerminals('calendar:$value', raw);
         final fresh = _canonical(raw);
         // A "pending" answer (server still materializing) is never cached.
         if (fresh.calendarPending) return fresh;
+        // A delayed response must not roll back a newer day already painted
+        // by another request (or persisted for the next app launch).
+        final current = _snapshotCache['calendar:$value'];
+        if (current != null && fresh.updatedAt.isBefore(current.updatedAt)) {
+          return current;
+        }
         _remember('calendar:$value', fresh);
         _calendarFetchedAt[value] = DateTime.now().toUtc();
         _forcedDates.remove(value);
@@ -362,6 +1069,9 @@ class ApiRepository implements FootballRepository {
       return Future.error(cancelToken.cancelError!);
     }
     var flight = _calendarInFlight[value];
+    if (flight != null && !flight.token.isCancelled) {
+      diagnostics?.record('/v1/calendar', 'sharedFlight');
+    }
     if (flight == null || flight.token.isCancelled) {
       flight = _calendarInFlight[value] = _startFlight(value);
     }
@@ -416,6 +1126,8 @@ class ApiRepository implements FootballRepository {
     Snapshot? cached = await _readStored(value);
     final freshCache = cached != null && _freshDate(value);
     if (cached != null) yield cached.withFreshness(revalidating: !freshCache);
+    if (cached == null) diagnostics?.record('/v1/calendar', 'cacheMiss');
+    if (!_appActive) return;
     if (freshCache) {
       _prefetchAround(date);
       return;
@@ -451,7 +1163,7 @@ class ApiRepository implements FootballRepository {
           value,
           cancelToken: cancelToken,
         ).timeout(remaining);
-        if (snapshot.calendarPending) {
+        if (!passivePreview && snapshot.calendarPending) {
           // The server is materializing this day: show the preparing state
           // (only without data) and poll on its hint, within the deadline.
           if (cached == null) yield snapshot;
@@ -489,7 +1201,10 @@ class ApiRepository implements FootballRepository {
         lastStack = stack;
         failures++;
         if (cached != null) yield cached.asStale();
-        if (failures >= calendarPolicy.maxAttempts) break;
+        // Authentication, known absence, invalid payloads and cancellation
+        // cannot recover through immediate repetition. Keep cached data, but
+        // reserve the bounded retry budget for transient transport/server errors.
+        if (!_retryable(error) || failures >= calendarPolicy.maxAttempts) break;
         if (!await wait(retryDelay * failures)) {
           if (cancelToken?.isCancelled == true) return;
           break;
@@ -510,6 +1225,8 @@ class ApiRepository implements FootballRepository {
   /// D+2, D-2, ...), only inside the window around today. A newer visible date
   /// supersedes the previous chain; missing and expired days are both fetched.
   void _prefetchAround(DateTime anchor) {
+    if (passivePreview) return;
+    if (!_appActive) return;
     final generation = ++_prefetchGeneration;
     final now = costaRicaNow();
     final today = DateTime.utc(now.year, now.month, now.day);
@@ -519,7 +1236,7 @@ class ApiRepository implements FootballRepository {
       await previous;
       for (var step = 1; step <= calendarPolicy.prefetchRadius; step++) {
         for (final sign in const [1, -1]) {
-          if (generation != _prefetchGeneration) return;
+          if (!_appActive || generation != _prefetchGeneration) return;
           final day = DateTime.utc(
             anchor.year,
             anchor.month,
@@ -537,10 +1254,11 @@ class ApiRepository implements FootballRepository {
   }
 
   Future<void> prefetchDate(DateTime date) async {
+    if (!_appActive) return;
     final value = _dateParam(date);
     try {
       await _readStored(value);
-      if (_freshDate(value)) return;
+      if (!_appActive || _freshDate(value)) return;
       await _fetchDate(value);
     } catch (_) {
       // Opportunistic, deduplicated and independent of the visible request.
@@ -606,6 +1324,7 @@ class ApiRepository implements FootballRepository {
         '/v1/entity',
         queryParameters: {'type': type, 'id': id},
       );
+      raw = _canonicalNetworkSnapshot(raw);
     } catch (error, stack) {
       final cached = _snapshotCache[key];
       if (cached != null) return cached.asStale();
@@ -706,11 +1425,88 @@ class ApiRepository implements FootballRepository {
     ),
   );
 
-  Future<Snapshot> loadMatchContext(String id) => _loadSnapshot(
-    'match-context:$id',
-    '/v1/match-context',
-    queryParameters: {'id': id},
-  );
+  Future<Snapshot> loadMatchContext(String id, {CancelToken? cancelToken}) =>
+      _loadSnapshot(
+        'match-context:$id',
+        '/v1/match-context',
+        queryParameters: {'id': id},
+        cancelToken: cancelToken,
+      );
+
+  Future<MatchDetail?> readStoredMatchDetail(String id) async {
+    if (!id.startsWith('fb_')) {
+      return null;
+    }
+    try {
+      final stopwatch = Stopwatch()..start();
+      final row = await database?.readPublicSnapshot('public:match-detail:$id');
+      diagnostics?.record(
+        '/v1/match-detail',
+        row == null ? 'sqliteMiss' : 'sqliteHit',
+        elapsed: stopwatch.elapsed,
+      );
+      if (row == null ||
+          DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
+              publicSnapshotRetention) {
+        return null;
+      }
+      final raw = jsonDecode(row.payload) as Json;
+      final detail = MatchDetail({
+        ...raw,
+        'offlineStale': true,
+      }, blockedAliasIds: media?.revokedDisplayAliases ?? const {});
+      if (!detail.available || detail.matchId != id) return null;
+      media?.absorbMatchDetail(detail);
+      return detail;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void persistMatchDetail(String id, MatchDetail detail) {
+    final db = database;
+    if (db == null ||
+        !id.startsWith('fb_') ||
+        !detail.available ||
+        detail.matchId != id ||
+        _containsPrivateCacheField(detail.sourceJson)) {
+      return;
+    }
+    final key = 'public:match-detail:$id';
+    // Serialize writes for one fixture. A late, less complete response must
+    // not replace richer detail already persisted for offline use.
+    final preceding = _detailDiskWrites[id] ?? Future<void>.value();
+    late final Future<void> write;
+    write = preceding
+        .then((_) async {
+          MatchDetail accepted = detail;
+          final row = await db.readPublicSnapshot(key);
+          if (row != null &&
+              DateTime.now().toUtc().difference(row.savedAt.toUtc()) <=
+                  publicSnapshotRetention) {
+            try {
+              final previous = MatchDetail(jsonDecode(row.payload) as Json);
+              if (previous.available && previous.matchId == id) {
+                accepted = _monotonicDetail(previous, detail);
+              }
+            } catch (_) {
+              // Replace a malformed cached value with the verified response.
+            }
+          }
+          if (!_containsPrivateCacheField(accepted.sourceJson)) {
+            await db.savePublicSnapshot(key, jsonEncode(accepted.sourceJson));
+          }
+        })
+        .catchError((Object _) {})
+        .whenComplete(() {
+          if (identical(_detailDiskWrites[id], write)) {
+            _detailDiskWrites.remove(id);
+          }
+          _diskWrites.remove(write);
+        });
+    _detailDiskWrites[id] = write;
+    _diskWrites.add(write);
+  }
 
   /// Recent form + head-to-head (DB-only on the server: never registers
   /// demand nor calls a provider). One attempt: it is optional content.
@@ -900,6 +1696,7 @@ class ApiRepository implements FootballRepository {
     Map<String, dynamic>? queryParameters,
     CancelToken? cancelToken,
     bool persist = false,
+    Json Function(Json)? adapt,
   }) async {
     final cached = _snapshotCache[key];
     final fetched = _catalogFetchedAt[key];
@@ -910,12 +1707,13 @@ class ApiRepository implements FootballRepository {
         DateTime.now().difference(fetched) < catalogMemoryTtl) {
       return cached;
     }
-    final raw = await _getJson(
+    final response = await _getJson(
       path,
       queryParameters: queryParameters,
       cancelToken: cancelToken,
       maxAttempts: 1,
     );
+    final raw = _canonicalNetworkSnapshot(adapt?.call(response) ?? response);
     final snapshot = _canonical(raw);
     _remember(key, snapshot);
     _catalogFetchedAt.removeWhere(
@@ -924,6 +1722,57 @@ class ApiRepository implements FootballRepository {
     _catalogFetchedAt[key] = DateTime.now();
     if (persist && !snapshot.pendingRemote) _persistCatalog(key, raw);
     return snapshot;
+  }
+
+  /// Real squad players to suggest without a query: followed [teamIds]
+  /// first, then [country]'s clubs, then globally relevant clubs (server
+  /// side, stored squads only). Optional content: one attempt, not persisted.
+  Future<Snapshot> loadPlayerSuggestions(
+    Iterable<String> teamIds,
+    String? country, {
+    CancelToken? cancelToken,
+  }) {
+    final teams = (teamIds.toSet().toList()..sort()).take(20).toList();
+    final code = exploreCountry(country);
+    return _loadCatalog(
+      'player-suggestions:${code ?? ''}:${teams.join(',')}',
+      '/v1/player-suggestions',
+      queryParameters: {
+        if (teams.isNotEmpty) 'teams': teams.join(','),
+        'country': ?code,
+      },
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Noticias: stored articles and roster changes (followed [subjects]
+  /// first, then [country]). One attempt; never persisted.
+  Future<Snapshot> loadNewsFeed(
+    Iterable<String> subjects,
+    String? country, {
+    CancelToken? cancelToken,
+  }) {
+    final keys = (subjects.toSet().toList()..sort())
+        .where(
+          (key) =>
+              RegExp(r'^(team|player|competition):fb_[A-Za-z0-9_-]{3,120}$')
+                  .hasMatch(key),
+        )
+        .take(50)
+        .toList();
+    final code = exploreCountry(country);
+    return _loadCatalog(
+      'news:${code ?? ''}:${keys.join(',')}',
+      '/v1/news',
+      queryParameters: {
+        'tab': 'for_you',
+        'limit': 40,
+        if (keys.isNotEmpty) 'follows': keys.join(','),
+        'country': ?code,
+      },
+      cancelToken: cancelToken,
+      adapt: adaptNewsFeed,
+    );
   }
 
   Future<Snapshot> searchCatalog(
@@ -948,37 +1797,6 @@ class ApiRepository implements FootballRepository {
     );
   }
 
-  /// Stored news and confirmed roster changes. Never persists this response.
-  Future<Snapshot> loadNewsFeed(
-    Iterable<String> subjects,
-    String? country, {
-    CancelToken? cancelToken,
-  }) async {
-    final keys = (subjects.toSet().toList()..sort())
-        .where(
-          (key) =>
-              RegExp(r'^(team|player|competition):fb_[A-Za-z0-9_-]{3,120}$')
-                  .hasMatch(key),
-        )
-        .take(50)
-        .toList();
-    final code = exploreCountry(country);
-    // News rights can change between reads: bypass the generic catalog cache.
-    final response = await _getJson(
-      '/v1/news',
-      queryParameters: {
-        'tab': 'for_you',
-        'limit': 40,
-        if (keys.isNotEmpty) 'follows': keys.join(','),
-        if (keys.isNotEmpty) 'subjects': keys.join(','),
-        'country': ?code,
-      },
-      cancelToken: cancelToken,
-      maxAttempts: 1,
-    );
-    return _canonical(adaptNewsFeed(response));
-  }
-
   Future<Snapshot> loadFavorites(List<String> keys) {
     final normalizedKeys = [...keys]..sort();
     return _loadSnapshot(
@@ -997,10 +1815,16 @@ class ApiRepository implements FootballRepository {
     // persisted detail at once (partial or full) and only registers demand
     // when hydration is actually needed (deduplicated, never waits for the
     // provider). `available` (displayable) is not "complete".
-    // Later opens are read-only unless the server says demand would help.
+    // Later opens avoid detail demand unless the server reports missing data.
+    // The API may still request lineup-photo hydration on any detail read.
     if (_detailRequested.contains(id)) {
       final cached = await readMatchDetail(id, cancelToken: cancelToken);
-      if (!cached.hydrationNeeded) return cached;
+      // The opt-in stored-only adapter cannot register hydration work. A
+      // second demand-shaped GET would be rewritten to the same passive read.
+      if (!cached.hydrationNeeded || storedReadsOnly) return cached;
+    }
+    if (_detailRequestInFlight.containsKey(id)) {
+      diagnostics?.record('/v1/match-detail', 'sharedFlight');
     }
     return _detailRequestInFlight.putIfAbsent(id, () async {
       try {
@@ -1013,8 +1837,11 @@ class ApiRepository implements FootballRepository {
           ),
           blockedAliasIds: media?.revokedDisplayAliases ?? const {},
         );
+        _validateMatchDetailIdentity(id, detail);
+        media?.absorbMatchDetail(detail);
         // Remember accepted requests only. Errors/timeouts remain retryable.
         _detailRequested.add(id);
+        persistMatchDetail(id, detail);
         return detail;
       } finally {
         _detailRequestInFlight.remove(id);
@@ -1025,15 +1852,29 @@ class ApiRepository implements FootballRepository {
   Future<MatchDetail> readMatchDetail(
     String id, {
     CancelToken? cancelToken,
-  }) async => MatchDetail(
-    await _getJson(
-      '/v1/match-detail',
-      queryParameters: {'id': id, 'request': '0'},
-      maxAttempts: 1,
-      cancelToken: cancelToken,
-    ),
-    blockedAliasIds: media?.revokedDisplayAliases ?? const {},
-  );
+  }) async {
+    final detail = MatchDetail(
+      await _getJson(
+        '/v1/match-detail',
+        queryParameters: {'id': id, 'request': '0'},
+        maxAttempts: 1,
+        cancelToken: cancelToken,
+      ),
+      blockedAliasIds: media?.revokedDisplayAliases ?? const {},
+    );
+    _validateMatchDetailIdentity(id, detail);
+    media?.absorbMatchDetail(detail);
+    persistMatchDetail(id, detail);
+    return detail;
+  }
+
+  void _validateMatchDetailIdentity(String id, MatchDetail detail) {
+    // Missing IDs in legacy/empty answers are not evidence of another match.
+    // An explicit foreign ID on displayable detail must never reach UI/media.
+    if (detail.available && detail.matchId.isNotEmpty && detail.matchId != id) {
+      throw const FormatException('Match detail identity mismatch');
+    }
+  }
 
   /// Tabla v2 "Forma" (#158), loaded only when the user opens it. DB-only on
   /// the server. One attempt: the table itself is already on screen.
@@ -1056,8 +1897,14 @@ class ApiRepository implements FootballRepository {
   );
 }
 
+/// One build-level switch for every Supabase-backed client. Demo snapshots
+/// must never inherit the Android defaults for production Auth or LIVE.
+final demoModeProvider = Provider<bool>(
+  (ref) => const bool.fromEnvironment('FUTBEAT_USE_DEMO'),
+);
+
 final repositoryProvider = Provider<FootballRepository>((ref) {
-  const useDemo = bool.fromEnvironment('FUTBEAT_USE_DEMO');
+  final useDemo = ref.watch(demoModeProvider);
   const baseUrl = String.fromEnvironment(
     'FUTBEAT_API_URL',
     defaultValue:
@@ -1067,8 +1914,8 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
   if (useDemo) return DemoRepository();
   final dio = Dio(
     BaseOptions(
-      baseUrl: baseUrl,
-      headers: publicToken.isEmpty
+      baseUrl: passivePreview ? 'https://preview.invalid' : baseUrl,
+      headers: passivePreview || publicToken.isEmpty
           ? null
           : {'Authorization': 'Bearer $publicToken'},
       connectTimeout: const Duration(seconds: 6),
@@ -1076,12 +1923,67 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
     ),
   );
 
+  if (userSessionAccessEnabled && !passivePreview && !qaLocalCacheOnly) {
+    final service = ref.watch(pushServiceProvider);
+    if (publicToken.isNotEmpty ||
+        const String.fromEnvironment('FUTBEAT_PASSIVE_CLIENT_KEY').isNotEmpty ||
+        baseUrl != '${service.config.supabaseUrl}/functions/v1/futbeat-api') {
+      throw StateError('Invalid user-session API configuration');
+    }
+    dio.options.headers.clear();
+    final transport = PassivePreviewTransport(
+      baseUri: Uri.parse(baseUrl),
+      publishableKey: service.config.publicKey,
+      userSession: service.apiSession,
+      currentScope: () => service.userSessionScope,
+      retryClient: dio,
+    );
+    dio.interceptors.add(transport);
+    ref.onDispose(transport.close);
+  } else if (passivePreview && passivePreviewEnabled) {
+    const passiveEndpoint =
+        'https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-passive-api';
+    if (baseUrl != passiveEndpoint) {
+      throw StateError('Invalid passive Preview endpoint');
+    }
+    final baseUri = Uri.parse(passiveEndpoint);
+    const clientKey = String.fromEnvironment('FUTBEAT_PASSIVE_CLIENT_KEY');
+    if (clientKey.isEmpty) {
+      throw StateError('Passive Preview client key missing');
+    }
+    final transport = PassivePreviewTransport(
+      baseUri: baseUri,
+      clientKey: clientKey,
+    );
+    dio.options.baseUrl = baseUri.toString();
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: createPassivePreviewHttpClient,
+    );
+    dio.interceptors.add(transport);
+    ref.onDispose(transport.close);
+  }
   ref.onDispose(() => dio.close(force: true));
   return ApiRepository(
     dio,
     ref.watch(databaseProvider),
     const CalendarCachePolicy(),
     ref.watch(entityMediaProvider),
+    ref.watch(qaDiagnosticsProvider),
+  );
+});
+
+/// Disabled in production and ordinary QA builds. Diagnostic builds emit only
+/// route names and counters, never arguments, response data or credentials.
+final qaDiagnosticsProvider = Provider<QaDiagnostics?>((ref) {
+  const enabled = bool.fromEnvironment('FUTBEAT_QA_DIAGNOSTICS');
+  if (!enabled || kReleaseMode || ref.watch(demoModeProvider)) return null;
+  return QaDiagnostics(
+    onRecord: (endpoint, event, milliseconds, bytes) {
+      debugPrint(
+        'FB_QA_DIAG route=$endpoint event=$event '
+        'ms=${milliseconds ?? -1} length=${bytes ?? -1}',
+      );
+    },
   );
 });
 
@@ -1128,22 +2030,43 @@ final snapshotProvider = FutureProvider<Snapshot>(
   (ref) => ref.watch(repositoryProvider).load(),
 );
 
+/// Shared app visibility signal. It is not persisted and never starts work.
+final sportsAppActiveProvider = Provider<ValueNotifier<bool>>((ref) {
+  final active = ValueNotifier(true);
+  ref.onDispose(active.dispose);
+  return active;
+});
+
 final calendarSnapshotProvider = StreamProvider.autoDispose
     .family<Snapshot, DateTime>((ref, date) {
       // Watched synchronously so the view can peek the memory cache in the
       // first frame of a date switch.
       final repository = ref.watch(repositoryProvider);
-      if (repository is! ApiRepository) {
-        return Stream.fromFuture(repository.loadDate(date));
-      }
+      final active = ref.watch(sportsAppActiveProvider);
       final token = CancelToken();
       Timer? timer;
       var disposed = false;
+      void onVisibility() {
+        if (!active.value) {
+          token.cancel('Calendar backgrounded');
+          timer?.cancel();
+          timer = null;
+        } else if (ref.mounted) {
+          ref.invalidateSelf();
+        }
+      }
+
+      active.addListener(onVisibility);
       ref.onDispose(() {
         disposed = true;
+        active.removeListener(onVisibility);
         token.cancel('Calendar date closed');
         timer?.cancel();
       });
+      if (!active.value) return const Stream<Snapshot>.empty();
+      if (repository is! ApiRepository) {
+        return Stream.fromFuture(repository.loadDate(date));
+      }
       return () async* {
         var hasData = false;
         try {
@@ -1158,7 +2081,7 @@ final calendarSnapshotProvider = StreamProvider.autoDispose
           // Revalidate only a date that has data, with backoff after failures.
           // A date that never got a snapshot ends in an error with Retry: it
           // is not restarted on a timer (no endless loading loop).
-          if (!disposed && hasData) {
+          if (!passivePreview && !disposed && active.value && hasData) {
             timer = Timer(
               repository.calendarRevalidateDelay(date),
               ref.invalidateSelf,
@@ -1185,21 +2108,25 @@ final entitySnapshotReceivedAtProvider =
 /// Kept for the session (not autoDispose) so a re-opened profile paints its
 /// last answer at once; [revalidateEntitySnapshot] refreshes it on re-entry.
 final entitySnapshotProvider =
-    FutureProvider.family<Snapshot, ({String type, String id})>((
+    StreamProvider.family<Snapshot, ({String type, String id})>((
       ref,
       request,
-    ) async {
+    ) async* {
       final repository = ref.watch(repositoryProvider);
-      final snapshot = repository is ApiRepository
-          ? await repository.loadEntity(request.type, request.id)
-          : await repository.load();
-      if (ref.mounted) {
-        ref.read(entitySnapshotReceivedAtProvider)[request] = ref.read(
-          clockProvider,
-        )();
+      final answers = repository is ApiRepository
+          ? repository.watchPublicEntity(request.type, request.id)
+          : Stream.fromFuture(repository.load());
+      await for (final snapshot in answers) {
+        if (ref.mounted && !snapshot.stale) {
+          ref.read(entitySnapshotReceivedAtProvider)[request] = ref.read(
+            clockProvider,
+          )();
+        }
+        yield snapshot;
       }
-      return snapshot;
-    });
+      // The repository already bounds request retries. Repeating failed
+      // streams here hides the offline error behind loading and burns quota.
+    }, retry: (_, _) => null);
 
 /// Called when a profile screen is (re-)entered: an answer already held for
 /// [request] that is at least [entityRevalidateAfter] old is refreshed in
@@ -1255,6 +2182,80 @@ final exploreSnapshotProvider = StreamProvider.autoDispose<Snapshot>((ref) {
   }();
 });
 
+/// Player suggestions for Explorar / onboarding without a query, keyed by
+/// the comma-joined followed team ids. Never invented and never blocking:
+/// any failure (or a non-API repository) answers no players.
+final playerSuggestionsProvider = FutureProvider.autoDispose
+    .family<List<Entity>, String>((ref, teamsKey) async {
+      if (passivePreview) return const <Entity>[];
+      final repository = ref.watch(repositoryProvider);
+      if (repository is! ApiRepository) return const <Entity>[];
+      final token = CancelToken();
+      ref.onDispose(() => token.cancel('Player suggestions closed'));
+      final country = await ref
+          .watch(preferenceProvider.selectAsync((p) => p.effectiveCountry))
+          .timeout(const Duration(seconds: 2))
+          .then<String?>((value) => value, onError: (Object _) => null);
+      try {
+        final snapshot = await repository.loadPlayerSuggestions(
+          teamsKey.split(',').where((id) => id.isNotEmpty),
+          country,
+          cancelToken: token,
+        );
+        return snapshot.players;
+      } catch (_) {
+        return const <Entity>[];
+      }
+    });
+
+/// Follow kinds the news feed understands (`type:id`).
+const newsSubjectKinds = ['team:', 'player:', 'competition:'];
+
+/// The Noticias feed for the current follows and country.
+final newsFeedProvider = FutureProvider.autoDispose<Snapshot>((ref) async {
+  final repository = ref.watch(repositoryProvider);
+  final follows = await ref.watch(followsProvider.future);
+  final country = await ref
+      .watch(preferenceProvider.selectAsync((p) => p.effectiveCountry))
+      .timeout(const Duration(seconds: 2))
+      .then<String?>((value) => value, onError: (Object _) => null);
+  if (repository is! ApiRepository) return repository.load();
+  final token = CancelToken();
+  ref.onDispose(() => token.cancel('Noticias closed'));
+  try {
+    return await repository.loadNewsFeed(
+      follows.where((key) => newsSubjectKinds.any(key.startsWith)),
+      country,
+      cancelToken: token,
+    );
+  } on DioException catch (error) {
+    // A server without the news route (older deploy) has no news: an empty
+    // feed, not an error. Network failures still surface as errors (Retry).
+    if (error.response?.statusCode == 404) {
+      return Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        'competitions': const <dynamic>[],
+        'teams': const <dynamic>[],
+        'players': const <dynamic>[],
+        'matches': const <dynamic>[],
+        'standings': const <dynamic>[],
+      });
+    }
+    rethrow;
+  }
+});
+
+/// Followed team ids as the [playerSuggestionsProvider] key.
+String followedTeamsKey(Set<String> follows) =>
+    (follows
+            .where((key) => key.startsWith('team:'))
+            .map((key) => key.substring(5))
+            .toList()
+          ..sort())
+        .join(',');
+
 final searchSnapshotProvider = FutureProvider.autoDispose
     .family<Snapshot, ({String query, String? country})>((ref, request) async {
       final repository = ref.watch(repositoryProvider);
@@ -1269,25 +2270,6 @@ final searchSnapshotProvider = FutureProvider.autoDispose
       }
       return repository.load();
     });
-
-const newsSubjectKinds = ['team:', 'player:', 'competition:'];
-
-final newsFeedProvider = FutureProvider.autoDispose<Snapshot>((ref) async {
-  final repository = ref.watch(repositoryProvider);
-  final follows = await ref.watch(followsProvider.future);
-  final country = await ref
-      .watch(preferenceProvider.selectAsync((p) => p.effectiveCountry))
-      .timeout(const Duration(seconds: 2))
-      .then<String?>((value) => value, onError: (Object _) => null);
-  if (repository is! ApiRepository) return repository.load();
-  final token = CancelToken();
-  ref.onDispose(() => token.cancel('Noticias closed'));
-  return repository.loadNewsFeed(
-    follows.where((key) => newsSubjectKinds.any(key.startsWith)),
-    country,
-    cancelToken: token,
-  );
-});
 
 final favoritesSnapshotProvider = FutureProvider.family<Snapshot, String>((
   ref,
@@ -1315,16 +2297,25 @@ void _retainSettled(Ref ref) {
   ref.onDispose(expiry.cancel);
 }
 
-final matchContextSnapshotProvider = FutureProvider.autoDispose
-    .family<Snapshot, String>((ref, id) async {
+final matchContextSnapshotProvider = StreamProvider.autoDispose
+    .family<Snapshot, String>((ref, id) async* {
       final repository = ref.watch(repositoryProvider);
-      final value = await (repository is ApiRepository
-          ? repository.loadMatchContext(id)
-          : repository.load());
-      // Data still arriving is re-read, never pinned by the retention cache.
-      if (ref.mounted && !value.standingsPending) _retainSettled(ref);
-      return value;
-    });
+      final token = CancelToken();
+      ref.onDispose(() => token.cancel('Match Center closed'));
+      final answers = repository is ApiRepository
+          ? repository.watchPublicMatchContext(id, cancelToken: token)
+          : Stream.fromFuture(repository.load());
+      await for (final value in answers) {
+        // Data still arriving is re-read, never pinned by the retention cache.
+        if (ref.mounted && !value.stale && !value.standingsPending) {
+          _retainSettled(ref);
+        }
+        yield value;
+      }
+      // The repository already bounds HTTP retries. Riverpod's automatic
+      // error retry would restart a failed read on every tab rebuild, while
+      // the Match Center remains visible from its initial calendar snapshot.
+    }, retry: (_, _) => null);
 
 /// Recent form + head-to-head of a match, loaded after (and independently
 /// of) the match context: it never blocks the header or the tabs, fails on
@@ -1341,21 +2332,20 @@ final matchPreviewProvider = FutureProvider.autoDispose
       // "Reintentar" in Cara a cara only).
     }, retry: (_, _) => null);
 
-/// First read-only recheck after the open. The provider usually answers in
-/// ~1 s once the worker is woken, so rechecks start early (reads only: never
-/// a provider request).
+/// First bounded recheck after the open. Detail rechecks use request=0, but
+/// the API may independently request lineup-photo hydration.
 final detailPollIntervalProvider = Provider<Duration>(
   (ref) => const Duration(seconds: 2),
 );
 
-/// Bounded, growing read-only refreshes while the server reports pending
+/// Bounded, growing detail refreshes while the server reports pending
 /// sections (5 s, 10 s, 20 s, 40 s by default), then stop.
 final detailPollScheduleProvider = Provider<List<Duration>>((ref) {
   final base = ref.watch(detailPollIntervalProvider);
   // 2, 4, 8, 15, 40 s by default: the last read lands ~69 s after the open,
   // clearly after the worker's 1-minute cron fallback (+ ~1 s GOAL + write
   // latency) when a debounced wake-up was skipped. Then a stable state.
-  // Finite: 5 read-only rechecks at most.
+  // Finite: 5 rechecks at most.
   return [base, base * 2, base * 4, base * 7.5, base * 20];
 });
 
@@ -1547,6 +2537,20 @@ bool _hasVisibleLineup(Json home, Json away) {
 /// latest answer. Rechecks may add data, but never erase richer UI state.
 MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   if (!current.available) return next;
+  // Both timestamps describe the stored provider observations, not when the
+  // HTTP requests finished. A delayed older answer cannot restore an annulled
+  // event or roll back corrected statistics. Equal/missing timestamps retain
+  // the legacy authoritative replacement contract.
+  final currentObservation = DateTime.tryParse(current.fetchedAt ?? '');
+  final nextObservation = DateTime.tryParse(next.fetchedAt ?? '');
+  if (currentObservation != null &&
+      nextObservation != null &&
+      nextObservation.isBefore(currentObservation)) {
+    return current.withBlockedAliases({
+      ...current.blockedAliasIds,
+      ...next.blockedAliasIds,
+    });
+  }
   // Merge untouched provider rows; presentation may have hidden an alias row
   // that must be restorable if the adjudication is revoked later.
   final currentRaw = current.sourceJson;
@@ -1639,6 +2643,7 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
       'pending': next.pending,
       'hydrationNeeded': next.hydrationNeeded,
       'coverage': coverage,
+      'offlineStale': next.available ? next.offlineStale : current.offlineStale,
     },
     blockedAliasIds: {...current.blockedAliasIds, ...next.blockedAliasIds},
   );
@@ -1677,6 +2682,16 @@ final matchDetailProvider = StreamProvider.autoDispose
       var current =
           memory[id]?.withBlockedAliases(blockedAliases) ??
           MatchDetail.waiting(id);
+      if (repository is ApiRepository) {
+        repository.diagnostics?.record(
+          '/v1/match-detail',
+          current.available ? 'memoryHit' : 'memoryMiss',
+        );
+      }
+      if (!current.available && repository is ApiRepository) {
+        current = await repository.readStoredMatchDetail(id) ?? current;
+        if (current.available) remember(current);
+      }
       yield current;
       if (disposed) return;
       try {
@@ -1693,7 +2708,25 @@ final matchDetailProvider = StreamProvider.autoDispose
                 );
         current = _monotonicDetail(current, loaded);
         remember(current);
-      } catch (_) {
+      } catch (error) {
+        if (error is DioException && error.type == DioExceptionType.cancel) {
+          // STOP/disposal is an instruction to stop, not a retryable read.
+          if (!disposed) yield current.withPending(false);
+          return;
+        }
+        if (isQaStoredDetailAbsent(error)) {
+          // Acknowledged passive absence cannot schedule provider work. Keep
+          // any cached detail without fabricating data or retrying hydration.
+          if (!disposed) yield current.withPending(false);
+          return;
+        }
+        if (error is DioException &&
+            error.type == DioExceptionType.connectionError) {
+          // No read-only polling can help while the device has no route.
+          // Keep the last cached detail, but resolve missing sections now.
+          if (!disposed) yield current.withOfflineUnavailable();
+          return;
+        }
         // A failed read is not evidence that data is absent: keep what we
         // had and try bounded read-only refreshes.
         final currentBlocked = repository is ApiRepository
@@ -1734,7 +2767,14 @@ final matchDetailProvider = StreamProvider.autoDispose
           current = _monotonicDetail(current, next);
           remember(current);
           yield current;
-        } catch (_) {
+        } catch (error) {
+          if (error is DioException && error.type == DioExceptionType.cancel) {
+            break;
+          }
+          if (isQaStoredDetailAbsent(error)) {
+            if (!disposed) yield current.withPending(false);
+            return;
+          }
           // Retain the latest detail; the schedule stays bounded.
         }
       }
@@ -1750,7 +2790,9 @@ final matchDetailProvider = StreamProvider.autoDispose
     });
 
 final liveRealtimeConfigProvider = Provider<LiveRealtimeConfig>(
-  (ref) => LiveRealtimeConfig.fromEnvironment(),
+  (ref) => (ref.watch(demoModeProvider) || qaLocalCacheOnly || passivePreview)
+      ? const LiveRealtimeConfig(supabaseUrl: '', publicKey: '')
+      : LiveRealtimeConfig.fromEnvironment(),
 );
 
 final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
@@ -1761,11 +2803,31 @@ final liveRealtimeClientProvider = Provider<LiveRealtimeClient>((ref) {
     ),
   );
   ref.onDispose(() => dio.close(force: true));
-  return LiveRealtimeClient(ref.watch(liveRealtimeConfigProvider), dio);
+  final client = LiveRealtimeClient(
+    userSessionAccessEnabled
+        ? const LiveRealtimeConfig(supabaseUrl: '', publicKey: '')
+        : ref.watch(liveRealtimeConfigProvider),
+    dio,
+    scopedRealtime: true,
+  );
+  ref.onDispose(client.dispose);
+  return client;
 });
 
 final liveMatchUpdatesProvider = StreamProvider<Map<String, LiveMatchUpdate>>(
-  (ref) => ref.watch(liveRealtimeClientProvider).watch(),
+  (ref) =>
+      (ref.watch(demoModeProvider) ||
+          qaLocalCacheOnly ||
+          passivePreview ||
+          userSessionAccessEnabled)
+      ? Stream.value(const <String, LiveMatchUpdate>{})
+      : ref.watch(liveRealtimeClientProvider).watch().map((updates) {
+          final repository = ref.read(repositoryProvider);
+          if (repository is ApiRepository) {
+            unawaited(repository.persistTerminalObservations(updates));
+          }
+          return updates;
+        }),
 );
 
 final effectiveSnapshotProvider = Provider<AsyncValue<Snapshot>>((ref) {
@@ -1848,14 +2910,23 @@ Future<void> toggleFollow(
   AppDatabase database,
   EntityRedirectMemory redirects,
   String type,
-  String id,
-) async {
-  if (type == 'match') return database.toggle(type, id);
+  String id, {
+  Future<void> Function(Set<String> keys)? onIntent,
+}) async {
+  if (type == 'match') {
+    await onIntent?.call(Set.unmodifiable({'match:$id'}));
+    return database.toggle(type, id);
+  }
   final canonical = redirects.resolve(id);
   final aliases = {
     for (final alias in redirects.redirects.keys)
       if (redirects.resolve(alias) == canonical) alias,
   };
+  await onIntent?.call(
+    Set.unmodifiable({
+      for (final controlled in {canonical, id, ...aliases}) '$type:$controlled',
+    }),
+  );
   // No alias known for this entity: the plain toggle.
   if (canonical == id && aliases.isEmpty) return database.toggle(type, id);
   await database.toggleAny(type, canonical, {id, ...aliases});

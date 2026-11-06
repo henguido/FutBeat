@@ -7,15 +7,8 @@ import 'package:go_router/go_router.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
-
-// Image.network with a cacheWidth/cacheHeight wraps the NetworkImage in a
-// ResizeImage, so the URL must be unwrapped rather than read directly.
-String? _networkUrl(ImageProvider? provider) {
-  var resolved = provider;
-  if (resolved is ResizeImage) resolved = resolved.imageProvider;
-  return resolved is NetworkImage ? resolved.url : null;
-}
 
 Map<String, dynamic> _payload() => {
   'schemaVersion': 1,
@@ -94,7 +87,7 @@ Future<void> _pumpMatch(
       databaseProvider.overrideWithValue(db),
       repositoryProvider.overrideWithValue(ApiRepository(Dio())),
       matchContextSnapshotProvider.overrideWith(
-        (ref, id) async => Snapshot(payload),
+        (ref, id) => Stream.value(Snapshot(payload)),
       ),
       matchDetailProvider.overrideWith(
         (ref, id) => Stream.value(MatchDetail(detail)),
@@ -161,7 +154,7 @@ void main() {
       );
       expect(
         find.byWidgetPredicate(
-          (w) => w is Image && (_networkUrl(w.image) ?? '').endsWith('1.png'),
+          (w) => w is SportsImage && (w.url ?? '').endsWith('1.png'),
         ),
         findsOneWidget,
       );
@@ -189,14 +182,14 @@ void main() {
     );
     expect(
       find.byWidgetPredicate(
-        (w) => w is Image && (_networkUrl(w.image) ?? '').endsWith('2.png'),
+        (w) => w is SportsImage && (w.url ?? '').endsWith('2.png'),
       ),
       findsOneWidget,
     );
   });
 
   testWidgets(
-    'player without any photo shows initials, not a broken image (case D4)',
+    'player without any photo shows a silhouette, not a broken image (case D4)',
     (tester) async {
       await _pumpMatch(
         tester,
@@ -209,7 +202,10 @@ void main() {
           ),
         ),
       );
-      expect(find.text('SF'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('lineup-photo-fallback-fb_player_1')),
+        findsOneWidget,
+      );
       expect(find.byType(Image), findsNothing);
     },
   );

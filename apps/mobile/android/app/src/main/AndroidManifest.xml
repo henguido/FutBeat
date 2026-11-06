@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
-        android:label="FutBeat"
+        android:label="${futbeatAppLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round">
@@ -26,6 +26,49 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- Password-reset email link (Android App Link, verified by
+                 https://futbeat.com/.well-known/assetlinks.json): handled by
+                 app_links in Dart (lib/main.dart, handlePasswordResetLink),
+                 never by the router, so the one-time token is not kept in
+                 navigation. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="${futbeatAppLinkHost}"
+                    android:pathPrefix="/auth/reset" />
+            </intent-filter>
+            <!-- Manual fallback from https://futbeat.com/auth/reset ("Abrir
+                 FutBeat", after a tap) when the App Link is not resolved. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="${futbeatAuthScheme}"
+                    android:host="password-reset" />
+            </intent-filter>
+            <meta-data
+                android:name="flutter_deeplinking_enabled"
+                android:value="false" />
+        </activity>
+        <!-- Receives the Supabase OAuth redirect
+             (com.futbeat.futbeat://login-callback) for Google / Facebook
+             sign-in; see PushService.signInWithOAuth. -->
+        <activity
+            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:exported="true"
+            android:taskAffinity="">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="${futbeatAuthScheme}"
+                    android:host="login-callback" />
             </intent-filter>
         </activity>
         <!-- Channel FCM uses for notifications without an explicit channel.

@@ -141,7 +141,7 @@ Future<void> _pumpTeam(
       databaseProvider.overrideWithValue(db),
       if (media != null) entityMediaProvider.overrideWithValue(media),
       entitySnapshotProvider.overrideWith(
-        (ref, request) async => Snapshot(payload),
+        (ref, request) => Stream.value(Snapshot(payload)),
       ),
       followsProvider.overrideWith((ref) => Stream.value({})),
     ],
@@ -401,7 +401,8 @@ void main() {
     );
     // Summary v2 (#156): no upcoming match -> no empty "next match" card.
     expect(find.text('Partido siguiente'), findsNothing);
-    expect(find.text('Últimos partidos'), findsOneWidget);
+    expect(find.text('Forma reciente'), findsOneWidget);
+    expect(find.text('Últimos resultados'), findsOneWidget);
 
     await _openTab(tester, 'Plantilla');
     for (final label in squadGroupOrder) {
@@ -417,6 +418,124 @@ void main() {
     expect(find.text('Portero · Costa Rica'), findsNWidgets(2));
     expect(find.text('23'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'scoped national squad keeps a member whose primary team is a club',
+    (tester) async {
+      final payload = _payload(
+        players: [
+          {
+            ..._player(
+              'fb_player_shared_synthetic',
+              'Persona Compartida',
+              'Forward',
+              number: 17,
+              photo: true,
+            ),
+            'teamId': 'fb_club_synthetic',
+          },
+        ],
+      );
+      await _pumpTeam(tester, payload);
+      expect(find.text('1 jugador'), findsOneWidget);
+      await _openTab(tester, 'Plantilla');
+      expect(find.text('Persona Compartida'), findsOneWidget);
+      expect(
+        find.text('17'),
+        findsNothing,
+        reason: 'the club shirt number is not a national-team shirt number',
+      );
+      await tester.tap(find.text('Persona Compartida'));
+      await tester.pumpAndSettle();
+      expect(find.text('Perfil fb_player_shared_synthetic'), findsOneWidget);
+    },
+  );
+
+  testWidgets('server-redirected squad alias yields one canonical member', (
+    tester,
+  ) async {
+    final payload = _payload(
+      players: [
+        _player('fb_player_alias_synthetic', 'Persona Parcial', 'Forward'),
+        _player(
+          'fb_player_root_synthetic',
+          'Persona Completa',
+          'Forward',
+          photo: true,
+        ),
+      ],
+    );
+    payload['entityRedirects'] = {
+      'fb_player_alias_synthetic': 'fb_player_root_synthetic',
+    };
+    await _pumpTeam(tester, payload);
+    expect(find.text('1 jugador'), findsOneWidget);
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('Persona Completa'), findsOneWidget);
+    expect(find.text('Persona Parcial'), findsNothing);
+  });
+
+  testWidgets('two explicit aliases to an absent root show one squad member', (
+    tester,
+  ) async {
+    final payload = _payload(
+      players: [
+        _player('fb_player_alias_a', 'Persona A', 'Forward'),
+        _player('fb_player_alias_b', 'Persona B', 'Forward'),
+      ],
+    );
+    payload['entityRedirects'] = {
+      'fb_player_alias_a': 'fb_player_root_missing',
+      'fb_player_alias_b': 'fb_player_root_missing',
+    };
+
+    await _pumpTeam(tester, payload);
+    expect(find.text('1 jugador'), findsOneWidget);
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('1 jugador'), findsOneWidget);
+    expect(find.text('Persona A'), findsOneWidget);
+    expect(find.text('Persona B'), findsNothing);
+  });
+
+  testWidgets('redirected fixture and club-linked squad stay in one profile', (
+    tester,
+  ) async {
+    final payload = _payload(
+      players: [
+        {
+          ..._player('fb_player_alias_synthetic', 'Persona Parcial', 'Forward'),
+          'teamId': 'fb_club_synthetic',
+        },
+        {
+          ..._player(
+            'fb_player_root_synthetic',
+            'Persona Completa',
+            'Forward',
+            number: 17,
+          ),
+          'teamId': 'fb_club_synthetic',
+        },
+      ],
+    );
+    payload['entityRedirects'] = {
+      'fb_player_alias_synthetic': 'fb_player_root_synthetic',
+      'fb_team_alias_synthetic': 'fb_team',
+    };
+    (payload['matches'] as List<dynamic>).first['homeTeamId'] =
+        'fb_team_alias_synthetic';
+
+    await _pumpTeam(tester, payload);
+    expect(find.text('1 jugador'), findsOneWidget);
+    await _openTab(tester, 'Partidos');
+    expect(
+      find.byKey(const ValueKey('profile-match-fb_match_past')),
+      findsOneWidget,
+    );
+    await _openTab(tester, 'Plantilla');
+    expect(find.text('Persona Completa'), findsOneWidget);
+    expect(find.text('Persona Parcial'), findsNothing);
+    expect(find.text('17'), findsNothing);
   });
 
   testWidgets('players with and without photo never show broken images', (

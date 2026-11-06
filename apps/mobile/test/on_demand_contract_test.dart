@@ -111,7 +111,10 @@ void main() {
       }
       expect(_searches(requests), 1 + remoteSearchRetryDelays.length);
       expect(find.text('Buscando más jugadores…'), findsNothing);
-      expect(find.text('No encontramos resultados'), findsOneWidget);
+      expect(
+        find.text('No encontramos resultados para “julian alvarez”.'),
+        findsOneWidget,
+      );
       expect(
         find.text('Seguimos buscando; intenta de nuevo en unos segundos.'),
         findsOneWidget,
@@ -148,9 +151,9 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         databaseProvider.overrideWithValue(db),
-        entitySnapshotProvider.overrideWith((ref, request) async {
+        entitySnapshotProvider.overrideWith((ref, request) {
           loads.add(loads.length);
-          return Snapshot(payload(loads.length - 1));
+          return Stream.value(Snapshot(payload(loads.length - 1)));
         }),
         followsProvider.overrideWith((ref) => Stream.value({})),
       ],
