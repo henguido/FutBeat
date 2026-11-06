@@ -246,7 +246,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
           _seededTeamView() ??
           Scaffold(
             appBar: AppBar(title: const Text('FutBeat')),
-            body: const Center(child: CircularProgressIndicator()),
+            body: const ContentSkeleton(layout: SkeletonLayout.profile),
           ),
       error: (_, stack) => Scaffold(
         appBar: AppBar(title: const Text('FutBeat')),
@@ -313,14 +313,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             : orderedTeamCompetitions(data, teamId);
         if (type == 'team') {
           final view = _teamView(data, entity, matches, teamCompetitions);
-          return data.stale
-              ? Banner(
-                  message: 'Datos guardados',
-                  location: BannerLocation.topEnd,
-                  color: Colors.deepOrange,
-                  child: view,
-                )
-              : view;
+          return view;
         }
         if (type == 'player') {
           final view = PlayerProfileView(
@@ -333,14 +326,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                 enrichmentAttempts < profileEnrichmentRetryDelays.length,
             matchContext: widget.playerMatchContext,
           );
-          return data.stale
-              ? Banner(
-                  message: 'Datos guardados',
-                  location: BannerLocation.topEnd,
-                  color: Colors.deepOrange,
-                  child: view,
-                )
-              : view;
+          return view;
         }
         if (type == 'competition') {
           final view = CompetitionProfileView(
@@ -349,14 +335,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             matches: matches,
             teams: competitionTeams(data, canonicalId),
           );
-          return data.stale
-              ? Banner(
-                  message: 'Datos guardados',
-                  location: BannerLocation.topEnd,
-                  color: Colors.deepOrange,
-                  child: view,
-                )
-              : view;
+          return view;
         }
         // Teams and players have dedicated profiles; this is the competition
         // profile.

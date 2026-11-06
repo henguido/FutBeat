@@ -400,9 +400,9 @@ void main() {
       );
       final container = await _open(tester, server);
       expect(
-        find.textContaining('Último marcador conocido'),
+        find.byIcon(Icons.sync_problem_outlined),
         findsOneWidget,
-        reason: 'freshness warning is visible on the initial facts tab',
+        reason: 'the discreet freshness indicator remains on the initial facts tab',
       );
       await _elapse(tester, const Duration(minutes: 2));
       expect(
@@ -492,7 +492,7 @@ void main() {
         find.byWidgetPredicate(
           (w) => w is Banner && w.message == 'Datos guardados',
         ),
-        findsOneWidget,
+        findsNothing,
       );
       container.invalidate(matchContextSnapshotProvider(_match));
       await tester.pump();
@@ -532,7 +532,7 @@ void main() {
         find.byWidgetPredicate(
           (w) => w is Banner && w.message == 'Datos guardados',
         ),
-        findsOneWidget,
+        findsNothing,
       );
 
       container.invalidate(matchContextSnapshotProvider(_match));

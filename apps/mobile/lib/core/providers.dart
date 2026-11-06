@@ -327,10 +327,10 @@ class CalendarCachePolicy {
       : futureTtl;
 }
 
-/// One shared network request per date. Callers that pass a cancel token only
+/// One shared network request per resource. Callers with a cancel token only
 /// stop waiting; the request itself is cancelled when no waiter remains, so a
 /// closed screen never cancels a prefetch (or another screen) of the same date.
-class _CalendarFlight {
+class _SnapshotFlight {
   final CancelToken token = CancelToken();
   late final Future<Snapshot> future;
   int _waiters = 0;
@@ -380,7 +380,8 @@ class ApiRepository implements FootballRepository {
 
   final Map<String, DateTime> _calendarFetchedAt = {};
   final Map<String, int> _calendarFailures = {};
-  final Map<String, _CalendarFlight> _calendarInFlight = {};
+  final Map<String, _SnapshotFlight> _calendarInFlight = {};
+  final Map<String, _SnapshotFlight> _catalogInFlight = {};
   final Set<Future<void>> _diskWrites = {};
   final Map<String, Future<void>> _detailDiskWrites = {};
   Future<void> _prefetchTask = Future<void>.value();
@@ -1026,8 +1027,8 @@ class ApiRepository implements FootballRepository {
     _diskWrites.add(write);
   }
 
-  _CalendarFlight _startFlight(String value) {
-    final flight = _CalendarFlight();
+  _SnapshotFlight _startFlight(String value) {
+    final flight = _SnapshotFlight();
     flight.future = () async {
       try {
         var raw = await _getJson(
@@ -1075,6 +1076,13 @@ class ApiRepository implements FootballRepository {
     if (flight == null || flight.token.isCancelled) {
       flight = _calendarInFlight[value] = _startFlight(value);
     }
+    return _waitForFlight(flight, cancelToken);
+  }
+
+  Future<Snapshot> _waitForFlight(
+    _SnapshotFlight flight,
+    CancelToken? cancelToken,
+  ) {
     if (cancelToken == null) {
       flight.pin();
       return flight.future;
@@ -1698,6 +1706,9 @@ class ApiRepository implements FootballRepository {
     bool persist = false,
     Json Function(Json)? adapt,
   }) async {
+    if (cancelToken?.isCancelled == true) {
+      throw cancelToken!.cancelError!;
+    }
     final cached = _snapshotCache[key];
     final fetched = _catalogFetchedAt[key];
     // A partial answer (remote discovery pending) is never served from cache.
@@ -1707,21 +1718,41 @@ class ApiRepository implements FootballRepository {
         DateTime.now().difference(fetched) < catalogMemoryTtl) {
       return cached;
     }
-    final response = await _getJson(
-      path,
-      queryParameters: queryParameters,
-      cancelToken: cancelToken,
-      maxAttempts: 1,
-    );
-    final raw = _canonicalNetworkSnapshot(adapt?.call(response) ?? response);
-    final snapshot = _canonical(raw);
-    _remember(key, snapshot);
-    _catalogFetchedAt.removeWhere(
-      (key, value) => !_snapshotCache.containsKey(key),
-    );
-    _catalogFetchedAt[key] = DateTime.now();
-    if (persist && !snapshot.pendingRemote) _persistCatalog(key, raw);
-    return snapshot;
+    var flight = _catalogInFlight[key];
+    if (flight == null || flight.token.isCancelled) {
+      final current = _SnapshotFlight();
+      _catalogInFlight[key] = current;
+      current.future = () async {
+        try {
+          final response = await _getJson(
+            path,
+            queryParameters: queryParameters,
+            cancelToken: current.token,
+            maxAttempts: 1,
+          );
+          final raw = _canonicalNetworkSnapshot(
+            adapt?.call(response) ?? response,
+          );
+          final snapshot = _canonical(raw);
+          _remember(key, snapshot);
+          _catalogFetchedAt.removeWhere(
+            (key, value) => !_snapshotCache.containsKey(key),
+          );
+          _catalogFetchedAt[key] = DateTime.now();
+          if (persist && !snapshot.pendingRemote) _persistCatalog(key, raw);
+          return snapshot;
+        } finally {
+          if (identical(_catalogInFlight[key], current)) {
+            _catalogInFlight.remove(key);
+          }
+        }
+      }();
+      unawaited(current.future.then((_) {}, onError: (Object _) {}));
+      flight = current;
+    } else {
+      diagnostics?.record(path, 'sharedFlight');
+    }
+    return _waitForFlight(flight, cancelToken);
   }
 
   /// Real squad players to suggest without a query: followed [teamIds]
@@ -2180,7 +2211,7 @@ final exploreSnapshotProvider = StreamProvider.autoDispose<Snapshot>((ref) {
     yield* repository.watchExplore(country, cancelToken: token);
     keepForAMinute();
   }();
-});
+}, retry: (_, _) => null);
 
 /// Player suggestions for Explorar / onboarding without a query, keyed by
 /// the comma-joined followed team ids. Never invented and never blocking:
@@ -2269,7 +2300,7 @@ final searchSnapshotProvider = FutureProvider.autoDispose
         );
       }
       return repository.load();
-    });
+    }, retry: (_, _) => null);
 
 final favoritesSnapshotProvider = FutureProvider.family<Snapshot, String>((
   ref,
@@ -2285,7 +2316,7 @@ final favoritesSnapshotProvider = FutureProvider.family<Snapshot, String>((
     return repository.loadFavorites(keys);
   }
   return repository.load();
-});
+}, retry: (_, _) => null);
 
 /// Settled match data stays cached for this long after it loads, so leaving
 /// and re-entering a match shortly after does not refetch it.

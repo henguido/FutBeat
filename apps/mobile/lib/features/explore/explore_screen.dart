@@ -121,7 +121,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       if (typing) setState(() => typing = false);
       return;
     }
-    setState(() => typing = true);
+    setState(() {
+      // Stop watching the obsolete query now, not after the debounce. The
+      // auto-dispose provider detaches/cancels only this screen's waiter.
+      requestQuery = '';
+      typing = true;
+    });
     debounce = Timer(const Duration(milliseconds: 275), () {
       if (!mounted || pendingQuery == requestQuery) return;
       setState(() {
@@ -148,36 +153,43 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final hasQuery = requestQuery.isNotEmpty;
+    final hasRemoteQuery = requestQuery.isNotEmpty;
+    final hasQuery = typing || hasRemoteQuery;
+    final visibleQuery = typing ? pendingQuery : requestQuery;
     final country = ref
         .watch(preferenceProvider)
         .asData
         ?.value
         .effectiveCountry;
     final request = (query: requestQuery, country: country);
-    if (hasQuery) {
+    if (hasRemoteQuery) {
       ref.listen(searchSnapshotProvider(request), (_, next) {
         if (!next.isLoading && next.asData?.value.pendingRemote == true) {
           _scheduleRemoteRetry(request);
         }
       });
     }
-    final result = hasQuery
+    final result = hasRemoteQuery
         ? ref.watch(searchSnapshotProvider(request))
         : ref.watch(exploreSnapshotProvider);
     final fresh = result.asData?.value;
     if (fresh != null) {
-      if (hasQuery) {
+      if (hasRemoteQuery) {
         previousSearches[request] = fresh;
       } else {
         previousDiscovery = fresh;
       }
     }
     final source =
-        fresh ?? (hasQuery ? previousSearches[request] : previousDiscovery);
+        fresh ??
+        (hasRemoteQuery ? previousSearches[request] : null) ??
+        previousDiscovery;
+    final localResults = hasQuery && (!hasRemoteQuery || fresh == null);
     final data = source == null ? null : presentSnapshotForSession(ref, source);
     final refreshing =
-        result.isLoading || (!hasQuery && fresh?.revalidating == true);
+        typing ||
+        result.isLoading ||
+        (!hasQuery && fresh?.revalidating == true);
     final failed = result.hasError || (!hasQuery && fresh?.stale == true);
     final searchingRemote =
         hasQuery &&
@@ -188,17 +200,17 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         ? widget.focusType
         : null;
     final competitions = focus == null || focus == 'competition'
-        ? _matching(data?.competitions, data, requestQuery)
+        ? _matching(data?.competitions, data, visibleQuery, local: localResults)
         : const <Entity>[];
     final teams = focus == null || focus == 'team'
-        ? _matching(data?.teams, data, requestQuery)
+        ? _matching(data?.teams, data, visibleQuery, local: localResults)
         : const <Entity>[];
     final follows =
         ref.watch(followsProvider).asData?.value ?? const <String>{};
     final players = focus != null && focus != 'player'
         ? const <Entity>[]
         : hasQuery
-        ? _matching(data?.players, data, requestQuery)
+        ? _matching(data?.players, data, visibleQuery, local: localResults)
         : suggestAvailablePlayers(
             remote:
                 ref
@@ -263,7 +275,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
             child: _ExploreContent(
               data: data,
               hasQuery: hasQuery,
-              query: requestQuery,
+              query: visibleQuery,
               focusType: focus,
               refreshing: refreshing,
               failed: failed,
@@ -283,9 +295,16 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 }
 
-List<Entity> _matching(List<Entity>? entities, Snapshot? data, String query) =>
+List<Entity> _matching(
+  List<Entity>? entities,
+  Snapshot? data,
+  String query, {
+  bool local = false,
+}) =>
     entities
-        ?.where((entity) => data?.demo != true || entity.matches(query))
+        ?.where(
+          (entity) => (!local && data?.demo != true) || entity.matches(query),
+        )
         .toList(growable: false) ??
     const <Entity>[];
 
@@ -358,7 +377,7 @@ class _ExploreContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (data == null && refreshing) {
+    if (refreshing && (data == null || (hasQuery && isEmpty))) {
       return _ColdLoading(hasQuery: hasQuery, query: query);
     }
     if (data == null && failed) return _LoadError(onRetry: onRetry);
@@ -616,20 +635,7 @@ class _ColdLoading extends StatelessWidget {
     final message = hasQuery
         ? 'Buscando “$query”…'
         : 'Cargando recomendaciones…';
-    return Center(
-      child: Semantics(
-        label: message,
-        liveRegion: true,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 14),
-            Text(message),
-          ],
-        ),
-      ),
-    );
+    return ContentSkeleton(label: message);
   }
 }
 

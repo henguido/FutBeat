@@ -291,7 +291,7 @@ void main() {
     expect(find.text('No pudimos cargar los partidos.'), findsNothing);
   });
 
-  testWidgets('stale cached feed stays interactive with a discreet notice', (
+  testWidgets('stale cached feed stays interactive without a cache banner', (
     tester,
   ) async {
     await _pump(
@@ -300,12 +300,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Mostrando datos guardados.'), findsOneWidget);
+    expect(find.text('Mostrando datos guardados.'), findsNothing);
     expect(find.text('Sin conexión.'), findsNothing);
     expect(find.byKey(const ValueKey('match-row-match')), findsOneWidget);
     await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
     await tester.pumpAndSettle();
-    expect(find.text('Mostrando datos guardados.'), findsOneWidget);
+    expect(find.text('Mostrando datos guardados.'), findsNothing);
     expect(find.text('No hay partidos en vivo ahora.'), findsNothing);
     expect(
       find.text('No hay partidos guardados para este filtro.'),

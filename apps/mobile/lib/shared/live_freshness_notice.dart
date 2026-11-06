@@ -59,13 +59,16 @@ class _LiveFreshnessNoticeState extends State<LiveFreshnessNotice>
   Widget build(BuildContext context) =>
       !widget.match.liveDataStaleAt(widget.now())
       ? const SizedBox.shrink()
-      : const Padding(
+      : Padding(
           key: ValueKey('live-last-known'),
-          padding: EdgeInsets.symmetric(vertical: 5),
-          child: Text(
-            'Último marcador conocido · Sin actualización reciente',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: muted, fontSize: 11),
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Semantics(
+            label: 'LIVE sin sincronizar',
+            child: const Icon(
+              Icons.sync_problem_outlined,
+              color: muted,
+              size: 14,
+            ),
           ),
         );
 }

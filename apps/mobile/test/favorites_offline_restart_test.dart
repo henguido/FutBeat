@@ -422,7 +422,9 @@ void main() {
         ),
       );
       await tester.runAsync(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final follows = await container.read(followsProvider.future);
+        final keys = (follows.toList()..sort()).join(',');
+        await container.read(favoritesSnapshotProvider(keys).future);
       });
       await tester.pumpAndSettle();
       expect(find.text('Alpha'), findsOneWidget);

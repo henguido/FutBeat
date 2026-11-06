@@ -159,7 +159,8 @@ void main() {
     await tester.pump(const Duration(minutes: 1));
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
-    expect(find.textContaining('Último marcador conocido'), findsOneWidget);
+    expect(find.textContaining('Último marcador conocido'), findsNothing);
+    expect(find.byIcon(Icons.sync_problem_outlined), findsOneWidget);
     final recovered = FootballMatch(
       LiveMatchUpdate.fromJson({
         ...row(revision: 2),

@@ -361,7 +361,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         .when(
           loading: () => Scaffold(
             appBar: AppBar(title: const Text('Match Center')),
-            body: const Center(child: CircularProgressIndicator()),
+            body: const ContentSkeleton(layout: SkeletonLayout.match),
           ),
           error: (_, stack) => Scaffold(
             appBar: AppBar(title: const Text('Match Center')),
@@ -762,14 +762,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       detail: detail,
       home: home,
       away: away,
-      child: data.stale || detail.offlineStale
-          ? Banner(
-              message: 'Datos guardados',
-              location: BannerLocation.topEnd,
-              color: Colors.deepOrange,
-              child: page,
-            )
-          : page,
+      child: page,
     );
   }
 }

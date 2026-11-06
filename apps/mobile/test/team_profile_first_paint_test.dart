@@ -182,12 +182,13 @@ void main() {
     expect(find.text('FutBeat'), findsNothing);
   });
 
-  testWidgets('an unknown team keeps the spinner until its profile arrives', (
+  testWidgets('an unknown team keeps the skeleton until its profile arrives', (
     tester,
   ) async {
     final harness = await _pump(tester, _repository(_search()));
     expect(find.text('FutBeat'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const ValueKey('content-skeleton')), findsOneWidget);
     expect(find.text('Club Semilla'), findsNothing);
 
     harness.entity.complete(_profile());

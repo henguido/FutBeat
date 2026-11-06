@@ -602,8 +602,9 @@ void main() {
       // Discovery recommendations never leak into the query state while its
       // own response is pending.
       expect(find.text('Home'), findsNothing);
-      expect(find.text('Buscando “manchester”…'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.bySemanticsLabel('Buscando “manchester”…'), findsOneWidget);
+      expect(find.byKey(const ValueKey('content-skeleton')), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
       await tester.enterText(find.byType(TextField), 'london');
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump(const Duration(milliseconds: 10));
@@ -619,6 +620,15 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 10));
       expect(requests[3].cancelToken!.isCancelled, true);
+      // Shared flights detach their old waiter before the new Dio request.
+      // Bound the scheduling window without weakening country/cancel checks.
+      for (
+        var frame = 0;
+        frame < 10 && requests.last.queryParameters['country'] != 'ES';
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
       expect(requests.last.queryParameters['country'], 'ES');
       expect(find.text('Home'), findsNothing);
       await tester.pumpWidget(const SizedBox());

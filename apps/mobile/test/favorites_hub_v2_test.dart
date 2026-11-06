@@ -224,7 +224,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Mostrando tus seguidos guardados'), findsOneWidget);
+    expect(find.text('Mostrando tus seguidos guardados'), findsNothing);
+    expect(find.byTooltip('Reintentar actualización'), findsOneWidget);
     expect(
       find.text('Asociación Deportiva de Nombre Extraordinariamente Largo'),
       findsOneWidget,
@@ -296,7 +297,8 @@ void main() {
         ),
       ),
     );
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byKey(const ValueKey('content-skeleton')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
 
     follows.add(const {'team:team_a'});
     await tester.pumpAndSettle();

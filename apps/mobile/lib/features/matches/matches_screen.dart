@@ -793,13 +793,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             )
             ..add(() => const SizedBox(height: 16));
 
-          if (data.stale && allGames.isNotEmpty && !loading && !failed) {
-            feedItems.add(
-              () =>
-                  const _SavedDataNotice(message: 'Mostrando datos guardados.'),
-            );
-          }
-
           if (loading) {
             if (data.calendarPending) {
               feedItems.add(
@@ -1136,39 +1129,6 @@ class _MatchesStatusCard extends StatelessWidget {
             const SizedBox(height: 18),
             FilledButton.tonal(onPressed: onAction, child: Text(actionLabel!)),
           ],
-        ],
-      ),
-    ),
-  );
-}
-
-class _SavedDataNotice extends StatelessWidget {
-  const _SavedDataNotice({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    liveRegion: true,
-    child: Container(
-      key: const ValueKey('matches-saved-data-notice'),
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A2429),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.cloud_done_outlined, color: muted, size: 18),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(color: muted, fontSize: 13),
-            ),
-          ),
         ],
       ),
     ),

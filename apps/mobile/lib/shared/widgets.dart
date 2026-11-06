@@ -14,6 +14,9 @@ import '../core/qa_development.dart';
 import '../core/sports_image_cache.dart';
 import '../core/relevance.dart';
 import '../core/theme.dart';
+import 'content_skeleton.dart';
+
+export 'content_skeleton.dart';
 
 /// Existing verified entity-media identity, used only as a disk-cache key.
 /// A canonical entity keeps precedence over a contradictory alias field.
@@ -210,7 +213,7 @@ class DataView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) => ref
       .watch(effectiveSnapshotProvider)
       .when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const ContentSkeleton(),
         error: (_, stack) => Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,

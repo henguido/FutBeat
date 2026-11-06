@@ -236,7 +236,7 @@ void main() {
         find.byWidgetPredicate(
           (w) => w is Banner && w.message == 'Datos guardados',
         ),
-        findsOneWidget,
+        findsNothing,
       );
       await tester.tap(find.text('Tabla'));
       await tester.pumpAndSettle();

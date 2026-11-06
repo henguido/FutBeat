@@ -41,7 +41,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         appBar: AppBar(title: const Text('Siguiendo')),
         body: followState.hasError
             ? _LoadFailure(onRetry: () => ref.invalidate(followsProvider))
-            : const Center(child: CircularProgressIndicator()),
+            : const ContentSkeleton(),
       );
     }
 
@@ -92,7 +92,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                 onRetry: () =>
                     ref.invalidate(favoritesSnapshotProvider(encodedKeys)),
               )
-            : const Center(child: CircularProgressIndicator()),
+            : const ContentSkeleton(),
       );
     }
 
@@ -399,13 +399,12 @@ class _CachedNotice extends StatelessWidget {
   final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.amber.withValues(alpha: .10),
-    child: ListTile(
-      dense: true,
-      leading: const Icon(Icons.cloud_off_outlined, color: Colors.amber),
-      title: const Text('Mostrando tus seguidos guardados'),
-      trailing: TextButton(onPressed: onRetry, child: const Text('Reintentar')),
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerRight,
+    child: IconButton(
+      tooltip: 'Reintentar actualización',
+      onPressed: onRetry,
+      icon: const Icon(Icons.refresh, color: muted),
     ),
   );
 }
