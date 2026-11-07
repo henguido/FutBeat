@@ -35,14 +35,13 @@ List<String> timelineMetadata({
   for (final raw in (event['detail']?.toString() ?? '').split(' · ')) {
     final part = clean(raw);
     if (part.isEmpty || represented.contains(part)) continue;
-    if (event.containsKey('score') &&
-        event['score'] == null &&
-        scoreKey(part) != null) {
-      continue; // An explicit correction cleared the score; do not revive its text.
-    }
-    if (score != null &&
-        scoreKey(part) != null &&
-        scoreKey(part) == scoreKey(score)) {
+    final detailScore = scoreKey(part);
+    // An explicit score (or a correction clearing it) supersedes an old
+    // standalone score in the provider's free text for this occurrence.
+    if (detailScore != null &&
+        ((event.containsKey('score') &&
+                (event['score'] == null || score != null)) ||
+            (score != null && detailScore == scoreKey(score)))) {
       continue;
     }
     if (!result.contains(part)) result.add(part);

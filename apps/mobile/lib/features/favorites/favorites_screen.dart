@@ -20,7 +20,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   LiveRealtimeClient? _liveClient;
   late final String _liveScope = 'favorites:${identityHashCode(this)}';
   Set<String>? _lastFollows;
-  Snapshot? _lastSnapshot;
+  ({String keys, Snapshot snapshot})? _lastSnapshot;
 
   @override
   void dispose() {
@@ -31,11 +31,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   @override
   Widget build(BuildContext context) {
     final followState = ref.watch(followsProvider);
-    ref.listen(followsProvider, (_, next) {
-      final value = next.asData?.value;
-      if (value != null && mounted) setState(() => _lastFollows = value);
-    });
-    final follows = followState.asData?.value ?? _lastFollows;
+    final follows = _lastFollows = followState.asData?.value ?? _lastFollows;
     if (follows == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Siguiendo')),
@@ -50,13 +46,16 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     final request = follows.isEmpty
         ? null
         : ref.watch(favoritesSnapshotProvider(encodedKeys));
-    if (request != null) {
-      ref.listen(favoritesSnapshotProvider(encodedKeys), (_, next) {
-        final value = next.asData?.value;
-        if (value != null && mounted) setState(() => _lastSnapshot = value);
-      });
+    final current = request?.asData?.value;
+    if (current != null) {
+      _lastSnapshot = (keys: encodedKeys, snapshot: current);
     }
-    final snapshot = request?.asData?.value ?? _lastSnapshot;
+    // Keep a refresh fallback only for the same selection. An old response
+    // may include the new favorite incidentally (e.g. as an opponent) and
+    // must not stand in for its data or keep its matches subscribed to LIVE.
+    final cached = _lastSnapshot;
+    final snapshot =
+        current ?? (cached?.keys == encodedKeys ? cached?.snapshot : null);
     final client = ref.read(liveRealtimeClientProvider);
     if (!identical(_liveClient, client)) {
       _liveClient?.clearScope(_liveScope);

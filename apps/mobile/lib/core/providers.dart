@@ -717,6 +717,13 @@ class ApiRepository implements FootballRepository {
   }) async {
     try {
       final row = await database?.readPublicSnapshot('public:$key');
+      if (key.startsWith('entity:') || key.startsWith('match-context:')) {
+        // A fresh network answer can land while SQLite returns an older
+        // snapshot. Keep it before decoding the disk row, which would also
+        // absorb older media and identity redirects into shared state.
+        final landed = _snapshotCache[key];
+        if (landed != null) return landed;
+      }
       if (row == null && allowFavoriteSubset && key.startsWith('favorites:')) {
         final encoded = parameters?['keys'];
         if (encoded is! String ||
@@ -852,10 +859,11 @@ class ApiRepository implements FootballRepository {
       }
       final cached = _snapshotCache[key];
       if (cached != null) return cached.asStale();
-      final stored = await _readPublicSnapshot(key, queryParameters);
+      final disk = await _readPublicSnapshot(key, queryParameters);
+      final stored = _snapshotCache[key] ?? disk;
       if (stored != null) {
         _remember(key, stored);
-        return stored;
+        return stored.asStale();
       }
       Error.throwWithStackTrace(error, stack);
     }
@@ -863,9 +871,10 @@ class ApiRepository implements FootballRepository {
 
   Stream<Snapshot> watchPublicEntity(String type, String id) async* {
     final key = 'entity:$type:$id';
-    final stored =
+    final initial =
         _snapshotCache[key] ??
         await _readPublicSnapshot(key, {'type': type, 'id': id});
+    final stored = _snapshotCache[key] ?? initial;
     if (stored != null) {
       _remember(key, stored);
       yield stored.asStale();
@@ -879,8 +888,9 @@ class ApiRepository implements FootballRepository {
     CancelToken? cancelToken,
   }) async* {
     final key = 'match-context:$id';
-    final stored =
+    final initial =
         _snapshotCache[key] ?? await _readPublicSnapshot(key, {'id': id});
+    final stored = _snapshotCache[key] ?? initial;
     if (stored != null) {
       _remember(key, stored);
       yield stored.asStale();
@@ -2136,6 +2146,9 @@ const entityRevalidateAfter = Duration(seconds: 30);
 final entitySnapshotReceivedAtProvider =
     Provider<Map<({String type, String id}), DateTime>>((ref) => {});
 
+final _entitySnapshotFlightsProvider =
+    Provider<Map<({String type, String id}), Object>>((ref) => {});
+
 /// Kept for the session (not autoDispose) so a re-opened profile paints its
 /// last answer at once; [revalidateEntitySnapshot] refreshes it on re-entry.
 final entitySnapshotProvider =
@@ -2144,16 +2157,28 @@ final entitySnapshotProvider =
       request,
     ) async* {
       final repository = ref.watch(repositoryProvider);
-      final answers = repository is ApiRepository
-          ? repository.watchPublicEntity(request.type, request.id)
-          : Stream.fromFuture(repository.load());
-      await for (final snapshot in answers) {
-        if (ref.mounted && !snapshot.stale) {
-          ref.read(entitySnapshotReceivedAtProvider)[request] = ref.read(
-            clockProvider,
-          )();
+      final flights = ref.read(_entitySnapshotFlightsProvider);
+      final flight = Object();
+      flights[request] = flight;
+      void finish() {
+        if (identical(flights[request], flight)) flights.remove(request);
+      }
+
+      ref.onDispose(finish);
+      try {
+        final answers = repository is ApiRepository
+            ? repository.watchPublicEntity(request.type, request.id)
+            : Stream.fromFuture(repository.load());
+        await for (final snapshot in answers) {
+          if (ref.mounted && !snapshot.stale) {
+            ref.read(entitySnapshotReceivedAtProvider)[request] = ref.read(
+              clockProvider,
+            )();
+          }
+          yield snapshot;
         }
-        yield snapshot;
+      } finally {
+        finish();
       }
       // The repository already bounds request retries. Repeating failed
       // streams here hides the offline error behind loading and burns quota.
@@ -2176,7 +2201,12 @@ bool revalidateEntitySnapshot(
   // An offline first visit may leave a completed error or only a stale
   // cached answer. Re-entering the profile is a chance to recover even
   // before we have a timestamp for a successful response.
-  if (current.isLoading) return false;
+  // A cache emission ends the provider's loading state before the network
+  // leg ends. Re-entering during that window must reuse the running stream.
+  if (current.isLoading ||
+      ref.read(_entitySnapshotFlightsProvider).containsKey(request)) {
+    return false;
+  }
   final received = ref.read(entitySnapshotReceivedAtProvider)[request];
   if (!current.hasError && current.value?.stale != true) {
     if (received == null) return false;

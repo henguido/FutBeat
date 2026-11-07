@@ -40,7 +40,53 @@ Dio _dio(Map<String, dynamic> Function(RequestOptions) answer) {
   return dio;
 }
 
+class _DelayedPublicRead extends AppDatabase {
+  _DelayedPublicRead() : super(NativeDatabase.memory());
+
+  final captured = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<CatalogSnapshot?> readPublicSnapshot(String key) async {
+    final row = await super.readPublicSnapshot(key);
+    if (!captured.isCompleted) {
+      captured.complete();
+      await release.future;
+    }
+    return row;
+  }
+}
+
 void main() {
+  test(
+    'late SQLite context cannot paint over a newer network answer',
+    () async {
+      const id = 'fb_match_clasico';
+      final db = _DelayedPublicRead();
+      final snapshot = _snapshot();
+      final dio = _dio(
+        (_) => {...snapshot, 'updatedAt': '2026-10-30T00:00:00Z'},
+      );
+      final repository = ApiRepository(dio, db);
+      try {
+        await db.savePublicSnapshot(
+          'public:match-context:$id',
+          jsonEncode({...snapshot, 'updatedAt': '2026-10-29T00:00:00Z'}),
+        );
+        final opening = repository.watchPublicMatchContext(id).first;
+        await db.captured.future;
+        final online = await repository.loadMatchContext(id);
+        db.release.complete();
+        expect((await opening).updatedAt, online.updatedAt);
+      } finally {
+        if (!db.release.isCompleted) db.release.complete();
+        await repository.settleBackground();
+        dio.close();
+        await db.close();
+      }
+    },
+  );
+
   test(
     'canonical lineup and statistics survive restart without network',
     () async {

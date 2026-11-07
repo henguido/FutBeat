@@ -232,6 +232,33 @@ void main() {
     );
   });
 
+  testWidgets('a failed new selection does not show the old match as fresh', (
+    tester,
+  ) async {
+    final harness = await _pump(
+      tester,
+      follows: const {'team:team_a'},
+      snapshotLoader: (keys, _) async {
+        if (keys == 'team:team_a') return Snapshot(_payload());
+        throw StateError('offline');
+      },
+    );
+    expect(find.byKey(const ValueKey('following-team-team_a')), findsOneWidget);
+
+    await tester.runAsync(() async {
+      await harness.db.removeFollows(const ['team:team_a']);
+      await harness.db.addFollows(const ['team:team_b']);
+      await harness.db.watchFollows().firstWhere(
+        (keys) => keys.length == 1 && keys.contains('team:team_b'),
+      );
+    });
+    await tester.pumpAndSettle();
+
+    expect(harness.requests, contains('team:team_b'));
+    expect(find.byKey(const ValueKey('following-team-team_b')), findsNothing);
+    expect(find.text('No pudimos cargar tus seguidos'), findsOneWidget);
+  });
+
   for (final target in const [
     (tab: 'Equipos', type: 'team', id: 'team_a'),
     (tab: 'Jugadores', type: 'player', id: 'player_a'),
