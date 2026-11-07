@@ -110,7 +110,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     debounce?.cancel();
     _resetRemoteSearch();
     if (next.isEmpty) {
-      if (requestQuery.isEmpty && !typing) return;
+      // Even a one-character query needs to update the clear button, without
+      // starting a remote search before the two-character threshold.
       setState(() {
         requestQuery = '';
         typing = false;
@@ -300,13 +301,16 @@ List<Entity> _matching(
   Snapshot? data,
   String query, {
   bool local = false,
-}) =>
-    entities
-        ?.where(
-          (entity) => (!local && data?.demo != true) || entity.matches(query),
-        )
-        .toList(growable: false) ??
-    const <Entity>[];
+}) {
+  if (entities == null) return const <Entity>[];
+  final seen = <String>{};
+  return [
+    for (final entity in entities)
+      if (((!local && data?.demo != true) || entity.matches(query)) &&
+          seen.add(entity.id))
+        entity,
+  ];
+}
 
 /// Reuses canonical catalogue rows already on screen. Remote suggestions may
 /// be sparse or unavailable offline; neither case creates another request.

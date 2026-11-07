@@ -307,7 +307,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   DateTime? date;
   String filter = 'Todos';
-  bool _retrying = false;
+  DateTime? _retryDate;
+  Object? _retryAttempt;
   // Competitions collapsed by the user in this session (headers stay).
   final Set<String> _collapsed = <String>{};
 
@@ -490,6 +491,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       date = value;
       if (next != previous) {
         _collapsed.clear();
+        _retryDate = null;
+        _retryAttempt = null;
         _dayDirection = next.isAfter(previous) ? 1 : -1;
       }
       // #168: "En vivo" only makes sense today. On any other day it would
@@ -509,8 +512,12 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   });
 
   Future<void> _retry(DateTime value) async {
-    if (_retrying) return;
-    setState(() => _retrying = true);
+    if (_retryDate == value) return;
+    final attempt = Object();
+    setState(() {
+      _retryDate = value;
+      _retryAttempt = attempt;
+    });
     final repository = ref.read(repositoryProvider);
     if (repository is ApiRepository) repository.refreshDate(value);
     ref.invalidate(calendarSnapshotProvider(value));
@@ -519,7 +526,13 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
     } catch (_) {
       // The same recoverable state remains visible.
     } finally {
-      if (mounted) setState(() => _retrying = false);
+      // The previous date may finish after a retry on the selected date.
+      if (mounted && identical(_retryAttempt, attempt)) {
+        setState(() {
+          _retryDate = null;
+          _retryAttempt = null;
+        });
+      }
     }
   }
 
@@ -551,6 +564,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   @override
   Widget build(BuildContext context) {
     final requestDate = DateUtils.dateOnly(date ?? widget.now());
+    final retrying = _retryDate == requestDate;
 
     return Scaffold(
       appBar: AppBar(
@@ -821,8 +835,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                     ? 'Sin conexión.'
                     : 'No pudimos cargar los partidos.',
                 message: 'Puedes cambiar de fecha o intentarlo nuevamente.',
-                actionLabel: _retrying ? 'Reintentando…' : 'Reintentar',
-                onAction: _retrying ? null : () => _retry(requestDate),
+                actionLabel: retrying ? 'Reintentando…' : 'Reintentar',
+                onAction: retrying ? null : () => _retry(requestDate),
               ),
             );
           } else if (allGames.isEmpty &&
@@ -837,8 +851,8 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                 message: data.stale
                     ? 'La información guardada puede estar incompleta.'
                     : 'La cobertura del calendario todavía es parcial.',
-                actionLabel: _retrying ? 'Reintentando…' : 'Reintentar',
-                onAction: _retrying ? null : () => _retry(requestDate),
+                actionLabel: retrying ? 'Reintentando…' : 'Reintentar',
+                onAction: retrying ? null : () => _retry(requestDate),
               ),
             );
           } else if (allGames.isEmpty) {

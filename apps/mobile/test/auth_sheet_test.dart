@@ -371,6 +371,14 @@ void main() {
           isA<OAuthFailed>(),
         ),
         ('com.futbeat.futbeat://login-callback', isA<OAuthFailed>()),
+        (
+          'com.futbeat.futbeat://password-reset?code=unexpected',
+          isA<OAuthFailed>(),
+        ),
+        (
+          'https://login-callback?code=unexpected',
+          isA<OAuthFailed>(),
+        ),
       ]) {
         final http = _GoTrue();
         final value = service(http, browser: (_, _) async => callback);

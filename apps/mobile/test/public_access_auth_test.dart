@@ -122,6 +122,8 @@ class _AuthContract {
               }
             } else if (path.endsWith('/auth/v1/user/identities/authorize')) {
               expect(anonymous[uid], isTrue);
+              expect(request.queryParameters['skip_http_redirect'], 'true');
+              expect(request.followRedirects, isFalse);
               pkceOwner = uid;
               data = {
                 'url': 'https://fixture.invalid/auth/v1/authorize?flow=link',

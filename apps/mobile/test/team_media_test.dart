@@ -52,6 +52,38 @@ bool _showsCrest(WidgetTester tester, Finder within) => tester
     .any((image) => image.url == _crest);
 
 void main() {
+  testWidgets('invalid optional colors do not hide crests or initials', (
+    tester,
+  ) async {
+    const crestKey = ValueKey('verified-crest');
+    const fallbackKey = ValueKey('initials-fallback');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              EntityAvatar(
+                Entity({..._team(crest: true), 'color': 12}),
+                key: crestKey,
+              ),
+              EntityAvatar(
+                Entity({..._team(id: 'fb_other'), 'color': '#bad-value'}),
+                key: fallbackKey,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(_showsCrest(tester, find.byKey(crestKey)), isTrue);
+    expect(
+      find.descendant(of: find.byKey(fallbackKey), matching: find.text('DS')),
+      findsOneWidget,
+    );
+  });
+
   test('memory keeps verified media only, shares it with aliases and '
       'notifies only on change', () {
     final memory = EntityMediaMemory();

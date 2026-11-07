@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 
@@ -56,26 +57,40 @@ Future<CountryPreference> refreshDetectedCountry(
 final preferenceProvider = StreamProvider<CountryPreference>((ref) async* {
   final database = ref.watch(databaseProvider);
   final detected = ref.watch(detectedCountryProvider);
-  final before = await database.watchPreference().first;
-  final current = await refreshDetectedCountry(database, detected);
-  if (before.detectedCountry != detected) {
+  var current = await database.watchPreference().first;
+  if (current.detectedCountry != detected && ref.mounted) {
+    // Capture the service before committing the local change. Invalidating the
+    // stream afterward must not lose the pending country sync.
     final service = ref.read(pushServiceProvider);
-    await service.markDetectedCountryDirty();
-    if (service.authenticated) {
-      try {
-        await service.syncCountries(
-          current.detectedCountry,
-          current.selectedCountry,
-          updateSelected: false,
-        );
-      } catch (_) {
-        // The dirty marker lets the periodic account loop retry offline.
-      }
-    }
+    final scope = service.userSessionScope;
+    await database.saveDetectedCountry(detected);
+    current = await database.watchPreference().first;
+    unawaited(_syncDetectedCountry(service, current, scope));
   }
   yield current;
   yield* database.watchPreference();
 });
+
+Future<void> _syncDetectedCountry(
+  PushService service,
+  CountryPreference preference,
+  String scope,
+) async {
+  try {
+    if (service.userSessionScope != scope) return;
+    await service.markDetectedCountryDirty();
+    if (service.authenticated && service.userSessionScope == scope) {
+      await service.syncCountries(
+        preference.detectedCountry,
+        preference.selectedCountry,
+        updateSelected: false,
+      );
+    }
+  } catch (_) {
+    // The startup route and cached screens must not wait for account I/O.
+    // A failed remote sync keeps the dirty marker for the periodic retry.
+  }
+}
 
 final temporaryInterestsProvider = StreamProvider<Set<String>>(
   (ref) => ref.watch(databaseProvider).watchTemporaryInterests(),

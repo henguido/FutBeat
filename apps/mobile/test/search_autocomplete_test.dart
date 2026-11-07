@@ -62,7 +62,7 @@ void main() {
   );
 
   testWidgets(
-    'cached autocomplete paints before debounce and obsolete query cancels',
+    'cached autocomplete deduplicates IDs, clears short input and cancels obsolete queries',
     (tester) async {
       final dio = Dio();
       final searches = <RequestOptions>[];
@@ -82,6 +82,8 @@ void main() {
                   'updatedAt': '2026-11-06T00:00:00Z',
                   'teams': [
                     {'id': 'fb_team_arsenal', 'name': 'Arsenal'},
+                    {'id': 'fb_team_arsenal', 'name': 'Arsenal'},
+                    {'id': 'fb_team_arsenal_other', 'name': 'Arsenal'},
                     {'id': 'fb_team_everton', 'name': 'Everton'},
                   ],
                   for (final key in [
@@ -116,9 +118,21 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      final searchField = find.byType(TextField);
+      final clear = find.byKey(const ValueKey('explore-clear-search'));
+      expect(clear, findsNothing);
+      await tester.enterText(searchField, 'a');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(clear, findsOneWidget);
+      expect(searches, isEmpty);
+      await tester.tap(clear);
+      await tester.pump();
+      expect(tester.widget<TextField>(searchField).controller!.text, isEmpty);
+      expect(clear, findsNothing);
       await tester.enterText(find.byType(TextField), 'ars');
       await tester.pump();
-      expect(find.text('Arsenal'), findsOneWidget);
+      // Three source rows, but only two distinct teams; the homonym stays.
+      expect(find.text('Arsenal'), findsNWidgets(2));
       expect(find.text('Everton'), findsNothing);
       expect(searches, isEmpty);
       await tester.pump(const Duration(milliseconds: 250));

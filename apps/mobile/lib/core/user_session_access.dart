@@ -276,9 +276,11 @@ extension UserSessionAccess on PushService {
       final (:verifier, :challenge) = PushService._pkcePair();
       final response = await dio.get<dynamic>(
         '${config.supabaseUrl}/auth/v1/user/identities/authorize',
-        options: authHeaders,
+        options: authHeaders.copyWith(followRedirects: false),
         queryParameters: {
           'provider': provider.id,
+          // GoTrue otherwise returns a 302 rather than a JSON browser URL.
+          'skip_http_redirect': 'true',
           'redirect_to': PushService.oauthRedirect,
           'code_challenge': challenge,
           'code_challenge_method': 's256',
@@ -307,8 +309,7 @@ extension UserSessionAccess on PushService {
         await oauthBrowser(url, PushService.oauthCallbackScheme),
       );
       if (_authenticationStale(attempt) || userId != uid) return;
-      if (callback.scheme != PushService.oauthCallbackScheme ||
-          callback.host != 'login-callback') {
+      if (!PushService._isOAuthCallback(callback)) {
         throw const OAuthFailed('invalid_callback');
       }
       final params = PushService._redirectParams(callback);

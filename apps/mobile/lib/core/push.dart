@@ -627,6 +627,13 @@ class PushService {
   };
   static const oauthCallbackScheme = 'com.futbeat.futbeat';
   static const oauthRedirect = '$oauthCallbackScheme://login-callback';
+
+  static bool _isOAuthCallback(Uri callback) =>
+      callback.scheme == oauthCallbackScheme &&
+      callback.host == 'login-callback' &&
+      callback.userInfo.isEmpty &&
+      !callback.hasPort &&
+      callback.path.isEmpty;
   static const passwordResetHost = 'futbeat.com';
   static const passwordResetPath = '/auth/reset';
   static const passwordResetUrl =
@@ -965,6 +972,9 @@ class PushService {
       );
       final callback = Uri.parse(await oauthBrowser(url, oauthCallbackScheme));
       if (_authenticationStale(attempt)) return;
+      if (!_isOAuthCallback(callback)) {
+        throw const OAuthFailed('invalid_callback');
+      }
       // GoTrue reports failures in the query or, for implicit errors, the
       // fragment.
       final params = _redirectParams(callback);

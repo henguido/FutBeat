@@ -3665,6 +3665,11 @@ class _TeamLineup extends StatelessWidget {
                         );
                 },
               ),
+            ] else if (showStarters) ...[
+              const Text(
+                'Titulares no disponibles',
+                style: TextStyle(color: muted),
+              ),
             ],
             if (substitutes.isNotEmpty) ...[
               const SizedBox(height: 16),
@@ -3678,11 +3683,6 @@ class _TeamLineup extends StatelessWidget {
                 compactGrid: true,
               ),
             ],
-            if (showStarters && starters.isEmpty && substitutes.isEmpty)
-              const Text(
-                'Titulares no disponibles',
-                style: TextStyle(color: muted),
-              ),
             if (coach != null) ...[
               const SizedBox(height: 16),
               const _LineupLabel('Entrenador'),

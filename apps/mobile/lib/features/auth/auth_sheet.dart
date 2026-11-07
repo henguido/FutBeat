@@ -134,6 +134,7 @@ class _AuthSheetState extends ConsumerState<AuthSheet> {
       } else {
         await service.signIn(email.text, password.text);
       }
+      if (!mounted) return;
       password.clear();
       if (!service.registered && signup) {
         setState(() => confirmationEmail = email.text.trim());

@@ -326,6 +326,7 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Titulares'), findsNothing);
+      expect(find.text('Titulares no disponibles'), findsOneWidget);
       expect(find.text('Suplentes'), findsOneWidget);
       expect(find.text('Suplente Local'), findsOneWidget);
       expect(find.text('Entrenador Local'), findsOneWidget);
@@ -400,7 +401,7 @@ void main() {
       );
       await tester.pump();
       expect(find.text('Suplente Local'), findsOneWidget);
-      expect(find.text('Titulares no disponibles'), findsOneWidget);
+      expect(find.text('Titulares no disponibles'), findsNWidgets(2));
       expect(find.text('Entrenador Visitante'), findsOneWidget);
       expect(tester.takeException(), isNull);
 

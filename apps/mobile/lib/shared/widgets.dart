@@ -30,15 +30,20 @@ String entityImageCacheId(Entity entity) {
 
 class EntityAvatar extends StatelessWidget {
   const EntityAvatar(this.entity, {super.key, this.size = 42, this.cache});
+  static final _rgbColor = RegExp(r'^#[0-9a-fA-F]{6}$');
+
   final Entity entity;
   final double size;
   final SportsImageDiskCache? cache;
   @override
   Widget build(BuildContext context) {
-    final hex = entity.json['color'] as String?;
-    final color = hex == null
-        ? lime
-        : Color(int.parse(hex.replaceFirst('#', 'FF'), radix: 16));
+    final rawColor = entity.json['color'];
+    final hex = rawColor is String ? rawColor.trim() : '';
+    // Optional catalog metadata must not prevent a verified image (or its
+    // initials fallback) from rendering.
+    final color = _rgbColor.hasMatch(hex)
+        ? Color(0xFF000000 | int.parse(hex.substring(1), radix: 16))
+        : lime;
     final image = entityImageOf(context, entity);
     // Legacy squad rows can already resolve a verified canonical person's
     // photo through entityImageOf. Keep that same identity as the disk key
