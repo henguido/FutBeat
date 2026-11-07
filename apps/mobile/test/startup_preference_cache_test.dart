@@ -157,6 +157,10 @@ void main() {
       jsonEncode({...snapshot, 'demo': false}),
     );
 
+    // StartupGate watches this provider continuously. A read alone leaves the
+    // stream paused when its first asynchronous SQLite read returns.
+    final preferences = container.listen(preferenceProvider, (_, _) {});
+    addTearDown(preferences.close);
     final local = container.read(preferenceProvider.future);
     final request = await requestStarted.future.timeout(
       const Duration(seconds: 3),
@@ -209,6 +213,8 @@ void main() {
       });
 
       await db.savePreference(detectedCountry: 'CR', bootstrapDismissed: true);
+      final preferences = container.listen(preferenceProvider, (_, _) {});
+      addTearDown(preferences.close);
       final local = container.read(preferenceProvider.future);
       await db.committed.future.timeout(const Duration(seconds: 3));
       service.session = {
