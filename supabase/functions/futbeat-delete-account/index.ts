@@ -11,6 +11,11 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 // account is not deleted (503, safe to retry with the same id). Without the
 // header the behaviour is exactly the previous one (installed APKs).
 // Contract: packages/contracts/account-deletion-v1.md.
+//
+// BE11-A5: a receipt that holds a live uid is only written after Auth itself
+// (/auth/v1/user) has accepted the token, never from the unverified JWT
+// payload alone. The gateway check stays on; this keeps the function safe
+// even if it were deployed with --no-verify-jwt.
 
 const json = (status: number, body: unknown) =>
   Response.json(body, {
@@ -87,12 +92,7 @@ Deno.serve(async (request: Request) => {
     });
   };
 
-  if (deletionId !== null) {
-    const state = await receipt("begin");
-    if (state === null) return json(503, { error: "Account deletion unavailable", code: "RECEIPT_UNAVAILABLE" });
-    if (state === "conflict") return json(409, { error: "Deletion id already used", code: "DELETION_ID_CONFLICT" });
-    if (state === "deleted") return json(200, { deleted: true, alreadyDeleted: true, deletionId });
-  }
+  const conflict = () => json(409, { error: "Deletion id already used", code: "DELETION_ID_CONFLICT" });
 
   const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
     headers: { apikey: secret, authorization },
@@ -100,19 +100,28 @@ Deno.serve(async (request: Request) => {
   });
 
   if (!userResponse.ok) {
-    // The gateway has already verified the JWT. A retry after a successful
-    // deletion no longer resolves /user; only return success if Admin confirms
-    // that this same JWT subject is already absent.
+    // A retry after a successful deletion no longer resolves /user; only
+    // return success if Admin confirms that this same JWT subject is already
+    // absent. The receipt written here names a uid that no longer exists, so
+    // it can never hold a live account's uid.
     const existing = await fetch(`${supabaseUrl}/auth/v1/admin/users/${subject}`, {
       headers: adminHeaders,
       signal: AbortSignal.timeout(10000),
     });
-    if (existing.status === 404) return deleted(true);
-    return json(401, { error: "Authentication required" });
+    if (existing.status !== 404) return json(401, { error: "Authentication required" });
+    if (deletionId !== null && await receipt("begin") === "conflict") return conflict();
+    return deleted(true);
   }
 
   const user = await userResponse.json();
   if (user?.id !== subject) return json(403, { error: "Forbidden" });
+
+  if (deletionId !== null) {
+    const state = await receipt("begin");
+    if (state === null) return json(503, { error: "Account deletion unavailable", code: "RECEIPT_UNAVAILABLE" });
+    if (state === "conflict") return conflict();
+    if (state === "deleted") return json(200, { deleted: true, alreadyDeleted: true, deletionId });
+  }
 
   const deletion = await fetch(`${supabaseUrl}/auth/v1/admin/users/${subject}`, {
     method: "DELETE",

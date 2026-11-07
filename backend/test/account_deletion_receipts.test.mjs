@@ -16,9 +16,9 @@ const userB = '22222222-2222-4222-8222-222222222222';
 const idA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const idB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
-const jwt = (subject) => {
+const jwt = (subject, signature = 'sig') => {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  return `${encode({ alg: 'ES256' })}.${encode({ sub: subject, role: 'authenticated' })}.sig`;
+  return `${encode({ alg: 'ES256' })}.${encode({ sub: subject, role: 'authenticated' })}.${signature}`;
 };
 
 const open = [];
@@ -54,6 +54,8 @@ async function harness(db, { failRpc = new Set(), deleteStatus = null } = {}) {
     const bearer = headers.get('authorization')?.replace('Bearer ', '') ?? '';
     const exists = async (id) => (await db.query('select 1 from auth.users where id=$1', [id])).rows.length > 0;
     if (url.pathname === '/auth/v1/user') {
+      // Auth rejects a token it did not sign (simulated by the signature).
+      if (bearer.split('.')[2] === 'forged') return Response.json({}, { status: 401 });
       const sub = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url')).sub;
       return (await exists(sub)) ? Response.json({ id: sub }) : Response.json({}, { status: 401 });
     }
@@ -75,8 +77,8 @@ async function harness(db, { failRpc = new Set(), deleteStatus = null } = {}) {
     },
   });
   vm.runInContext(stripTypeScriptTypes(source), context);
-  const post = async (subject, deletionId) => {
-    const headers = { authorization: `Bearer ${jwt(subject)}` };
+  const post = async (subject, deletionId, signature) => {
+    const headers = { authorization: `Bearer ${jwt(subject, signature)}` };
     if (deletionId !== undefined) headers['x-futbeat-deletion-id'] = deletionId;
     const r = await handler(new Request('https://edge.test', { method: 'POST', headers }));
     return { status: r.status, body: await r.json() };
@@ -202,4 +204,41 @@ test('receipts older than 30 days are purged; grants: status for anon, begin/fin
   assert.equal(await can('authenticated', 'public.futbeat_account_deletion_finish(uuid,uuid)'), false);
   assert.equal(await can('service_role', 'public.futbeat_account_deletion_begin(uuid,uuid)'), true);
   assert.equal((await db.query("select has_table_privilege('anon','futbeat_private.account_deletion_receipts','select') v")).rows[0].v, false);
+});
+
+// BE11-A5: the receipt is written only after Auth accepted the token, so the
+// function never stores a live uid from an unverified payload (defence in
+// depth if the gateway check were ever off).
+test('a token Auth rejects writes no receipt and deletes nothing, even for an existing uid', async () => {
+  const db = await database();
+  await db.query('insert into auth.users values ($1)', [userA]);
+  const { post, calls } = await harness(db);
+  const r = await post(userA, idA, 'forged');
+  assert.equal(r.status, 401);
+  assert.deepEqual(await users(db), [userA]);
+  assert.equal((await receipts(db)).length, 0, 'no pending receipt with the victim uid');
+  assert.ok(!calls.some((c) => c.method === 'DELETE' || c.path.startsWith('/rest/')));
+  assert.deepEqual(await status(db, idA), { status: 'unknown' });
+});
+
+test('account already gone (deleted without a receipt): a retry with an id is 200 and the id reads deleted', async () => {
+  const db = await database();
+  await db.query('insert into auth.users values ($1)', [userA]);
+  const { post } = await harness(db);
+  assert.equal((await post(userA)).status, 200, 'legacy delete, no receipt');
+  const r = await post(userA, idA);
+  assert.deepEqual([r.status, r.body.alreadyDeleted, r.body.deletionId], [200, true, idA]);
+  assert.equal((await status(db, idA)).status, 'deleted');
+  assert.equal((await receipts(db))[0].subject, null, 'no uid kept for a deleted account');
+});
+
+test('account already gone: an id bound to another subject is still a conflict', async () => {
+  const db = await database();
+  await db.query('insert into auth.users values ($1),($2)', [userA, userB]);
+  assert.equal((await (await harness(db, { deleteStatus: 503 })).post(userB, idA)).status, 503, 'B owns idA (pending)');
+  const { post } = await harness(db);
+  assert.equal((await post(userA)).status, 200, 'A deleted without a receipt');
+  const r = await post(userA, idA);
+  assert.deepEqual([r.status, r.body.code], [409, 'DELETION_ID_CONFLICT']);
+  assert.equal((await status(db, idA)).status, 'pending', 'B still exists');
 });
