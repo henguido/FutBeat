@@ -83,6 +83,13 @@ function trustedMedia(value, kind, receivedAt) {
   };
 }
 
+// A stored media object only wins over a fresh badge when it can be shown:
+// `{}` or a url-less object (seen on ~50 teams/competitions in prod) used to
+// block every later GOAL badge forever, leaving initials in the app.
+const usableMedia = (media) =>
+  media && typeof media === 'object' && typeof media.url === 'string' &&
+  media.url.startsWith('https://') ? media : null;
+
 function statusOf(fixture, receivedAt) {
   const status = clean(fixture?.matchStatus).toUpperCase();
   const period = clean(fixture?.matchPeriod).toUpperCase();
@@ -169,7 +176,7 @@ export async function normalizeGoalApiFixtures(
       name: competitionIdentity.name,
       country: previousCompetition.country || competitionIdentity.country,
       season: clean(fixture?.leagueYear) || previousCompetition.season || '',
-      media: previousCompetition.media ?? competitionMedia,
+      media: usableMedia(previousCompetition.media) ?? competitionMedia,
     } : {
       id: competitionId,
       name: competitionIdentity.name,
@@ -196,7 +203,7 @@ export async function normalizeGoalApiFixtures(
         ...previous,
         name: previous.name || identity.name,
         competitionId,
-        media: previous.media ?? badge,
+        media: usableMedia(previous.media) ?? badge,
       } : {
         id,
         name: identity.name,

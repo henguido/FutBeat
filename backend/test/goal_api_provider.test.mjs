@@ -342,3 +342,27 @@ test('GOAL API base identity collection deduplicates competitions and teams', ()
     'Costa Rica',
   );
 });
+
+test('GOAL API badge replaces an empty or url-less stored media, never a usable one', async () => {
+  const kept = { url: 'https://media.goal-api.com/badges/old_saprissa.jpg', kind: 'TEAM_LOGO', verificationStatus: 'VERIFIED' };
+  const existing = {
+    competitions: [{ id: 'fb_comp_cr', name: 'Primera', country: 'Costa Rica', season: '', media: {} }],
+    teams: [
+      { id: 'fb_team_lda', name: 'Alajuelense', shortName: '', country: '', competitionId: 'fb_comp_cr', aliases: [], media: {} },
+      { id: 'fb_team_sap', name: 'Saprissa', shortName: '', country: '', competitionId: 'fb_comp_cr', aliases: [], media: kept },
+    ],
+    matches: [],
+  };
+  const resolve = async (kind, external, identity) => {
+    if (kind === 'competition') return 'fb_comp_cr';
+    if (kind === 'team' && identity.name === 'Alajuelense') return 'fb_team_lda';
+    if (kind === 'team' && identity.name === 'Saprissa') return 'fb_team_sap';
+    return `fb_${kind}_${external}`;
+  };
+  const snapshot = await normalizeGoalApiFixtures([fixture()], resolve, '2026-09-18T04:40:00Z', existing);
+  const team = (id) => snapshot.teams.find((item) => item.id === id);
+  assert.equal(team('fb_team_lda').media.url, 'https://media.goal-api.com/badges/100_alajuelense.jpg');
+  assert.equal(team('fb_team_lda').media.verificationStatus, 'VERIFIED');
+  assert.deepEqual(team('fb_team_sap').media, kept);
+  assert.equal(snapshot.competitions[0].media.url, 'https://media.goal-api.com/badges/logo_leagues/162_primera-division.png');
+});
