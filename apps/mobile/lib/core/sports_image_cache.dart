@@ -77,16 +77,31 @@ class SportsImageDiskCache {
 
   /// Static media paths observed in verified entity records. Provider API
   /// routes, credentials and arbitrary redirects never enter this channel.
-  static bool allowedRemoteUri(Uri uri) =>
-      uri.scheme == 'https' &&
-      uri.host == 'media.goal-api.com' &&
-      uri.port == 443 &&
-      uri.userInfo.isEmpty &&
-      !uri.hasQuery &&
-      !uri.hasFragment &&
-      RegExp(
-        r'^/badges/(players|teams|tournaments)/[A-Za-z0-9_-]+\.(png|jpg|jpeg|webp)$',
-      ).hasMatch(uri.path);
+  static final _goalMedia = RegExp(
+    r'^/badges/(?:(?:players|teams|tournaments|logo_leagues)/)?[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(png|jpg|jpeg|webp)$',
+  );
+  static final _apiSportsMedia = RegExp(
+    r'^/football/(teams|leagues)/[0-9]+\.png$',
+  );
+  static final _sportsDbMedia = RegExp(
+    r'^/images/media/(team|league)/badge/[A-Za-z0-9_-]+\.(png|jpg|jpeg|webp)$',
+  );
+
+  static bool allowedRemoteUri(Uri uri) {
+    if (uri.scheme != 'https' ||
+        uri.port != 443 ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      return false;
+    }
+    return switch (uri.host) {
+      'media.goal-api.com' => _goalMedia.hasMatch(uri.path),
+      'media.api-sports.io' => _apiSportsMedia.hasMatch(uri.path),
+      'r2.thesportsdb.com' => _sportsDbMedia.hasMatch(uri.path),
+      _ => false,
+    };
+  }
 
   Future<File?> resolve({required String canonicalId, required String? url}) {
     final uri = validUri(url);

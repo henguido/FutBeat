@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/sports_image_cache.dart';
 
 /// Counts real directory traversals without replacing filesystem behavior.
@@ -51,6 +52,47 @@ class _ScanCountingDirectory implements Directory {
 }
 
 void main() {
+  test('malformed media cannot break entity presentation', () {
+    final entity = Entity({'id': 'fb_team_test', 'name': 'Club', 'media': []});
+    expect(entity.imageUrl, isNull);
+    expect(entity.initials, 'C');
+  });
+  test('verified static CDN shapes from the device snapshot are allowed', () {
+    for (final url in [
+      'https://media.goal-api.com/badges/4168_1.-fc-bocholt.jpg',
+      'https://media.goal-api.com/badges/logo_leagues/32_1st-division.png',
+      'https://media.goal-api.com/badges/players/57366_g-torres.jpg',
+      'https://media.api-sports.io/football/teams/540.png',
+      'https://media.api-sports.io/football/leagues/39.png',
+      'https://r2.thesportsdb.com/images/media/team/badge/zi6mw31581857175.png',
+    ]) {
+      expect(
+        SportsImageDiskCache.allowedRemoteUri(Uri.parse(url)),
+        isTrue,
+        reason: url,
+      );
+    }
+  });
+
+  test('CDN exception does not permit API paths or arbitrary URLs', () {
+    for (final url in [
+      'http://media.goal-api.com/badges/team.png',
+      'https://media.goal-api.com:444/badges/team.png',
+      'https://media.goal-api.com.evil.test/badges/team.png',
+      'https://media.goal-api.com/badges/team.png?token=value',
+      'https://user@media.goal-api.com/badges/team.png',
+      'https://media.goal-api.com/badges/team.svg',
+      'https://media.goal-api.com/badges/nested/team.png',
+      'https://media.api-sports.io/football/players/39.png',
+      'https://r2.thesportsdb.com/api/v1/json/123/team.png',
+    ]) {
+      expect(
+        SportsImageDiskCache.allowedRemoteUri(Uri.parse(url)),
+        isFalse,
+        reason: url,
+      );
+    }
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory directory;
   late DateTime now;

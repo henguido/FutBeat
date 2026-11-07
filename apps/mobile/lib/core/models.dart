@@ -377,8 +377,8 @@ class Entity {
   int? get shirtNumber => shirtNumberOf(json['shirtNumber'] ?? json['number']);
 
   String? get imageUrl {
-    final media = json['media'] as Json?;
-    if (media == null || media['verificationStatus'] != 'VERIFIED') return null;
+    final media = json['media'];
+    if (media is! Map || media['verificationStatus'] != 'VERIFIED') return null;
     return safePlayerImage(media['url']);
   }
 
