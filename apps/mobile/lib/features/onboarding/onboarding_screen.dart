@@ -374,6 +374,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   bool busy = false;
   bool settingsBusy = false;
   bool countryBusy = false;
+  bool _googleSetupPendingReconcile = false;
+  bool _welcomeAuthOpen = false;
   bool _countrySaveNeedsRetry = false;
   String? message;
 
@@ -394,9 +396,24 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Future<void> _resume() async {
     final saved = await _progress.read();
-    if (!mounted || saved == null || step != OnboardingStep.welcome) return;
-    if (saved > OnboardingStep.welcome && saved < onboardingStepCount) {
+    if (!mounted || step != OnboardingStep.welcome) return;
+    if (saved != null &&
+        saved > OnboardingStep.welcome &&
+        saved < onboardingStepCount) {
       setState(() => step = saved);
+      return;
+    }
+    final service = ref.read(pushServiceProvider);
+    await service.accountResolved;
+    if (mounted &&
+        !_welcomeAuthOpen &&
+        step == OnboardingStep.welcome &&
+        _hasGoogleSession(service)) {
+      if (service.accountHadData == true) {
+        await _finish();
+      } else {
+        _startGoogleSetup(service);
+      }
     }
   }
 
@@ -434,6 +451,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   void _goTo(int next) {
+    _googleSetupPendingReconcile = false;
     _resetSearch();
     setState(() {
       step = next;
@@ -593,6 +611,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   Future<void> _selectCountry(String? value) async {
     if (countryBusy) return;
+    _googleSetupPendingReconcile = false;
     setState(() {
       countryBusy = true;
       _countrySaveNeedsRetry = false;
@@ -630,18 +649,36 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     }
   }
 
-  /// Sign in / create the account in place: the onboarding stays on the
-  /// same step and updates by itself when the account changes. From the
-  /// welcome screen of a first run, an account that already has favourites
-  /// or a country (reinstall, new phone) is set up: straight to Partidos.
+  bool _hasGoogleSession(PushService service) =>
+      service.registered && service.authProvider == 'google';
+
+  void _startGoogleSetup(PushService service) {
+    _goTo(OnboardingStep.country);
+    _googleSetupPendingReconcile = service.accountHadData == null;
+  }
+
+  /// Returning accounts can skip first-run setup. A Google account without
+  /// confirmed setup starts personalization rather than returning to guest
+  /// welcome. Sign-in inside an existing setup step stays in place.
   Future<void> _openAuth(AuthMode mode, {bool fromWelcome = false}) async {
-    final signedIn = await showAuthSheet(context, mode);
+    if (fromWelcome) _welcomeAuthOpen = true;
+    final bool signedIn;
+    try {
+      signedIn = await showAuthSheet(context, mode);
+    } finally {
+      if (fromWelcome) _welcomeAuthOpen = false;
+    }
     if (!signedIn || !mounted) return;
-    if (fromWelcome &&
-        !widget.reentry &&
-        ref.read(pushServiceProvider).accountHadData == true) {
-      await _finish();
-      return;
+    final service = ref.read(pushServiceProvider);
+    if (fromWelcome && !widget.reentry && step == OnboardingStep.welcome) {
+      if (service.accountHadData == true) {
+        await _finish();
+        return;
+      }
+      if (_hasGoogleSession(service)) {
+        _startGoogleSetup(service);
+        return;
+      }
     }
     setState(() {});
   }
@@ -656,14 +693,16 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Widget build(BuildContext context) {
     // A restored, already set-up account (see PushService.accountHadData)
     // marks the setup done: from the first-run welcome go to Partidos.
-    // Mid-setup steps and Personalizar FutBeat are never moved.
+    // Only an untouched automatic Google setup can be redirected later.
     ref.listen(preferenceProvider, (previous, next) {
       final was = previous?.asData?.value.bootstrapDismissed;
       if (!widget.reentry &&
-          step == OnboardingStep.welcome &&
-          was == false &&
+          !_welcomeAuthOpen &&
+          (step == OnboardingStep.welcome || _googleSetupPendingReconcile) &&
+          (was == false || (_googleSetupPendingReconcile && was == null)) &&
           next.asData?.value.bootstrapDismissed == true &&
           mounted) {
+        unawaited(_progress.clear());
         context.go('/matches');
       }
     });

@@ -52,6 +52,19 @@ bool _showsCrest(WidgetTester tester, Finder within) => tester
     .any((image) => image.url == _crest);
 
 void main() {
+  test(
+    'a known calendar alias receives a crest hydrated in a later snapshot',
+    () {
+      final memory = EntityMediaMemory();
+      addTearDown(memory.dispose);
+      const alias = 'fb_team_calendar';
+      memory.absorb(Snapshot(_payload(redirects: {alias: 'fb_team'})));
+      expect(memory.imageFor(alias), isNull);
+      memory.absorb(Snapshot(_payload(crest: true)));
+      expect(memory.imageFor(alias), _crest);
+      expect(memory.imageFor('fb_team_unrelated'), isNull);
+    },
+  );
   testWidgets('invalid optional colors do not hide crests or initials', (
     tester,
   ) async {

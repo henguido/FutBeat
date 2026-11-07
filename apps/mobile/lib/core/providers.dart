@@ -1294,10 +1294,14 @@ class ApiRepository implements FootballRepository {
   /// once while `/v1/entity` loads. Memory only: never a request. Null when
   /// nothing read so far mentions the team.
   Snapshot? entitySeed(String type, String id) {
-    if (type != 'team') return null;
+    if (type != 'team' && type != 'competition') return null;
     final snapshots = _snapshotCache.values.toList().reversed.toList();
     for (final snapshot in snapshots) {
       final resolved = snapshot.resolveEntityId(id);
+      if (type == 'competition') {
+        if (snapshot.competition(resolved) != null) return snapshot.asStale();
+        continue;
+      }
       final team = snapshot.team(resolved);
       if (team == null) continue;
       final competitionId = team.json['competitionId']?.toString() ?? '';

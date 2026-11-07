@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -206,6 +208,80 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 30));
+  }
+
+  for (final hadData in [true, false]) {
+    testWidgets(
+      'AUTH-GOOGLE-01: Google routes and survives reopen ($hadData)',
+      (tester) async {
+        FlutterSecureStorage.setMockInitialValues({});
+        final db = AppDatabase(NativeDatabase.memory());
+        final service = _SheetAuth(db, hadData: hadData);
+        addTearDown(db.close);
+        addTearDown(service.dispose);
+        await tester.runAsync(service.restore);
+        await pumpGate(
+          tester,
+          database: db,
+          dismissed: false,
+          pushService: service,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('onboarding-welcome-login')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('auth-google')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        final saved = await tester.runAsync(() => db.watchPreference().first);
+        expect(service.registered, isTrue);
+        expect(saved?.bootstrapDismissed, hadData);
+        expect(
+          find.byKey(const ValueKey('onboarding-quick-setup')),
+          findsNothing,
+        );
+        expect(
+          find.byType(NavigationBar),
+          hadData ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('onboarding-country')),
+          hadData ? findsNothing : findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
+
+        // Recreate the service and router; no browser callback on cold start.
+        final restored = _SheetAuth(db);
+        addTearDown(restored.dispose);
+        // Model a process exit before the asynchronous step write completed.
+        await const SecureOnboardingProgressStore().clear();
+        await pumpGate(
+          tester,
+          database: db,
+          dismissed: saved!.bootstrapDismissed,
+          pushService: restored,
+        );
+        await tester.runAsync(restored.restore);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(restored.registered, isTrue);
+        expect(restored.authProvider, 'google');
+        expect(
+          find.byKey(const ValueKey('onboarding-quick-setup')),
+          findsNothing,
+        );
+        expect(
+          find.byType(NavigationBar),
+          hadData ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('onboarding-country')),
+          hadData ? findsNothing : findsOneWidget,
+        );
+        await tester.pump(const Duration(seconds: 5));
+      },
+    );
   }
 
   for (final hadData in [true, false]) {
@@ -1652,6 +1728,17 @@ class _SheetAuth extends PushService {
         ),
         db,
         _NoTokens(),
+        dio: Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) => handler.reject(
+                DioException(
+                  requestOptions: options,
+                  type: DioExceptionType.connectionError,
+                ),
+              ),
+            ),
+          ),
         oauthEnabled: true,
         oauthAllowedProviders: const {
           OAuthProvider.google,
@@ -1668,6 +1755,27 @@ class _SheetAuth extends PushService {
         buildProviders: const {OAuthProvider.google, OAuthProvider.facebook},
         enabledProviders: const {OAuthProvider.google, OAuthProvider.facebook},
       );
+
+  @override
+  Future<void> signInWithOAuth(OAuthProvider provider) async {
+    accountHadData = hadData;
+    session = {
+      'access_token': 'access',
+      'refresh_token': 'refresh',
+      'user': {
+        'id': 'google-user',
+        'email': 'qa@example.com',
+        'app_metadata': {'provider': provider.id},
+      },
+    };
+    await storage.write(
+      key: 'futbeat.push.session',
+      value: jsonEncode(session),
+    );
+  }
+
+  @override
+  Future<void> refreshSession() async {}
 
   @override
   Future<void> signIn(String email, String password) async {

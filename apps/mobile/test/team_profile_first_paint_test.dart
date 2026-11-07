@@ -91,7 +91,12 @@ class _Harness {
   final GoRouter router;
 }
 
-Future<_Harness> _pump(WidgetTester tester, ApiRepository repository) async {
+Future<_Harness> _pump(
+  WidgetTester tester,
+  ApiRepository repository, {
+  String type = 'team',
+  String id = 'fb_team_seed',
+}) async {
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -99,12 +104,14 @@ Future<_Harness> _pump(WidgetTester tester, ApiRepository repository) async {
   final entity = Completer<Snapshot>();
   final contextRequests = <String>[];
   final router = GoRouter(
-    initialLocation: '/team/fb_team_seed',
+    initialLocation: '//',
     routes: [
       GoRoute(
-        path: '/team/:id',
-        builder: (_, state) =>
-            EntityScreen(type: 'team', id: state.pathParameters['id']!),
+        path: '/:type/:id',
+        builder: (_, state) => EntityScreen(
+          type: state.pathParameters['type']!,
+          id: state.pathParameters['id']!,
+        ),
       ),
     ],
   );
@@ -150,6 +157,36 @@ Future<void> _openTab(WidgetTester tester, String label) async {
 }
 
 void main() {
+  for (final type in ['team', 'competition']) {
+    testWidgets(
+      'keeps the known $type visible when its profile service fails',
+      (tester) async {
+        final repository = _repository(_search());
+        await tester.runAsync(() => repository.searchCatalog('semilla', null));
+        final isTeam = type == 'team';
+        final harness = await _pump(
+          tester,
+          repository,
+          type: type,
+          id: isTeam ? 'fb_team_seed' : _competition['id'] as String,
+        );
+        harness.entity.completeError(
+          DioException(
+            requestOptions: RequestOptions(path: '/v1/entity'),
+            type: DioExceptionType.connectionError,
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('No pudimos cargar este perfil'), findsNothing);
+        expect(find.text('Reintentar carga del perfil'), findsOneWidget);
+        expect(
+          find.text(isTeam ? 'Club Semilla' : _competition['name'] as String),
+          findsWidgets,
+        );
+      },
+    );
+  }
   testWidgets('changing teams paints the new cached team before its response', (
     tester,
   ) async {

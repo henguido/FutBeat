@@ -19,6 +19,7 @@ class CompetitionProfileView extends StatelessWidget {
     required this.competition,
     required this.matches,
     required this.teams,
+    this.retry,
     super.key,
   });
 
@@ -26,6 +27,7 @@ class CompetitionProfileView extends StatelessWidget {
   final Entity competition;
   final List<FootballMatch> matches;
   final List<Entity> teams;
+  final VoidCallback? retry;
 
   @override
   Widget build(BuildContext context) {
@@ -131,6 +133,14 @@ class CompetitionProfileView extends StatelessWidget {
         ),
         body: NestedScrollView(
           headerSliverBuilder: (context, _) => [
+            if (retry != null)
+              SliverToBoxAdapter(
+                child: TextButton.icon(
+                  onPressed: retry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Reintentar carga del perfil'),
+                ),
+              ),
             SliverToBoxAdapter(
               child: CompetitionHeader(competition: competition),
             ),

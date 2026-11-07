@@ -500,10 +500,10 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
         _retryDate = null;
         _retryAttempt = null;
         _dayDirection = next.isAfter(previous) ? 1 : -1;
+        // Reset when moving away from today; a selected day's LIVE filter
+        // becomes available once its existing feed shows a live fixture.
+        filter = matchFilterForDate(filter, next, today);
       }
-      // #168: "En vivo" only makes sense today. On any other day it would
-      // leave an empty screen although that day has matches.
-      filter = matchFilterForDate(filter, next, today);
     });
     if (next == previous) return;
     if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
@@ -601,22 +601,6 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
               : DateUtils.dateOnly(widget.now());
           final selected = DateUtils.dateOnly(date ?? anchor);
           _today = anchor;
-          final effectiveFilter = matchFilterForDate(filter, selected, anchor);
-          if (effectiveFilter != filter) {
-            // The anchor can roll over at midnight without a date tap. Render
-            // coherently now and persist the normalized state after the frame.
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
-              final currentToday = _today ?? DateUtils.dateOnly(widget.now());
-              final currentSelected = DateUtils.dateOnly(date ?? currentToday);
-              final normalized = matchFilterForDate(
-                filter,
-                currentSelected,
-                currentToday,
-              );
-              if (normalized != filter) setState(() => filter = normalized);
-            });
-          }
           final follows =
               ref.watch(followsProvider).asData?.value ?? <String>{};
           final preference = ref.watch(preferenceProvider).asData?.value;
@@ -624,6 +608,24 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
             data.onDate(selected, 'Todos'),
             resolve: data.resolveEntityId,
           );
+          // A match may still be LIVE after midnight on its kickoff date.
+          // Only use the selected day's deduped feed, never fetch another day.
+          final canFilterLive =
+              selected == anchor || allGames.any((match) => match.isLive);
+          final effectiveFilter = canFilterLive
+              ? filter
+              : matchFilterForDate(filter, selected, anchor);
+          if (effectiveFilter != filter && !loading) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted || filter != 'En vivo') return;
+              final currentToday = _today ?? DateUtils.dateOnly(widget.now());
+              if (currentToday != anchor ||
+                  DateUtils.dateOnly(date ?? currentToday) != selected) {
+                return;
+              }
+              setState(() => filter = effectiveFilter);
+            });
+          }
           _warmRelevantMatches(
             data,
             allGames,
@@ -799,10 +801,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                             ),
                           ),
                           selected: effectiveFilter == value,
-                          // A non-today date cannot contain an in-progress
-                          // match. Keep the option visible for orientation,
-                          // but do not allow an artificial empty LIVE view.
-                          onSelected: value == 'En vivo' && selected != anchor
+                          onSelected: value == 'En vivo' && !canFilterLive
                               ? null
                               : (_) => setState(() => filter = value),
                         ),
@@ -892,7 +891,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
                         _ => 'No hay partidos para este filtro.',
                       },
                 message: data.stale
-                    ? 'Puedes ver los partidos guardados en Todos.'
+                    ? null
                     : data.coverage?['partial'] == true
                     ? 'La cobertura del calendario todavía es parcial.'
                     : 'Los partidos del día siguen disponibles en Todos.',
@@ -1105,7 +1104,7 @@ class _MatchesStatusCard extends StatelessWidget {
 
   final IconData icon;
   final String title;
-  final String message;
+  final String? message;
   final String? actionLabel;
   final VoidCallback? onAction;
   final bool loading;
@@ -1131,12 +1130,14 @@ class _MatchesStatusCard extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
-          const SizedBox(height: 7),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: muted, height: 1.4),
-          ),
+          if (message != null) ...[
+            const SizedBox(height: 7),
+            Text(
+              message!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: muted, height: 1.4),
+            ),
+          ],
           if (loading) ...[
             const SizedBox(height: 18),
             const SizedBox(

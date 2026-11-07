@@ -1,6 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/features/entities/team_profile.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
@@ -100,21 +104,18 @@ void main() {
         ),
       ),
     );
-    expect(find.byType(Image), findsNWidgets(4));
+    expect(find.byType(SportsImage), findsNWidgets(4));
     expect(find.byKey(const Key('homonym-without-photo')), findsOneWidget);
     expect(
       find.text('https://media.example.test/shared.png'),
       findsNWidgets(2),
     );
     expect(find.byKey(const Key('id-photo')), findsOneWidget);
-    for (final image in tester.widgetList<Image>(find.byType(Image))) {
-      final provider = image.image is ResizeImage
-          ? (image.image as ResizeImage).imageProvider
-          : image.image;
-      expect(
-        (provider as NetworkImage).url,
-        'https://media.example.test/shared.png',
-      );
+    for (final image in tester.widgetList<SportsImage>(
+      find.byType(SportsImage),
+    )) {
+      expect(image.canonicalId, 'fb_player_shared');
+      expect(image.url, 'https://media.example.test/shared.png');
     }
     // A later partial snapshot omits media; omission is not revocation.
     memory.absorb(
@@ -132,7 +133,52 @@ void main() {
       }),
     );
     await tester.pump();
-    expect(find.byType(Image), findsNWidgets(4));
+    expect(find.byType(SportsImage), findsNWidgets(4));
+  });
+  testWidgets('profile renders the cached canonical player photo offline', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('player-photo-');
+    addTearDown(() => directory.delete(recursive: true));
+    const id = 'fb_player_offline';
+    const url = 'https://media.goal-api.com/badges/players/offline.png';
+    final online = SportsImageDiskCache(
+      directory: directory,
+      fetch: (_) async => base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+      ),
+    );
+    final cached = await tester.runAsync(
+      () => online.resolve(canonicalId: id, url: url),
+    );
+    expect(cached, isNotNull);
+    var offlineAttempts = 0;
+    final offline = SportsImageDiskCache(
+      directory: directory,
+      fetch: (_) async {
+        offlineAttempts++;
+        throw const SocketException('offline');
+      },
+    );
+    final player = Entity({
+      'id': 'provider-squad-player',
+      'canonicalId': id,
+      'name': 'Foto verificada',
+      'media': {'verificationStatus': 'VERIFIED', 'url': url},
+    });
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        MaterialApp(home: PlayerPhoto(player, size: 84, cache: offline)),
+      );
+      await offline.resolve(canonicalId: id, url: url);
+    });
+    await tester.pump();
+    final image = tester.widget<Image>(find.byType(Image));
+    final provider = (image.image as ResizeImage).imageProvider as FileImage;
+    expect(provider.file.path, cached!.path);
+    expect(offlineAttempts, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
   test('canonical verified player media wins over lineup fallback', () {
     expect(

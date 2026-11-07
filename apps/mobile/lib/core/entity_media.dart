@@ -250,6 +250,17 @@ class EntityMediaMemory extends ChangeNotifier {
       next[canonical] ??= image;
       next[alias] = next[canonical]!;
     }
+    // A later profile may supply the canonical crest without repeating the
+    // redirect. Keep older calendar rows on the same verified media.
+    for (final alias in redirects.redirects.keys) {
+      final target = redirects.resolve(alias);
+      if (target == alias ||
+          !(target.startsWith('fb_team') || target.startsWith('fb_comp'))) {
+        continue;
+      }
+      final image = next[target];
+      if (image != null) next[alias] = image;
+    }
     if (next.length == _images.length &&
         next.entries.every((entry) => _images[entry.key] == entry.value)) {
       if (blockedCountBefore != revokedDisplayAliases.length) notifyListeners();

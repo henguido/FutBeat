@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/interests.dart';
+import '../../core/load_errors.dart';
 import '../../core/models.dart';
 import '../../core/profile_context.dart';
 import '../../core/providers.dart';
@@ -203,6 +204,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     List<FootballMatch> matches,
     List<Entity> competitions, {
     bool loading = false,
+    VoidCallback? retry,
   }) => TeamProfileView(
     data: data,
     team: team,
@@ -211,6 +213,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     initialCompetitionId: widget.competitionId,
     initialSeason: widget.season,
     loading: loading,
+    retry: retry,
   );
 
   /// Looked up once per screen: the seed only changes with new reads.
@@ -220,7 +223,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   /// The team profile painted from what this session already read about the
   /// team (see [ApiRepository.entitySeed]) while `/v1/entity` loads; null
   /// when nothing is known (then the screen keeps its spinner).
-  Widget? _seededTeamView() {
+  Widget? _seededTeamView({VoidCallback? retry}) {
     if (widget.type != 'team') return null;
     if (!_seedLooked) {
       _seedLooked = true;
@@ -239,7 +242,31 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       team,
       const [],
       orderedTeamCompetitions(seed, canonicalId),
-      loading: true,
+      loading: retry == null,
+      retry: retry,
+    );
+  }
+
+  Widget? _seededCompetitionView(VoidCallback retry) {
+    if (widget.type != 'competition') return null;
+    final repository = ref.read(repositoryProvider);
+    if (repository is! ApiRepository) return null;
+    final seed = repository.entitySeed(widget.type, widget.id);
+    if (seed == null) return null;
+    final data = presentSnapshotForSession(ref, seed);
+    final id = data.resolveEntityId(widget.id);
+    final competition = data.competition(id);
+    if (competition == null) return null;
+    return CompetitionProfileView(
+      data: data,
+      competition: competition,
+      matches:
+          data.matches
+              .where((match) => data.resolveEntityId(match.competitionId) == id)
+              .toList()
+            ..sort((a, b) => a.startTime.compareTo(b.startTime)),
+      teams: competitionTeams(data, id),
+      retry: retry,
     );
   }
 
@@ -268,29 +295,34 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             appBar: AppBar(title: const Text('FutBeat')),
             body: const ContentSkeleton(layout: SkeletonLayout.profile),
           ),
-      error: (_, stack) => Scaffold(
-        appBar: AppBar(title: const Text('FutBeat')),
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              EmptyState(
-                'No pudimos cargar este perfil',
-                type == 'competition'
-                    ? 'No hay datos guardados para mostrar. Conéctate e intenta nuevamente.'
-                    : 'Revisa tu conexión e intenta nuevamente.',
-                icon: Icons.cloud_off,
-              ),
-              FilledButton(
-                onPressed: () => ref.invalidate(
-                  entitySnapshotProvider((type: type, id: id)),
+      error: (error, _) {
+        void retry() =>
+            ref.invalidate(entitySnapshotProvider((type: type, id: id)));
+        final failure = classifyLoadError(error);
+        if (failure != LoadFailure.other) {
+          final cached =
+              _seededTeamView(retry: retry) ?? _seededCompetitionView(retry);
+          if (cached != null) return cached;
+        }
+        return Scaffold(
+          appBar: AppBar(title: const Text('FutBeat')),
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                EmptyState(
+                  'No pudimos cargar este perfil',
+                  loadErrorMessage(error),
+                  icon: failure == LoadFailure.offline
+                      ? Icons.cloud_off
+                      : Icons.sync_problem_outlined,
                 ),
-                child: const Text('Reintentar'),
-              ),
-            ],
+                FilledButton(onPressed: retry, child: const Text('Reintentar')),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
       data: (data) {
         final canonicalId = data.resolveEntityId(id);
         final entity = switch (type) {
