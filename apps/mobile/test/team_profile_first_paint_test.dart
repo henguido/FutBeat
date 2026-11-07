@@ -39,7 +39,10 @@ Map<String, dynamic> _search({Map<String, String> redirects = const {}}) => {
   'updatedAt': _now(),
   'entityRedirects': redirects,
   'competitions': [_competition],
-  'teams': [_team('fb_team_seed', 'Club Semilla')],
+  'teams': [
+    _team('fb_team_seed', 'Club Semilla'),
+    _team('fb_team_other', 'Club Vecino'),
+  ],
   'players': <dynamic>[],
   'matches': <dynamic>[],
   'standings': <dynamic>[],
@@ -82,9 +85,10 @@ ApiRepository _repository(Map<String, dynamic> search) => ApiRepository(
 );
 
 class _Harness {
-  _Harness(this.entity, this.contextRequests);
+  _Harness(this.entity, this.contextRequests, this.router);
   final Completer<Snapshot> entity;
   final List<String> contextRequests;
+  final GoRouter router;
 }
 
 Future<_Harness> _pump(WidgetTester tester, ApiRepository repository) async {
@@ -134,7 +138,7 @@ Future<_Harness> _pump(WidgetTester tester, ApiRepository repository) async {
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 100));
-  return _Harness(entity, contextRequests);
+  return _Harness(entity, contextRequests, router);
 }
 
 Future<void> _openTab(WidgetTester tester, String label) async {
@@ -146,6 +150,23 @@ Future<void> _openTab(WidgetTester tester, String label) async {
 }
 
 void main() {
+  testWidgets('changing teams paints the new cached team before its response', (
+    tester,
+  ) async {
+    final repository = _repository(_search());
+    await tester.runAsync(() => repository.searchCatalog('semilla', null));
+    final harness = await _pump(tester, repository);
+    expect(find.text('Club Semilla'), findsWidgets);
+
+    harness.router.go('/team/fb_team_other');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(harness.entity.isCompleted, isFalse);
+    expect(find.text('Club Semilla'), findsNothing);
+    expect(find.text('Club Vecino'), findsWidgets);
+  });
+
   testWidgets('a team found by search paints at once, then fills in', (
     tester,
   ) async {

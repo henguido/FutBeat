@@ -2160,8 +2160,9 @@ final entitySnapshotProvider =
     }, retry: (_, _) => null);
 
 /// Called when a profile screen is (re-)entered: an answer already held for
-/// [request] that is at least [entityRevalidateAfter] old is refreshed in
-/// the background. The old answer stays on screen meanwhile (instant paint;
+/// [request] that is at least [entityRevalidateAfter] old, or a settled
+/// error or stale answer, is refreshed in the background. An existing
+/// answer stays on screen meanwhile (instant paint;
 /// a failed refresh keeps it, see `_loadSnapshot`), so server changes (e.g. a
 /// deduplicated squad) appear without restarting the app. Returns whether a
 /// refresh started.
@@ -2169,12 +2170,20 @@ bool revalidateEntitySnapshot(
   WidgetRef ref,
   ({String type, String id}) request,
 ) {
-  if (!ref.exists(entitySnapshotProvider(request))) return false;
+  final provider = entitySnapshotProvider(request);
+  if (!ref.exists(provider)) return false;
+  final current = ref.read(provider);
+  // An offline first visit may leave a completed error or only a stale
+  // cached answer. Re-entering the profile is a chance to recover even
+  // before we have a timestamp for a successful response.
+  if (current.isLoading) return false;
   final received = ref.read(entitySnapshotReceivedAtProvider)[request];
-  if (received == null) return false;
-  final age = ref.read(clockProvider)().difference(received);
-  if (age < entityRevalidateAfter) return false;
-  ref.invalidate(entitySnapshotProvider(request));
+  if (!current.hasError && current.value?.stale != true) {
+    if (received == null) return false;
+    final age = ref.read(clockProvider)().difference(received);
+    if (age < entityRevalidateAfter) return false;
+  }
+  ref.invalidate(provider);
   return true;
 }
 

@@ -314,6 +314,35 @@ void main() {
     expect(counted.scans, 2);
   });
 
+  test(
+    'a transient eviction error does not hide a verified download',
+    () async {
+      final counted = _ScanCountingDirectory(directory);
+      counted.afterSnapshot = (scan) async {
+        if (scan == 1) {
+          throw const FileSystemException('fixture storage failure');
+        }
+      };
+      final errors = <Object>[];
+      final cache = SportsImageDiskCache(
+        directory: counted,
+        fetch: (_) async => png,
+        onError: errors.add,
+      );
+
+      final file = await cache.resolve(
+        canonicalId: 'fb_team_visible',
+        url: 'https://media.goal-api.com/badges/team.png',
+      );
+
+      expect(file, isNotNull);
+      expect(await file!.readAsBytes(), png);
+      expect(errors.single, isA<FileSystemException>());
+      await cache.evict();
+      expect(counted.scans, 2);
+    },
+  );
+
   test('concurrent downloads retain entry and byte bounds with fewer scans', () async {
     final counted = _ScanCountingDirectory(directory);
     final cache = SportsImageDiskCache(

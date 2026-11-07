@@ -3838,7 +3838,10 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
         ? (incidentSide == 'home' ? 'away' : 'home')
         : incidentSide;
     if (playerSide.isNotEmpty && playerSide != side) continue;
-    final minute = incident['minute'] as int?;
+    final rawMinute = incident['minute'];
+    // Match the timeline's contract: an invalid clock does not invalidate
+    // an otherwise identified event or prevent the lineup from rendering.
+    final minute = rawMinute is int ? rawMinute : null;
     if (matches(incident, 'playerId', 'canonicalPlayerId')) {
       result.add(LineupPlayerEvent(ownGoal ? 'OWN_GOAL' : type, minute));
     }

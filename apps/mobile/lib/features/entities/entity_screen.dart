@@ -120,9 +120,29 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(
-      () => recordTemporaryInterest(ref, widget.type, widget.id),
-    );
+    _openProfile();
+  }
+
+  @override
+  void didUpdateWidget(EntityScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.type == widget.type && oldWidget.id == widget.id) return;
+    // The same route can reuse this State for a different entity.
+    enrichmentRetry?.cancel();
+    enrichmentRetry = null;
+    enrichmentAttempts = 0;
+    _seed = null;
+    _seedLooked = false;
+    _openProfile();
+  }
+
+  void _openProfile() {
+    final identity = (type: widget.type, id: widget.id);
+    Future.microtask(() {
+      if (mounted && identity == (type: widget.type, id: widget.id)) {
+        recordTemporaryInterest(ref, identity.type, identity.id);
+      }
+    });
     // Re-entering a profile shows its last answer at once and revalidates
     // it when older than entityRevalidateAfter.
     revalidateEntitySnapshot(ref, (type: widget.type, id: widget.id));

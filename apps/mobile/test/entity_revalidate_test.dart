@@ -43,6 +43,57 @@ class _Repository implements FootballRepository {
 }
 
 void main() {
+  for (final initialError in [true, false]) {
+    testWidgets('reopening retries a completed offline profile '
+        '(${initialError ? 'cache miss' : 'stale cache'})', (tester) async {
+      final request = (type: 'player', id: 'fb_player');
+      var attempts = 0;
+      final container = ProviderContainer(
+        overrides: [
+          entitySnapshotProvider(request).overrideWith((ref) async* {
+            attempts++;
+            if (attempts == 1) {
+              if (initialError) throw StateError('offline');
+              yield _payload('Perfil guardado').asStale();
+            } else {
+              yield _payload('Perfil actualizado');
+            }
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+      var reopen = false;
+      var retried = false;
+      Widget screen() => UncontrolledProviderScope(
+        container: container,
+        child: Consumer(
+          builder: (_, ref, _) {
+            if (reopen) {
+              // Match the screen lifecycle: its re-entry check runs once.
+              reopen = false;
+              retried = revalidateEntitySnapshot(ref, request);
+            }
+            ref.watch(entitySnapshotProvider(request));
+            return const SizedBox();
+          },
+        ),
+      );
+      await tester.pumpWidget(screen());
+      await tester.pumpAndSettle();
+      expect(attempts, 1);
+      await tester.pumpWidget(const SizedBox());
+      reopen = true;
+      await tester.pumpWidget(screen());
+      await tester.pumpAndSettle();
+      expect(retried, isTrue);
+      expect(attempts, 2);
+      expect(
+        container.read(entitySnapshotProvider(request)).requireValue.stale,
+        isFalse,
+      );
+    });
+  }
+
   testWidgets('a re-opened profile paints its last answer at once and '
       'revalidates it once it is old enough', (tester) async {
     tester.view.physicalSize = const Size(400, 900);

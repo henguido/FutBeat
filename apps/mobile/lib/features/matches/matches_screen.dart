@@ -187,7 +187,13 @@ String _compactDate(DateTime value) {
 String _dateContextLabel(DateTime value, DateTime today) {
   final date = DateUtils.dateOnly(value);
   final anchor = DateUtils.dateOnly(today);
-  final difference = date.difference(anchor).inDays;
+  // These are calendar dates, not elapsed 24-hour periods. The device's
+  // local time zone can make consecutive midnights 23 or 25 hours apart.
+  final difference = DateTime.utc(
+    date.year,
+    date.month,
+    date.day,
+  ).difference(DateTime.utc(anchor.year, anchor.month, anchor.day)).inDays;
   if (difference == -1) return 'AYER';
   if (difference == 0) return 'HOY';
   if (difference == 1) return 'MAÑANA';
@@ -547,7 +553,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
   }
 
   Widget _centeredDateOption(int offset, DateTime selected, DateTime today) {
-    final candidate = DateUtils.dateOnly(selected.add(Duration(days: offset)));
+    final candidate = DateUtils.addDaysToDate(selected, offset);
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.only(right: 6),
@@ -953,7 +959,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
               if (velocity.abs() < _dateSwipeMinVelocity) return;
               _setDate(
                 DateUtils.dateOnly(
-                  selected.add(Duration(days: velocity < 0 ? 1 : -1)),
+                  DateUtils.addDaysToDate(selected, velocity < 0 ? 1 : -1),
                 ),
               );
             },

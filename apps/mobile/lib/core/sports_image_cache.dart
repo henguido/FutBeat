@@ -172,7 +172,12 @@ class SportsImageDiskCache {
       } finally {
         if (await temporary.exists()) await temporary.delete();
       }
-      await evict();
+      try {
+        await evict();
+      } on FileSystemException catch (error) {
+        // A maintenance failure does not invalidate the verified download.
+        onError?.call(error);
+      }
       return await file.exists() ? file : null;
     } catch (error) {
       // The image remains optional: failed downloads and unavailable storage
