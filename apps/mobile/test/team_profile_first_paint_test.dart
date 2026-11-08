@@ -104,7 +104,7 @@ Future<_Harness> _pump(
   final entity = Completer<Snapshot>();
   final contextRequests = <String>[];
   final router = GoRouter(
-    initialLocation: '//',
+    initialLocation: '/$type/$id',
     routes: [
       GoRoute(
         path: '/:type/:id',

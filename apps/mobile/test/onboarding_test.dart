@@ -179,6 +179,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          onboardingProgressStoreProvider.overrideWithValue(MemoryProgress()),
           databaseProvider.overrideWithValue(database),
           repositoryProvider.overrideWithValue(DemoRepository()),
           preferenceProvider.overrideWith(
@@ -216,6 +217,7 @@ void main() {
       (tester) async {
         FlutterSecureStorage.setMockInitialValues({});
         final db = AppDatabase(NativeDatabase.memory());
+        await tester.runAsync(() => db.customSelect('SELECT 1').get());
         final service = _SheetAuth(db, hadData: hadData);
         addTearDown(db.close);
         addTearDown(service.dispose);
@@ -254,8 +256,7 @@ void main() {
         // Recreate the service and router; no browser callback on cold start.
         final restored = _SheetAuth(db);
         addTearDown(restored.dispose);
-        // Model a process exit before the asynchronous step write completed.
-        await const SecureOnboardingProgressStore().clear();
+        // The new container also starts without saved onboarding progress.
         await pumpGate(
           tester,
           database: db,

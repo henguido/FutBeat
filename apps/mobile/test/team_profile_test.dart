@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/models.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
 import 'package:futbeat/features/entities/team_profile.dart';
@@ -544,7 +545,7 @@ void main() {
     await _pumpTeam(tester, _payload());
     await _openTab(tester, 'Plantilla');
     // Only the verified canonical photo is requested; others use initials.
-    expect(find.byType(Image), findsOneWidget);
+    expect(find.byType(SportsImage), findsOneWidget);
     expect(find.text('DN'), findsOneWidget);
     expect(find.text('PT'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);

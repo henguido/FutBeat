@@ -180,7 +180,7 @@ void main() {
       await settleRequests(tester);
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(find.text('No pudimos cargar este perfil'), findsOneWidget);
-      expect(find.textContaining('datos guardados'), findsOneWidget);
+      expect(find.text('Sin conexión'), findsOneWidget);
       final settledCalls = calls;
       await tester.pump(const Duration(minutes: 2));
       await tester.runAsync(() async {

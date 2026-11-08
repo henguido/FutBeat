@@ -67,7 +67,7 @@ jobs:
 
   mobile:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     env:
       TZ: America/Costa_Rica
     defaults:
@@ -131,12 +131,24 @@ jobs:
       - run: flutter analyze
         if: steps.changes.outputs.run == 'true'
 
+      - name: Verify RC auth and favorites
+        if: steps.changes.outputs.run == 'true'
+        run: >-
+          flutter test --no-pub --concurrency=1
+          test/onboarding_test.dart test/auth_sheet_test.dart
+          test/auth_flows_test.dart test/password_reset_cold_start_test.dart
+          test/favorites_hub_v2_test.dart
+
       - name: Run portable Flutter tests
         if: steps.changes.outputs.run == 'true'
         shell: bash
         run: |
           find test -type f -name '*_test.dart' ! -name 'visual_test.dart' -print0 |
-            xargs -0 flutter test
+            xargs -0 flutter test --no-pub --concurrency=2
+
+      - name: Run visual goldens
+        if: "!cancelled() && steps.changes.outputs.run == 'true'"
+        run: flutter test --no-pub --concurrency=1 test/visual_test.dart
 
       - name: Verify public user-session configuration offline
         if: steps.changes.outputs.run == 'true'
