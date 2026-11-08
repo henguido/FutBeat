@@ -251,18 +251,24 @@ void main() {
         await tester.pumpWidget(const SizedBox());
         await tester.pump();
 
-        // Recreate the service and router; no browser callback on cold start.
-        final restored = _SheetAuth(db);
+        // A cold process owns both its service queue and restoration in the
+        // same real clock zone; a fake-zone Future cannot progress in runAsync.
+        final restored = (await tester.runAsync(() async {
+          final service = _SheetAuth(db);
+          try {
+            await service.restore().timeout(const Duration(seconds: 5));
+            return service;
+          } catch (_) {
+            service.dispose();
+            rethrow;
+          }
+        }))!;
         addTearDown(restored.dispose);
-        // The new container also starts without saved onboarding progress.
         await pumpGate(
           tester,
           database: db,
           dismissed: db.dismissed,
           pushService: restored,
-        );
-        await tester.runAsync(
-          () => restored.restore().timeout(const Duration(seconds: 5)),
         );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
