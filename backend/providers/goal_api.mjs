@@ -90,6 +90,18 @@ const usableMedia = (media) =>
   media && typeof media === 'object' && typeof media.url === 'string' &&
   media.url.startsWith('https://') ? media : null;
 
+// BE11-A3: in calendar mode `existing` comes from the compact calendar read
+// (futbeat_read_calendar_range), which keeps only {url, verificationStatus}.
+// Writing that back stripped source/rightsStatus/usageScope (709 teams + 66
+// competitions in prod). A stored media keeps priority only when it is
+// complete; otherwise a fresh GOAL badge wins and the lossy one is the last
+// resort. The SQL trigger futbeat_preserve_entity_media keeps the stored
+// complete media of the same url, so this never rewrites receivedAt alone.
+const completeMedia = (media) =>
+  usableMedia(media) && media.source && media.rightsStatus ? media : null;
+const chooseMedia = (previous, fresh) =>
+  completeMedia(previous) ?? fresh ?? usableMedia(previous);
+
 function statusOf(fixture, receivedAt) {
   const status = clean(fixture?.matchStatus).toUpperCase();
   const period = clean(fixture?.matchPeriod).toUpperCase();
@@ -176,7 +188,7 @@ export async function normalizeGoalApiFixtures(
       name: competitionIdentity.name,
       country: previousCompetition.country || competitionIdentity.country,
       season: clean(fixture?.leagueYear) || previousCompetition.season || '',
-      media: usableMedia(previousCompetition.media) ?? competitionMedia,
+      media: chooseMedia(previousCompetition.media, competitionMedia),
     } : {
       id: competitionId,
       name: competitionIdentity.name,
@@ -203,7 +215,7 @@ export async function normalizeGoalApiFixtures(
         ...previous,
         name: previous.name || identity.name,
         competitionId,
-        media: usableMedia(previous.media) ?? badge,
+        media: chooseMedia(previous.media, badge),
       } : {
         id,
         name: identity.name,
