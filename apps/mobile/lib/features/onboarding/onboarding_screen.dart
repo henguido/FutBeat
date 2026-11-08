@@ -404,7 +404,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       return;
     }
     final service = ref.read(pushServiceProvider);
-    await service.accountResolved;
+    if (!service.accountKnown) await service.accountResolved;
     if (mounted &&
         !_welcomeAuthOpen &&
         step == OnboardingStep.welcome &&
