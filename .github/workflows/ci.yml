@@ -43,7 +43,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run download 42451140903 --name flutter-golden-failures --dir "$RUNNER_TEMP/rc248-goldens"
+          gh run download 42461426770 --name flutter-golden-failures --dir "$RUNNER_TEMP/rc248-goldens"
           python -m pip install --quiet Pillow
           python - <<'PY'
           import base64, io, os
@@ -52,7 +52,7 @@ jobs:
 
           root = Path(os.environ['RUNNER_TEMP']) / 'rc248-goldens'
           names = ('matches', 'match', 'competition', 'team', 'explore', 'player')
-          sheet = Image.new('RGB', (780, 6 * 144))
+          sheet = Image.new('RGB', (585, 6 * 422))
           for row, name in enumerate(names):
               master, = root.rglob(f'{name}_masterImage.png')
               actual, = root.rglob(f'{name}_testImage.png')
@@ -60,10 +60,12 @@ jobs:
               if a.size != b.size:
                   print(f'{name}: dimensions {a.size} -> {b.size}')
                   continue
-              for col, img in enumerate((a, b)):
-                  sheet.paste(img.resize((195, 422)).crop((0, 0, 195, 72)), (col * 390, row * 144))
-                  sheet.paste(img.crop((0, 772, 390, 844)), (col * 390, row * 144 + 72))
               diff = ImageChops.difference(a, b)
+              for col, img in enumerate((a, b, diff)):
+                  sheet.paste(img.resize((195, 422)), (col * 195, row * 422))
+              payload = base64.b64encode(actual.read_bytes()).decode()
+              for i in range(0, len(payload), 4096):
+                  print(f'RC248_PNG {name} ' + payload[i:i+4096])
               w, h = diff.size
               bands = [sum(pixel != (0, 0, 0) for pixel in
                            diff.crop((0, y, w, min(y + 80, h))).getdata())
