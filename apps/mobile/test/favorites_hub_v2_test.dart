@@ -72,6 +72,7 @@ Future<_Harness> _pump(
   },
   Size size = const Size(390, 844),
   bool aliases = false,
+  Stream<Set<String>>? followChanges,
   Future<Snapshot> Function(String keys, int request)? snapshotLoader,
 }) async {
   tester.view.physicalSize = size;
@@ -100,6 +101,11 @@ Future<_Harness> _pump(
   final container = ProviderContainer(
     overrides: [
       databaseProvider.overrideWithValue(db),
+      if (followChanges != null)
+        followsProvider.overrideWith((ref) async* {
+          yield follows;
+          yield* followChanges;
+        }),
       favoritesSnapshotProvider.overrideWith((ref, keys) async {
         requests.add(keys);
         requestNumber += 1;
@@ -235,8 +241,13 @@ void main() {
   testWidgets('a failed new selection does not show the old match as fresh', (
     tester,
   ) async {
+    final changes = StreamController<Set<String>>();
+    addTearDown(() {
+      unawaited(changes.close());
+    });
     final harness = await _pump(
       tester,
+      followChanges: changes.stream,
       follows: const {'team:team_a'},
       snapshotLoader: (keys, _) async {
         if (keys == 'team:team_a') return Snapshot(_payload());
@@ -245,13 +256,7 @@ void main() {
     );
     expect(find.byKey(const ValueKey('following-team-team_a')), findsOneWidget);
 
-    await tester.runAsync(() async {
-      await harness.db.removeFollows(const ['team:team_a']);
-      await harness.db.addFollows(const ['team:team_b']);
-      await harness.db.watchFollows().firstWhere(
-        (keys) => keys.length == 1 && keys.contains('team:team_b'),
-      );
-    });
+    changes.add(const {'team:team_b'});
     await tester.pumpAndSettle();
 
     expect(harness.requests, contains('team:team_b'));

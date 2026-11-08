@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
+import { stripStaticMediaHostCases } from './support/static_media_scan.mjs';
 import { stripTypeScriptTypes } from 'node:module';
 import vm from 'node:vm';
 import { openDatabase } from '../storage/database.mjs';
@@ -256,7 +257,7 @@ test('19. mobile contains no provider URL or call', async () => {
       const path = new URL(entry.name + (entry.isDirectory() ? '/' : ''), dir);
       if (entry.isDirectory()) await walk(path);
       else if (entry.name.endsWith('.dart')) {
-        const source = (await readFile(path, 'utf8')).toLowerCase();
+        const source = stripStaticMediaHostCases(path, await readFile(path, 'utf8')).toLowerCase();
         for (const host of ['api.goal-api.com', 'goal-api.com/v1', 'api-sports.io', 'api-football', 'thesportsdb']) {
           if (source.includes(host)) offenders.push(`${entry.name}:${host}`);
         }

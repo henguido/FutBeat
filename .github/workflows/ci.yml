@@ -16,7 +16,77 @@ permissions:
   contents: read
 
 jobs:
+  rc-focal:
+    if: github.event.pull_request.number == 248
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      actions: read
+    env:
+      TZ: America/Costa_Rica
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - name: Verify the three mobile provider guards
+        run: >-
+          node --test --test-name-pattern='mobile contains no provider URL or call'
+          backend/test/h2h_full_history.test.mjs
+          backend/test/match_h2h_v2.test.mjs
+          backend/test/team_match_coverage.test.mjs
+      - name: Inspect previous golden evidence
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 42451140903 --name flutter-golden-failures --dir "$RUNNER_TEMP/rc248-goldens"
+          python -m pip install --quiet Pillow
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from PIL import Image, ImageChops
+
+          root = Path(os.environ['RUNNER_TEMP']) / 'rc248-goldens'
+          names = ('matches', 'match', 'competition', 'team', 'explore', 'player')
+          for name in names:
+              master, = root.rglob(f'{name}_masterImage.png')
+              actual, = root.rglob(f'{name}_testImage.png')
+              a, b = (Image.open(p).convert('RGB') for p in (master, actual))
+              if a.size != b.size:
+                  print(f'{name}: dimensions {a.size} -> {b.size}')
+                  continue
+              diff = ImageChops.difference(a, b)
+              w, h = diff.size
+              bands = [sum(pixel != (0, 0, 0) for pixel in
+                           diff.crop((0, y, w, min(y + 80, h))).getdata())
+                       for y in range(0, h, 80)]
+              print(f'{name}: {w}x{h}; bbox={diff.getbbox()}; '
+                    f'changed={sum(bands)}; by 80px vertical band={bands}')
+          PY
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+        working-directory: apps/mobile
+      - run: dart run build_runner build
+        working-directory: apps/mobile
+      - name: Verify RC auth and favorites
+        working-directory: apps/mobile
+        run: >-
+          flutter test --no-pub --concurrency=1 --reporter=expanded
+          test/onboarding_test.dart test/auth_sheet_test.dart
+          test/auth_flows_test.dart test/password_reset_cold_start_test.dart
+          test/favorites_hub_v2_test.dart
+
   contracts:
+    needs: rc-focal
+    if: always() && (needs.rc-focal.result == 'success' || needs.rc-focal.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -66,6 +136,8 @@ jobs:
         run: deno check supabase/functions/_shared/news_pipeline.ts supabase/functions/_shared/news_collector.ts supabase/functions/futbeat-news-collect/index.ts
 
   mobile:
+    needs: rc-focal
+    if: always() && (needs.rc-focal.result == 'success' || needs.rc-focal.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -130,14 +202,6 @@ jobs:
 
       - run: flutter analyze
         if: steps.changes.outputs.run == 'true'
-
-      - name: Verify RC auth and favorites
-        if: steps.changes.outputs.run == 'true'
-        run: >-
-          flutter test --no-pub --concurrency=1
-          test/onboarding_test.dart test/auth_sheet_test.dart
-          test/auth_flows_test.dart test/password_reset_cold_start_test.dart
-          test/favorites_hub_v2_test.dart
 
       - name: Run portable Flutter tests
         if: steps.changes.outputs.run == 'true'

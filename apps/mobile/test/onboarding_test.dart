@@ -261,7 +261,9 @@ void main() {
           dismissed: db.dismissed,
           pushService: restored,
         );
-        await restored.restore();
+        await tester.runAsync(
+          () => restored.restore().timeout(const Duration(seconds: 5)),
+        );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
         expect(restored.registered, isTrue);
