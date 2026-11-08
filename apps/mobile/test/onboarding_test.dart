@@ -216,12 +216,11 @@ void main() {
       'AUTH-GOOGLE-01: Google routes and survives reopen ($hadData)',
       (tester) async {
         FlutterSecureStorage.setMockInitialValues({});
-        final db = AppDatabase(NativeDatabase.memory());
-        await tester.runAsync(() => db.customSelect('SELECT 1').get());
+        final db = _GateDatabase();
         final service = _SheetAuth(db, hadData: hadData);
         addTearDown(db.close);
         addTearDown(service.dispose);
-        await tester.runAsync(service.restore);
+        await service.restore();
         await pumpGate(
           tester,
           database: db,
@@ -235,9 +234,8 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('auth-google')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        final saved = await tester.runAsync(() => db.watchPreference().first);
         expect(service.registered, isTrue);
-        expect(saved?.bootstrapDismissed, hadData);
+        expect(db.dismissed, hadData);
         expect(
           find.byKey(const ValueKey('onboarding-quick-setup')),
           findsNothing,
@@ -260,10 +258,10 @@ void main() {
         await pumpGate(
           tester,
           database: db,
-          dismissed: saved!.bootstrapDismissed,
+          dismissed: db.dismissed,
           pushService: restored,
         );
-        await tester.runAsync(restored.restore);
+        await restored.restore();
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
         expect(restored.registered, isTrue);
@@ -281,7 +279,9 @@ void main() {
           hadData ? findsNothing : findsOneWidget,
         );
         await tester.pump(const Duration(seconds: 5));
+        await tester.pumpWidget(const SizedBox());
       },
+      timeout: const Timeout(Duration(seconds: 45)),
     );
   }
 
@@ -290,13 +290,13 @@ void main() {
       'Welcome sign-in: ${hadData ? 'an existing account goes to Partidos' : 'a new account stays to set up'}',
       (tester) async {
         FlutterSecureStorage.setMockInitialValues({});
-        final db = AppDatabase(NativeDatabase.memory());
+        final db = _GateDatabase();
         final service = _SheetAuth(db, hadData: hadData);
         addTearDown(() async {
           service.dispose();
           await db.close();
         });
-        await tester.runAsync(service.restore);
+        await service.restore();
         await pumpGate(
           tester,
           database: db,
@@ -318,8 +318,7 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('auth-submit')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        final saved = await tester.runAsync(() => db.watchPreference().first);
-        expect(saved?.bootstrapDismissed, hadData);
+        expect(db.dismissed, hadData);
         expect(
           find.byKey(const ValueKey('onboarding-quick-setup')),
           hadData ? findsNothing : findsOneWidget,
@@ -330,7 +329,9 @@ void main() {
         );
         // Let the screen's own timers (feed, sheets) run out.
         await tester.pump(const Duration(seconds: 5));
+        await tester.pumpWidget(const SizedBox());
       },
+      timeout: const Timeout(Duration(seconds: 45)),
     );
   }
 
@@ -1720,6 +1721,20 @@ class _NoTokens implements PushTokenSource {
 }
 
 /// Configured account service whose sign-in needs no server.
+/// Isolates route assertions from Drift streams crossing the widget test
+/// clock. Secure session storage is still exercised by the restored service.
+class _GateDatabase extends AppDatabase {
+  _GateDatabase() : super(NativeDatabase.memory());
+
+  bool dismissed = false;
+
+  @override
+  Future<void> markBootstrapDismissed() async => dismissed = true;
+
+  @override
+  Stream<Set<String>> watchFollows() => Stream.value(<String>{});
+}
+
 class _SheetAuth extends PushService {
   _SheetAuth(AppDatabase db, {this.hadData})
     : super(
