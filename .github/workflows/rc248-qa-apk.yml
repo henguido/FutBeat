@@ -37,6 +37,12 @@ jobs:
           flutter-version: '3.47.4'
           channel: stable
           cache: true
+      - name: Prepare an isolated debug signer
+        run: |
+          mkdir -p "$RUNNER_TEMP/.android"
+          keytool -genkeypair -keystore "$RUNNER_TEMP/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 365 -dname 'CN=Android Debug,O=Android,C=US'
+          echo "ANDROID_USER_HOME=$RUNNER_TEMP/.android" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_HOME=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Build one debug APK
         working-directory: apps/mobile
         run: |
@@ -55,7 +61,7 @@ jobs:
           grep '^package:' "$RUNNER_TEMP/rc248-badging" || true
           "$tools/apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/rc248-certs"
           cat "$RUNNER_TEMP/rc248-certs"
-          keytool -exportcert -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -file "$RUNNER_TEMP/rc248-debug.der"
+          keytool -exportcert -keystore "$RUNNER_TEMP/.android/debug.keystore" -storepass android -alias androiddebugkey -file "$RUNNER_TEMP/rc248-debug.der"
           python3 - <<'PY'
           import hashlib, os, pathlib, re
           temp = pathlib.Path(os.environ['RUNNER_TEMP'])
@@ -72,7 +78,7 @@ jobs:
               if values != [expected]:
                   raise SystemExit(f'APK identity mismatch: {key}')
               fields[key] = values[0]
-          digests = re.findall(r'^Signer #\d+ certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$', certs, re.M)
+          digests = re.findall(r'^(?:Signer #\d+|V\d+(?:\.\d+)? Signer(?: #\d+)?):? certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$', certs, re.M)
           expected_cert = hashlib.sha256((temp / 'rc248-debug.der').read_bytes()).hexdigest()
           if [d.lower() for d in digests] != [expected_cert]:
               raise SystemExit(f'APK signer mismatch: observed={digests!r}; debug keystore={expected_cert}')
