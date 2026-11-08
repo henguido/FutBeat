@@ -209,3 +209,81 @@ test('period scores: absent, nonterminal, awarded and incoherent answers fail cl
   assert.deepEqual(periods({ ...fixture, matchStatus: 'FINISHED', homeTeamHalftimeScore: '999' }),
     {});
 });
+
+// BE11-A4: shapes copied from stored GOAL rows (match_detail_cache, 2026-11-07):
+// China League Two fb_match_f6d7d248… has a starter with playerKey "0"; in prod
+// goal_api player external id "0" belongs to one unrelated catalog player.
+test('placeholder provider id "0" never becomes a lineup or incident identity', () => {
+  const lineups = [
+    { team: 'home', type: 'starting_lineups', playerId: null, playerKey: '0', lineupPlayer: 'Lei Guanzhang', lineupNumber: '13', lineupPosition: '0' },
+    { team: 'home', type: 'starting_lineups', playerId: null, playerKey: '1576645187', lineupPlayer: 'Muhtar Ular', lineupNumber: '7', lineupPosition: '1' },
+    { team: 'home', type: 'coach', playerId: null, playerKey: '1944689663', lineupPlayer: 'Wenbo Qu', lineupNumber: null, lineupPosition: '' },
+  ];
+  const media = { 0: { canonicalId: 'fb_player_unrelated', image: cdn('unrelated') } };
+  const home = normalizeLineupSide(lineups, 'home', media);
+  assert.deepEqual(home.starters.map((p) => [p.name, p.id, p.canonicalId, p.image, p.number]), [
+    ['Lei Guanzhang', null, null, null, '13'],
+    ['Muhtar Ular', '1576645187', null, null, '7'],
+  ]);
+  assert.equal(home.coach.name, 'Wenbo Qu');
+  assert.equal(home.coach.lineupPosition, null);
+  assert.deepEqual(lineupPlayerIds({ payload: { lineups } }), ['1576645187']);
+
+  const detail = normalizeMatchDetail({ payload: {
+    lineups,
+    cards: [{ id: 'c1', card: 'yellow card', homeFault: 'X', homePlayerId: '0', time: '20' }],
+    events: [{ id: 'g1', type: 'GOAL', homeScorer: 'Y', homeScorerId: '0', homeAssistId: '00', time: '30', score: '1 - 0' }],
+    substitutions: [{ id: 's1', team: 'home', substitution: 'A | B', substitutionPlayerId: '0 | 853783791', time: '46' }],
+  } });
+  const byId = Object.fromEntries(detail.incidents.map((i) => [i.providerEventId, i]));
+  assert.equal(byId.c1.playerId, null);
+  assert.equal(byId.g1.playerId, null);
+  assert.equal(byId.g1.assistPlayerId, null);
+  // Positional out|in pair: the real id stays the incoming player.
+  assert.equal(byId.s1.outPlayerId, null);
+  assert.equal(byId.s1.inPlayerId, '853783791');
+});
+
+test('first-half statistics: stored 1half rows only, separate from full time', () => {
+  const statistics = [
+    { type: 'Corners', home: '5', away: '3', half: 'full' },
+    { type: 'Corners', home: '2', away: '1', half: '1half' },
+    { type: 'Shots', home: null, away: '', half: '1half' },
+  ];
+  const detail = normalizeMatchDetail({ payload: { statistics } });
+  assert.deepEqual(detail.statistics, [{ label: 'Corners', home: '5', away: '3' }]);
+  assert.deepEqual(detail.firstHalfStatistics, [{ label: 'Corners', home: '2', away: '1' }]);
+  for (const empty of [null, undefined, [], {}, [{ type: 'Corners', home: 1, away: 0, half: 'full' }]]) {
+    assert.deepEqual(normalizeMatchDetail({ payload: { statistics: empty } }).firstHalfStatistics, [], JSON.stringify(empty));
+  }
+});
+
+// Stored K3 League detail (fb_match_599b6c10995…, 2026-11-07): scorer-less
+// goals carry only the scoring side in info; the running score agrees.
+test('scorer-less goals: info "home"/"away" is the side, never shown as text', () => {
+  const goal = (id, info, score, time) => ({
+    id, type: 'GOAL', info, score, time, scoreInfoTime: '1st Half',
+    homeScorer: null, awayScorer: null, homeScorerId: null, awayScorerId: null,
+  });
+  const detail = normalizeMatchDetail({ payload: {
+    events: [
+      goal('g1', 'home', '1 - 0', '32'),
+      goal('g2', 'away', '1 - 1', '38'),
+      goal('g3', 'Penalty', '2 - 1', '50'),
+      { ...goal('g4', 'away', '2 - 2', '60'), type: 'OWN GOAL' },
+      { ...goal('g5', 'home', '3 - 2', '70'), homeScorer: 'Real Scorer', homeScorerId: '77' },
+    ],
+    cards: [{ id: 'c1', card: 'yellow card', homeFault: null, awayFault: null, info: 'away', time: '40' }],
+  } });
+  const byId = Object.fromEntries(detail.incidents.map((i) => [i.providerEventId, i]));
+  assert.deepEqual([byId.g1.side, byId.g1.detail, byId.g1.info], ['home', '1 - 0', null]);
+  assert.deepEqual([byId.g2.side, byId.g2.detail, byId.g2.info], ['away', '1 - 1', null]);
+  // Other info is still text, and no side is invented without a marker.
+  assert.deepEqual([byId.g3.side, byId.g3.detail, byId.g3.info], [null, '2 - 1 · Penalty', 'Penalty']);
+  // Own goal: a side-only marker is unverified there, so no side.
+  assert.equal(byId.g4.side, null);
+  assert.equal(byId.g4.ownGoal, true);
+  // A named scorer still decides.
+  assert.deepEqual([byId.g5.side, byId.g5.playerName], ['home', 'Real Scorer']);
+  assert.deepEqual([byId.c1.side, byId.c1.detail], ['away', null]);
+});
