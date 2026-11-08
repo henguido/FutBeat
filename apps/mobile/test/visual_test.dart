@@ -5,6 +5,7 @@ import 'package:futbeat/main.dart';
 import 'package:futbeat/core/models.dart';
 
 import 'flow_test.dart' show openApp, TestRepository;
+import 'support/platform_goldens.dart';
 
 /// This existing baseline depicts a RECENT live observation. Its historic
 /// demo fixture has no observation timestamp. Make that test assumption
@@ -52,7 +53,7 @@ void main() {
       );
       await expectLater(
         find.byType(FutBeatApp),
-        matchesGoldenFile('goldens/$name.png'),
+        matchesPlatformGolden('goldens/$name.png'),
       );
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());

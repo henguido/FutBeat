@@ -20,9 +20,6 @@ jobs:
     if: github.event.pull_request.number == 248
     runs-on: ubuntu-latest
     timeout-minutes: 12
-    permissions:
-      contents: read
-      actions: read
     env:
       TZ: America/Costa_Rica
     steps:
@@ -37,47 +34,6 @@ jobs:
           backend/test/h2h_full_history.test.mjs
           backend/test/match_h2h_v2.test.mjs
           backend/test/team_match_coverage.test.mjs
-      - name: Inspect previous golden evidence
-        continue-on-error: true
-        timeout-minutes: 2
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh run download 42461426770 --name flutter-golden-failures --dir "$RUNNER_TEMP/rc248-goldens"
-          python -m pip install --quiet Pillow
-          python - <<'PY'
-          import base64, io, os
-          from pathlib import Path
-          from PIL import Image, ImageChops
-
-          root = Path(os.environ['RUNNER_TEMP']) / 'rc248-goldens'
-          names = ('matches', 'match', 'competition', 'team', 'explore', 'player')
-          sheet = Image.new('RGB', (585, 6 * 422))
-          for row, name in enumerate(names):
-              master, = root.rglob(f'{name}_masterImage.png')
-              actual, = root.rglob(f'{name}_testImage.png')
-              a, b = (Image.open(p).convert('RGB') for p in (master, actual))
-              if a.size != b.size:
-                  print(f'{name}: dimensions {a.size} -> {b.size}')
-                  continue
-              diff = ImageChops.difference(a, b)
-              for col, img in enumerate((a, b, diff)):
-                  sheet.paste(img.resize((195, 422)), (col * 195, row * 422))
-              payload = base64.b64encode(actual.read_bytes()).decode()
-              for i in range(0, len(payload), 4096):
-                  print(f'RC248_PNG {name} ' + payload[i:i+4096])
-              w, h = diff.size
-              bands = [sum(pixel != (0, 0, 0) for pixel in
-                           diff.crop((0, y, w, min(y + 80, h))).getdata())
-                       for y in range(0, h, 80)]
-              print(f'{name}: {w}x{h}; bbox={diff.getbbox()}; '
-                    f'changed={sum(bands)}; by 80px vertical band={bands}')
-          buffer = io.BytesIO()
-          sheet.save(buffer, format='JPEG', quality=80)
-          encoded = base64.b64encode(buffer.getvalue()).decode()
-          for i in range(0, len(encoded), 2048):
-              print('RC248_GOLDEN_SHEET ' + encoded[i:i+2048])
-          PY
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.4'
@@ -94,6 +50,10 @@ jobs:
           test/onboarding_test.dart test/auth_sheet_test.dart
           test/auth_flows_test.dart test/password_reset_cold_start_test.dart
           test/favorites_hub_v2_test.dart
+
+      - name: Verify the six reviewed Linux screen goldens
+        working-directory: apps/mobile
+        run: flutter test --no-pub --concurrency=1 --reporter=expanded test/visual_test.dart
 
   contracts:
     needs: rc-focal

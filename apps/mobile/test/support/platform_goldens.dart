@@ -3,9 +3,15 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 // Host rasterization differs even with the same Flutter SDK and bundled fonts.
-// Only the 18 reviewed, unchanged Linux renders use a separate baseline.
+// Only reviewed Linux renders use a separate baseline.
 // All comparisons still use Flutter's exact, default pixel comparator.
 const linuxGoldenNames = <String>{
+  'matches',
+  'match',
+  'competition',
+  'team',
+  'explore',
+  'player',
   'favorites_hub_competitions',
   'favorites_hub_empty',
   'favorites_hub_mixed',
