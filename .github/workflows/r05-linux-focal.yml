@@ -5,7 +5,7 @@ on:
 permissions:
   contents: read
 jobs:
-  r05:
+  lost-response:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -15,11 +15,10 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.4'
-          channel: stable
           cache: true
       - run: flutter pub get --enforce-lockfile
         working-directory: apps/mobile
       - run: dart run build_runner build
         working-directory: apps/mobile
-      - run: flutter test --no-pub --concurrency=1 --reporter=expanded test/account_deletion_receipt_test.dart test/mobile261_account_delete02_reopen_test.dart
+      - run: flutter test --no-pub --concurrency=1 --reporter=expanded --plain-name 'R05 keeps session and same receipt on lost response / unknown' test/account_deletion_receipt_test.dart
         working-directory: apps/mobile

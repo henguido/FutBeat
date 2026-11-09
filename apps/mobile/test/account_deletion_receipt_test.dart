@@ -27,8 +27,10 @@ void main() {
     (401, 'unknown'),
     (202, 'pending'),
     (503, 'unknown'),
+    (null, 'unknown'),
   ]) {
-    test('R05 keeps session and same receipt on $code / $status', () async {
+    final failure = code?.toString() ?? 'lost response';
+    test('R05 keeps session and same receipt on $failure / $status', () async {
       FlutterSecureStorage.setMockInitialValues({});
       final db = AppDatabase(NativeDatabase.memory());
       final dio = Dio();
@@ -51,6 +53,15 @@ void main() {
                 ),
               );
               ids.add(id);
+              if (code == null) {
+                h.reject(
+                  DioException(
+                    requestOptions: r,
+                    type: DioExceptionType.connectionError,
+                  ),
+                );
+                return;
+              }
               h.resolve(
                 Response(
                   requestOptions: r,
