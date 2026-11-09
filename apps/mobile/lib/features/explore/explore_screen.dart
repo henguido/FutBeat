@@ -145,7 +145,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   void _retry(bool hasQuery, _SearchRequest request) {
     if (hasQuery) {
-      previousSearches.remove(request);
+      _resetRemoteSearch();
       ref.invalidate(searchSnapshotProvider(request));
     } else {
       ref.invalidate(exploreSnapshotProvider);
@@ -413,7 +413,19 @@ class _ExploreContent extends StatelessWidget {
             padding: EdgeInsets.symmetric(horizontal: 20),
             child: _RemoteSearchNotice(),
           ),
-        if (!searchingRemote && !refreshing && !failed && isEmpty)
+        if (remoteExhausted && !refreshing && !failed)
+          _BoxSliver(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: TextButton(
+              onPressed: onRetry,
+              child: const Text('Reintentar búsqueda'),
+            ),
+          ),
+        if (!searchingRemote &&
+            !remoteExhausted &&
+            !refreshing &&
+            !failed &&
+            isEmpty)
           _BoxSliver(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: EmptyState(
@@ -422,8 +434,6 @@ class _ExploreContent extends StatelessWidget {
                   : 'Sin sugerencias disponibles',
               !hasQuery
                   ? 'Vuelve a intentarlo más tarde.'
-                  : remoteExhausted
-                  ? 'Seguimos buscando; intenta de nuevo en unos segundos.'
                   : 'Prueba con otro nombre o abreviación.',
               icon: hasQuery ? Icons.search_off : Icons.explore_outlined,
             ),

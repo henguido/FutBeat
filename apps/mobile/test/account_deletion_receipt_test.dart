@@ -22,8 +22,13 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const storage = FlutterSecureStorage();
   const receiptKey = 'futbeat.account.deletionReceipt';
-  for (final status in ['pending', 'unknown']) {
-    test('R05 keeps session and same receipt on 401 / $status', () async {
+  for (final (code, status) in [
+    (401, 'pending'),
+    (401, 'unknown'),
+    (202, 'pending'),
+    (503, 'unknown'),
+  ]) {
+    test('R05 keeps session and same receipt on $code / $status', () async {
       FlutterSecureStorage.setMockInitialValues({});
       final db = AppDatabase(NativeDatabase.memory());
       final dio = Dio();
@@ -46,7 +51,22 @@ void main() {
                 ),
               );
               ids.add(id);
-              h.resolve(Response(requestOptions: r, statusCode: 401));
+              h.resolve(
+                Response(
+                  requestOptions: r,
+                  statusCode: code,
+                  data: switch (code) {
+                    202 => {
+                      'deleted': false,
+                      'pending': true,
+                      'deletionId': id,
+                      'code': 'DELETION_PENDING',
+                    },
+                    503 => {'code': 'RECEIPT_UNAVAILABLE'},
+                    _ => null,
+                  },
+                ),
+              );
             } else if (r.path.endsWith('/futbeat_account_deletion_status')) {
               expect(r.method, 'POST');
               expect(
