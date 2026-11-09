@@ -2354,19 +2354,21 @@ final favoritesAccountChangesProvider = StreamProvider.autoDispose<String?>((
   return ref.watch(pushServiceProvider).accountChanges;
 });
 
-final favoritesSnapshotProvider = FutureProvider.autoDispose
-    .family<Snapshot, String>((ref, encodedKeys) async {
-      final repository = ref.watch(repositoryProvider);
-      if (repository is ApiRepository) {
-        final keys = encodedKeys
-            .split(',')
-            .map((value) => value.trim())
-            .where((value) => value.isNotEmpty)
-            .toList();
-        return repository.loadFavorites(keys);
-      }
-      return repository.load();
-    }, retry: (_, _) => null);
+final favoritesSnapshotProvider = FutureProvider.family<Snapshot, String>((
+  ref,
+  encodedKeys,
+) async {
+  final repository = ref.watch(repositoryProvider);
+  if (repository is ApiRepository) {
+    final keys = encodedKeys
+        .split(',')
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList();
+    return repository.loadFavorites(keys);
+  }
+  return repository.load();
+}, retry: (_, _) => null);
 
 /// Settled match data stays cached for this long after it loads, so leaving
 /// and re-entering a match shortly after does not refetch it.

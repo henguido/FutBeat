@@ -582,6 +582,11 @@ class _ExploreEntityTile extends StatelessWidget {
       final nationality =
           _firstText(entity.json, const ['nationality']) ?? entity.country;
       if ((club ?? team)?.isNotEmpty == true) parts.add(club ?? team!);
+      final nationalTeamId = _firstText(entity.json, const ['nationalTeamId']);
+      final nationalTeam = nationalTeamId == null
+          ? null
+          : data.team(nationalTeamId)?.displayName;
+      if (nationalTeam?.isNotEmpty == true) parts.add(nationalTeam!);
       if (position.isNotEmpty) parts.add(position);
       if (nationality.isNotEmpty) parts.add(nationality);
     } else if (type == 'team') {
