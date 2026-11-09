@@ -15,6 +15,13 @@ jobs:
           ref: b8348843ae292d9e3b103777f02e94ace0eb1e29
           path: source
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: validation
+          persist-credentials: false
+          sparse-checkout: apps/mobile/test/live_bootstrap_test.dart
+          sparse-checkout-cone-mode: false
+      - run: cp "validation/apps/mobile/test/live_bootstrap_test.dart" "source/apps/mobile/test/live_bootstrap_test.dart"
       - run: test "$(git -C source rev-parse HEAD)" = "b8348843ae292d9e3b103777f02e94ace0eb1e29" && git -C source diff --check
       - uses: subosito/flutter-action@v2
         with:
@@ -28,7 +35,7 @@ jobs:
         working-directory: source/apps/mobile
         run: |
           failed=0
-          for i in $(seq 1 12); do
+          for i in $(seq 1 16); do
             echo "Attempt $i"
             flutter test --no-pub --concurrency=1 --reporter=expanded --plain-name 'retired terminal fences share the configured page bound and clear on watch close' test/mobile261_live_terminal02_replay_test.dart || failed=1
           done

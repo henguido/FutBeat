@@ -56,6 +56,7 @@ class FakeSupabase {
   void Function(int request)? beforeAnswer;
   Future<void> Function(int request)? beforeAnswerAsync;
   late HttpServer server;
+  bool _stopping = false;
 
   String get url => 'http://127.0.0.1:${server.port}';
 
@@ -69,18 +70,29 @@ class FakeSupabase {
           return;
         }
         final ws = await WebSocketTransformer.upgrade(request);
+        if (_stopping) {
+          await ws.close();
+          return;
+        }
         sockets.add(ws);
         ws.listen((raw) {
           final message = jsonDecode(raw as String) as Map;
           if (message['event'] == 'phx_join') {
             joins.add(Map<String, dynamic>.from(message));
-            ws.add(
-              jsonEncode({
-                'event': 'phx_reply',
-                'ref': message['ref'],
-                'payload': {'status': 'ok'},
-              }),
-            );
+            if (_stopping || ws.readyState != WebSocket.open) return;
+            try {
+              ws.add(
+                jsonEncode({
+                  'event': 'phx_reply',
+                  'ref': message['ref'],
+                  'payload': {'status': 'ok'},
+                }),
+              );
+            } on StateError catch (error) {
+              // A buffered join can arrive after the peer closed the sink,
+              // before dart:io publishes the socket's closed state.
+              if (error.message != 'StreamSink is closed') rethrow;
+            }
           }
         });
         return;
@@ -135,7 +147,8 @@ class FakeSupabase {
   }
 
   Future<void> stop() async {
-    for (final ws in sockets) {
+    _stopping = true;
+    for (final ws in sockets.toList()) {
       await ws.close();
     }
     await server.close(force: true);
