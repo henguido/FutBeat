@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      APPROVED_SHA: a1457574cab28fb5d356f0665cf8ad9083b35b3d
+      APPROVED_SHA: a0008b0a17ed50bd5c15e635e4aed7fd1336a602
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,8 +55,8 @@ jobs:
           tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           apk=apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
           mkdir qa-apk
-          cp "$apk" qa-apk/FutBeat-RC248-a145757-debug.apk
-          apk=qa-apk/FutBeat-RC248-a145757-debug.apk
+          cp "$apk" qa-apk/FutBeat-RC248-a0008b0-debug.apk
+          apk=qa-apk/FutBeat-RC248-a0008b0-debug.apk
           "$tools/aapt" dump badging "$apk" > "$RUNNER_TEMP/rc248-badging"
           grep '^package:' "$RUNNER_TEMP/rc248-badging" || true
           "$tools/apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/rc248-certs"
@@ -65,7 +65,7 @@ jobs:
           python3 - <<'PY'
           import hashlib, os, pathlib, re
           temp = pathlib.Path(os.environ['RUNNER_TEMP'])
-          apk = pathlib.Path('qa-apk/FutBeat-RC248-a145757-debug.apk')
+          apk = pathlib.Path('qa-apk/FutBeat-RC248-a0008b0-debug.apk')
           badging = (temp / 'rc248-badging').read_text()
           certs = (temp / 'rc248-certs').read_text()
           package_lines = [line for line in badging.splitlines() if line.startswith('package:')]
@@ -98,7 +98,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         id: upload
         with:
-          name: FutBeat-RC248-a145757-debug
+          name: FutBeat-RC248-a0008b0-debug
           path: qa-apk/
           if-no-files-found: error
           retention-days: 5
@@ -112,4 +112,4 @@ jobs:
           target="${ARTIFACT_URL:-$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID}"
           state=failure
           if [[ "$BUILD_STATUS" == success && -n "$ARTIFACT_URL" ]]; then state=success; fi
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rc248-qa-apk -f target_url="$target" -f description="Exact RC248 source a145757; debug QA" --silent
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rc248-qa-apk -f target_url="$target" -f description="Exact RC248 source a0008b0; debug QA" --silent
