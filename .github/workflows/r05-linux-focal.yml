@@ -1,17 +1,24 @@
-name: R05 Linux focal
+name: Linux focal validation
 on:
   push:
     branches: [codex/r05-linux-focal]
+    paths: ['.github/workflows/r05-linux-focal.yml']
 permissions:
   contents: read
+  statuses: write
 jobs:
-  lost-response:
+  match-center:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      TZ: America/Costa_Rica
+      CANDIDATE: aa5b5d115f1ebc913bcb5ed70afd3acbf72414d6
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.CANDIDATE }}
           persist-credentials: false
+      - run: test "$(git rev-parse HEAD)" = "$CANDIDATE"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.4'
@@ -20,5 +27,16 @@ jobs:
         working-directory: apps/mobile
       - run: dart run build_runner build
         working-directory: apps/mobile
-      - run: flutter test --no-pub --concurrency=1 --reporter=expanded --plain-name 'R05 keeps session and same receipt on lost response / unknown' test/account_deletion_receipt_test.dart
+      - run: flutter analyze
         working-directory: apps/mobile
+      - name: Match Center focal and visual regression tests
+        run: flutter test --no-pub --concurrency=1 --reporter=expanded test/match_center_phase1_test.dart test/match_center_phase2_test.dart test/historical_match_center_test.dart test/lineups_match_center_visual_test.dart test/visual_test.dart
+        working-directory: apps/mobile
+      - if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ job.status }}
+        run: |
+          state=failure
+          if [[ "$RESULT" == success ]]; then state=success; fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=match-center-linux -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
