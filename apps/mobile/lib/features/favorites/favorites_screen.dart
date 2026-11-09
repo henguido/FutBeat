@@ -43,6 +43,15 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
     final sortedKeys = follows.toList()..sort();
     final encodedKeys = sortedKeys.join(',');
+    ref.listen(favoritesAccountChangesProvider, (_, next) {
+      if (next is! AsyncData<String?>) return;
+      // A request started under the guest scope can be cancelled by the
+      // transport on sign-in. The same follow keys still need a fresh read.
+      _lastSnapshot = null;
+      if (encodedKeys.isNotEmpty) {
+        ref.invalidate(favoritesSnapshotProvider(encodedKeys));
+      }
+    });
     final request = follows.isEmpty
         ? null
         : ref.watch(favoritesSnapshotProvider(encodedKeys));

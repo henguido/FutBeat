@@ -73,6 +73,7 @@ Future<_Harness> _pump(
   Size size = const Size(390, 844),
   bool aliases = false,
   Stream<Set<String>>? followChanges,
+  Stream<String?>? accountChanges,
   Future<Snapshot> Function(String keys, int request)? snapshotLoader,
 }) async {
   tester.view.physicalSize = size;
@@ -101,6 +102,8 @@ Future<_Harness> _pump(
   final container = ProviderContainer(
     overrides: [
       databaseProvider.overrideWithValue(db),
+      if (accountChanges != null)
+        favoritesAccountChangesProvider.overrideWith((ref) => accountChanges),
       if (followChanges != null)
         followsProvider.overrideWith((ref) async* {
           yield follows;
@@ -146,6 +149,29 @@ Future<void> _tab(WidgetTester tester, String label) async {
 }
 
 void main() {
+  testWidgets('same favorites recover when Google changes the account scope', (
+    tester,
+  ) async {
+    final accounts = StreamController<String?>.broadcast();
+    addTearDown(accounts.close);
+    final harness = await _pump(
+      tester,
+      accountChanges: accounts.stream,
+      snapshotLoader: (_, request) async {
+        if (request == 1) throw StateError('Obsolete guest request');
+        return Snapshot(_payload());
+      },
+    );
+    expect(find.text('No pudimos cargar tus seguidos'), findsOneWidget);
+    expect(harness.requests, hasLength(1));
+    // Simulate the account event emitted by PushService after Google login.
+    accounts.add('registered-user');
+    await tester.pumpAndSettle();
+    expect(find.text('No pudimos cargar tus seguidos'), findsNothing);
+    expect(find.text('Equipos'), findsOneWidget);
+    expect(harness.requests, hasLength(2));
+    expect(harness.requests.first, harness.requests.last);
+  });
   test('hub data is canonical, deduplicated and alphabetically stable', () {
     final data = Snapshot(_payload(aliases: true));
     final hub = FollowingHubData.from(data, const {'team:team_alias'});
