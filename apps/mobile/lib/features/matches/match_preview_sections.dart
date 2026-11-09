@@ -546,39 +546,6 @@ class PreviewHeadToHeadSection extends StatelessWidget {
   );
 }
 
-class PreviewEmptyState extends StatelessWidget {
-  const PreviewEmptyState({
-    required this.preview,
-    required this.hasStandings,
-    super.key,
-  });
-
-  final AsyncValue<MatchPreview> preview;
-  final bool hasStandings;
-
-  @override
-  Widget build(BuildContext context) {
-    if (hasStandings || preview.isLoading) return const SizedBox.shrink();
-    final value = preview.asData?.value;
-    if (value != null &&
-        (value.formMatches('home').isNotEmpty ||
-            value.formMatches('away').isNotEmpty ||
-            value.h2hMeetings.isNotEmpty)) {
-      return const SizedBox.shrink();
-    }
-    return const Padding(
-      key: ValueKey('preview-empty'),
-      padding: EdgeInsets.only(top: 14),
-      child: _Card(
-        child: Text(
-          'Todavía no hay datos suficientes para esta previa.',
-          style: TextStyle(color: muted),
-        ),
-      ),
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Cara a cara
 // ---------------------------------------------------------------------------

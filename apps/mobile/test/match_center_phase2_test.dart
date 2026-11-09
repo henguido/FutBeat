@@ -573,8 +573,9 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('Previa without supplemental data keeps useful context and a '
-      'compact empty state', (tester) async {
+  testWidgets('Previa without supplemental data keeps useful context', (
+    tester,
+  ) async {
     final empty = _preview(h2h: false)
       ..['form'] = {
         'home': {'state': 'none', 'matchIds': <String>[]},
@@ -584,11 +585,10 @@ void main() {
       tester,
       _Server((_) => _context(table: false), preview: () => empty),
     );
-    await _scrollTo(tester, find.byKey(const ValueKey('preview-empty')));
     expect(find.text('Información del partido'), findsOneWidget);
     expect(
       find.text('Todavía no hay datos suficientes para esta previa.'),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.byKey(const ValueKey('recent-form')), findsNothing);
     expect(find.byKey(const ValueKey('preview-h2h')), findsNothing);

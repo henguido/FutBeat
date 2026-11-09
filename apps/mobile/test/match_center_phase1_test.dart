@@ -532,6 +532,25 @@ void main() {
     await _close(tester, container);
   });
 
+  testWidgets('past fixture without a confirmed result skips Previa', (
+    tester,
+  ) async {
+    final container = await _open(
+      tester,
+      _Server(
+        (_) => _context(
+          status: 'SCHEDULED',
+          start: DateTime.now().toUtc().subtract(const Duration(days: 1)),
+        ),
+      ),
+      width: 360,
+    );
+    expect(_selectedTab(tester), 'Hechos');
+    expect(find.text('Previa'), findsNothing);
+    expect(find.text('2 - 1'), findsNothing);
+    await _close(tester, container);
+  });
+
   testWidgets('20. header: LIVE match shows score and minute', (tester) async {
     final container = await _open(
       tester,

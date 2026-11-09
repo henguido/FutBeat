@@ -474,7 +474,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         !match.showKickoff ||
         (match.isAwaitingUpdate && detail.pending) ||
         mergedMatchTimeline(match, detail).isNotEmpty;
-    final factsTabLabel = match.showKickoff ? 'Previa' : 'Hechos';
+    final showPreview = match.isUpcoming && match.showKickoff;
+    final factsTabLabel = showPreview ? 'Previa' : 'Hechos';
     final periodScores = MatchPeriodScores.fromMatch(match, detail);
     final previewSections = [
       if (showRecentForm) ...[
@@ -500,14 +501,6 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       LineupHistorySection(
         teamName: away.displayName,
         entries: awayLineupHistory,
-      ),
-      PreviewEmptyState(
-        preview: preview,
-        hasStandings: StandingsSnapshotCard.entries(
-          data,
-          match,
-          stage: detail.stage,
-        ).isNotEmpty,
       ),
     ];
 
@@ -578,7 +571,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       _MatchTabId.facts: _MatchTabList('facts', [
         if (data.demo) const DemoNotice(),
         // Before kickoff the match facts lead; afterwards the story.
-        if (match.showKickoff) ...[
+        if (showPreview) ...[
           const _SectionTitle('Información del partido'),
           MatchInfoCard(
             match: match,
@@ -658,7 +651,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
             ),
           ),
         ],
-        if (!match.showKickoff) ...[
+        if (!showPreview) ...[
           const _SectionTitle('Información del partido'),
           MatchInfoCard(
             match: match,
