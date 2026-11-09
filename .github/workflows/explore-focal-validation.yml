@@ -1,0 +1,27 @@
+name: FutBeat Explore focal validation
+on:
+  push:
+    branches: [codex/explore-focal-validation]
+permissions:
+  contents: read
+jobs:
+  explore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: America/Costa_Rica
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: dart run build_runner build
+      - run: flutter test --no-pub --concurrency=1 --reporter=expanded test/on_demand_contract_test.dart
