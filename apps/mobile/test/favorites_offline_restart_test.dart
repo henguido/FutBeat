@@ -234,6 +234,60 @@ void main() {
     },
   );
 
+  test(
+    'favorite reads respect the Edge key limit and keep a valid batch',
+    () async {
+      final keys = List.generate(
+        51,
+        (i) => 'team:fb_team_${i.toString().padLeft(2, '0')}',
+      );
+      final sizes = <int>[];
+      final dio = Dio(BaseOptions(baseUrl: 'https://fixture.invalid'))
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (r, h) {
+              final batch = (r.queryParameters['keys'] as String).split(',');
+              sizes.add(batch.length);
+              expect(batch.every(keys.contains), isTrue);
+              if (batch.length == 1) {
+                h.reject(
+                  DioException.badResponse(
+                    statusCode: 403,
+                    requestOptions: r,
+                    response: Response(requestOptions: r, statusCode: 403),
+                  ),
+                );
+                return;
+              }
+              h.resolve(
+                Response(
+                  requestOptions: r,
+                  statusCode: 200,
+                  data: {
+                    ..._catalog(),
+                    'teams': [
+                      for (final key in batch)
+                        {'id': key.substring(5), 'name': key},
+                    ],
+                    'matches': <dynamic>[],
+                  },
+                ),
+              );
+            },
+          ),
+        );
+      try {
+        final answer = await ApiRepository(dio)
+            .loadFavorites([...keys, 'team:legacy']);
+        expect(sizes, [50, 1]);
+        expect(answer.teams, hasLength(50));
+        expect(answer.stale, isTrue);
+      } finally {
+        dio.close();
+      }
+    },
+  );
+
   test('offline session restoration retains guest and never signs up another anonymous user', () async {
     final db = AppDatabase(NativeDatabase.memory());
     final storage = InstallSecureStorage();

@@ -1862,12 +1862,40 @@ class ApiRepository implements FootballRepository {
     );
   }
 
-  Future<Snapshot> loadFavorites(List<String> keys) {
-    final normalizedKeys = [...keys]..sort();
-    return _loadSnapshot(
-      'favorites:${normalizedKeys.join(',')}',
+  Future<Snapshot> loadFavorites(List<String> keys) async {
+    // Match the Edge request contract without rewriting the user's follows.
+    final accepted = RegExp(
+      r'^(team|player|competition|match):fb_[A-Za-z0-9_-]{3,120}$',
+    );
+    final normalized = keys.where(accepted.hasMatch).toSet().toList()..sort();
+    final answers = <Snapshot>[];
+    Object? lastError;
+    StackTrace? lastStack;
+    Future<Snapshot> read(List<String> batch) => _loadSnapshot(
+      'favorites:${batch.join(',')}',
       '/v1/favorites',
-      queryParameters: {'keys': normalizedKeys.join(',')},
+      queryParameters: {'keys': batch.join(',')},
+    );
+    if (normalized.isEmpty) return read(const []);
+    for (var offset = 0; offset < normalized.length; offset += 50) {
+      try {
+        answers.add(
+          await read(
+            normalized.sublist(
+              offset,
+              (offset + 50).clamp(0, normalized.length),
+            ),
+          ),
+        );
+      } catch (error, stack) {
+        lastError = error;
+        lastStack = stack;
+      }
+    }
+    if (answers.isEmpty) Error.throwWithStackTrace(lastError!, lastStack!);
+    return Snapshot.combineFavoriteCatalogs(
+      answers,
+      incomplete: lastError != null,
     );
   }
 

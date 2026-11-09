@@ -1467,6 +1467,41 @@ class Snapshot {
         : Snapshot.unpresented(source);
   }
 
+  /// Joins public favorite batches by entity ID, never by name.
+  static Snapshot combineFavoriteCatalogs(
+    List<Snapshot> batches, {
+    required bool incomplete,
+  }) {
+    if (batches.length == 1) {
+      return incomplete ? batches.single.asStale() : batches.single;
+    }
+    final ordered = [...batches]
+      ..sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+    List<Json> rows(String field) => {
+      for (final batch in ordered)
+        for (final row in (batch._sourceJson[field] as List).cast<Json>())
+          if (row['id'] is String) row['id'] as String: row,
+    }.values.toList();
+    return Snapshot(
+      {
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': ordered.last.updatedAt.toIso8601String(),
+        'freshness': {'stale': incomplete || batches.any((item) => item.stale)},
+        'entityRedirects': {
+          for (final batch in ordered)
+            ...(batch._sourceJson['entityRedirects'] as Map? ?? const {}),
+        },
+        for (final field in ['teams', 'players', 'competitions', 'matches'])
+          field: rows(field),
+        'standings': <Json>[],
+      },
+      blockedAliasIds: {
+        for (final batch in batches) ...batch.blockedDisplayAliases,
+      },
+    );
+  }
+
   Snapshot asStale() {
     return withFreshness(stale: true);
   }
