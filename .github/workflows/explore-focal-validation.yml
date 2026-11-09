@@ -1,4 +1,4 @@
-name: Favorites session regression Linux
+name: LIVE fixture close regression Linux
 on:
   push:
     branches: [codex/explore-focal-validation]
@@ -6,29 +6,16 @@ permissions:
   contents: read
   statuses: write
 jobs:
-  favorites:
+  terminal:
     runs-on: ubuntu-latest
-    timeout-minutes: 16
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: a0008b0a17ed50bd5c15e635e4aed7fd1336a602
+          ref: b8348843ae292d9e3b103777f02e94ace0eb1e29
           path: source
           persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          path: validation
-          persist-credentials: false
-          sparse-checkout: |
-            apps/mobile/test/favorites_hub_v2_test.dart
-            apps/mobile/lib/features/favorites/favorites_screen.dart
-          sparse-checkout-cone-mode: false
-      - name: Overlay the regression tests and minimal fix
-        run: |
-          test "$(git -C source rev-parse HEAD)" = "a0008b0a17ed50bd5c15e635e4aed7fd1336a602"
-          cp "validation/apps/mobile/test/favorites_hub_v2_test.dart" "source/apps/mobile/test/favorites_hub_v2_test.dart"
-          cp "validation/apps/mobile/lib/features/favorites/favorites_screen.dart" "source/apps/mobile/lib/features/favorites/favorites_screen.dart"
-          git -C source diff --check
+      - run: test "$(git -C source rev-parse HEAD)" = "b8348843ae292d9e3b103777f02e94ace0eb1e29" && git -C source diff --check
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.4'
@@ -37,10 +24,16 @@ jobs:
         working-directory: source/apps/mobile
       - run: dart run build_runner build
         working-directory: source/apps/mobile
-      - name: Run four suites without stopping at first failure
+      - name: Repeat the exact isolated case
         working-directory: source/apps/mobile
-        run: flutter test --no-pub --concurrency=1 --reporter=expanded test/favorites_hub_v2_test.dart test/favorites_offline_restart_test.dart test/public_access_auth_test.dart test/public_access_transport_test.dart
-      - name: Publish exact run link
+        run: |
+          failed=0
+          for i in $(seq 1 12); do
+            echo "Attempt $i"
+            flutter test --no-pub --concurrency=1 --reporter=expanded --plain-name 'retired terminal fences share the configured page bound and clear on watch close' test/mobile261_live_terminal02_replay_test.dart || failed=1
+          done
+          exit "$failed"
+      - name: Publish run link
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -48,4 +41,4 @@ jobs:
         run: |
           state=failure
           if [ "$OUTCOME" = success ]; then state=success; fi
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=favorites-linux-focal -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --silent
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=live-fixture-focal -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --silent
