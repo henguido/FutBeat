@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../../shared/live_freshness_notice.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,20 +9,36 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/entity_media.dart';
 import '../../core/interests.dart';
+import '../../core/live_realtime.dart';
 import '../../core/models.dart';
 import '../../core/profile_context.dart';
 import '../../core/providers.dart';
+import '../../core/sports_image_cache.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../entities/standings.dart';
 import 'match_info_card.dart';
 import 'match_preview_sections.dart';
+import 'lineup_history_section.dart';
+import 'live_field_card.dart';
 import 'match_period_scores.dart';
+import 'timeline_presentation.dart';
 
 const _headerTop = Color(0xFF1B2B31);
 const _headerBottom = Color(0xFF0F181C);
 const _cardBorder = Color(0xFF2B373D);
 const awaySideColor = Color(0xFF4FC3F7);
+
+enum _MatchTabId { facts, live, lineup, standings, statistics, headToHead }
+
+const _allMatchTabs = <_MatchTabId>[
+  _MatchTabId.facts,
+  _MatchTabId.live,
+  _MatchTabId.lineup,
+  _MatchTabId.standings,
+  _MatchTabId.statistics,
+  _MatchTabId.headToHead,
+];
 
 /// Bounded refreshes while the server hydrates missing lineup photos.
 /// Same cadence as EntityScreen's profileEnrichmentRetryDelays.
@@ -77,7 +95,9 @@ class MatchScreen extends ConsumerStatefulWidget {
 }
 
 class _MatchScreenState extends ConsumerState<MatchScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
+  LiveRealtimeClient? _liveClient;
+  late final String _liveScope = 'match:${identityHashCode(this)}';
   final Set<String> _recordedTeamInterests = {};
   late TabController _tabs;
   Timer? _lineupEnrichmentRetry;
@@ -89,13 +109,26 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   int _staleLiveAttempts = 0;
   Timer? _detailRefreshIndicatorTimer;
   bool _detailRefreshIndicatorExpired = false;
+  bool _sportsActive = true;
+  bool _lineupPending = false;
+  bool _standingsPending = false;
+  bool _liveStale = false;
+  Snapshot? _lastMatchContext;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Stable structure: Tabla always exists (its content reports the state),
     // so tabs never appear/disappear while data arrives.
     _tabs = TabController(length: 6, vsync: this);
+    _startDetailRefreshIndicator();
+    Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
+  }
+
+  void _startDetailRefreshIndicator() {
+    _detailRefreshIndicatorTimer?.cancel();
+    _detailRefreshIndicatorExpired = false;
     _detailRefreshIndicatorTimer = Timer(
       matchDetailRefreshIndicatorDuration,
       () {
@@ -103,18 +136,53 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         setState(() => _detailRefreshIndicatorExpired = true);
       },
     );
-    Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
+  }
+
+  @override
+  void didUpdateWidget(MatchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.id == widget.id) return;
+    // GoRouter may retain this State while /match/:id changes. A previous
+    // match's timers and exhausted budgets must never refresh (or suppress
+    // recovery for) the new match.
+    _lineupEnrichmentRetry?.cancel();
+    _lineupEnrichmentRetry = null;
+    _lineupEnrichmentAttempts = 0;
+    _standingsRetry?.cancel();
+    _standingsRetry = null;
+    _standingsAttempts = 0;
+    _standingsManualRetry = false;
+    _staleLiveRefresh?.cancel();
+    _staleLiveRefresh = null;
+    _staleLiveAttempts = 0;
+    _lineupPending = false;
+    _standingsPending = false;
+    _liveStale = false;
+    _lastMatchContext = null;
+    _recordedTeamInterests.clear();
+    _liveClient?.clearScope(_liveScope);
+    _tabs.index = 0;
+    _startDetailRefreshIndicator();
+    final id = widget.id;
+    Future.microtask(() => recordTemporaryInterest(ref, 'match', id));
+  }
+
+  void _selectTab(_MatchTabId id) {
+    final index = _allMatchTabs.indexOf(id);
+    if (index >= 0 && index != _tabs.index) _tabs.animateTo(index);
   }
 
   void _scheduleLineupEnrichmentRefresh() {
-    if (_lineupEnrichmentRetry != null ||
+    if (_storedReadsOnly ||
+        !_sportsActive ||
+        _lineupEnrichmentRetry != null ||
         _lineupEnrichmentAttempts >= _lineupEnrichmentRetryDelays.length) {
       return;
     }
     _lineupEnrichmentRetry = Timer(
       _lineupEnrichmentRetryDelays[_lineupEnrichmentAttempts],
       () {
-        if (!mounted) return;
+        if (!mounted || !_sportsActive) return;
         setState(() {
           _lineupEnrichmentAttempts++;
           _lineupEnrichmentRetry = null;
@@ -124,13 +192,20 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     );
   }
 
+  bool get _storedReadsOnly {
+    final repository = ref.read(repositoryProvider);
+    return repository is ApiRepository && repository.storedReadsOnly;
+  }
+
   void _scheduleStandingsRefresh() {
-    if (_standingsRetry != null ||
+    if (_storedReadsOnly ||
+        !_sportsActive ||
+        _standingsRetry != null ||
         _standingsAttempts >= _standingsSchedule.length) {
       return;
     }
     _standingsRetry = Timer(_standingsSchedule[_standingsAttempts], () {
-      if (!mounted) return;
+      if (!mounted || !_sportsActive) return;
       setState(() {
         _standingsAttempts++;
         _standingsRetry = null;
@@ -140,22 +215,49 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   }
 
   void _watchStaleLive(Snapshot merged) {
-    if (merged.match(widget.id)?.liveDataStale != true) {
+    final match = merged.match(widget.id);
+    // Unknown timestamps get a UI warning, not new polling. Preserve the
+    // existing bounded recovery only for an actual dated LIVE overlay.
+    _liveStale = match?.liveChangedAt != null && match?.liveDataStale == true;
+    if (!_liveStale) {
       _staleLiveRefresh?.cancel();
       _staleLiveRefresh = null;
       _staleLiveAttempts = 0;
       return;
     }
-    if (_staleLiveRefresh != null ||
+    if (!_sportsActive ||
+        _staleLiveRefresh != null ||
         _staleLiveAttempts >= staleLiveRefreshDelays.length) {
       return;
     }
     _staleLiveRefresh = Timer(staleLiveRefreshDelays[_staleLiveAttempts], () {
-      if (!mounted) return;
+      if (!mounted || !_sportsActive) return;
       _staleLiveAttempts++;
       _staleLiveRefresh = null;
       ref.invalidate(matchContextSnapshotProvider(widget.id));
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final active = state == AppLifecycleState.resumed;
+    if (_sportsActive == active) return;
+    _sportsActive = active;
+    if (!active) {
+      _lineupEnrichmentRetry?.cancel();
+      _lineupEnrichmentRetry = null;
+      _standingsRetry?.cancel();
+      _standingsRetry = null;
+      _staleLiveRefresh?.cancel();
+      _staleLiveRefresh = null;
+      return;
+    }
+    // Recheck only the data that was still incomplete when this screen was
+    // suspended. The app-wide lifecycle owner handles the regular feed.
+    if (_lineupPending) ref.invalidate(matchDetailProvider(widget.id));
+    if (_standingsPending || _liveStale) {
+      ref.invalidate(matchContextSnapshotProvider(widget.id));
+    }
   }
 
   /// "Reintentar": one more read of the same context in this screen. The
@@ -175,6 +277,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _liveClient?.clearScope(_liveScope);
     _tabs.dispose();
     _lineupEnrichmentRetry?.cancel();
     _standingsRetry?.cancel();
@@ -185,13 +289,31 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 
   @override
   Widget build(BuildContext context) {
-    final updates =
-        ref.watch(liveMatchUpdatesProvider).asData?.value ??
-        const <String, LiveMatchUpdate>{};
+    final client = ref.read(liveRealtimeClientProvider);
+    if (!identical(_liveClient, client)) {
+      _liveClient?.clearScope(_liveScope);
+      _liveClient = client;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) client.setScope(_liveScope, [widget.id]);
+    });
+    // Unrelated goals elsewhere in the feed must not rebuild this Match
+    // Center. The map retains each unchanged update object across emissions.
+    final ownUpdate = ref.watch(
+      liveMatchUpdatesProvider.select(
+        (value) => value.asData?.value[widget.id],
+      ),
+    );
+    final updates = ownUpdate == null
+        ? const <String, LiveMatchUpdate>{}
+        : <String, LiveMatchUpdate>{widget.id: ownUpdate};
     ref.listen(matchDetailProvider(widget.id), (_, next) {
+      if (!next.isLoading) {
+        _lineupPending =
+            next.asData?.value.lineupEnrichmentPending == true && !_storedReadsOnly;
+      }
       // Ignore the refresh-in-progress state (it still carries old data).
-      if (!next.isLoading &&
-          next.asData?.value.lineupEnrichmentPending == true) {
+      if (!next.isLoading && _lineupPending) {
         _scheduleLineupEnrichmentRefresh();
       }
     });
@@ -201,7 +323,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     if (watchesContext) {
       ref.listen(matchContextSnapshotProvider(widget.id), (_, next) {
         if (next.isLoading || next.value == null) return;
-        if (next.value!.standingsPending) {
+        _standingsPending = next.value!.standingsPending && !_storedReadsOnly;
+        if (_standingsPending) {
           _scheduleStandingsRefresh();
         } else {
           // Answered (or settled server-side): no further revalidation.
@@ -215,7 +338,15 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final refreshed = watchesContext
         ? ref.watch(matchContextSnapshotProvider(widget.id)).value
         : null;
-    final source = refreshed ?? widget.initialData;
+    if (refreshed?.match(widget.id) != null) _lastMatchContext = refreshed;
+    final fallback = _lastMatchContext ?? widget.initialData;
+    // A partial refresh must not replace the last visible exact fixture.
+    final source =
+        refreshed != null &&
+            refreshed.match(widget.id) == null &&
+            fallback?.match(widget.id) != null
+        ? fallback!.asStale()
+        : refreshed ?? fallback;
     final initialData = source == null
         ? null
         : presentSnapshotForSession(ref, source);
@@ -230,7 +361,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         .when(
           loading: () => Scaffold(
             appBar: AppBar(title: const Text('Match Center')),
-            body: const Center(child: CircularProgressIndicator()),
+            body: const ContentSkeleton(layout: SkeletonLayout.match),
           ),
           error: (_, stack) => Scaffold(
             appBar: AppBar(title: const Text('Match Center')),
@@ -312,12 +443,18 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final away = data.team(match.awayId)!;
     // Key statistics only when one row is worth showing (see Statistics).
     final hasStats = displayableStatistics(
-      detail.statistics.isNotEmpty ? detail.statistics : match.statistics,
+      matchStatisticsForDisplay(match, detail),
     ).isNotEmpty;
     // Recent form + head-to-head: a separate read, never blocking the header
     // or the tabs, failing on its own, read once per open.
     final preview = ref.watch(matchPreviewProvider(widget.id));
     final previewValue = preview.asData?.value;
+    final homeLineupHistory = ref.watch(
+      lineupHistoryProvider((matchId: widget.id, teamId: match.homeId)),
+    );
+    final awayLineupHistory = ref.watch(
+      lineupHistoryProvider((matchId: widget.id, teamId: match.awayId)),
+    );
     final showRecentForm =
         preview.isLoading ||
         (previewValue != null &&
@@ -337,20 +474,41 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         !match.showKickoff ||
         (match.isAwaitingUpdate && detail.pending) ||
         mergedMatchTimeline(match, detail).isNotEmpty;
-    final factsTabLabel = match.showKickoff ? 'Previa' : 'Hechos';
+    final showPreview = match.isUpcoming && match.showKickoff;
+    final factsTabLabel = showPreview ? 'Previa' : 'Hechos';
     final periodScores = MatchPeriodScores.fromMatch(match, detail);
     final previewSections = [
       if (showRecentForm) ...[
         const _SectionTitle('Forma reciente'),
         RecentFormSection(preview: preview, data: data, match: match),
       ],
-      StandingsSnapshotCard(data: data, match: match, stage: detail.stage),
+      StandingsSnapshotCard(
+        data: data,
+        match: match,
+        stage: detail.stage,
+        onViewTable: () => _selectTab(_MatchTabId.standings),
+      ),
+      PreviewHeadToHeadSection(
+        preview: preview,
+        data: data,
+        match: match,
+        onOpen: () => _selectTab(_MatchTabId.headToHead),
+      ),
+      LineupHistorySection(
+        teamName: home.displayName,
+        entries: homeLineupHistory,
+      ),
+      LineupHistorySection(
+        teamName: away.displayName,
+        entries: awayLineupHistory,
+      ),
     ];
 
     // Bounded: once the retries are spent a pending table settles into a
     // stable state (no endless spinner).
     final standingsRefreshing =
         data.standingsPending &&
+        !_storedReadsOnly &&
         _standingsAttempts < standingsRetryDelays.length;
     final refreshing =
         (detail.pending && !_detailRefreshIndicatorExpired) ||
@@ -360,7 +518,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       controller: _tabs,
       isScrollable: true,
       tabAlignment: TabAlignment.start,
-      labelPadding: const EdgeInsets.symmetric(horizontal: 14),
+      labelPadding: const EdgeInsets.symmetric(horizontal: 12),
       labelColor: Colors.white,
       unselectedLabelColor: muted,
       labelStyle: const TextStyle(
@@ -380,14 +538,183 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ),
       dividerColor: Colors.transparent,
       tabs: [
-        Tab(text: factsTabLabel, height: 42),
-        const Tab(text: 'En vivo', height: 42),
-        const Tab(text: 'Alineación', height: 42),
-        const Tab(text: 'Tabla', height: 42),
-        const Tab(text: 'Estadísticas', height: 42),
-        const Tab(text: 'Cara a cara', height: 42),
+        Tab(
+          key: const ValueKey('match-tab-facts'),
+          text: factsTabLabel,
+          height: 44,
+        ),
+        const Tab(key: ValueKey('match-tab-live'), text: 'En vivo', height: 44),
+        const Tab(
+          key: ValueKey('match-tab-lineup'),
+          text: 'Alineación',
+          height: 44,
+        ),
+        const Tab(
+          key: ValueKey('match-tab-standings'),
+          text: 'Tabla',
+          height: 44,
+        ),
+        const Tab(
+          key: ValueKey('match-tab-statistics'),
+          text: 'Estadísticas',
+          height: 44,
+        ),
+        const Tab(
+          key: ValueKey('match-tab-headToHead'),
+          text: 'Cara a cara',
+          height: 44,
+        ),
       ],
     );
+
+    final tabViews = <_MatchTabId, Widget>{
+      _MatchTabId.facts: _MatchTabList('facts', [
+        if (data.demo) const DemoNotice(),
+        // Before kickoff the match facts lead; afterwards the story.
+        if (showPreview) ...[
+          const _SectionTitle('Información del partido'),
+          MatchInfoCard(
+            match: match,
+            competition: competition,
+            detail: detail,
+            venue: venue,
+          ),
+          ...previewSections,
+        ],
+        if (verifiedVideoLinks(detail).isNotEmpty) ...[
+          const _SectionTitle('Videos de canales verificados'),
+          PostMatchVideos(detail),
+        ] else if (!match.showKickoff && !match.isLive && !detail.pending) ...[
+          const _SectionTitle('Videos oficiales'),
+          const _EmptySection(
+            Icons.play_circle_outline_rounded,
+            'Sin videos oficiales verificados',
+          ),
+        ],
+        if (periodScores != null) ...[
+          const _SectionTitle('Marcador por período'),
+          MatchPeriodScoresCard(scores: periodScores),
+        ],
+        if (!match.showKickoff && detail.topRated().isNotEmpty) ...[
+          _SectionTitle(_topRatedTitle(match, detail)),
+          if (match.isLive)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Provisional',
+                style: TextStyle(
+                  color: muted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          TopRatedCard(
+            key: const ValueKey('top-rated-card'),
+            topRated: detail.topRated(),
+            home: home,
+            away: away,
+          ),
+          const _SectionTitle('Mejor puntuado por equipo'),
+          if (match.isLive)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Provisional',
+                style: TextStyle(
+                  color: muted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          TeamTopRatedCard(
+            key: const ValueKey('team-top-rated-card'),
+            best: detail.bestRatedBySide(),
+            home: home,
+            away: away,
+          ),
+        ],
+        if (hasStats) ...[
+          const _SectionTitle('Estadísticas clave'),
+          Statistics(
+            match,
+            detail: detail,
+            mode: StatisticsDisplayMode.compact,
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () => _selectTab(_MatchTabId.statistics),
+              icon: const Icon(Icons.bar_chart_rounded, size: 18),
+              label: const Text('Ver todas las estadísticas'),
+            ),
+          ),
+        ],
+        if (!showPreview) ...[
+          const _SectionTitle('Información del partido'),
+          MatchInfoCard(
+            match: match,
+            competition: competition,
+            detail: detail,
+            venue: venue,
+          ),
+          ...previewSections,
+        ],
+      ]),
+      _MatchTabId.live: _MatchTabList('live', [
+        if (data.demo) const DemoNotice(),
+        if (match.isLive)
+          LiveFieldCard(
+            home: home,
+            away: away,
+            score: _liveFieldScore(match),
+            status: match.statusLabel,
+            latestEvent: _liveFieldLatestEvent(match, detail, data),
+          ),
+        if (showEvents) ...[
+          const _SectionTitle('Eventos del partido'),
+          MatchTimeline(data, match, detail),
+        ] else
+          const _EmptySection(
+            Icons.sports_soccer_rounded,
+            'El partido aún no inicia',
+          ),
+      ]),
+      _MatchTabId.lineup: _MatchTabList('alineacion', [
+        if (data.demo) const DemoNotice(),
+        Lineups(data, match, detail),
+      ]),
+      _MatchTabId.standings: _MatchTabList('tabla', [
+        if (data.demo) const DemoNotice(),
+        MatchStandingsTab(
+          data,
+          match.competitionId,
+          homeTeamId: match.homeId,
+          awayTeamId: match.awayId,
+          stage: detail.stage,
+          season: match.season,
+          compactContext: true,
+          refreshing: standingsRefreshing || _standingsManualRetry,
+          onRetry: _retryStandings,
+        ),
+      ]),
+      _MatchTabId.statistics: _MatchTabList('estadisticas', [
+        if (data.demo) const DemoNotice(),
+        _StatsLegend(home: home, away: away),
+        const SizedBox(height: 12),
+        Statistics(match, detail: detail),
+      ]),
+      _MatchTabId.headToHead: _MatchTabList('cara-a-cara', [
+        if (data.demo) const DemoNotice(),
+        HeadToHeadTab(
+          preview: preview,
+          data: data,
+          match: match,
+          onRetry: () => ref.invalidate(matchPreviewProvider(widget.id)),
+        ),
+      ]),
+    };
 
     final page = Scaffold(
       appBar: AppBar(
@@ -399,6 +726,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ),
       body: NestedScrollView(
         headerSliverBuilder: (context, _) => [
+          SliverToBoxAdapter(child: LiveFreshnessNotice(match)),
           SliverToBoxAdapter(
             child: MatchHero(
               data: data,
@@ -417,149 +745,43 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         ],
         body: TabBarView(
           controller: _tabs,
-          children: [
-            _MatchTabList('facts', [
-              if (data.demo) const DemoNotice(),
-              // Before kickoff the match facts lead; afterwards the story.
-              if (match.showKickoff) ...[
-                const _SectionTitle('Información del partido'),
-                MatchInfoCard(
-                  match: match,
-                  competition: competition,
-                  detail: detail,
-                  venue: venue,
-                ),
-                ...previewSections,
-              ],
-              if (detail.videos.isNotEmpty) ...[
-                const _SectionTitle('Resumen oficial'),
-                PostMatchVideos(detail),
-              ],
-              if (periodScores != null) ...[
-                const _SectionTitle('Marcador por período'),
-                MatchPeriodScoresCard(scores: periodScores),
-              ],
-              if (!match.showKickoff && detail.topRated().isNotEmpty) ...[
-                _SectionTitle(_topRatedTitle(match, detail)),
-                if (match.isLive)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'Provisional',
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                TopRatedCard(
-                  key: const ValueKey('top-rated-card'),
-                  topRated: detail.topRated(),
-                  home: home,
-                  away: away,
-                ),
-                const _SectionTitle('Mejor puntuado por equipo'),
-                if (match.isLive)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'Provisional',
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                TeamTopRatedCard(
-                  key: const ValueKey('team-top-rated-card'),
-                  best: detail.bestRatedBySide(),
-                  home: home,
-                  away: away,
-                ),
-              ],
-              if (hasStats) ...[
-                const _SectionTitle('Estadísticas clave'),
-                Statistics(
-                  match,
-                  detail: detail,
-                  mode: StatisticsDisplayMode.compact,
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    onPressed: () => _tabs.animateTo(4),
-                    icon: const Icon(Icons.bar_chart_rounded, size: 18),
-                    label: const Text('Ver todas las estadísticas'),
-                  ),
-                ),
-              ],
-              if (!match.showKickoff) ...[
-                const _SectionTitle('Información del partido'),
-                MatchInfoCard(
-                  match: match,
-                  competition: competition,
-                  detail: detail,
-                  venue: venue,
-                ),
-                ...previewSections,
-              ],
-            ]),
-            _MatchTabList('live', [
-              if (data.demo) const DemoNotice(),
-              if (showEvents) ...[
-                const _SectionTitle('Eventos del partido'),
-                MatchTimeline(data, match, detail),
-              ] else
-                const _EmptySection(
-                  Icons.sports_soccer_rounded,
-                  'El partido aún no inicia',
-                ),
-            ]),
-            _MatchTabList('alineacion', [
-              if (data.demo) const DemoNotice(),
-              Lineups(data, match, detail),
-            ]),
-            _MatchTabList('tabla', [
-              if (data.demo) const DemoNotice(),
-              MatchStandingsTab(
-                data,
-                match.competitionId,
-                homeTeamId: match.homeId,
-                awayTeamId: match.awayId,
-                stage: detail.stage,
-                refreshing: standingsRefreshing || _standingsManualRetry,
-                onRetry: _retryStandings,
-              ),
-            ]),
-            _MatchTabList('estadisticas', [
-              if (data.demo) const DemoNotice(),
-              _StatsLegend(home: home, away: away),
-              const SizedBox(height: 12),
-              Statistics(match, detail: detail),
-            ]),
-            _MatchTabList('cara-a-cara', [
-              if (data.demo) const DemoNotice(),
-              HeadToHeadTab(
-                preview: preview,
-                data: data,
-                match: match,
-                onRetry: () => ref.invalidate(matchPreviewProvider(widget.id)),
-              ),
-            ]),
-          ],
+          children: [for (final id in _allMatchTabs) tabViews[id]!],
         ),
       ),
     );
     // Every player entry point opens the same local sheet (#99).
     return MatchPlayerScope(
+      data: data,
       detail: detail,
       home: home,
       away: away,
       child: page,
     );
   }
+}
+
+String _liveFieldScore(FootballMatch match) {
+  final score = match.json['score'];
+  if (score is! Map || score['home'] is! int || score['away'] is! int) {
+    return '— : —';
+  }
+  return '${score['home']} : ${score['away']}';
+}
+
+String? _liveFieldLatestEvent(
+  FootballMatch match,
+  MatchDetail detail,
+  Snapshot data,
+) {
+  final events = mergedMatchTimeline(
+    match,
+    detail,
+  ).where((event) => !_neutralEvents.contains(event['type'])).toList();
+  if (events.isEmpty) return null;
+  final event = events.last;
+  final type = timelineDisplayType(event);
+  final player = _timelinePlayerName(event, data);
+  return [eventMinuteLabel(event), eventLabel(type), ?player].join(' · ');
 }
 
 class _TabBarHeader extends SliverPersistentHeaderDelegate {
@@ -967,6 +1189,13 @@ class MatchHero extends StatelessWidget {
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
     final round = matchRoundHeadline(detail.round);
+    final stage = matchStageLabel(
+      stage: detail.stage,
+      competitionName: competition.name,
+      round: detail.round,
+    );
+    final venue = detail.stadium ?? match.json['venue']?.toString().trim();
+    final periodScores = MatchPeriodScores.fromMatch(match, detail);
     // Scorers only once the match has started and a goal has a known side.
     final summary = match.showKickoff
         ? null
@@ -976,80 +1205,186 @@ class MatchHero extends StatelessWidget {
         ? summary
         : null;
 
-    return Container(
-      key: const ValueKey('match-hero'),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [_headerTop, _headerBottom],
+    return Semantics(
+      container: true,
+      label: matchHeroSemanticLabel(context, match, home, away),
+      child: Container(
+        key: const ValueKey('match-hero'),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [_headerTop, _headerBottom],
+          ),
         ),
-      ),
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Competition first, clearly separated from the teams. Date,
-          // venue, country and season live in "Información del partido".
-          Material(
-            color: Colors.white.withValues(alpha: .06),
-            shape: const StadiumBorder(),
-            child: InkWell(
-              customBorder: const StadiumBorder(),
-              onTap: () => context.push('/competition/${competition.id}'),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 30),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.emoji_events_outlined,
-                        size: 14,
-                        color: lime,
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          [competition.name, ?round].join(' · '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Competition first, clearly separated from the teams. Date,
+            // venue, country and season live in "Información del partido".
+            Material(
+              color: Colors.white.withValues(alpha: .06),
+              shape: const StadiumBorder(),
+              child: InkWell(
+                customBorder: const StadiumBorder(),
+                onTap: () => context.push('/competition/${competition.id}'),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 30),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        EntityAvatar(competition, size: 16),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            [competition.name, ?stage, ?round].join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
-                      ),
-                      const Icon(
-                        Icons.chevron_right_rounded,
-                        size: 16,
-                        color: muted,
-                      ),
-                    ],
+                        const Icon(
+                          Icons.chevron_right_rounded,
+                          size: 16,
+                          color: muted,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _HeaderTeam(home, match, accent: lime)),
-              SizedBox(width: 120, child: _HeaderCenter(match)),
-              Expanded(child: _HeaderTeam(away, match, accent: awaySideColor)),
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: _HeaderTeam(home, match, accent: lime)),
+                SizedBox(width: 120, child: _HeaderCenter(match)),
+                Expanded(
+                  child: _HeaderTeam(away, match, accent: awaySideColor),
+                ),
+              ],
+            ),
+            if (scorers != null) ...[
+              const SizedBox(height: 8),
+              _HeaderScorers(home: scorers.home, away: scorers.away),
             ],
-          ),
-          if (scorers != null) ...[
-            const SizedBox(height: 8),
-            _HeaderScorers(home: scorers.home, away: scorers.away),
+            if (periodScores?.penalties case final penalties?) ...[
+              const SizedBox(height: 8),
+              _HeroScoreContext(
+                key: const ValueKey('hero-penalties'),
+                label: 'Penales',
+                score: penalties.label,
+              ),
+            ] else if (periodScores?.extraTime != null) ...[
+              const SizedBox(height: 8),
+              const _HeroScoreContext(
+                key: ValueKey('hero-extra-time'),
+                label: 'Tras prórroga',
+              ),
+            ],
+            if (match.showKickoff && venue != null && venue.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _HeroMetadataLine(icon: Icons.stadium_outlined, value: venue),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
+}
+
+String matchHeroSemanticLabel(
+  BuildContext context,
+  FootballMatch match,
+  Entity home,
+  Entity away,
+) {
+  if (match.showKickoff) {
+    return '${home.displayName} contra ${away.displayName}, '
+        '${matchDateLabel(match.startTime)} a las '
+        '${localTime(context, match.startTime)}';
+  }
+  final score = _heroScore(match);
+  final result = score == null
+      ? '${home.displayName} contra ${away.displayName}, Marcador no disponible'
+      : '${home.displayName} ${score.home}, ${away.displayName} ${score.away}';
+  final status = match.statusLabel;
+  return status.isEmpty ? result : '$result, $status';
+}
+
+/// The header must not speak or paint raw nulls, fractional or negative goals.
+/// An incomplete provider response is unknown, never an inferred 0–0.
+int? _heroGoalCount(Object? value) =>
+    value is num &&
+        value.isFinite &&
+        value >= 0 &&
+        value == value.roundToDouble()
+    ? value.toInt()
+    : null;
+
+({int home, int away})? _heroScore(FootballMatch match) {
+  final raw = match.json['score'];
+  if (raw is! Map) return null;
+  final home = _heroGoalCount(raw['home']), away = _heroGoalCount(raw['away']);
+  return home != null && away != null
+      ? (home: home, away: away)
+      : null;
+}
+
+class _HeroScoreContext extends StatelessWidget {
+  const _HeroScoreContext({required this.label, this.score, super.key});
+
+  final String label;
+  final String? score;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .05),
+      borderRadius: BorderRadius.circular(9),
+    ),
+    child: Text(
+      [label, ?score].join(' · '),
+      style: const TextStyle(
+        color: Colors.white70,
+        fontSize: 11.5,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
+}
+
+class _HeroMetadataLine extends StatelessWidget {
+  const _HeroMetadataLine({required this.icon, required this.value});
+
+  final IconData icon;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      Icon(icon, size: 14, color: muted),
+      const SizedBox(width: 6),
+      Flexible(
+        child: Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: muted, fontSize: 11.5),
+        ),
+      ),
+    ],
+  );
 }
 
 class _HeaderTeam extends StatelessWidget {
@@ -1127,6 +1462,7 @@ class _HeaderCenter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (color, _) = matchStatusTone(match);
+    final score = _heroScore(match);
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Column(
@@ -1158,7 +1494,7 @@ class _HeaderCenter extends StatelessWidget {
             FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                match.score,
+                score == null ? '—' : '${score.home} - ${score.away}',
                 style: TextStyle(
                   fontSize: 40,
                   height: 1.05,
@@ -1244,7 +1580,7 @@ class PostMatchVideos extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      for (final video in detail.videos)
+      for (final video in verifiedVideoLinks(detail))
         Card(
           child: ListTile(
             leading: const CircleAvatar(child: Icon(Icons.play_arrow_rounded)),
@@ -1263,9 +1599,9 @@ class PostMatchVideos extends StatelessWidget {
               tooltip: 'Copiar enlace de YouTube',
               icon: const Icon(Icons.link),
               onPressed: () async {
-                final url = video['url']?.toString() ?? '';
-                if (!url.startsWith('https://www.youtube.com/watch?v=')) return;
-                await Clipboard.setData(ClipboardData(text: url));
+                final url = _safeVerifiedVideoUrl(video);
+                if (url == null) return;
+                await Clipboard.setData(ClipboardData(text: url.toString()));
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Enlace de YouTube copiado')),
@@ -1276,6 +1612,37 @@ class PostMatchVideos extends StatelessWidget {
         ),
     ],
   );
+}
+
+/// v1 supplies links from an approved channel, not playback or image rights.
+/// Only expose a link when its canonical YouTube ID, HTTPS URL and channel
+/// verification agree. The future API must add separate embed/thumbnail rights.
+List<Json> verifiedVideoLinks(MatchDetail detail) => [
+  for (final video in detail.videos)
+    if (_safeVerifiedVideoUrl(video) != null) video,
+];
+
+Uri? _safeVerifiedVideoUrl(Json video) {
+  if (video['verificationStatus'] != 'VERIFIED_CHANNEL') return null;
+  final id = video['videoId']?.toString() ?? '';
+  final channel = video['channelId']?.toString() ?? '';
+  if (!RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(id) || channel.isEmpty) {
+    return null;
+  }
+  final uri = Uri.tryParse(video['url']?.toString() ?? '');
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host != 'www.youtube.com' ||
+      uri.port != 443 ||
+      uri.path != '/watch' ||
+      uri.userInfo.isNotEmpty) {
+    return null;
+  }
+  final videoIds = uri.queryParametersAll['v'];
+  if (videoIds == null || videoIds.length != 1 || videoIds.single != id) {
+    return null;
+  }
+  return uri;
 }
 
 /// Calm section skeleton while detail is still arriving.
@@ -1340,6 +1707,8 @@ class MatchStandingsTab extends StatelessWidget {
     this.awayTeamId,
     this.onRetry,
     this.stage,
+    this.season,
+    this.compactContext = false,
   });
 
   final Snapshot data;
@@ -1353,19 +1722,53 @@ class MatchStandingsTab extends StatelessWidget {
   /// that phase is shown (see standingsGroups).
   final String? stage;
 
+  /// Exact season carried by the match, when present.
+  final String? season;
+
+  /// Production Match Center uses a short compact window. Kept optional so
+  /// embedders that already request the full table retain their behaviour.
+  final bool compactContext;
+
   /// A visible refresh for this table is running (bounded or manual).
   final bool refreshing;
 
   /// Manual refresh offered once a pending table settled.
   final VoidCallback? onRetry;
 
+  void _openFullTable(BuildContext context) {
+    // The competition overview defaults to its current season. Keep this
+    // match's exact cached table/phase instead, with no extra context read.
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Tabla completa')),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              MatchStandingsTab(
+                data,
+                competitionId,
+                homeTeamId: homeTeamId,
+                awayTeamId: awayTeamId,
+                stage: stage,
+                season: season,
+                refreshing: false,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final hasRows = data.standings.any(
-      (table) =>
-          table['competitionId'] == competitionId &&
-          (table['rows'] as List? ?? const []).isNotEmpty,
+    final selectedTable = standingsTableFor(
+      data,
+      competitionId,
+      season: season,
     );
+    final hasRows = (selectedTable?['rows'] as List? ?? const []).isNotEmpty;
     if (hasRows) {
       // A stale table stays on screen while it is revalidated.
       return Column(
@@ -1380,6 +1783,12 @@ class MatchStandingsTab extends StatelessWidget {
                 style: TextStyle(color: muted, fontSize: 12),
               ),
             ),
+          if (data.standingsStale || data.stale)
+            const Text(
+              'Tabla guardada · Puede no estar actualizada',
+              key: ValueKey('standings-saved'),
+              style: TextStyle(color: muted, fontSize: 12),
+            ),
           Standings(
             data,
             competitionId,
@@ -1390,10 +1799,22 @@ class MatchStandingsTab extends StatelessWidget {
             // their own labelled group, never one mixed table.
             focusTeamIds: {?homeTeamId, ?awayTeamId},
             stage: stage,
+            season: season,
+            contextRows: compactContext ? 7 : null,
             highlightedTeams: {?homeTeamId: lime, ?awayTeamId: awaySideColor},
             // In-play evidence from the snapshot itself (never the clock).
             liveTeamIds: liveTeamIds(data, competitionId),
           ),
+          if (compactContext)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: const ValueKey('standings-show-full'),
+                onPressed: () => _openFullTable(context),
+                icon: const Icon(Icons.open_in_new_rounded, size: 17),
+                label: const Text('Ver tabla completa'),
+              ),
+            ),
         ],
       );
     }
@@ -1416,8 +1837,25 @@ class MatchStandingsTab extends StatelessWidget {
         ],
       );
     }
-    // NO_DATA negative cache, missing or not fetchable: no retry action.
-    // unavailable (provider has no table), missing or not fetchable.
+    if (data.standingsState != 'unavailable') {
+      return Column(
+        children: [
+          _EmptySection(
+            Icons.table_rows_outlined,
+            data.stale || data.standingsState == 'error'
+                ? 'No se pudo actualizar la tabla'
+                : 'Tabla aún no descargada',
+          ),
+          if (onRetry != null)
+            OutlinedButton.icon(
+              key: const ValueKey('standings-retry'),
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Reintentar'),
+            ),
+        ],
+      );
+    }
     return const _EmptySection(
       Icons.table_rows_outlined,
       'Sin tabla disponible',
@@ -1500,49 +1938,127 @@ class Statistics extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final stats = detail?.statistics.isNotEmpty == true
-        ? detail!.statistics
-        : match.statistics;
+    final stats = matchStatisticsForDisplay(match, detail);
     if (stats.isEmpty) {
+      if (detail?.offlineUnavailable == true) {
+        return const _EmptySection(
+          Icons.wifi_off_rounded,
+          'No se pudo conectar. Estadísticas no disponibles.',
+        );
+      }
       if (detail?.statisticsPending == true) {
         return const _PendingSection('Cargando estadísticas…');
       }
-      return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
+      return const _EmptySection(
+        Icons.bar_chart_rounded,
+        'Todavía no hay estadísticas disponibles.',
+      );
     }
     final compact = mode == StatisticsDisplayMode.compact;
-    final ordered = orderedStatistics(displayableStatistics(stats));
-    if (ordered.isEmpty) {
-      return const _EmptySection(Icons.bar_chart_rounded, 'Sin estadísticas');
+    final viewModel = MatchStatisticsViewModel.from(stats);
+    if (viewModel.rows.isEmpty) {
+      return const _EmptySection(
+        Icons.bar_chart_rounded,
+        'Todavía no hay estadísticas disponibles.',
+      );
     }
-    final visible = compact ? ordered.take(4).toList() : ordered;
+    final visible = compact ? viewModel.rows.take(4).toList() : viewModel.rows;
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
         child: mode == StatisticsDisplayMode.compact
             ? Column(
                 children: [
-                  for (final stat in visible) _StatisticComparison(stat),
+                  for (final row in visible) _StatisticComparison(row),
                 ],
               )
-            : _FullStatistics(visible),
+            : MatchStatisticsSection(rows: visible),
       ),
     );
   }
+}
+
+/// A late detail response takes precedence only when it contains at least
+/// one statistic FutBeat can actually show. An unknown-only response must
+/// not erase valid statistics already present in the canonical snapshot.
+List<Json> matchStatisticsForDisplay(FootballMatch match, MatchDetail? detail) {
+  final detailed = detail?.statistics ?? const <Json>[];
+  if (displayableStatistics(detailed).isNotEmpty) return detailed;
+  return match.statistics;
+}
+
+/// Presentation model prepared once per statistics build. It normalizes
+/// aliases, removes duplicates/data-less rows and freezes a stable order
+/// without deriving any provider metric.
+class MatchStatisticsViewModel {
+  const MatchStatisticsViewModel(this.rows);
+
+  factory MatchStatisticsViewModel.from(List<Json> stats) =>
+      MatchStatisticsViewModel(
+        orderedStatistics(displayableStatistics(stats))
+            .map(MatchStatisticRowViewModel.from)
+            .toList(growable: false),
+      );
+
+  final List<MatchStatisticRowViewModel> rows;
+}
+
+class MatchStatisticRowViewModel {
+  const MatchStatisticRowViewModel({
+    required this.source,
+    required this.key,
+    required this.label,
+    required this.group,
+    required this.home,
+    required this.away,
+    required this.homeText,
+    required this.awayText,
+    required this.higherIsBetter,
+    required this.showsBar,
+  });
+
+  factory MatchStatisticRowViewModel.from(Json stat) {
+    final name = statisticName(stat);
+    final key = _statKey(name);
+    return MatchStatisticRowViewModel(
+      source: stat,
+      key: key,
+      label: _statLabel(name) ?? 'Estadística',
+      group: _statisticGroup(name),
+      home: statNumericValue(stat['home']),
+      away: statNumericValue(stat['away']),
+      homeText: _statValue(stat['home'], stat['unit']),
+      awayText: _statValue(stat['away'], stat['unit']),
+      higherIsBetter: statisticHigherIsBetter(name),
+      showsBar: statisticShowsComparisonBar(name),
+    );
+  }
+
+  final Json source;
+  final String key;
+  final String label;
+  final MatchStatisticGroup group;
+  final double? home;
+  final double? away;
+  final String homeText;
+  final String awayText;
+  final bool higherIsBetter;
+  final bool showsBar;
 }
 
 /// Provider statistic name: normalized rows use `label`, raw rows `type`.
 String statisticName(Json stat) =>
     (stat['label'] ?? stat['type'])?.toString() ?? '';
 
-enum _StatisticGroup { summary, attack, passes, defense, discipline, other }
+enum MatchStatisticGroup { summary, attack, passes, defense, discipline, other }
 
 const _statisticGroupLabels = {
-  _StatisticGroup.summary: 'Resumen',
-  _StatisticGroup.attack: 'Ataque',
-  _StatisticGroup.passes: 'Pases',
-  _StatisticGroup.defense: 'Defensa',
-  _StatisticGroup.discipline: 'Disciplina',
-  _StatisticGroup.other: 'Otras estadísticas',
+  MatchStatisticGroup.summary: 'Resumen',
+  MatchStatisticGroup.attack: 'Ataque',
+  MatchStatisticGroup.passes: 'Pases',
+  MatchStatisticGroup.defense: 'Defensa / duelos',
+  MatchStatisticGroup.discipline: 'Disciplina',
+  MatchStatisticGroup.other: 'Otras estadísticas',
 };
 
 const _possessionKeys = {
@@ -1565,8 +2081,11 @@ const _passKeys = {
   'total passes',
   'accurate passes',
   'passes accurate',
+  'successful passes',
   'passes %',
   'pass accuracy',
+  'successful passes percentage',
+  'passes percentage',
   'pases',
 };
 const _cornerKeys = {'corners', 'corner kicks', 'córners', 'saques de esquina'};
@@ -1581,14 +2100,63 @@ const _disciplineKeys = {
 
 int _statisticPriority(String name) {
   final key = _statKey(name);
-  if (_possessionKeys.contains(key)) return 0;
-  if (_xgKeys.contains(key)) return 1;
-  if (_totalShotKeys.contains(key)) return 2;
-  if (_onTargetKeys.contains(key)) return 3;
-  if (_passKeys.contains(key)) return 4;
-  if (_cornerKeys.contains(key)) return 5;
-  if (_disciplineKeys.contains(key)) return 6;
-  return 7;
+  final preferred = <String>[
+    'possession',
+    'ball possession',
+    'possession %',
+    'posesión',
+    'expected goals',
+    'expected goals (xg)',
+    'xg',
+    'shots',
+    'total shots',
+    'shots total',
+    'tiros',
+    'shots on target',
+    'shots on goal',
+    'on target',
+    'shot on goal',
+    'big chances',
+    'shots off target',
+    'shots off goal',
+    'off target',
+    'shot off goal',
+    'blocked shots',
+    'shots blocked',
+    'corners',
+    'corner kicks',
+    'córners',
+    'saques de esquina',
+    'offsides',
+    'attacks',
+    'dangerous attacks',
+    'passes',
+    'total passes',
+    'pases',
+    'accurate passes',
+    'passes accurate',
+    'successful passes',
+    'passes %',
+    'pass accuracy',
+    'successful passes percentage',
+    'passes percentage',
+    'recoveries',
+    'ball recoveries',
+    'tackles',
+    'duels won',
+    'interceptions',
+    'clearances',
+    'saves',
+    'goalkeeper saves',
+    'fouls',
+    'faltas',
+    'yellow cards',
+    'tarjetas amarillas',
+    'red cards',
+    'tarjetas rojas',
+  ];
+  final index = preferred.indexOf(key);
+  return index < 0 ? preferred.length : index;
 }
 
 /// Stable, deterministic priority. No row is deduplicated or synthesized.
@@ -1602,13 +2170,16 @@ List<Json> orderedStatistics(List<Json> stats) {
   return indexed.map((entry) => entry.$2).toList();
 }
 
-_StatisticGroup _statisticGroup(String name) {
+MatchStatisticGroup _statisticGroup(String name) {
   final key = _statKey(name);
-  if (_possessionKeys.contains(key) || _xgKeys.contains(key)) {
-    return _StatisticGroup.summary;
-  }
-  if (_totalShotKeys.contains(key) ||
+  if (_possessionKeys.contains(key) ||
+      _xgKeys.contains(key) ||
+      _totalShotKeys.contains(key) ||
       _onTargetKeys.contains(key) ||
+      key == 'big chances') {
+    return MatchStatisticGroup.summary;
+  }
+  if (_cornerKeys.contains(key) ||
       const {
         'shots off target',
         'shots off goal',
@@ -1622,27 +2193,32 @@ _StatisticGroup _statisticGroup(String name) {
         'shots outsidebox',
         'attacks',
         'dangerous attacks',
+        'offsides',
       }.contains(key)) {
-    return _StatisticGroup.attack;
+    return MatchStatisticGroup.attack;
   }
   if (_passKeys.contains(key) || const {'crosses', 'centros'}.contains(key)) {
-    return _StatisticGroup.passes;
+    return MatchStatisticGroup.passes;
   }
-  if (_cornerKeys.contains(key) ||
-      const {
-        'saves',
-        'goalkeeper saves',
-        'tackles',
-        'offsides',
-        'free kicks',
-        'throw ins',
-        'throw-ins',
-        'goal kicks',
-      }.contains(key)) {
-    return _StatisticGroup.defense;
+  if (const {
+    'saves',
+    'goalkeeper saves',
+    'tackles',
+    'recoveries',
+    'ball recoveries',
+    'interceptions',
+    'clearances',
+    'duels won',
+    'aerials won',
+    'free kicks',
+    'throw ins',
+    'throw-ins',
+    'goal kicks',
+  }.contains(key)) {
+    return MatchStatisticGroup.defense;
   }
-  if (_disciplineKeys.contains(key)) return _StatisticGroup.discipline;
-  return _StatisticGroup.other;
+  if (_disciplineKeys.contains(key)) return MatchStatisticGroup.discipline;
+  return MatchStatisticGroup.other;
 }
 
 /// Only explicit performance metrics get winner emphasis. Unknown and
@@ -1654,43 +2230,35 @@ bool statisticHigherIsBetter(String name) {
       _totalShotKeys.contains(key) ||
       _onTargetKeys.contains(key) ||
       _passKeys.contains(key) ||
-      _cornerKeys.contains(key) ||
-      const {
-        'shots off target',
-        'shots off goal',
-        'off target',
-        'shot off goal',
-        'blocked shots',
-        'shots blocked',
-        'shots inside box',
-        'shots insidebox',
-        'shots outside box',
-        'shots outsidebox',
-        'attacks',
-        'dangerous attacks',
-        'saves',
-        'goalkeeper saves',
-        'tackles',
-        'crosses',
-      }.contains(key);
+      const {'big chances', 'attacks', 'dangerous attacks'}.contains(key);
 }
 
-class _FullStatistics extends StatelessWidget {
-  const _FullStatistics(this.stats);
+/// Bars are limited to metrics where a relative comparison is useful. The
+/// value remains the provider value; xG and counts use only a relative scale,
+/// never a fabricated percentage.
+bool statisticShowsComparisonBar(String name) {
+  final key = _statKey(name);
+  return _possessionKeys.contains(key) ||
+      _xgKeys.contains(key) ||
+      _totalShotKeys.contains(key) ||
+      _onTargetKeys.contains(key) ||
+      _passKeys.contains(key);
+}
 
-  final List<Json> stats;
+class MatchStatisticsSection extends StatelessWidget {
+  const MatchStatisticsSection({required this.rows, super.key});
+
+  final List<MatchStatisticRowViewModel> rows;
 
   @override
   Widget build(BuildContext context) {
-    final grouped = <_StatisticGroup, List<Json>>{};
-    for (final stat in stats) {
-      grouped
-          .putIfAbsent(_statisticGroup(statisticName(stat)), () => [])
-          .add(stat);
+    final grouped = <MatchStatisticGroup, List<MatchStatisticRowViewModel>>{};
+    for (final row in rows) {
+      grouped.putIfAbsent(row.group, () => []).add(row);
     }
     return Column(
       children: [
-        for (final group in _StatisticGroup.values)
+        for (final group in MatchStatisticGroup.values)
           if (grouped[group]?.isNotEmpty == true) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 10, 4, 2),
@@ -1707,7 +2275,7 @@ class _FullStatistics extends StatelessWidget {
                 ),
               ),
             ),
-            for (final stat in grouped[group]!) _StatisticComparison(stat),
+            for (final row in grouped[group]!) _StatisticComparison(row),
           ],
       ],
     );
@@ -1715,27 +2283,29 @@ class _FullStatistics extends StatelessWidget {
 }
 
 class _StatisticComparison extends StatelessWidget {
-  const _StatisticComparison(this.stat);
+  const _StatisticComparison(this.row);
 
-  final Json stat;
+  final MatchStatisticRowViewModel row;
 
   @override
   Widget build(BuildContext context) {
-    final home = statNumericValue(stat['home']);
-    final away = statNumericValue(stat['away']);
+    final home = row.home;
+    final away = row.away;
     final comparable = home != null && away != null && home >= 0 && away >= 0;
     final total = comparable ? home + away : 0.0;
-    final higherIsBetter = statisticHigherIsBetter(statisticName(stat));
+    final higherIsBetter = row.higherIsBetter;
     final homeLeads = higherIsBetter && comparable && home > away;
     final awayLeads = higherIsBetter && comparable && away > home;
-    final label = _statLabel(statisticName(stat)) ?? 'Estadística';
-    final homeText = _statValue(stat['home'], stat['unit']);
-    final awayText = _statValue(stat['away'], stat['unit']);
+    final label = row.label;
+    final homeText = row.homeText;
+    final awayText = row.awayText;
 
     return Semantics(
       container: true,
       excludeSemantics: true,
-      label: '$label. Local $homeText. Visitante $awayText.',
+      label:
+          '$label: local ${_statSemanticValue(homeText)}, '
+          'visitante ${_statSemanticValue(awayText)}.',
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Column(
@@ -1746,7 +2316,7 @@ class _StatisticComparison extends StatelessWidget {
                   homeText,
                   color: lime,
                   highlighted: homeLeads,
-                  key: ValueKey('stat-${_statKey(statisticName(stat))}-home'),
+                  key: ValueKey('stat-${row.key}-home'),
                 ),
                 Expanded(
                   child: Padding(
@@ -1767,11 +2337,11 @@ class _StatisticComparison extends StatelessWidget {
                   awayText,
                   color: awaySideColor,
                   highlighted: awayLeads,
-                  key: ValueKey('stat-${_statKey(statisticName(stat))}-away'),
+                  key: ValueKey('stat-${row.key}-away'),
                 ),
               ],
             ),
-            if (comparable) ...[
+            if (row.showsBar && comparable && total > 0) ...[
               const SizedBox(height: 7),
               Row(
                 key: const ValueKey('stat-bars'),
@@ -1885,6 +2455,14 @@ String _statValue(dynamic value, dynamic unit) {
   return '$text$suffix';
 }
 
+String _statSemanticValue(String value) {
+  if (value == '—') return 'sin dato';
+  return value
+      .replaceAll('%', ' por ciento')
+      .replaceAll('.', ' punto ')
+      .replaceAll(',', ' coma ');
+}
+
 /// Canonical key of a provider statistic name: case, `_`/`-`, camelCase and
 /// a singular/plural last word ("Throw In", "throw_ins", "YellowCard") all
 /// map to the same key of [_statLabels] when one exists.
@@ -1955,6 +2533,8 @@ const _statLabels = {
   'throw-ins': 'Saques de banda',
   'goal kicks': 'Saques de meta',
   'tackles': 'Entradas',
+  'recoveries': 'Recuperaciones',
+  'ball recoveries': 'Recuperaciones',
   'crosses': 'Centros',
   'substitutions': 'Cambios',
   'shot on goal': 'Tiros a puerta',
@@ -2079,7 +2659,67 @@ String? timelineSide(Json event, FootballMatch match, Snapshot data) {
   return null;
 }
 
-const _neutralEvents = {'KICKOFF', 'HALFTIME', 'FULL_TIME'};
+const _neutralEvents = {
+  'KICKOFF',
+  'HALFTIME',
+  'SECOND_HALF',
+  'EXTRA_TIME',
+  'PENALTIES',
+  'FULL_TIME',
+};
+
+String timelineDisplayType(Json event) {
+  final type = event['type']?.toString() ?? 'OTHER';
+  if (type == 'GOAL' && event['ownGoal'] == true) return 'OWN_GOAL';
+  if (type == 'GOAL' && event['penalty'] == true) return 'PENALTY_GOAL';
+  return type;
+}
+
+String? timelineScoreAfter(Json event) {
+  final score = event['score'];
+  if (score is! Map) return null;
+  final home = score['home'], away = score['away'];
+  return home is int && away is int ? '$home–$away' : null;
+}
+
+String? _timelinePlayerId(Json event, Snapshot data, {bool assist = false}) {
+  final raw =
+      event[assist ? 'canonicalAssistPlayerId' : 'canonicalPlayerId'] ??
+      event[assist ? 'assistPlayerId' : 'playerId'] ??
+      (event['type'] == 'SUBSTITUTION'
+          ? event[assist ? 'inPlayerId' : 'outPlayerId']
+          : null);
+  final id = raw?.toString();
+  if (id == null || id.isEmpty || data.player(id) == null) return null;
+  // A canonical event may still name an older explicit ID. Reuse the known
+  // canonical roster row without confusing reversible display aliases with
+  // backend identity evidence. Unknown/cyclic chains keep the existing route.
+  var current = id;
+  final seen = <String>{};
+  for (var i = 0; i < 8; i++) {
+    if (!seen.add(current) || data.presentationRedirectIds.contains(current)) {
+      return id;
+    }
+    final next = data.entityRedirects[current];
+    if (next == null || next.isEmpty || next == current) {
+      if (current == id) return id;
+      final target = data.players.where((player) => player.id == current).firstOrNull;
+      return target != null && target.json['displaySourceAliasId'] == null
+          ? current
+          : id;
+    }
+    current = next;
+  }
+  return id;
+}
+
+String? _timelinePlayerName(Json event, Snapshot data, {bool assist = false}) {
+  final id = _timelinePlayerId(event, data, assist: assist);
+  final entity = id == null ? null : data.player(id);
+  final raw = event[assist ? 'assistName' : 'playerName']?.toString().trim();
+  if (entity != null) return entity.name;
+  return raw == null || raw.isEmpty ? null : raw;
+}
 
 /// One header line: a real scorer with all their minutes on one side, or an
 /// anonymous goal ("Gol 55′") that is never merged with another one.
@@ -2091,6 +2731,17 @@ class ScorerLine {
   String get label => name == null
       ? 'Gol ${minutes.join(', ')}'
       : '$name ${minutes.join(', ')}';
+}
+
+String _heroGoalMinute(Json event) {
+  final minute = eventMinuteLabel(event);
+  if (event['ownGoal'] == true || event['type'] == 'OWN_GOAL') {
+    return '$minute (a.g.)';
+  }
+  if (event['penalty'] == true || event['type'] == 'PENALTY_GOAL') {
+    return '$minute (p.)';
+  }
+  return minute;
 }
 
 /// #99 header scorers from the already-deduplicated timeline (#121): only
@@ -2121,16 +2772,18 @@ class ScorerLine {
         event['playerId'].toString(): event['canonicalPlayerId'].toString(),
   };
   for (final event in timeline) {
-    if (event['type'] != 'GOAL') continue;
+    if (!const {'GOAL', 'PENALTY_GOAL', 'OWN_GOAL'}.contains(event['type'])) {
+      continue;
+    }
     final side = timelineSide(event, match, data);
     if (side == null) continue;
     goals[side]!.add(event);
   }
   final score = match.json['score'];
   for (final side in ['home', 'away']) {
-    final cap = score is Map ? score[side] : null;
+    final cap = _heroGoalCount(score is Map ? score[side] : null);
     final list = goals[side]!;
-    if (cap is! int || cap < 0) continue;
+    if (cap == null) continue;
     while (list.length > cap) {
       final anonymous = list.lastIndexWhere(
         (event) => _scorerName(event, data, canonicalOf) == null,
@@ -2143,12 +2796,12 @@ class ScorerLine {
     final byIdentity = <String, ScorerLine>{};
     for (final event in events) {
       final name = _scorerName(event, data, canonicalOf);
-      final minute = eventMinuteLabel(event);
+      final minute = _heroGoalMinute(event);
       if (name == null) {
         result.add(ScorerLine(null, [minute]));
         continue;
       }
-      final identity = _scorerIdentity(event, name, canonicalOf);
+      final identity = _scorerIdentity(event, name, canonicalOf, data);
       final existing = byIdentity[identity];
       if (existing != null) {
         existing.minutes.add(minute);
@@ -2197,9 +2850,10 @@ String _scorerIdentity(
   Json event,
   String name,
   Map<String, String> canonicalOf,
+  Snapshot data,
 ) {
   final canonicalId = _canonicalScorerId(event, canonicalOf);
-  if (canonicalId != null) return 'id:$canonicalId';
+  if (canonicalId != null) return 'id:${data.resolveEntityId(canonicalId)}';
   final providerId = event['detailSource'] == true
       ? event['playerId']?.toString().trim() ?? ''
       : '';
@@ -2263,6 +2917,32 @@ class _HeaderScorers extends StatelessWidget {
   );
 }
 
+/// Timeline taps reuse a known lineup row and the same local panel as pitch
+/// and bench. Only explicit canonical IDs qualify; homonyms never participate.
+String _matchPlayerCanonicalId(Json player, Snapshot? data) {
+  final id = player['canonicalId']?.toString().trim() ?? '';
+  if (id.isEmpty || data == null) return id;
+  return _timelinePlayerId({'canonicalPlayerId': id}, data) ?? id;
+}
+
+Future<void> _openTimelinePlayer(BuildContext context, String canonicalId) async {
+  final scope = MatchPlayerScope.maybeOf(context);
+  if (scope != null) {
+    final matches = <({Json player, String side})>[
+      for (final player in [...scope.detail.homeStarters, ...scope.detail.homeSubstitutes])
+        if (_matchPlayerCanonicalId(player, scope.data) == canonicalId) (player: player, side: 'home'),
+      for (final player in [...scope.detail.awayStarters, ...scope.detail.awaySubstitutes])
+        if (_matchPlayerCanonicalId(player, scope.data) == canonicalId) (player: player, side: 'away'),
+    ];
+    if (matches.length == 1) {
+      await showMatchPlayerSheet(context, matches.single.player, matches.single.side);
+      return;
+    }
+  }
+  // Older/partial contexts retain their verified canonical profile navigation.
+  await context.push<void>('/player/$canonicalId');
+}
+
 class MatchTimeline extends StatelessWidget {
   const MatchTimeline(this.data, this.match, this.detail, {super.key});
 
@@ -2274,6 +2954,12 @@ class MatchTimeline extends StatelessWidget {
   Widget build(BuildContext context) {
     final timeline = mergedMatchTimeline(match, detail);
     if (timeline.isEmpty) {
+      if (detail.offlineUnavailable) {
+        return const _EmptySection(
+          Icons.wifi_off_rounded,
+          'No se pudo conectar. Eventos no disponibles.',
+        );
+      }
       if (detail.pending) return const _PendingSection('Cargando eventos…');
       return const _EmptySection(Icons.timeline_rounded, 'Sin eventos');
     }
@@ -2282,17 +2968,21 @@ class MatchTimeline extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          children: [
-            for (final event in timeline)
-              _neutralEvents.contains(event['type'])
-                  ? _TimelineDivider(event)
-                  : _TimelineRow(
-                      event: event,
-                      data: data,
-                      side: timelineSide(event, match, data),
-                    ),
-          ],
+        child: ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: timeline.length,
+          itemBuilder: (context, index) {
+            final event = timeline[index];
+            return _neutralEvents.contains(event['type'])
+                ? _TimelineDivider(event)
+                : _TimelineRow(
+                    event: event,
+                    data: data,
+                    side: timelineSide(event, match, data),
+                    emphasized: match.isLive && index == timeline.length - 1,
+                  );
+          },
         ),
       ),
     );
@@ -2308,35 +2998,39 @@ class _TimelineDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     final type = event['type']?.toString() ?? '';
     final line = Expanded(child: Container(height: 1, color: _cardBorder));
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      child: Row(
-        children: [
-          line,
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .06),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(eventIcon(type), size: 14, color: eventColor(type)),
-                const SizedBox(width: 5),
-                Text(
-                  eventLabel(type),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
+    return Semantics(
+      label: eventLabel(type),
+      header: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Row(
+          children: [
+            line,
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .06),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(eventIcon(type), size: 14, color: eventColor(type)),
+                  const SizedBox(width: 5),
+                  Text(
+                    eventLabel(type),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          line,
-        ],
+            line,
+          ],
+        ),
       ),
     );
   }
@@ -2347,16 +3041,22 @@ class _TimelineRow extends StatelessWidget {
     required this.event,
     required this.data,
     required this.side,
+    required this.emphasized,
   });
 
   final Json event;
   final Snapshot data;
   final String? side;
+  final bool emphasized;
 
   @override
   Widget build(BuildContext context) {
-    final type = event['type']?.toString() ?? '';
-    final player = data.player(event['playerId']?.toString() ?? '');
+    final type = timelineDisplayType(event);
+    final playerId = _timelinePlayerId(event, data);
+    final player = playerId == null ? null : data.player(playerId);
+    final playerName = _timelinePlayerName(event, data);
+    final assistId = _timelinePlayerId(event, data, assist: true);
+    final assistName = _timelinePlayerName(event, data, assist: true);
     final team = data.team(event['teamId']?.toString() ?? '');
     final rawLabel = event['label']?.toString().trim() ?? '';
     final detailParts = (event['detail']?.toString() ?? '')
@@ -2368,23 +3068,32 @@ class _TimelineRow extends StatelessWidget {
         ? rawLabel
         : eventLabel(type);
     final title =
-        player?.name ??
+        playerName ??
         (detailParts.isNotEmpty
             ? detailParts.first
             : rawLabel.isNotEmpty
             ? rawLabel
             : typeLabel);
-    final subtitle = <String>[
-      if (title != typeLabel) typeLabel,
-      for (final part in detailParts)
-        if (part != title) part,
-      if (side == null && team != null) team.displayName,
-    ].join(' · ');
-
+    final score = timelineScoreAfter(event);
+    final metadata = timelineMetadata(
+      event: event,
+      typeLabel: typeLabel,
+      title: title,
+      playerName: playerName,
+      assistName: assistName,
+      score: score,
+      teamName: side == null ? team?.displayName : null,
+    );
     final content = _TimelineContent(
+      data: data,
       type: type,
       title: title,
-      subtitle: subtitle,
+      metadata: metadata,
+      playerId: playerId,
+      playerName: playerName,
+      assistName: assistName,
+      assistId: assistId,
+      score: score,
       alignEnd: side == 'home',
     );
     final minute = _MinuteBubble(eventMinuteLabel(event), type: type);
@@ -2413,13 +3122,37 @@ class _TimelineRow extends StatelessWidget {
       ),
     };
 
-    return InkWell(
-      onTap: player == null
-          ? null
-          : () => context.push('/player/${event['playerId']}'),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        child: row,
+    final semantic = [
+      eventMinuteLabel(event),
+      typeLabel,
+      ?playerName,
+      if (assistName != null) 'Asistencia de $assistName',
+      if (team != null) team.displayName,
+      if (score != null) 'Marcador $score',
+    ].join(', ');
+    return Semantics(
+      key: ValueKey(
+        'timeline-event-${event['id'] ?? type}-${eventMinuteLabel(event)}',
+      ),
+      label: semantic,
+      button: playerId != null,
+      child: Ink(
+        key: emphasized ? const ValueKey('timeline-latest-live') : null,
+        decoration: emphasized
+            ? BoxDecoration(
+                color: lime.withValues(alpha: .055),
+                border: const Border(left: BorderSide(color: lime, width: 2)),
+              )
+            : null,
+        child: InkWell(
+          onTap: player == null
+              ? null
+              : () => _openTimelinePlayer(context, playerId!),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            child: row,
+          ),
+        ),
       ),
     );
   }
@@ -2461,36 +3194,74 @@ class _MinuteBubble extends StatelessWidget {
 
 class _TimelineContent extends StatelessWidget {
   const _TimelineContent({
+    required this.data,
     required this.type,
     required this.title,
-    required this.subtitle,
+    required this.metadata,
+    required this.playerId,
+    required this.playerName,
+    required this.assistName,
+    required this.assistId,
+    required this.score,
     required this.alignEnd,
   });
 
+  final Snapshot data;
   final String type;
   final String title;
-  final String subtitle;
+  final List<String> metadata;
+  final String? playerId;
+  final String? playerName;
+  final String? assistName;
+  final String? assistId;
+  final String? score;
   final bool alignEnd;
 
   @override
   Widget build(BuildContext context) {
+    final subtitle = metadata.join(' · ');
+    final isSubstitution = type == 'SUBSTITUTION';
     final text = Flexible(
       child: Column(
         crossAxisAlignment: alignEnd
             ? CrossAxisAlignment.end
             : CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: alignEnd ? TextAlign.end : TextAlign.start,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.2,
-              fontWeight: type == 'GOAL' ? FontWeight.w900 : FontWeight.w700,
+          _TimelinePerson(
+            entity: data.player(
+              (isSubstitution && assistName != null ? assistId : playerId) ??
+                  '',
             ),
+            name: isSubstitution && assistName != null ? assistName! : title,
+            id: isSubstitution && assistName != null ? assistId : playerId,
+            prefix: isSubstitution
+                ? assistName != null
+                      ? '↑ '
+                      : playerName != null
+                      ? '↓ '
+                      : ''
+                : '',
+            alignEnd: alignEnd,
+            prominent:
+                type == 'GOAL' || type == 'OWN_GOAL' || type == 'PENALTY_GOAL',
           ),
+          if (isSubstitution && assistName != null && playerName != null)
+            _TimelinePerson(
+              name: title,
+              id: playerId,
+              entity: data.player(playerId ?? ''),
+              prefix: '↓ ',
+              alignEnd: alignEnd,
+            ),
+          if (assistName != null && !isSubstitution)
+            _TimelinePerson(
+              name: assistName!,
+              id: assistId,
+              entity: data.player(assistId ?? ''),
+              prefix: 'Asistencia: ',
+              alignEnd: alignEnd,
+              mutedStyle: true,
+            ),
           if (subtitle.isNotEmpty)
             Text(
               subtitle,
@@ -2498,6 +3269,17 @@ class _TimelineContent extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               textAlign: alignEnd ? TextAlign.end : TextAlign.start,
               style: const TextStyle(color: muted, fontSize: 11, height: 1.2),
+            ),
+          if (score != null)
+            Text(
+              score!,
+              key: ValueKey('timeline-score-$score'),
+              textAlign: alignEnd ? TextAlign.end : TextAlign.start,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
             ),
         ],
       ),
@@ -2514,6 +3296,78 @@ class _TimelineContent extends StatelessWidget {
   }
 }
 
+class _TimelinePerson extends StatelessWidget {
+  const _TimelinePerson({
+    required this.name,
+    required this.id,
+    required this.prefix,
+    required this.alignEnd,
+    this.entity,
+    this.prominent = false,
+    this.mutedStyle = false,
+  });
+  final String name;
+  final String? id;
+  final String prefix;
+  final bool alignEnd, prominent, mutedStyle;
+  final Entity? entity;
+
+  @override
+  Widget build(BuildContext context) {
+    final person = entity;
+    final label = Text(
+      '$prefix$name',
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      textAlign: alignEnd ? TextAlign.end : TextAlign.start,
+      style: TextStyle(
+        color: mutedStyle ? muted : Colors.white,
+        decoration: id == null ? null : TextDecoration.underline,
+        decorationColor: muted,
+        fontSize: mutedStyle ? 11 : 13,
+        height: 1.2,
+        fontWeight: prominent ? FontWeight.w900 : FontWeight.w700,
+      ),
+    );
+    // Same verified canonical media/cache as Lineups and Profile. No name
+    // lookup or new API request; absent/unverified media keeps the text.
+    final photo =
+        person != null &&
+            entityImageCacheId(person).startsWith('fb_player_') &&
+            entityImageOf(context, person) != null
+        ? ExcludeSemantics(
+            child: ClipOval(child: EntityAvatar(person, size: 20)),
+          )
+        : null;
+    return InkWell(
+      onTap: id == null ? null : () => _openTimelinePlayer(context, id!),
+      borderRadius: BorderRadius.circular(4),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 24),
+        child: Align(
+          alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
+          child: photo == null
+              ? label
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: alignEnd
+                      ? [
+                          Flexible(child: label),
+                          const SizedBox(width: 4),
+                          photo,
+                        ]
+                      : [
+                          photo,
+                          const SizedBox(width: 4),
+                          Flexible(child: label),
+                        ],
+                ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Distinct visual per event type (cards drawn as real cards).
 class EventGlyph extends StatelessWidget {
   const EventGlyph(this.type, {this.size = 28, super.key});
@@ -2524,8 +3378,13 @@ class EventGlyph extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = eventColor(type);
-    final isCard = type == 'YELLOW_CARD' || type == 'RED_CARD';
-    final isGoal = type == 'GOAL';
+    final isCard = const {
+      'YELLOW_CARD',
+      'SECOND_YELLOW_CARD',
+      'YELLOW_RED_CARD',
+      'RED_CARD',
+    }.contains(type);
+    final isGoal = const {'GOAL', 'OWN_GOAL', 'PENALTY_GOAL'}.contains(type);
     return Semantics(
       label: eventLabel(type),
       child: Container(
@@ -2572,65 +3431,100 @@ class Lineups extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Players define a lineup. Some providers publish only the coaches (no
-    // starters, no bench); that is not a lineup and must not render as two
-    // lone "Entrenador" cards.
     final homeHasPlayers =
         detail.homeStarters.isNotEmpty || detail.homeSubstitutes.isNotEmpty;
     final awayHasPlayers =
         detail.awayStarters.isNotEmpty || detail.awaySubstitutes.isNotEmpty;
-    if (!homeHasPlayers && !awayHasPlayers) {
-      if (detail.lineupPending) {
+    final homeHasInfo =
+        homeHasPlayers ||
+        detail.homeCoach != null ||
+        detail.homeFormation != null;
+    final awayHasInfo =
+        awayHasPlayers ||
+        detail.awayCoach != null ||
+        detail.awayFormation != null;
+    if (!homeHasInfo && !awayHasInfo) {
+      if (detail.offlineUnavailable) {
+        return const _EmptySection(
+          Icons.wifi_off_rounded,
+          'No se pudo conectar. Alineaciones no disponibles.',
+        );
+      }
+      // A stale SCHEDULED/PRE_MATCH row can remain globally pending long
+      // after kickoff when the provider never published an XI. Retrying may
+      // continue in the background, but the section must not look like an
+      // endless foreground load once the match itself is awaiting an update.
+      if (detail.lineupPending &&
+          (!detail.available || !match.isAwaitingUpdate)) {
         return const _PendingSection('Cargando alineaciones…');
       }
-      final homeCoach = detail.homeCoach;
-      final awayCoach = detail.awayCoach;
-      if (homeCoach == null && awayCoach == null) {
-        return const _EmptySection(Icons.groups_outlined, 'Sin alineaciones');
-      }
-      return Column(
-        children: [
-          const _EmptySection(Icons.groups_outlined, 'Alineación no publicada'),
-          _CoachesOnly(
-            home: homeCoach == null
-                ? null
-                : (data.team(match.homeId), homeCoach),
-            away: awayCoach == null
-                ? null
-                : (data.team(match.awayId), awayCoach),
-          ),
-        ],
+      return const _EmptySection(
+        Icons.groups_outlined,
+        'Todavía no hay alineaciones disponibles.',
       );
     }
-    // Once one side has players, a coach-only side still gets its card (with
-    // an explicit "not published" note) so the coach is not lost.
-    final homeHasLineup = homeHasPlayers || detail.homeCoach != null;
-    final awayHasLineup = awayHasPlayers || detail.awayCoach != null;
 
-    return Column(
-      children: [
-        if (homeHasLineup)
-          _TeamLineup(
-            team: data.team(match.homeId)!,
-            formation: detail.homeFormation,
-            starters: detail.homeStarters,
-            substitutes: detail.homeSubstitutes,
-            coach: detail.homeCoach,
-            incidents: detail.incidents,
-            side: 'home',
-          ),
-        if (homeHasLineup && awayHasLineup) const SizedBox(height: 14),
-        if (awayHasLineup)
-          _TeamLineup(
-            team: data.team(match.awayId)!,
-            formation: detail.awayFormation,
-            starters: detail.awayStarters,
-            substitutes: detail.awaySubstitutes,
-            coach: detail.awayCoach,
-            incidents: detail.incidents,
-            side: 'away',
-          ),
-      ],
+    final homeTeam = data.team(match.homeId)!;
+    final awayTeam = data.team(match.awayId)!;
+    final homeRows = formationPlayerRows(
+      detail.homeFormation,
+      detail.homeStarters,
+    );
+    final awayRows = formationPlayerRows(
+      detail.awayFormation,
+      detail.awayStarters,
+    );
+    final combinedPitch = homeRows != null && awayRows != null;
+    return Padding(
+      key: const ValueKey('lineups-safe-bottom'),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.paddingOf(context).bottom + 88,
+      ),
+      child: Column(
+        children: [
+          if (combinedPitch) ...[
+            const _LineupLabel('Titulares'),
+            const SizedBox(height: 8),
+            _CombinedFormationPitch(
+              homeTeam: homeTeam,
+              awayTeam: awayTeam,
+              homeCoach: detail.homeCoach,
+              awayCoach: detail.awayCoach,
+              homeFormation: detail.homeFormation!,
+              awayFormation: detail.awayFormation!,
+              homeRows: homeRows,
+              awayRows: awayRows,
+              incidents: detail.incidents,
+            ),
+            const SizedBox(height: 14),
+          ],
+          if (homeHasInfo)
+            _TeamLineup(
+              team: homeTeam,
+              status: lineupPresentationState(detail.home),
+              formation: detail.homeFormation,
+              starters: detail.homeStarters,
+              substitutes: detail.homeSubstitutes,
+              coach: detail.homeCoach,
+              incidents: detail.incidents,
+              side: 'home',
+              showStarters: !combinedPitch,
+            ),
+          if (homeHasInfo && awayHasInfo) const SizedBox(height: 14),
+          if (awayHasInfo)
+            _TeamLineup(
+              team: awayTeam,
+              status: lineupPresentationState(detail.away),
+              formation: detail.awayFormation,
+              starters: detail.awayStarters,
+              substitutes: detail.awaySubstitutes,
+              coach: detail.awayCoach,
+              incidents: detail.incidents,
+              side: 'away',
+              showStarters: !combinedPitch,
+            ),
+        ],
+      ),
     );
   }
 }
@@ -2638,110 +3532,150 @@ class Lineups extends StatelessWidget {
 class _TeamLineup extends StatelessWidget {
   const _TeamLineup({
     required this.team,
+    required this.status,
     required this.formation,
     required this.starters,
     required this.substitutes,
     required this.coach,
     required this.incidents,
     required this.side,
+    this.showStarters = true,
   });
 
   final Entity team;
+  final LineupPresentationState status;
   final String? formation;
   final List<Json> starters;
   final List<Json> substitutes;
   final Json? coach;
   final List<Json> incidents;
   final String side;
+  final bool showStarters;
 
   @override
   Widget build(BuildContext context) {
-    final pitchRows = adaptiveFormationRows(formation, starters);
+    final pitchRows = formationPlayerRows(formation, starters);
     final accent = side == 'home' ? lime : awaySideColor;
+    final sideLabel = side == 'home' ? 'Local' : 'Visitante';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                EntityAvatar(team, size: 34),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    team.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
+            Semantics(
+              container: true,
+              label:
+                  '$sideLabel, ${team.displayName}${formation == null ? '' : ', formación $formation'}',
+              child: Row(
+                children: [
+                  EntityAvatar(team, size: 34),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          sideLabel,
+                          style: TextStyle(
+                            color: accent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          team.displayName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                if (formation != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: .12),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: accent.withValues(alpha: .5)),
-                    ),
-                    child: Text(
-                      formation!,
-                      style: TextStyle(
-                        color: accent,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                      ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Wrap(
+                      alignment: WrapAlignment.end,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        if (formation != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: accent.withValues(alpha: .12),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: accent.withValues(alpha: .5),
+                              ),
+                            ),
+                            child: Text(
+                              formation!,
+                              style: TextStyle(
+                                color: accent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        if (status != LineupPresentationState.unknown)
+                          _LineupStatusBadge(status),
+                      ],
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
             const SizedBox(height: 12),
-            if (starters.isNotEmpty) ...[
+            if (showStarters && starters.isNotEmpty) ...[
               const _LineupLabel('Titulares'),
               const SizedBox(height: 8),
-              _FormationPitch(pitchRows, incidents: incidents, side: side),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final textScale = MediaQuery.textScalerOf(context).scale(1);
+                  final usePitch =
+                      pitchRows != null &&
+                      constraints.maxWidth >= 340 &&
+                      textScale <= 1.3;
+                  return usePitch
+                      ? _FormationPitch(
+                          pitchRows,
+                          incidents: incidents,
+                          side: side,
+                        )
+                      : _LineupPlayerList(
+                          players: starters,
+                          side: side,
+                          incidents: incidents,
+                          role: 'titular',
+                        );
+                },
+              ),
+            ] else if (showStarters) ...[
+              const Text(
+                'Titulares no disponibles',
+                style: TextStyle(color: muted),
+              ),
             ],
             if (substitutes.isNotEmpty) ...[
               const SizedBox(height: 16),
               const _LineupLabel('Suplentes'),
               const SizedBox(height: 8),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final columns = constraints.maxWidth >= 460 ? 3 : 2;
-                  return GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: substitutes.length,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: columns,
-                      mainAxisExtent: 70,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 8,
-                    ),
-                    itemBuilder: (_, index) => _BenchPlayer(
-                      substitutes[index],
-                      side: side,
-                      events: lineupEventsForPlayer(
-                        substitutes[index],
-                        incidents,
-                        side,
-                      ),
-                    ),
-                  );
-                },
+              _LineupPlayerList(
+                players: substitutes,
+                side: side,
+                incidents: incidents,
+                role: 'suplente',
+                compactGrid: true,
               ),
             ],
-            if (starters.isEmpty && substitutes.isEmpty)
-              const Text(
-                'Alineación no publicada',
-                style: TextStyle(color: muted),
-              ),
             if (coach != null) ...[
               const SizedBox(height: 16),
               const _LineupLabel('Entrenador'),
@@ -2755,42 +3689,43 @@ class _TeamLineup extends StatelessWidget {
   }
 }
 
-/// Secondary info shown under "Alineación no publicada" when the provider
-/// sent only the coaches.
-class _CoachesOnly extends StatelessWidget {
-  const _CoachesOnly({required this.home, required this.away});
+enum LineupPresentationState { unknown, provisional, confirmed }
 
-  final (Entity?, Json)? home;
-  final (Entity?, Json)? away;
+/// Only an explicit side-level signal can produce a provisional/confirmed
+/// label. The mere presence of eleven players or a formation stays neutral.
+LineupPresentationState lineupPresentationState(Json side) {
+  final value = side['lineupStatus']?.toString().trim().toLowerCase();
+  return switch (value) {
+    'provisional' => LineupPresentationState.provisional,
+    'confirmed' => LineupPresentationState.confirmed,
+    _ => LineupPresentationState.unknown,
+  };
+}
+
+class _LineupStatusBadge extends StatelessWidget {
+  const _LineupStatusBadge(this.status);
+
+  final LineupPresentationState status;
 
   @override
-  Widget build(BuildContext context) {
-    Widget row((Entity?, Json) entry) => Row(
-      children: [
-        if (entry.$1 != null) ...[
-          EntityAvatar(entry.$1!, size: 26),
-          const SizedBox(width: 10),
-        ],
-        Expanded(child: _CoachTile(entry.$2)),
-      ],
-    );
-    return Card(
-      key: const ValueKey('lineup-coaches-only'),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _LineupLabel('Entrenadores'),
-            const SizedBox(height: 8),
-            if (home != null) row(home!),
-            if (home != null && away != null) const SizedBox(height: 8),
-            if (away != null) row(away!),
-          ],
-        ),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .06),
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(color: _cardBorder),
+    ),
+    child: Text(
+      status == LineupPresentationState.confirmed
+          ? 'Confirmada'
+          : 'Provisional',
+      style: const TextStyle(
+        color: Colors.white70,
+        fontSize: 10,
+        fontWeight: FontWeight.w800,
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _LineupLabel extends StatelessWidget {
@@ -2841,54 +3776,7 @@ List<List<Json>>? formationPlayerRows(String? formation, List<Json> starters) {
 }
 
 List<List<Json>> adaptiveFormationRows(String? formation, List<Json> starters) {
-  final declared = formationPlayerRows(formation, starters);
-  if (declared != null) return declared;
-  if (starters.isEmpty) return const [];
-
-  final ordered = [...starters]
-    ..sort(
-      (a, b) => (a['lineupPosition'] as num? ?? 999).compareTo(
-        b['lineupPosition'] as num? ?? 999,
-      ),
-    );
-  final groups = <int, List<Json>>{};
-  for (final player in ordered) {
-    groups.putIfAbsent(_positionBand(player['position']), () => []).add(player);
-  }
-  if (groups.length > 1) {
-    return [
-      for (final key in groups.keys.toList()..sort((a, b) => b - a))
-        groups[key]!,
-    ];
-  }
-
-  final rows = <List<Json>>[];
-  for (var index = 0; index < ordered.length; index += 4) {
-    rows.add(ordered.sublist(index, (index + 4).clamp(0, ordered.length)));
-  }
-  return rows.reversed.toList();
-}
-
-int _positionBand(dynamic raw) {
-  final value = raw?.toString().toLowerCase() ?? '';
-  if (value.contains('goal') || value == 'gk' || value.contains('portero')) {
-    return 0;
-  }
-  if (value.contains('def') ||
-      value == 'cb' ||
-      value == 'lb' ||
-      value == 'rb') {
-    return 1;
-  }
-  if (value.contains('mid') || value.contains('medio') || value == 'cm') {
-    return 2;
-  }
-  if (value.contains('for') ||
-      value.contains('att') ||
-      value.contains('wing')) {
-    return 3;
-  }
-  return 2;
+  return formationPlayerRows(formation, starters) ?? const [];
 }
 
 class LineupPlayerEvent {
@@ -2898,19 +3786,42 @@ class LineupPlayerEvent {
   final String? role;
 }
 
+bool _matchesLineupPlayerIdentity(
+  Json player,
+  Json evidence,
+  String providerKey, [
+  String? canonicalKey,
+]) {
+  final id = player['id']?.toString().trim() ?? '';
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  final canonical = canonicalKey == null
+      ? ''
+      : evidence[canonicalKey]?.toString().trim() ?? '';
+  // Canonical evidence wins over a colliding provider ID. Names and provider
+  // numbers never establish a canonical relationship.
+  if (canonical.isNotEmpty && canonicalId.isNotEmpty) {
+    return canonical == canonicalId;
+  }
+  return id.isNotEmpty && evidence[providerKey]?.toString() == id;
+}
+
 List<LineupPlayerEvent> lineupEventsForPlayer(
   Json player,
   List<Json> incidents,
   String side,
 ) {
-  final id = player['id']?.toString().trim();
-  if (id == null || id.isEmpty) return const [];
+  final id = player['id']?.toString().trim() ?? '';
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  if (id.isEmpty && canonicalId.isEmpty) return const [];
+  bool matches(Json incident, String providerKey, [String? canonicalKey]) =>
+      _matchesLineupPlayerIdentity(player, incident, providerKey, canonicalKey);
   final result = <LineupPlayerEvent>[];
   for (final incident in incidents) {
     final incidentSide =
         incident['side']?.toString() ?? incident['team']?.toString() ?? '';
     final type = incident['type']?.toString() ?? 'OTHER';
-    final ownGoal = type == 'GOAL' && incident['ownGoal'] == true;
+    final ownGoal = type == 'OWN_GOAL' ||
+        (type == 'GOAL' && incident['ownGoal'] == true);
     // The normalizer credits an own goal to the beneficiary. Its playerId
     // still identifies the scorer, who belongs to the opposite lineup.
     // With no side, the explicit provider playerId still identifies the
@@ -2920,23 +3831,328 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
         ? (incidentSide == 'home' ? 'away' : 'home')
         : incidentSide;
     if (playerSide.isNotEmpty && playerSide != side) continue;
-    final minute = incident['minute'] as int?;
-    if (incident['playerId']?.toString() == id) {
+    final rawMinute = incident['minute'];
+    // Match the timeline's contract: an invalid clock does not invalidate
+    // an otherwise identified event or prevent the lineup from rendering.
+    final minute = rawMinute is int ? rawMinute : null;
+    if (matches(incident, 'playerId', 'canonicalPlayerId')) {
       result.add(LineupPlayerEvent(ownGoal ? 'OWN_GOAL' : type, minute));
     }
     if (type == 'GOAL' &&
         !ownGoal &&
-        incident['assistPlayerId']?.toString() == id) {
+        matches(incident, 'assistPlayerId', 'canonicalAssistPlayerId')) {
       result.add(LineupPlayerEvent('ASSIST', minute));
     }
-    if (incident['outPlayerId']?.toString() == id) {
+    if (matches(incident, 'outPlayerId')) {
       result.add(LineupPlayerEvent('SUB_OUT', minute, role: 'out'));
     }
-    if (incident['inPlayerId']?.toString() == id) {
+    if (matches(incident, 'inPlayerId')) {
       result.add(LineupPlayerEvent('SUB_IN', minute, role: 'in'));
     }
   }
   return result;
+}
+
+class _CombinedFormationPitch extends StatelessWidget {
+  const _CombinedFormationPitch({
+    required this.homeTeam,
+    required this.awayTeam,
+    required this.homeCoach,
+    required this.awayCoach,
+    required this.homeFormation,
+    required this.awayFormation,
+    required this.homeRows,
+    required this.awayRows,
+    required this.incidents,
+  });
+
+  final Entity homeTeam;
+  final Entity awayTeam;
+  final Json? homeCoach;
+  final Json? awayCoach;
+  final String homeFormation;
+  final String awayFormation;
+  final List<List<Json>> homeRows;
+  final List<List<Json>> awayRows;
+  final List<Json> incidents;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final textScale = MediaQuery.textScalerOf(context).scale(1);
+      if (constraints.maxWidth < 340 || textScale > 1.3) {
+        return Column(
+          key: const ValueKey('lineups-accessible-list'),
+          children: [
+            _PitchTeamIdentity(
+              team: homeTeam,
+              sideLabel: 'Local',
+              formation: homeFormation,
+              accent: lime,
+              coach: homeCoach,
+            ),
+            const SizedBox(height: 8),
+            _LineupPlayerList(
+              players: homeRows.expand((row) => row).toList(),
+              side: 'home',
+              incidents: incidents,
+              role: 'titular local',
+            ),
+            const SizedBox(height: 16),
+            _PitchTeamIdentity(
+              team: awayTeam,
+              sideLabel: 'Visitante',
+              formation: awayFormation,
+              accent: awaySideColor,
+              coach: awayCoach,
+            ),
+            const SizedBox(height: 8),
+            _LineupPlayerList(
+              players: awayRows.expand((row) => row).toList(),
+              side: 'away',
+              incidents: incidents,
+              role: 'titular visitante',
+            ),
+          ],
+        );
+      }
+      final homeHeight = _requiredPitchRowHeight(
+        context,
+        constraints.maxWidth,
+        homeRows,
+        incidents,
+        'home',
+      );
+      final awayHeight = _requiredPitchRowHeight(
+        context,
+        constraints.maxWidth,
+        awayRows,
+        incidents,
+        'away',
+      );
+      final rowHeight = homeHeight > awayHeight ? homeHeight : awayHeight;
+      return Semantics(
+        container: true,
+        label:
+            'Cancha de titulares. Local ${homeTeam.displayName}, formación $homeFormation. Visitante ${awayTeam.displayName}, formación $awayFormation.',
+        child: ClipRRect(
+          key: const ValueKey('lineups-combined-pitch'),
+          borderRadius: BorderRadius.circular(10),
+          child: Column(
+            children: [
+              _PitchTeamIdentity(
+                team: homeTeam,
+                sideLabel: 'Local',
+                formation: homeFormation,
+                accent: lime,
+                coach: homeCoach,
+                onPitch: true,
+              ),
+              _FormationHalf(
+                key: const ValueKey('lineups-home-half'),
+                rowHeight: rowHeight,
+                rows: homeRows.reversed.toList(),
+                side: 'home',
+                incidents: incidents,
+                goalAtTop: true,
+              ),
+              _FormationHalf(
+                key: const ValueKey('lineups-away-half'),
+                rowHeight: rowHeight,
+                rows: awayRows,
+                side: 'away',
+                incidents: incidents,
+                goalAtTop: false,
+              ),
+              _PitchTeamIdentity(
+                team: awayTeam,
+                sideLabel: 'Visitante',
+                formation: awayFormation,
+                accent: awaySideColor,
+                coach: awayCoach,
+                onPitch: true,
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _FormationHalf extends StatelessWidget {
+  const _FormationHalf({
+    super.key,
+    required this.rows,
+    required this.side,
+    required this.incidents,
+    required this.goalAtTop,
+    required this.rowHeight,
+  });
+
+  final List<List<Json>> rows;
+  final String side;
+  final List<Json> incidents;
+  final bool goalAtTop;
+  final double rowHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    const edgeInset = 12.0;
+    final height =
+        lineupPitchHalfHeight + (rowHeight - lineupPitchRowHeight) * 5;
+    final travel = height - rowHeight - edgeInset * 2;
+    return SizedBox(
+      height: height,
+      child: CustomPaint(
+        painter: _PitchHalfPainter(goalAtTop: goalAtTop),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            for (var index = 0; index < rows.length; index++)
+              Positioned(
+                top:
+                    edgeInset +
+                    (rows.length == 1
+                        ? travel / 2
+                        : travel * index / (rows.length - 1)),
+                left: 4,
+                right: 4,
+                height: rowHeight,
+                child: _PitchPlayerRow(
+                  row: rows[index],
+                  height: rowHeight,
+                  side: side,
+                  incidents: incidents,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PitchPlayerRow extends StatelessWidget {
+  const _PitchPlayerRow({
+    required this.row,
+    required this.side,
+    required this.incidents,
+    this.height = lineupPitchRowHeight,
+  });
+
+  final double height;
+  final List<Json> row;
+  final String side;
+  final List<Json> incidents;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: height,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final player in row)
+            Expanded(
+              child: _PitchPlayer(
+                player,
+                side: side,
+                events: lineupEventsForPlayer(player, incidents, side),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _PitchTeamIdentity extends StatelessWidget {
+  const _PitchTeamIdentity({
+    required this.team,
+    required this.sideLabel,
+    required this.formation,
+    required this.accent,
+    this.coach,
+    this.onPitch = false,
+  });
+
+  final Entity team;
+  final String sideLabel;
+  final String formation;
+  final Color accent;
+  final Json? coach;
+  final bool onPitch;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    label: '$sideLabel, ${team.displayName}, formación $formation',
+    child: Container(
+      constraints: const BoxConstraints(minHeight: 48),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: onPitch
+            ? const Color(0xFF292B2E)
+            : Colors.white.withValues(alpha: .04),
+        borderRadius: BorderRadius.circular(onPitch ? 0 : 14),
+        border: Border.all(
+          color: onPitch ? const Color(0xFF35383B) : _cardBorder,
+        ),
+      ),
+      child: Row(
+        children: [
+          EntityAvatar(team, size: 32),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  sideLabel,
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  team.displayName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (coach != null &&
+                    (coach!['name']?.toString().trim().isNotEmpty ?? false))
+                  Text(
+                    'DT · ${coach!['name']}',
+                    key: ValueKey('lineup-$sideLabel-coach'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFB9BDC2),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            formation,
+            style: TextStyle(color: accent, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _FormationPitch extends StatelessWidget {
@@ -2965,19 +4181,7 @@ class _FormationPitch extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             for (final row in rows)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final player in row)
-                    Expanded(
-                      child: _PitchPlayer(
-                        player,
-                        side: side,
-                        events: lineupEventsForPlayer(player, incidents, side),
-                      ),
-                    ),
-                ],
-              ),
+              _PitchPlayerRow(row: row, side: side, incidents: incidents),
           ],
         ),
       ),
@@ -2991,45 +4195,19 @@ class _PitchPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF1B5E43), Color(0xFF134832)],
-        ).createShader(rect),
-    );
-    final stripe = Paint()..color = const Color(0x10FFFFFF);
-    for (var i = 0; i < 10; i += 2) {
-      canvas.drawRect(
-        Rect.fromLTWH(0, size.height * i / 10, size.width, size.height / 10),
-        stripe,
-      );
-    }
+    canvas.drawRect(rect, Paint()..color = const Color(0xFF181A1C));
     final line = Paint()
-      ..color = Colors.white.withValues(alpha: .32)
+      ..color = const Color(0xFF414448).withValues(alpha: .62)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4;
-    final field = Rect.fromLTWH(8, 8, size.width - 16, size.height - 16);
-    canvas.drawRect(field, line);
+      ..strokeWidth = 1;
     final center = Offset(size.width / 2, size.height / 2);
-    canvas.drawLine(
-      Offset(8, center.dy),
-      Offset(size.width - 8, center.dy),
-      line,
-    );
+    canvas.drawLine(Offset(0, center.dy), Offset(size.width, center.dy), line);
     canvas.drawCircle(
       center,
       (size.width * .13).clamp(24, 44).toDouble(),
       line,
     );
-    canvas.drawCircle(
-      center,
-      2.5,
-      Paint()..color = Colors.white.withValues(alpha: .4),
-    );
-    for (final y in [8.0, size.height - 8]) {
+    for (final y in [0.0, size.height]) {
       canvas.drawRect(
         Rect.fromCenter(
           center: Offset(size.width / 2, y),
@@ -3053,6 +4231,142 @@ class _PitchPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
+class _PitchHalfPainter extends CustomPainter {
+  const _PitchHalfPainter({required this.goalAtTop});
+
+  final bool goalAtTop;
+
+  static const _goalLineInset = 12.0;
+  static const _goalAreaDepth = 64.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFF181A1C),
+    );
+    final line = Paint()
+      ..color = const Color(0xFF414448).withValues(alpha: .62)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    final goalY = goalAtTop ? _goalLineInset : size.height - _goalLineInset;
+    final halfwayY = goalAtTop ? size.height : 0.0;
+    canvas.drawLine(Offset(0, halfwayY), Offset(size.width, halfwayY), line);
+    canvas.drawArc(
+      Rect.fromCircle(center: Offset(size.width / 2, halfwayY), radius: 43),
+      goalAtTop ? 3.141592653589793 : 0,
+      3.141592653589793,
+      false,
+      line,
+    );
+    final direction = goalAtTop ? 1.0 : -1.0;
+    Rect area(double width, double depth) => Rect.fromLTRB(
+      (size.width - width) / 2,
+      goalAtTop ? goalY : goalY - depth,
+      (size.width + width) / 2,
+      goalAtTop ? goalY + depth : goalY,
+    );
+    canvas.drawLine(
+      Offset(size.width * .38, goalY),
+      Offset(size.width * .62, goalY),
+      line,
+    );
+    canvas.drawRect(area(size.width * .58, lineupPenaltyAreaDepth), line);
+    canvas.drawRect(area(size.width * .28, _goalAreaDepth), line);
+    canvas.drawCircle(
+      Offset(size.width / 2, goalY + direction * lineupPenaltyAreaDepth * .68),
+      2,
+      line..style = PaintingStyle.fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PitchHalfPainter oldDelegate) =>
+      oldDelegate.goalAtTop != goalAtTop;
+}
+
+/// Shared geometry contract for renderer and widget tests.
+// Keep five pitch rows separated while reserving room for scaled names and
+// event badges on 420 dpi phones such as the Galaxy A32.
+const double lineupPitchRowHeight = 100;
+const double lineupPitchHalfHeight = lineupPitchRowHeight * 5 + 24;
+const double lineupPenaltyAreaDepth = 132;
+
+// Reserve the real scaled label and Wrap height. Two badges wrap in a five-
+// defender row on A32 with bundled Roboto at 1.3; fixed 100px cells overflowed.
+// Both halves share the maximum so the pitch stays symmetric. No intrinsic
+// layout or extra requests: each distinct label is measured once per layout.
+double _requiredPitchRowHeight(
+  BuildContext context,
+  double width,
+  List<List<Json>> rows,
+  List<Json> incidents,
+  String side,
+) {
+  var required = lineupPitchRowHeight;
+  final cache = <String, Size>{};
+  final base = DefaultTextStyle.of(context).style;
+  Size measure(String value, double fontSize) =>
+      cache.putIfAbsent('$fontSize:$value', () {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: value,
+            style: base.merge(
+              TextStyle(
+                fontSize: fontSize,
+                fontWeight: fontSize == 11 ? FontWeight.w700 : null,
+              ),
+            ),
+          ),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          maxLines: 1,
+        )..layout();
+        final size = painter.size;
+        painter.dispose();
+        return size;
+      });
+  for (final row in rows) {
+    if (row.isEmpty) continue;
+    final slot = (width - 16) / row.length;
+    for (final player in row) {
+      final events = lineupEventsForPlayer(player, incidents, side);
+      if (events.isEmpty) continue;
+      var lineWidth = 0.0, lineHeight = 0.0, badgesHeight = 0.0;
+      for (final event in events) {
+        final size = event.minute == null
+            ? Size.zero
+            : measure('${event.minute}′', 8);
+        final badgeWidth = 12 + size.width;
+        final badgeHeight = size.height > 12 ? size.height : 12.0;
+        if (lineWidth > 0 && lineWidth + 3 + badgeWidth > slot) {
+          badgesHeight += lineHeight + 2;
+          lineWidth = 0;
+          lineHeight = 0;
+        }
+        lineWidth += (lineWidth > 0 ? 3 : 0) + badgeWidth;
+        if (badgeHeight > lineHeight) lineHeight = badgeHeight;
+      }
+      badgesHeight += lineHeight;
+      final name = measure(
+        _pitchName(player['name']?.toString() ?? 'Jugador'),
+        11,
+      ).height;
+      final number = measure(
+        _lineupShirtNumber(player)?.toString() ?? '',
+        11,
+      ).height;
+      final labelHeight = name > number ? name : number;
+      // 46px avatar + its 1px border on each side, existing 3/2px gaps,
+      // and 4px rounding reserve for platform font metrics.
+      final needed = (48 + 3 + labelHeight + 2 + badgesHeight + 4)
+          .ceilToDouble();
+      if (needed > required) required = needed;
+    }
+  }
+  return required;
+}
+
 String _pitchName(String name) {
   final words = name.trim().split(RegExp(r'\s+'));
   // Surname like football apps; keep the full name when the last token is
@@ -3073,7 +4387,8 @@ class _PitchPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final name = player['name']?.toString() ?? 'Jugador';
-    final number = shirtNumberOf(player['number'])?.toString() ?? '';
+    final number = _lineupShirtNumber(player)?.toString() ?? '';
+    final rating = _lineupRating(player);
 
     final content = Column(
       children: [
@@ -3083,83 +4398,75 @@ class _PitchPlayer extends StatelessWidget {
             Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x66000000), blurRadius: 6),
-                ],
+                border: Border.all(color: const Color(0xFF55595D), width: 1),
               ),
-              child: _PlayerAvatar(player, size: 42),
+              child: _PlayerAvatar(
+                player,
+                size: 46,
+                accent: const Color(0xFF55595D),
+                showBorder: false,
+              ),
             ),
-            if (number.isNotEmpty)
-              Positioned(left: -7, bottom: -3, child: _NumberBadge(number)),
-            if (player['rating'] is num)
-              Positioned(
-                right: -9,
-                top: -5,
-                child: _RatingBadge(player['rating'] as num),
-              ),
+            if (rating != null)
+              Positioned(right: -9, top: -5, child: _RatingBadge(rating)),
             if (player['captain'] == true)
               const Positioned(left: -7, top: -5, child: _CaptainBadge()),
           ],
         ),
-        const SizedBox(height: 5),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: .38),
-            borderRadius: BorderRadius.circular(5),
-          ),
-          child: Text(
-            _pitchName(name),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
+        const SizedBox(height: 3),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (number.isNotEmpty) ...[
+              Text(
+                number,
+                style: const TextStyle(
+                  color: Color(0xFF8E9297),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 3),
+            ],
+            Flexible(
+              child: Text(
+                _pitchName(name),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
-          ),
+          ],
         ),
         if (events.isNotEmpty) ...[
-          const SizedBox(height: 3),
+          const SizedBox(height: 2),
           _PlayerEvents(events),
         ],
       ],
     );
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(28),
-      onTap: () => showMatchPlayerSheet(context, player, side),
-      child: content,
+    return Semantics(
+      button: true,
+      excludeSemantics: true,
+      label: lineupPlayerSemanticLabel(player, 'titular', events),
+      child: InkWell(
+        key: ValueKey(
+          'lineup-pitch-$side-${player['canonicalId'] ?? player['id'] ?? player['name']}',
+        ),
+        borderRadius: BorderRadius.circular(28),
+        onTap: () => showMatchPlayerSheet(context, player, side),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 72),
+          child: content,
+        ),
+      ),
     );
   }
-}
-
-class _NumberBadge extends StatelessWidget {
-  const _NumberBadge(this.number);
-  final String number;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    constraints: const BoxConstraints(minWidth: 18),
-    height: 18,
-    padding: const EdgeInsets.symmetric(horizontal: 3),
-    alignment: Alignment.center,
-    decoration: BoxDecoration(
-      color: const Color(0xFF0B1114),
-      borderRadius: BorderRadius.circular(9),
-      border: Border.all(color: Colors.white.withValues(alpha: .7)),
-    ),
-    child: Text(
-      number,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 9,
-        fontWeight: FontWeight.w900,
-      ),
-    ),
-  );
 }
 
 String? _positionLabel(dynamic raw) {
@@ -3184,18 +4491,116 @@ String? _positionLabel(dynamic raw) {
   return value;
 }
 
+int? _lineupShirtNumber(Json player) =>
+    shirtNumberOf(player['shirtNumber'] ?? player['number']);
+
+num? _lineupRating(Json player) {
+  final rating = player['rating'];
+  return rating is num && rating > 0 ? rating : null;
+}
+
+String lineupPlayerSemanticLabel(
+  Json player,
+  String role,
+  List<LineupPlayerEvent> events,
+) {
+  final parts = <String>[
+    player['name']?.toString().trim().isNotEmpty == true
+        ? player['name'].toString().trim()
+        : 'Jugador',
+    if (_lineupShirtNumber(player) case final number?) 'dorsal $number',
+    role,
+    ?_positionLabel(player['position']),
+    if (player['captain'] == true) 'capitán',
+    if (_lineupRating(player) case final rating?)
+      'rating ${rating.toDouble().toStringAsFixed(1).replaceAll('.', ' punto ')}',
+    for (final event in events)
+      '${eventLabel(event.type)}${event.minute == null ? '' : ' minuto ${event.minute}'}',
+  ];
+  return '${parts.join(', ')}.';
+}
+
+class _LineupPlayerList extends StatelessWidget {
+  const _LineupPlayerList({
+    required this.players,
+    required this.side,
+    required this.incidents,
+    required this.role,
+    this.compactGrid = false,
+  });
+
+  final List<Json> players;
+  final String side;
+  final List<Json> incidents;
+  final String role;
+  final bool compactGrid;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final textScale = MediaQuery.textScalerOf(context).scale(1);
+      final useGrid =
+          compactGrid && constraints.maxWidth >= 300 && textScale <= 1.3;
+      Widget playerAt(int index) {
+        final player = players[index];
+        return _BenchPlayer(
+          player,
+          side: side,
+          role: role,
+          events: lineupEventsForPlayer(player, incidents, side),
+        );
+      }
+
+      if (useGrid) {
+        return GridView.builder(
+          key: ValueKey('lineup-$side-$role-grid'),
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: players.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            // A two-line name, dorsal and match events overflowed the old
+            // 76-pixel cells by 5 pixels on the Galaxy A32.
+            mainAxisExtent: 84 + (textScale - 1).clamp(0, .3) * 120,
+          ),
+          itemBuilder: (_, index) => playerAt(index),
+        );
+      }
+      return ListView.separated(
+        key: ValueKey('lineup-$side-$role-list'),
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: players.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 6),
+        itemBuilder: (_, index) => playerAt(index),
+      );
+    },
+  );
+}
+
 class _BenchPlayer extends StatelessWidget {
-  const _BenchPlayer(this.player, {required this.side, required this.events});
+  const _BenchPlayer(
+    this.player, {
+    required this.side,
+    required this.role,
+    required this.events,
+  });
   final Json player;
   final String side;
+  final String role;
   final List<LineupPlayerEvent> events;
 
   @override
   Widget build(BuildContext context) {
-    final number = shirtNumberOf(player['number'])?.toString() ?? '';
+    final number = _lineupShirtNumber(player)?.toString() ?? '';
     final position = _positionLabel(player['position']);
+    final rating = _lineupRating(player);
+    final accent = side == 'home' ? lime : awaySideColor;
 
     final content = Container(
+      constraints: const BoxConstraints(minHeight: 56),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: .04),
@@ -3204,7 +4609,7 @@ class _BenchPlayer extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _PlayerAvatar(player, size: 38),
+          _PlayerAvatar(player, size: 44, accent: accent),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -3213,7 +4618,7 @@ class _BenchPlayer extends StatelessWidget {
               children: [
                 Text(
                   player['name']?.toString() ?? 'Jugador',
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 12,
@@ -3230,15 +4635,24 @@ class _BenchPlayer extends StatelessWidget {
               ],
             ),
           ),
-          if (player['rating'] is num) _RatingBadge(player['rating'] as num),
+          if (player['captain'] == true) ...[
+            const _CaptainBadge(),
+            const SizedBox(width: 6),
+          ],
+          if (rating != null) _RatingBadge(rating),
         ],
       ),
     );
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => showMatchPlayerSheet(context, player, side),
-      child: content,
+    return Semantics(
+      button: true,
+      excludeSemantics: true,
+      label: lineupPlayerSemanticLabel(player, role, events),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => showMatchPlayerSheet(context, player, side),
+        child: content,
+      ),
     );
   }
 }
@@ -3248,43 +4662,68 @@ class _CoachTile extends StatelessWidget {
   final Json coach;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: .04),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: _cardBorder),
-    ),
-    child: Row(
-      children: [
-        _PlayerAvatar(coach, size: 38),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            coach['name']?.toString() ?? '',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w700),
+  Widget build(BuildContext context) {
+    final nationality = coach['nationality']?.toString().trim() ?? '';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _cardBorder),
+      ),
+      child: Row(
+        children: [
+          _PlayerAvatar(coach, size: 38),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  coach['name']?.toString() ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (nationality.isNotEmpty)
+                  Text(
+                    nationality,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: muted, fontSize: 11),
+                  ),
+              ],
+            ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }
 
 /// Existing canonical photo only; the fallback stays underneath while the
 /// image loads or if it fails, so there is no per-player spinner or broken
-/// image. No additional photo requests are made here.
+/// image. No additional photo requests are made here. The silhouette and
+/// dorsal are honest about missing media and remain stable during loading.
 class _PlayerAvatar extends StatelessWidget {
-  const _PlayerAvatar(this.player, {required this.size});
+  const _PlayerAvatar(
+    this.player, {
+    required this.size,
+    this.accent = muted,
+    this.showBorder = true,
+  });
   final Json player;
   final double size;
+  final Color accent;
+  final bool showBorder;
 
   @override
   Widget build(BuildContext context) {
     final image = lineupPlayerImageOf(context, player);
-    final initials = _playerInitials(player['name']);
     final fallback = Container(
+      key: ValueKey(
+        'lineup-photo-fallback-${player['canonicalId'] ?? player['id'] ?? player['name']}',
+      ),
       width: size,
       height: size,
       alignment: Alignment.center,
@@ -3295,37 +4734,51 @@ class _PlayerAvatar extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: [Color(0xFF2A3B36), Color(0xFF1A2622)],
         ),
-        border: Border.all(color: lime.withValues(alpha: .45)),
+        border: showBorder
+            ? Border.all(color: accent.withValues(alpha: .72))
+            : null,
       ),
-      child: Text(
-        initials.isNotEmpty
-            ? initials
-            : shirtNumberOf(player['number'])?.toString() ?? '',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: size * .32,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
+      child: Icon(Icons.person, color: Colors.white70, size: size * .58),
     );
     if (image == null || image.isEmpty) return fallback;
     final pixels = (size * MediaQuery.devicePixelRatioOf(context)).round();
+    final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+    final rowId = player['id']?.toString().trim() ?? '';
+    final imageId = canonicalId.startsWith('fb_player_')
+        ? canonicalId
+        : rowId.startsWith('fb_player_')
+        ? rowId
+        : '';
     return SizedBox(
+      key: ValueKey(
+        'lineup-photo-${player['canonicalId'] ?? player['id'] ?? player['name']}',
+      ),
       width: size,
       height: size,
       child: Stack(
         children: [
           fallback,
           ClipOval(
-            child: Image.network(
-              image,
-              width: size,
-              height: size,
-              cacheWidth: pixels,
-              fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
-              errorBuilder: (_, error, stack) => const SizedBox.shrink(),
-            ),
+            child: imageId.isEmpty
+                ? Image.network(
+                    image,
+                    width: size,
+                    height: size,
+                    cacheWidth: pixels,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  )
+                : SportsImage(
+                    canonicalId: imageId,
+                    url: image,
+                    width: size,
+                    height: size,
+                    cacheWidth: pixels,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    fallback: const SizedBox.shrink(),
+                  ),
           ),
         ],
       ),
@@ -3338,22 +4791,19 @@ class _PlayerAvatar extends StatelessWidget {
 /// (the same one the profile shows), else the photo the lineup carries.
 String? lineupPlayerImageOf(BuildContext context, Json player) {
   final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  final rowId = player['id']?.toString().trim() ?? '';
+  // Some locally cached/legacy detail rows carry the canonical FutBeat ID in
+  // `id` but omit `canonicalId`. Reuse only that typed ID; never join by name.
+  final lookupId = canonicalId.isNotEmpty
+      ? canonicalId
+      : rowId.startsWith('fb_player_')
+      ? rowId
+      : '';
   final name = player['name']?.toString() ?? '';
-  final shared = canonicalId.isEmpty
+  final shared = lookupId.isEmpty
       ? null
-      : entityImageOf(context, Entity({'id': canonicalId, 'name': name}));
+      : entityImageOf(context, Entity({'id': lookupId, 'name': name}));
   return shared ?? playerImage(player);
-}
-
-String _playerInitials(dynamic name) {
-  final words =
-      name?.toString().trim().split(RegExp(r'\s+')) ?? const <String>[];
-  return words
-      .where((word) => word.isNotEmpty)
-      .take(2)
-      .map((word) => word[0])
-      .join()
-      .toUpperCase();
 }
 
 Color _ratingColor(double value) => value >= 8
@@ -3429,10 +4879,12 @@ class _LineupEventIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (icon, color) = switch (event.type) {
-      'GOAL' => (Icons.sports_soccer, Colors.white),
+      'GOAL' || 'PENALTY_GOAL' => (Icons.sports_soccer, Colors.white),
       'OWN_GOAL' => (Icons.sports_soccer, Colors.orangeAccent),
       'ASSIST' => (Icons.assistant_rounded, lime),
       'YELLOW_CARD' => (Icons.square_rounded, Colors.amber),
+      'SECOND_YELLOW_CARD' ||
+      'YELLOW_RED_CARD' => (Icons.square_rounded, Colors.deepOrangeAccent),
       'RED_CARD' => (Icons.square_rounded, Colors.redAccent),
       'SUB_IN' => (Icons.arrow_upward_rounded, lime),
       'SUB_OUT' => (Icons.arrow_downward_rounded, Colors.redAccent),
@@ -3481,33 +4933,44 @@ class EventBadge extends StatelessWidget {
 }
 
 IconData eventIcon(String type) => switch (type) {
-  'GOAL' => Icons.sports_soccer,
-  'YELLOW_CARD' || 'RED_CARD' => Icons.square_rounded,
+  'GOAL' || 'OWN_GOAL' || 'PENALTY_GOAL' => Icons.sports_soccer,
+  'YELLOW_CARD' ||
+  'SECOND_YELLOW_CARD' ||
+  'YELLOW_RED_CARD' ||
+  'RED_CARD' => Icons.square_rounded,
   'SUBSTITUTION' => Icons.swap_vert_rounded,
   'VAR' => Icons.tv_rounded,
   'MISSED_PENALTY' => Icons.cancel_outlined,
   'KICKOFF' => Icons.play_arrow_rounded,
   'HALFTIME' => Icons.pause_rounded,
+  'SECOND_HALF' => Icons.play_arrow_rounded,
+  'EXTRA_TIME' => Icons.more_time_rounded,
+  'PENALTIES' => Icons.sports_soccer_rounded,
   'FULL_TIME' => Icons.flag_rounded,
   _ => Icons.more_horiz_rounded,
 };
 
 Color eventColor(String type) => switch (type) {
   'GOAL' => lime,
+  'OWN_GOAL' => Colors.orangeAccent,
+  'PENALTY_GOAL' => lime,
   'YELLOW_CARD' => Colors.amber,
+  'SECOND_YELLOW_CARD' || 'YELLOW_RED_CARD' => Colors.deepOrangeAccent,
   'RED_CARD' => Colors.redAccent,
   'SUBSTITUTION' => Colors.lightBlueAccent,
   'VAR' => Colors.purpleAccent,
   'MISSED_PENALTY' => Colors.orangeAccent,
-  'KICKOFF' || 'FULL_TIME' => Colors.white,
-  'HALFTIME' => muted,
+  'KICKOFF' || 'SECOND_HALF' || 'FULL_TIME' => Colors.white,
+  'HALFTIME' || 'EXTRA_TIME' || 'PENALTIES' => muted,
   _ => muted,
 };
 
 String eventLabel(String type) => switch (type) {
   'GOAL' => 'Gol',
   'OWN_GOAL' => 'Autogol',
+  'PENALTY_GOAL' => 'Gol · Penal',
   'YELLOW_CARD' => 'Tarjeta amarilla',
+  'SECOND_YELLOW_CARD' || 'YELLOW_RED_CARD' => 'Segunda amarilla',
   'RED_CARD' => 'Tarjeta roja',
   'SUBSTITUTION' => 'Sustitución',
   'SUB_IN' => 'Entró',
@@ -3517,6 +4980,9 @@ String eventLabel(String type) => switch (type) {
   'MISSED_PENALTY' => 'Penal fallado',
   'KICKOFF' => 'Inicio',
   'HALFTIME' => 'Medio tiempo',
+  'SECOND_HALF' => 'Segundo tiempo',
+  'EXTRA_TIME' => 'Tiempo extra',
+  'PENALTIES' => 'Penales',
   'FULL_TIME' => 'Final',
   _ => 'Evento',
 };
@@ -3536,10 +5002,12 @@ class MatchPlayerScope extends InheritedWidget {
     required this.home,
     required this.away,
     required super.child,
+    this.data,
     super.key,
   });
 
   final MatchDetail detail;
+  final Snapshot? data;
   final Entity home;
   final Entity away;
 
@@ -3549,6 +5017,7 @@ class MatchPlayerScope extends InheritedWidget {
   @override
   bool updateShouldNotify(MatchPlayerScope oldWidget) =>
       detail != oldWidget.detail ||
+      data != oldWidget.data ||
       home != oldWidget.home ||
       away != oldWidget.away;
 }
@@ -3586,6 +5055,23 @@ class PlayerMatchSummary {
   ];
 }
 
+/// Local, immutable context carried from Match Center to the full player
+/// profile. Every value was already computed for the sheet; opening the
+/// profile must not trigger another match request or infer missing numbers.
+class PlayerProfileMatchContext {
+  const PlayerProfileMatchContext({
+    required this.team,
+    required this.summary,
+    required this.statSections,
+    required this.events,
+  });
+
+  final Entity? team;
+  final PlayerMatchSummary summary;
+  final List<(String, List<(String, String)>)> statSections;
+  final List<LineupPlayerEvent> events;
+}
+
 PlayerMatchSummary playerMatchSummary(
   Json player,
   List<LineupPlayerEvent> events, {
@@ -3596,11 +5082,15 @@ PlayerMatchSummary playerMatchSummary(
   return PlayerMatchSummary(
     rating: rating is num && rating > 0 ? rating : null,
     minutes: minutes,
-    goals: count('GOAL'),
+    goals: count('GOAL') + count('PENALTY_GOAL'),
     ownGoals: count('OWN_GOAL'),
     assists: count('ASSIST'),
-    yellowCards: count('YELLOW_CARD'),
-    redCards: count('RED_CARD'),
+    yellowCards: count('YELLOW_CARD') +
+        count('SECOND_YELLOW_CARD') +
+        count('YELLOW_RED_CARD'),
+    redCards: count('RED_CARD') +
+        count('SECOND_YELLOW_CARD') +
+        count('YELLOW_RED_CARD'),
   );
 }
 
@@ -3617,9 +5107,10 @@ PlayerMatchSummary playerMatchSummary(
 /// sub-out minutes, exit before entry) also returns null.
 int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
   final id = player['id']?.toString().trim() ?? '';
-  if (id.isEmpty) return null;
+  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  if (id.isEmpty && canonicalId.isEmpty) return null;
   bool listed(List<Json> players) =>
-      players.any((p) => p['id']?.toString().trim() == id);
+      players.any((p) => _matchesLineupPlayerIdentity(player, p, 'id', 'canonicalId'));
   final starter = listed(
     side == 'home' ? detail.homeStarters : detail.awayStarters,
   );
@@ -3637,9 +5128,15 @@ int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
     if (minute is! int || minute < 0) continue;
     final type = incident['type']?.toString();
     if (type == 'SUBSTITUTION') {
-      if (incident['inPlayerId']?.toString() == id) subIn.add(minute);
-      if (incident['outPlayerId']?.toString() == id) subOut.add(minute);
-    } else if (type == 'RED_CARD' && incident['playerId']?.toString() == id) {
+      if (_matchesLineupPlayerIdentity(player, incident, 'inPlayerId')) {
+        subIn.add(minute);
+      }
+      if (_matchesLineupPlayerIdentity(player, incident, 'outPlayerId')) {
+        subOut.add(minute);
+      }
+    } else if (const {'RED_CARD', 'SECOND_YELLOW_CARD', 'YELLOW_RED_CARD'}
+            .contains(type) &&
+        _matchesLineupPlayerIdentity(player, incident, 'playerId', 'canonicalPlayerId')) {
       red.add(minute);
     }
   }
@@ -3760,7 +5257,9 @@ Future<void> showMatchPlayerSheet(
   final minutes = scope == null
       ? null
       : playerMinutesPlayed(player, scope.detail, side);
-  final canonicalId = player['canonicalId']?.toString().trim() ?? '';
+  final summary = playerMatchSummary(player, events, minutes: minutes);
+  final statSections = playerMatchStatSections(player);
+  final canonicalId = _matchPlayerCanonicalId(player, scope?.data);
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -3779,7 +5278,15 @@ Future<void> showMatchPlayerSheet(
           ? null
           : () {
               Navigator.of(sheetContext).pop();
-              context.push('/player/$canonicalId');
+              context.push(
+                '/player/$canonicalId',
+                extra: PlayerProfileMatchContext(
+                  team: team,
+                  summary: summary,
+                  statSections: statSections,
+                  events: events,
+                ),
+              );
             },
     ),
   );
@@ -3811,6 +5318,8 @@ class MatchPlayerSheet extends StatelessWidget {
     final age = player['age'];
     final summary = playerMatchSummary(player, events, minutes: minutes);
     final statSections = playerMatchStatSections(player);
+    final compact =
+        summary.entries.isEmpty && statSections.isEmpty && events.isEmpty;
     final sideColor = side == 'home' ? lime : awaySideColor;
     final details = <Widget>[
       if (number.isNotEmpty)
@@ -3840,7 +5349,7 @@ class MatchPlayerSheet extends StatelessWidget {
     return DraggableScrollableSheet(
       key: const ValueKey('player-sheet'),
       expand: false,
-      initialChildSize: .62,
+      initialChildSize: compact ? .35 : .62,
       minChildSize: .35,
       maxChildSize: .92,
       builder: (context, controller) => Column(

@@ -208,7 +208,8 @@ void main() {
     final container = await _open(tester, server);
     // Full-screen loader: no tabs, no teams.
     expect(find.byType(TabBar), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const ValueKey('content-skeleton')), findsOneWidget);
     expect(find.text('Local Histórico'), findsNothing);
     await _close(tester, container, server);
   });

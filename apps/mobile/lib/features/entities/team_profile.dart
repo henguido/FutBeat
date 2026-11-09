@@ -7,6 +7,7 @@ import '../../core/player_display_identity.dart';
 import '../../core/profile_context.dart';
 import '../../core/entity_media.dart';
 import '../../core/providers.dart';
+import '../../core/sports_image_cache.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import 'profile_context_bar.dart';
@@ -131,9 +132,17 @@ String? teamTableCompetitionId(Snapshot data, Entity team) {
         standingsTableFor(data, id),
         data,
         focusTeamIds: {team.id},
-      )?.any((group) => group.rows.any((row) => row['teamId'] == team.id)) ==
+      )?.any(
+        (group) => group.rows.any(
+          (row) =>
+              data.resolveEntityId(row['teamId']?.toString() ?? '') ==
+              data.resolveEntityId(team.id),
+        ),
+      ) ==
       true;
-  final main = team.json['competitionId']?.toString() ?? '';
+  final main = data.resolveEntityId(
+    team.json['competitionId']?.toString() ?? '',
+  );
   if (main.isNotEmpty && shows(main)) return main;
   final candidates = {
     for (final table in data.standings)
@@ -171,6 +180,7 @@ class TeamProfileView extends ConsumerWidget {
     this.initialCompetitionId,
     this.initialSeason,
     this.loading = false,
+    this.retry,
     super.key,
   });
 
@@ -184,6 +194,7 @@ class TeamProfileView extends ConsumerWidget {
   /// every independent section render now, and the sections that need the
   /// profile say they are loading instead of "empty".
   final bool loading;
+  final VoidCallback? retry;
 
   /// Context of the match the profile was opened from (#161), if any.
   final String? initialCompetitionId;
@@ -191,9 +202,48 @@ class TeamProfileView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final players = data.players
-        .where((player) => player.json['teamId'] == team.id)
-        .toList();
+    // /v1/entity already selects this team's roster by team_squad_members.
+    // A player's singular profile teamId may instead be their club (or their
+    // new club after a transfer), so it cannot filter this scoped roster.
+    // Likewise, a shirt number on another team's profile is not this team's
+    // contextual number; leave it unknown rather than showing a wrong one.
+    // DemoRepository is the exception: it serves a global snapshot, so first
+    // scope it to this team. Production /v1/entity already did that by the
+    // team_squad_members relation rather than the mutable profile teamId.
+    final roster = data.demo
+        ? data.players
+              .where(
+                (player) =>
+                    data.resolveEntityId(
+                      player.json['teamId']?.toString() ?? '',
+                    ) ==
+                    team.id,
+              )
+              .toList()
+        : data.players;
+    final rosterIds = {for (final player in roster) player.id};
+    final representedMissingRoots = <String>{};
+    bool keepRosterPlayer(Entity player) {
+      final canonical = data.resolveEntityId(player.id);
+      if (canonical == player.id) return true;
+      if (rosterIds.contains(canonical)) return false;
+      // Several explicit aliases may resolve to a root absent from this
+      // response. Keep one representative, never merge by display name.
+      return representedMissingRoots.add(canonical);
+    }
+
+    final players = [
+      for (final player in roster)
+        // An authoritative redirect may leave both rows in the response.
+        // Prefer its present canonical row; keep one alias if the target
+        // was not included. No name- or shirt-based merge is inferred here.
+        if (keepRosterPlayer(player))
+          if (data.resolveEntityId(player.json['teamId']?.toString() ?? '') ==
+              team.id)
+            player
+          else
+            Entity({...player.json, 'shirtNumber': null}),
+    ];
     final visiblePlayerCount = squadGroups(
       players,
       blockedAliasIds: {
@@ -404,6 +454,14 @@ class TeamProfileView extends ConsumerWidget {
                 players: visiblePlayerCount,
               ),
             ),
+            if (retry != null)
+              SliverToBoxAdapter(
+                child: TextButton.icon(
+                  onPressed: retry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Reintentar carga del perfil'),
+                ),
+              ),
             if (teamContext != null && selected != null)
               SliverToBoxAdapter(
                 child: ProfileContextBar(
@@ -691,7 +749,7 @@ class SquadPlayerRow extends StatelessWidget {
             SizedBox(
               width: 28,
               child: Text(
-                number?.toString() ?? '–',
+                number?.toString() ?? '',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: muted,
@@ -735,10 +793,11 @@ class SquadPlayerRow extends StatelessWidget {
 /// Canonical verified photo only; initials stay underneath while loading or
 /// on failure, so there is no spinner and never a broken image.
 class PlayerPhoto extends StatelessWidget {
-  const PlayerPhoto(this.player, {required this.size, super.key});
+  const PlayerPhoto(this.player, {required this.size, this.cache, super.key});
 
   final Entity player;
   final double size;
+  final SportsImageDiskCache? cache;
 
   @override
   Widget build(BuildContext context) {
@@ -764,8 +823,13 @@ class PlayerPhoto extends StatelessWidget {
         ),
       ),
     );
-    final image = player.imageUrl;
+    final image = entityImageOf(context, player);
     if (image == null) return fallback;
+    final imageId = entityImageCacheId(player);
+    final pixels = (size * (MediaQuery.maybeDevicePixelRatioOf(context) ?? 1))
+        .ceil()
+        .clamp(1, 1024)
+        .toInt();
     return SizedBox(
       width: size,
       height: size,
@@ -773,16 +837,27 @@ class PlayerPhoto extends StatelessWidget {
         children: [
           fallback,
           ClipOval(
-            child: Image.network(
-              image,
-              width: size,
-              height: size,
-              cacheWidth: (size * MediaQuery.devicePixelRatioOf(context))
-                  .round(),
-              fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
-              errorBuilder: (_, error, stack) => const SizedBox.shrink(),
-            ),
+            child: imageId.startsWith('fb_')
+                ? SportsImage(
+                    canonicalId: imageId,
+                    url: image,
+                    cache: cache,
+                    width: size,
+                    height: size,
+                    cacheWidth: pixels,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    fallback: const SizedBox.shrink(),
+                  )
+                : Image.network(
+                    image,
+                    width: size,
+                    height: size,
+                    cacheWidth: pixels,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  ),
           ),
         ],
       ),

@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/models.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
 import 'package:futbeat/features/entities/player_profile.dart';
+import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:go_router/go_router.dart';
 
 const _longName =
@@ -84,6 +86,7 @@ Future<void> _pumpPlayer(
   WidgetTester tester,
   Map<String, dynamic> payload, {
   Size size = const Size(360, 780),
+  PlayerProfileMatchContext? matchContext,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -98,8 +101,11 @@ Future<void> _pumpPlayer(
     routes: [
       GoRoute(
         path: '/player/:id',
-        builder: (_, state) =>
-            EntityScreen(type: 'player', id: state.pathParameters['id']!),
+        builder: (_, state) => EntityScreen(
+          type: 'player',
+          id: state.pathParameters['id']!,
+          playerMatchContext: matchContext,
+        ),
       ),
       GoRoute(
         path: '/team/:id',
@@ -117,7 +123,7 @@ Future<void> _pumpPlayer(
     overrides: [
       databaseProvider.overrideWithValue(db),
       entitySnapshotProvider.overrideWith(
-        (ref, request) async => Snapshot(payload),
+        (ref, request) => Stream.value(Snapshot(payload)),
       ),
       followsProvider.overrideWith((ref) => Stream.value({})),
     ],
@@ -219,7 +225,7 @@ void main() {
   ) async {
     await _pumpPlayer(tester, _payload(player: _rich));
     expect(find.text('#10'), findsOneWidget);
-    expect(find.byType(Image), findsOneWidget);
+    expect(find.byType(SportsImage), findsOneWidget);
     expect(
       find.descendant(
         of: find.byType(AppBar),
@@ -269,6 +275,152 @@ void main() {
     await _openTab(tester, 'Partidos');
     expect(find.text('Próximos'), findsOneWidget);
     expect(find.text('Resultados'), findsOneWidget);
+  });
+
+  testWidgets('Partidos resolves an explicit alias of the current team', (
+    tester,
+  ) async {
+    final payload = _payload(player: {'teamId': 'fb_team_old'});
+    payload['entityRedirects'] = {'fb_team_old': 'fb_team'};
+    await _pumpPlayer(tester, payload);
+    await _openTab(tester, 'Partidos');
+    expect(find.text('Próximos'), findsOneWidget);
+    expect(find.text('Resultados'), findsOneWidget);
+  });
+
+  testWidgets(
+    'Partidos includes confirmed club activity when current team is national',
+    (tester) async {
+      final payload = _payload(player: {'teamId': 'fb_national_team'});
+      (payload['teams'] as List).add({
+        'id': 'fb_national_team',
+        'name': 'Selección Local',
+      });
+      (payload['matches'] as List).add({
+        'id': 'fb_national_match',
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_national_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-10-04T18:00:00Z',
+        'status': 'VERIFIED',
+        'score': {'home': 1, 'away': 0},
+        'events': <dynamic>[],
+      });
+      (payload['matches'] as List).add({
+        'id': 'fb_club_match',
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-10-18T18:00:00Z',
+        'status': 'VERIFIED',
+        'score': {'home': 1, 'away': 0},
+        'events': [
+          {
+            'id': 'club_goal',
+            'type': 'GOAL',
+            'minute': 44,
+            'playerId': 'fb_player',
+            'teamId': 'fb_team',
+          },
+        ],
+      });
+      await _pumpPlayer(tester, payload);
+      await _openTab(tester, 'Partidos');
+      expect(
+        find.textContaining('Dom 18 oct', findRichText: true),
+        findsWidgets,
+      );
+    },
+  );
+
+  test('club activity requires player ID, not a matching name', () {
+    final payload = _payload(player: {'teamId': 'fb_national_team'});
+    (payload['teams'] as List).add({
+      'id': 'fb_national_team',
+      'name': 'Selección Local',
+    });
+    (payload['matches'] as List).add({
+      'id': 'fb_same_name_match',
+      'competitionId': 'fb_comp',
+      'homeTeamId': 'fb_team',
+      'awayTeamId': 'fb_rival',
+      'startTime': '2026-10-18T18:00:00Z',
+      'status': 'VERIFIED',
+      'events': [
+        {
+          'type': 'GOAL',
+          'minute': 44,
+          'playerId': 'fb_other_player',
+          'playerName': 'Delantero Estrella',
+        },
+      ],
+    });
+    final data = Snapshot(payload);
+    expect(
+      playerProfileMatches(data, data.player('fb_player')!).map((m) => m.id),
+      isNot(contains('fb_same_name_match')),
+    );
+  });
+
+  test(
+    'server memberships include club and national team without duplicates',
+    () {
+      final payload = _payload(
+        player: {
+          'teamId': 'fb_team',
+          'nationalTeamId': 'fb_national_team',
+          'teamIds': ['fb_team', 'fb_national_team', 'fb_team'],
+        },
+      );
+      (payload['teams'] as List).add({
+        'id': 'fb_national_team',
+        'name': 'Selección Local',
+      });
+      (payload['matches'] as List).add({
+        'id': 'fb_national_match',
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_national_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-10-04T18:00:00Z',
+        'status': 'VERIFIED',
+        'score': {'home': 1, 'away': 0},
+        'events': <dynamic>[],
+      });
+      final data = Snapshot(payload);
+      final ids = playerProfileMatches(
+        data,
+        data.player('fb_player')!,
+      ).map((match) => match.id).toList();
+      expect(ids, contains('fb_national_match'));
+      expect(ids.where((id) => id == 'fb_match_past'), hasLength(1));
+    },
+  );
+
+  testWidgets('Partidos never labels LIVE or suspended as Próximos', (
+    tester,
+  ) async {
+    final payload = _payload(player: _rich);
+    final matches = payload['matches'] as List;
+    for (final (id, status) in [
+      ('fb_match_live', 'LIVE'),
+      ('fb_match_suspended', 'SUSPENDED'),
+    ]) {
+      matches.add({
+        'id': id,
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-09-20T18:00:00Z',
+        'status': status,
+        'events': <dynamic>[],
+        'statistics': <dynamic>[],
+      });
+    }
+    await _pumpPlayer(tester, payload);
+    await _openTab(tester, 'Partidos');
+    expect(find.text('En vivo'), findsOneWidget);
+    expect(find.text('Próximos'), findsOneWidget);
+    expect(find.text('Otros estados'), findsOneWidget);
   });
 
   testWidgets('Estadísticas tab lists real numbers aligned to the edge', (
@@ -373,7 +525,8 @@ void main() {
   testWidgets('player without photo, team, number or data stays compact', (
     tester,
   ) async {
-    await _pumpPlayer(tester, _payload(team: false));
+    final payload = _payload(team: false);
+    await _pumpPlayer(tester, payload);
     expect(find.byType(Image), findsNothing);
     expect(find.text('DE'), findsOneWidget);
     expect(find.text('Sin equipo'), findsOneWidget);
@@ -428,6 +581,161 @@ void main() {
     expect(find.text('Partido fb_match_past'), findsOneWidget);
   });
 
+  test('recent activity follows an explicit canonical player redirect', () {
+    final payload = _payload();
+    payload['entityRedirects'] = {'fb_player_old': 'fb_player'};
+    final events = ((payload['matches'] as List).first['events'] as List);
+    (events.first as Map)['playerId'] = 'fb_player_old';
+    (events.last as Map)['assistPlayerId'] = 'fb_player_old';
+
+    final activity = playerRecentEvents(Snapshot(payload), 'fb_player');
+    expect(activity, hasLength(2));
+    expect(activity.where((entry) => entry.$3), hasLength(1));
+  });
+
+  test(
+    'club and national-team events share an ID without merging homonyms',
+    () {
+      final payload = _payload();
+      (payload['teams'] as List).add({
+        'id': 'fb_national_team',
+        'name': 'Selección Local',
+        'country': 'Costa Rica',
+      });
+      (payload['matches'] as List).add({
+        'id': 'fb_national_match',
+        'competitionId': 'fb_comp',
+        'homeTeamId': 'fb_national_team',
+        'awayTeamId': 'fb_rival',
+        'startTime': '2026-09-22T18:00:00Z',
+        'status': 'FINISHED',
+        'events': [
+          {
+            'type': 'GOAL',
+            'minute': 12,
+            'playerId': 'fb_player',
+            'teamId': 'fb_national_team',
+          },
+          {
+            'type': 'GOAL',
+            'minute': 20,
+            'playerId': 'fb_homonym',
+            'teamId': 'fb_national_team',
+          },
+        ],
+        'statistics': <dynamic>[],
+      });
+
+      final activity = playerRecentEvents(Snapshot(payload), 'fb_player');
+      expect(activity, hasLength(3));
+      expect(
+        activity.where((entry) => entry.$1.id == 'fb_national_match'),
+        hasLength(1),
+      );
+    },
+  );
+
+  testWidgets(
+    'Match Center context shows only real summary, provider stats and events',
+    (tester) async {
+      await _pumpPlayer(
+        tester,
+        _payload(player: _rich),
+        matchContext: PlayerProfileMatchContext(
+          team: Entity({
+            'id': 'fb_team',
+            'name': 'Club Local',
+            'country': 'Costa Rica',
+          }),
+          summary: const PlayerMatchSummary(
+            rating: 8.4,
+            minutes: 72,
+            goals: 1,
+            assists: 1,
+            yellowCards: 1,
+          ),
+          statSections: const [
+            (
+              'Pases',
+              [('Pases precisos', '21/25'), ('Ocasiones creadas', '3')],
+            ),
+            ('Defensa', [('Duelos', '6/9'), ('Recuperaciones', '4')]),
+          ],
+          events: const [
+            LineupPlayerEvent('GOAL', 23),
+            LineupPlayerEvent('ASSIST', 51),
+            LineupPlayerEvent('YELLOW_CARD', 64),
+            LineupPlayerEvent('SUB_OUT', 72, role: 'out'),
+            LineupPlayerEvent('OWN_GOAL', 12),
+          ],
+        ),
+      );
+
+      expect(find.text('En este partido'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('player-current-match')),
+        findsOneWidget,
+      );
+      for (final text in ['8.4', '72′']) {
+        expect(find.text(text), findsWidgets, reason: text);
+      }
+      await _scrollSummaryTo(tester, 'Ocasiones creadas');
+      for (final text in [
+        'Pases precisos',
+        '21/25',
+        'Duelos',
+        'Ocasiones creadas',
+      ]) {
+        expect(find.text(text), findsWidgets, reason: text);
+      }
+      await _scrollSummaryTo(tester, 'EVENTOS');
+      for (final type in [
+        'GOAL',
+        'ASSIST',
+        'YELLOW_CARD',
+        'SUB_OUT',
+        'OWN_GOAL',
+      ]) {
+        expect(
+          find.byKey(
+            ValueKey(
+              'player-current-event-$type-${switch (type) {
+                'GOAL' => 23,
+                'ASSIST' => 51,
+                'YELLOW_CARD' => 64,
+                'SUB_OUT' => 72,
+                _ => 12,
+              }}',
+            ),
+          ),
+          findsOneWidget,
+          reason: type,
+        );
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('empty match context explains missing data without fake zeros', (
+    tester,
+  ) async {
+    await _pumpPlayer(
+      tester,
+      _payload(player: _rich),
+      matchContext: const PlayerProfileMatchContext(
+        team: null,
+        summary: PlayerMatchSummary(),
+        statSections: [],
+        events: [],
+      ),
+      size: const Size(320, 640),
+    );
+    expect(find.text('En este partido'), findsOneWidget);
+    expect(find.text('Sin datos individuales del partido'), findsOneWidget);
+    expect(find.text('0'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'own goal is labelled for its scorer and never creates an assist',
     (tester) async {
@@ -476,6 +784,7 @@ void main() {
             'fromTeamName': 'Otro Club',
             'toTeamName': 'Club Local',
           },
+          {'fromTeamName': 'Origen sin jugador', 'toTeamName': 'Club Local'},
         ],
       ),
     );
@@ -485,6 +794,7 @@ void main() {
     expect(find.text('Club Viejo'), findsOneWidget);
     expect(find.byIcon(Icons.arrow_forward_rounded), findsOneWidget);
     expect(find.text('Otro Club'), findsNothing);
+    expect(find.text('Origen sin jugador'), findsNothing);
     await tester.tap(find.text('Club Viejo'));
     await tester.pumpAndSettle();
     expect(find.text('Equipo fb_team'), findsOneWidget);

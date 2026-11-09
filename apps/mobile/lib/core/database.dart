@@ -4,6 +4,8 @@ import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 part 'database.g.dart';
 
+const _selectedCountryUnchanged = Object();
+
 class Follows extends Table {
   TextColumn get entityId => text()();
   TextColumn get entityType => text()();
@@ -44,9 +46,8 @@ class CalendarSnapshots extends Table {
   Set<Column> get primaryKey => {calendarDate};
 }
 
-/// Last answer of a public catalog read (Explorar suggestions), so the
-/// screen paints at once on the next app start while it revalidates. Public,
-/// non-personal data; bounded to a handful of keys.
+/// Last public API answers. Catalog and offline profile/detail entries use
+/// separate key prefixes and separate eviction budgets; no account data.
 class CatalogSnapshots extends Table {
   TextColumn get cacheKey => text()();
   TextColumn get payload => text()();
@@ -67,6 +68,7 @@ class CatalogSnapshots extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor])
     : super(executor ?? driftDatabase(name: 'futbeat'));
+  DateTime? _lastPublicPruneAt;
   @override
   int get schemaVersion => 5;
   @override
@@ -183,44 +185,68 @@ class AppDatabase extends _$AppDatabase {
       );
   Future<void> savePreference({
     String? detectedCountry,
-    String? selectedCountry,
+    Object? selectedCountry = _selectedCountryUnchanged,
     bool? bootstrapDismissed,
     String? competitionOrderMode,
     String? competitionOrderPreference,
     List<String>? pinnedCompetitionIds,
   }) async {
-    final old = await (select(
-      preferences,
-    )..where((p) => p.id.equals(1))).getSingleOrNull();
-    await into(preferences).insertOnConflictUpdate(
+    final orderChanged =
+        competitionOrderMode != null ||
+        competitionOrderPreference != null ||
+        pinnedCompetitionIds != null;
+    final now = DateTime.now().toUtc();
+    // One atomic statement: new rows receive defaults and explicit values,
+    // while conflicts update only the requested fields, not a stale row copy.
+    await into(preferences).insert(
       PreferencesCompanion.insert(
         id: const Value(1),
-        detectedCountry: Value(detectedCountry ?? old?.detectedCountry),
-        selectedCountry: Value(selectedCountry),
-        bootstrapDismissed: Value(
-          bootstrapDismissed ?? old?.bootstrapDismissed ?? false,
-        ),
-        competitionOrderMode: Value(
-          competitionOrderMode ??
-              old?.competitionOrderMode ??
-              CompetitionOrderMode.automatic,
-        ),
-        competitionOrderPreference: Value(
-          competitionOrderPreference ??
-              old?.competitionOrderPreference ??
-              CompetitionOrderPreference.countryFirst,
-        ),
-        pinnedCompetitionIds: Value(
-          pinnedCompetitionIds == null
-              ? old?.pinnedCompetitionIds ?? '[]'
-              : jsonEncode(pinnedCompetitionIds.toSet().toList()),
-        ),
-        competitionOrderUpdatedAt: Value(
-          competitionOrderMode != null ||
-                  competitionOrderPreference != null ||
-                  pinnedCompetitionIds != null
-              ? DateTime.now().toUtc()
-              : old?.competitionOrderUpdatedAt ?? DateTime.now().toUtc(),
+        detectedCountry: detectedCountry == null
+            ? const Value.absent()
+            : Value(detectedCountry),
+        selectedCountry: identical(selectedCountry, _selectedCountryUnchanged)
+            ? const Value.absent()
+            : Value(selectedCountry as String?),
+        bootstrapDismissed: bootstrapDismissed == null
+            ? const Value.absent()
+            : Value(bootstrapDismissed),
+        competitionOrderMode: competitionOrderMode == null
+            ? const Value.absent()
+            : Value(competitionOrderMode),
+        competitionOrderPreference: competitionOrderPreference == null
+            ? const Value.absent()
+            : Value(competitionOrderPreference),
+        pinnedCompetitionIds: pinnedCompetitionIds == null
+            ? const Value.absent()
+            : Value(jsonEncode(pinnedCompetitionIds.toSet().toList())),
+        competitionOrderUpdatedAt: Value(now),
+      ),
+      onConflict: DoUpdate(
+        (_) => PreferencesCompanion.custom(
+          detectedCountry: detectedCountry == null
+              ? null
+              : Variable(detectedCountry),
+          selectedCountry: identical(selectedCountry, _selectedCountryUnchanged)
+              ? null
+              : Variable<String>(selectedCountry as String?),
+          bootstrapDismissed: bootstrapDismissed == null
+              ? null
+              : Variable(bootstrapDismissed),
+          competitionOrderMode: competitionOrderMode == null
+              ? null
+              : Variable(competitionOrderMode),
+          competitionOrderPreference: competitionOrderPreference == null
+              ? null
+              : Variable(competitionOrderPreference),
+          pinnedCompetitionIds: pinnedCompetitionIds == null
+              ? null
+              : Variable(jsonEncode(pinnedCompetitionIds.toSet().toList())),
+          competitionOrderUpdatedAt: orderChanged
+              ? Variable(now)
+              : FunctionCallExpression<DateTime>('COALESCE', [
+                  preferences.competitionOrderUpdatedAt,
+                  Variable(now),
+                ]),
         ),
       ),
     );
@@ -298,27 +324,43 @@ class AppDatabase extends _$AppDatabase {
     calendarSnapshots,
   )..where((row) => row.calendarDate.equals(date))).getSingleOrNull())?.payload;
 
-  Future<void> saveCalendarSnapshot(String date, String payload) async {
-    await into(calendarSnapshots).insertOnConflictUpdate(
-      CalendarSnapshotsCompanion.insert(
-        calendarDate: date,
-        payload: payload,
-        savedAt: DateTime.now().toUtc(),
-      ),
-    );
-    final old =
-        await (select(calendarSnapshots)
-              ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
-              ..limit(100, offset: 64))
-            .get();
-    if (old.isNotEmpty) {
-      await (delete(calendarSnapshots)..where(
-            (row) => row.calendarDate.isIn(
-              old.map((item) => item.calendarDate).toList(),
-            ),
-          ))
-          .go();
-    }
+  // Replacement renews rowId as a stable same-second recency tie-breaker.
+  // Write and eviction must commit together: a stale victim selection must
+  // never delete a response refreshed by a concurrent cache write.
+  Future<void> saveCalendarSnapshot(
+    String date,
+    String payload, {
+    String Function(String? previous, String incoming)? merge,
+  }) async {
+    return transaction(() async {
+      if (merge != null) {
+        payload = merge((await readCalendarEntry(date))?.payload, payload);
+      }
+      await into(calendarSnapshots).insert(
+        CalendarSnapshotsCompanion.insert(
+          calendarDate: date,
+          payload: payload,
+          savedAt: DateTime.now().toUtc(),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+      final old =
+          await (select(calendarSnapshots)
+                ..orderBy([
+                  (row) => OrderingTerm.desc(row.savedAt),
+                  (row) => OrderingTerm.desc(row.rowId),
+                ])
+                ..limit(100, offset: 64))
+              .get();
+      if (old.isNotEmpty) {
+        await (delete(calendarSnapshots)..where(
+              (row) => row.calendarDate.isIn(
+                old.map((item) => item.calendarDate).toList(),
+              ),
+            ))
+            .go();
+      }
+    });
   }
 
   Future<CatalogSnapshot?> readCatalogEntry(String key) => (select(
@@ -326,29 +368,154 @@ class AppDatabase extends _$AppDatabase {
   )..where((row) => row.cacheKey.equals(key))).getSingleOrNull();
 
   Future<void> saveCatalogSnapshot(String key, String payload) async {
-    await into(catalogSnapshots).insertOnConflictUpdate(
-      CatalogSnapshotsCompanion.insert(
-        cacheKey: key,
-        payload: payload,
-        savedAt: DateTime.now().toUtc(),
-      ),
-    );
-    final old =
-        await (select(catalogSnapshots)
-              ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
-              ..limit(100, offset: maxCatalogSnapshots))
-            .get();
-    if (old.isNotEmpty) {
+    return transaction(() async {
+      await into(catalogSnapshots).insert(
+        CatalogSnapshotsCompanion.insert(
+          cacheKey: key,
+          payload: payload,
+          savedAt: DateTime.now().toUtc(),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+      final old =
+          await (select(catalogSnapshots)
+                ..where((row) => row.cacheKey.like('public:%').not())
+                ..orderBy([
+                  (row) => OrderingTerm.desc(row.savedAt),
+                  (row) => OrderingTerm.desc(row.rowId),
+                ])
+                ..limit(100, offset: maxCatalogSnapshots))
+              .get();
+      if (old.isNotEmpty) {
+        await (delete(catalogSnapshots)..where(
+              (row) => row.cacheKey.isIn(old.map((item) => item.cacheKey)),
+            ))
+            .go();
+      }
+    });
+  }
+
+  /// Only validated public match/entity responses belong here. Reject a
+  /// single oversized answer so the entire offline partition stays bounded.
+  Future<void> savePublicSnapshot(
+    String key,
+    String payload, {
+    String Function(String? previous, String incoming)? merge,
+  }) async {
+    return transaction(() async {
+      if (!key.startsWith('public:') ||
+          utf8.encode(payload).length > maxPublicSnapshotBytes) {
+        return;
+      }
+      await _pruneExpiredPublicSnapshots();
+      if (merge != null) {
+        payload = merge((await readCatalogEntry(key))?.payload, payload);
+        if (utf8.encode(payload).length > maxPublicSnapshotBytes) return;
+      }
+      await into(catalogSnapshots).insert(
+        CatalogSnapshotsCompanion.insert(
+          cacheKey: key,
+          payload: payload,
+          savedAt: DateTime.now().toUtc(),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+      final old =
+          await (select(catalogSnapshots)
+                ..where((row) => row.cacheKey.like('public:%'))
+                ..orderBy([
+                  (row) => OrderingTerm.desc(row.savedAt),
+                  (row) => OrderingTerm.desc(row.rowId),
+                ])
+                ..limit(100, offset: maxPublicSnapshots))
+              .get();
+      if (old.isNotEmpty) {
+        await (delete(catalogSnapshots)..where(
+              (row) => row.cacheKey.isIn(old.map((item) => item.cacheKey)),
+            ))
+            .go();
+      }
+    });
+  }
+
+  /// Updates already retained sporting payloads without refreshing their age,
+  /// eviction order or retention budget. Reads and updates share one transaction.
+  Future<void> rewriteStoredSportingSnapshots(
+    String? Function(String) rewrite,
+  ) => transaction(() async {
+    for (final row in await select(calendarSnapshots).get()) {
+      final next = rewrite(row.payload);
+      if (next != null) {
+        await (update(calendarSnapshots)
+              ..where((r) => r.calendarDate.equals(row.calendarDate)))
+            .write(CalendarSnapshotsCompanion(payload: Value(next)));
+      }
+    }
+    final public = await (select(
+      catalogSnapshots,
+    )..where((r) => r.cacheKey.like('public:%'))).get();
+    for (final row in public) {
+      final next = rewrite(row.payload);
+      if (next != null && utf8.encode(next).length <= maxPublicSnapshotBytes) {
+        await (update(catalogSnapshots)
+              ..where((r) => r.cacheKey.equals(row.cacheKey)))
+            .write(CatalogSnapshotsCompanion(payload: Value(next)));
+      }
+    }
+  });
+
+  Future<CatalogSnapshot?> readPublicSnapshot(String key) async {
+    if (!key.startsWith('public:')) return null;
+    await _pruneExpiredPublicSnapshots();
+    final row = await readCatalogEntry(key);
+    if (row == null) return null;
+    if (DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
+        publicSnapshotRetention) {
       await (delete(catalogSnapshots)..where(
-            (row) => row.cacheKey.isIn(old.map((item) => item.cacheKey)),
+            // A refresh may commit after this read observed an expired row.
+            // Never delete the replacement saved under the same cache key.
+            (entry) =>
+                entry.cacheKey.equals(key) & entry.savedAt.equals(row.savedAt),
           ))
           .go();
+      return null;
     }
+    return row;
+  }
+
+  /// Bounded public catalogs only; never reads or restores personal follows.
+  Future<List<CatalogSnapshot>> readPublicFavoriteCatalogs() async {
+    await _pruneExpiredPublicSnapshots();
+    return (select(catalogSnapshots)
+          ..where((row) => row.cacheKey.like('public:favorites:%'))
+          ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
+          ..limit(maxPublicSnapshots))
+        .get();
+  }
+
+  Future<void> _pruneExpiredPublicSnapshots() async {
+    final now = DateTime.now().toUtc();
+    if (_lastPublicPruneAt != null &&
+        now.difference(_lastPublicPruneAt!) < const Duration(hours: 24)) {
+      return;
+    }
+    await (delete(catalogSnapshots)..where(
+          (row) =>
+              row.cacheKey.like('public:%') &
+              row.savedAt.isSmallerThanValue(
+                now.subtract(publicSnapshotRetention),
+              ),
+        ))
+        .go();
+    _lastPublicPruneAt = now;
   }
 }
 
 /// Stored catalog answers kept on the device (global + recent countries).
 const maxCatalogSnapshots = 8;
+const maxPublicSnapshots = 32;
+const maxPublicSnapshotBytes = 256 * 1024;
+const publicSnapshotRetention = Duration(days: 7);
 
 class CountryPreference {
   const CountryPreference({

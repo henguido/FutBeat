@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,12 +12,22 @@ import 'core/billing.dart';
 import 'core/database.dart';
 import 'core/entity_media.dart';
 import 'core/models.dart';
+import 'core/live_realtime.dart';
+import 'core/password_reset_links.dart';
 import 'core/providers.dart';
+import 'core/qa_development.dart';
 import 'core/theme.dart';
 import 'core/push.dart';
 import 'core/push_messages.dart';
 import 'core/interests.dart';
 import 'features/profile/profile_screen.dart';
+import 'features/profile/about_screen.dart';
+import 'features/profile/account_security_screen.dart';
+import 'features/profile/notifications_screen.dart';
+import 'features/profile/personalization_screen.dart';
+import 'features/profile/premium_screen.dart';
+import 'features/profile/privacy_ads_screen.dart';
+import 'features/profile/support_legal_screen.dart';
 import 'features/matches/matches_screen.dart';
 import 'features/matches/match_screen.dart';
 import 'features/entities/entity_screen.dart';
@@ -23,17 +35,66 @@ import 'features/explore/explore_screen.dart';
 import 'features/news/news_screen.dart';
 import 'features/favorites/favorites_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
+import 'features/profile/password_reset_sheet.dart';
 
-void main() => runApp(const ProviderScope(child: FutBeatApp()));
+Future<void> main() async {
+  installQaLocalCachePolicy();
+  installPassivePreviewPolicy();
+  WidgetsFlutterBinding.ensureInitialized();
+  await loadDeviceRegion();
+  runApp(const ProviderScope(child: FutBeatApp()));
+}
 
 Future<CountryPreference> refreshCountryForLocales(
   AppDatabase database,
   List<Locale>? locales,
 ) {
-  final detected = normalizeCountry(
+  final detected = deviceCountry(
     locales != null && locales.isNotEmpty ? locales.first.countryCode : null,
   );
   return refreshDetectedCountry(database, detected);
+}
+
+/// The reset email's https://futbeat.com/auth/reset App Link (or the web
+/// fallback's com.futbeat.futbeat://password-reset): redeems the one-time
+/// token and opens [NewPasswordScreen] on [navigator]. The token never
+/// becomes a route, so it is not kept in navigation. Other links are
+/// ignored (OAuth callbacks go to flutter_web_auth_2).
+/// Returns false when verification failed and the link can be reopened.
+Future<bool> handlePasswordResetLink(
+  Uri link, {
+  required PushService service,
+  required NavigatorState? navigator,
+  required ScaffoldMessengerState? messenger,
+  Future<void> Function()? onSignedIn,
+}) async {
+  if (!PushService.isPasswordResetLink(link)) return true;
+  // Host and path only: the one-time token is never logged.
+  debugPrint('FutBeat reset link: ${link.host}${link.path}');
+  void say(String text) =>
+      messenger?.showSnackBar(SnackBar(content: Text(text)));
+  try {
+    await service.beginPasswordRecovery(link);
+  } on RecoveryLinkInvalid catch (error) {
+    debugPrint('FutBeat reset link invalid: ${error.reason}');
+    say(
+      error.reason == 'missing_token'
+          ? 'Ese enlace está incompleto. Pide uno nuevo.'
+          : 'El enlace ya no es válido. Pide uno nuevo.',
+    );
+    return true;
+  } catch (_) {
+    say('No se pudo abrir el enlace. Inténtalo de nuevo.');
+    return false;
+  }
+  if (navigator == null) return true;
+  final changed = await navigator.push<bool>(
+    MaterialPageRoute(builder: (_) => NewPasswordScreen(service: service)),
+  );
+  if (changed != true) return true;
+  say('Contraseña actualizada. Sesión iniciada.');
+  await onSignedIn?.call();
+  return true;
 }
 
 GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
@@ -60,13 +121,46 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
           AppShell(location: state.uri.path, child: child),
       routes: [
         GoRoute(path: '/matches', builder: (_, state) => const MatchesScreen()),
-        GoRoute(path: '/news', builder: (_, state) => const NewsScreen()),
-        GoRoute(path: '/explore', builder: (_, state) => const ExploreScreen()),
+        if (!passivePreview && !userSessionAccessEnabled)
+          GoRoute(path: '/news', builder: (_, state) => const NewsScreen()),
+        GoRoute(
+          path: '/explore',
+          builder: (_, state) =>
+              ExploreScreen(focusType: state.uri.queryParameters['type']),
+        ),
         GoRoute(
           path: '/favorites',
           builder: (_, state) => const FavoritesScreen(),
         ),
         GoRoute(path: '/profile', builder: (_, state) => const ProfileScreen()),
+        GoRoute(
+          path: '/profile/personalization',
+          builder: (_, state) => const PersonalizationScreen(),
+        ),
+        GoRoute(
+          path: '/profile/notifications',
+          builder: (_, state) => const NotificationsScreen(),
+        ),
+        GoRoute(
+          path: '/profile/account',
+          builder: (_, state) => const AccountSecurityScreen(),
+        ),
+        GoRoute(
+          path: '/profile/premium',
+          builder: (_, state) => const PremiumScreen(),
+        ),
+        GoRoute(
+          path: '/profile/privacy',
+          builder: (_, state) => const PrivacyAdsScreen(),
+        ),
+        GoRoute(
+          path: '/profile/support',
+          builder: (_, state) => const SupportLegalScreen(),
+        ),
+        GoRoute(
+          path: '/profile/about',
+          builder: (_, state) => const AboutScreen(),
+        ),
         GoRoute(
           path: '/match/:id',
           builder: (_, state) {
@@ -86,6 +180,9 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
               // Opened from a match: that competition + season (#161).
               competitionId: state.uri.queryParameters['competitionId'],
               season: state.uri.queryParameters['season'],
+              playerMatchContext: state.extra is PlayerProfileMatchContext
+                  ? state.extra as PlayerProfileMatchContext
+                  : null,
             ),
           ),
       ],
@@ -121,8 +218,12 @@ class StartupGate extends ConsumerWidget {
 }
 
 class FutBeatApp extends ConsumerStatefulWidget {
-  const FutBeatApp({super.key, this.router});
+  const FutBeatApp({super.key, this.router, this.resetLinks});
   final GoRouter? router;
+
+  /// Password-reset links; Android's app links when null (tests inject
+  /// their own stream).
+  final Stream<Uri>? resetLinks;
   @override
   ConsumerState<FutBeatApp> createState() => _FutBeatAppState();
 }
@@ -133,11 +234,28 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   final messenger = GlobalKey<ScaffoldMessengerState>();
   PushMessageRouter? pushMessages;
   bool followPromptChecked = false;
+  StreamSubscription<Uri>? links;
+  late final resetLinks = PasswordResetLinkQueue(
+    router: router,
+    handle: (link, navigator) => handlePasswordResetLink(
+      link,
+      service: ref.read(pushServiceProvider),
+      navigator: navigator,
+      messenger: messenger.currentState,
+      onSignedIn: _afterRecovery,
+    ),
+  );
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Password-reset links (the initial one included), Android only. Queued
+    // until the router has left /start (see PasswordResetLinkQueue).
+    final linkSource =
+        widget.resetLinks ??
+        (Platform.isAndroid ? AppLinks().uriLinkStream : null);
+    links = linkSource?.listen(resetLinks.add, onError: (_) {});
     // Null unless the build has the push flags: nothing runs otherwise.
     final source = ref.read(pushMessageSourceProvider);
     if (source != null) {
@@ -150,17 +268,35 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     }
   }
 
+  /// After a password reset the account is signed in: close the sheets
+  /// that requested the link and land on Partidos (an existing account is
+  /// set up; a first-run onboarding is completed by it).
+  Future<void> _afterRecovery() async {
+    final navigator = router.routerDelegate.navigatorKey.currentState;
+    navigator?.popUntil((route) => route is! PopupRoute);
+    await ref.read(databaseProvider).markBootstrapDismissed();
+    unawaited(const SecureOnboardingProgressStore().clear());
+    router.go('/matches');
+  }
+
   /// The first follow added in this session offers notifications once.
   void _onFollows(
     AsyncValue<Set<String>>? previous,
     AsyncValue<Set<String>> next,
   ) {
     if (followPromptChecked) return;
-    if (!followAdded(previous?.asData?.value, next.asData?.value)) return;
+    final service = ref.read(pushServiceProvider);
+    if (!followAdded(
+      previous?.asData?.value,
+      next.asData?.value,
+      synced: service.syncedFollows,
+    )) {
+      return;
+    }
     followPromptChecked = true;
     final context = router.routerDelegate.navigatorKey.currentContext;
     if (context == null) return;
-    unawaited(maybeOfferNotifications(context, ref.read(pushServiceProvider)));
+    unawaited(maybeOfferNotifications(context, service));
   }
 
   @override
@@ -190,6 +326,17 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final sportsActive = state == AppLifecycleState.resumed;
+    ref.read(sportsAppActiveProvider).value = sportsActive;
+    if (ref.exists(repositoryProvider)) {
+      final repository = ref.read(repositoryProvider);
+      if (repository is ApiRepository) repository.setAppActive(sportsActive);
+    }
+    // A backgrounded app keeps its last visible data but does not retain a
+    // sporting socket or run its REST safety-net timer.
+    if (ref.exists(liveRealtimeClientProvider)) {
+      ref.read(liveRealtimeClientProvider).setAppActive(sportsActive);
+    }
     // Retry a session refresh/merge that failed offline, without creating
     // the account service just for this.
     if (state == AppLifecycleState.resumed && ref.exists(pushServiceProvider)) {
@@ -206,6 +353,8 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     pushMessages?.dispose();
+    unawaited(links?.cancel());
+    resetLinks.dispose();
     if (widget.router == null) router.dispose();
     super.dispose();
   }
@@ -236,7 +385,15 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
           data: query.copyWith(alwaysUse24HourFormat: use24HourClock),
           child: EntityMediaScope(
             memory: media,
-            child: child ?? const SizedBox.shrink(),
+            child:
+                qaLocalCacheOnly &&
+                    !const bool.fromEnvironment('FUTBEAT_OFFLINE_PREVIEW')
+                ? Banner(
+                    message: 'QA LOCAL · SIN RED',
+                    location: BannerLocation.topEnd,
+                    child: child ?? const SizedBox.shrink(),
+                  )
+                : child ?? const SizedBox.shrink(),
           ),
         );
       },
@@ -251,7 +408,7 @@ class AppShell extends ConsumerStatefulWidget {
   final Widget child;
   static const paths = [
     '/matches',
-    '/news',
+    if (!passivePreview && !userSessionAccessEnabled) '/news',
     '/explore',
     '/favorites',
     '/profile',
@@ -303,10 +460,11 @@ class _AppShellState extends ConsumerState<AppShell> {
             icon: Icon(Icons.sports_soccer),
             label: 'Partidos',
           ),
-          NavigationDestination(
-            icon: Icon(Icons.article_outlined),
-            label: 'Noticias',
-          ),
+          if (!passivePreview && !userSessionAccessEnabled)
+            NavigationDestination(
+              icon: Icon(Icons.article_outlined),
+              label: 'Noticias',
+            ),
           NavigationDestination(icon: Icon(Icons.search), label: 'Explorar'),
           NavigationDestination(
             icon: Icon(Icons.star_border),
@@ -320,15 +478,4 @@ class _AppShellState extends ConsumerState<AppShell> {
       ),
     );
   }
-}
-
-class SectionScreen extends StatelessWidget {
-  const SectionScreen({super.key, required this.title, required this.child});
-  final String title;
-  final Widget child;
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(title)),
-    body: ListView(padding: const EdgeInsets.all(20), children: [child]),
-  );
 }

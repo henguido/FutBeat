@@ -12,17 +12,40 @@ import 'theme.dart';
 
 /// A push as the app sees it, independent of Firebase.
 class PushMessage {
-  const PushMessage({this.title, this.body, this.data = const {}});
+  const PushMessage({
+    this.title,
+    this.body,
+    this.data = const {},
+    this.deliveryId,
+  });
 
   factory PushMessage.fromRemote(RemoteMessage message) => PushMessage(
     title: message.notification?.title ?? message.data['title']?.toString(),
     body: message.notification?.body ?? message.data['body']?.toString(),
     data: Map<String, dynamic>.from(message.data),
+    deliveryId: message.messageId,
   );
 
   final String? title;
   final String? body;
   final Map<String, dynamic> data;
+  final String? deliveryId;
+
+  /// Server outbox identity wins over a transport retry's new FCM message ID.
+  /// Never infer identity from text, player names or the match alone: a goal
+  /// correction and a new goal must remain separate notifications.
+  String? get deduplicationId {
+    for (final raw in [data['notificationId'], deliveryId]) {
+      if (raw is! String) continue;
+      final value = raw.trim();
+      if (value.isNotEmpty &&
+          value.length <= 200 &&
+          !RegExp(r'[\x00-\x1f\x7f]').hasMatch(value)) {
+        return value;
+      }
+    }
+    return null;
+  }
 
   /// Screen this push opens, or null when it has no target.
   String? get route => pushRouteFor(data);
@@ -32,8 +55,19 @@ class PushMessage {
 /// `data.teamId` → team, news → News. Ids are path segments, so they are encoded.
 String? pushRouteFor(Map<String, dynamic> data) {
   String? id(String key) {
-    final value = data[key]?.toString().trim();
-    return value == null || value.isEmpty ? null : Uri.encodeComponent(value);
+    final raw = data[key];
+    if (raw is! String) return null;
+    final value = raw.trim();
+    // A target is an identifier, never an arbitrary object or URI dot segment.
+    // Preserve older IDs (including encoded separators) without guessing IDs
+    // from a player's name or another entity in the payload.
+    if (value.isEmpty ||
+        value == '.' ||
+        value == '..' ||
+        RegExp(r'[\x00-\x1f\x7f]').hasMatch(value)) {
+      return null;
+    }
+    return Uri.encodeComponent(value);
   }
 
   final match = id('matchId');
@@ -128,6 +162,19 @@ class PushMessageRouter {
   final _subscriptions = <StreamSubscription<PushMessage>>[];
   String? _pending;
   bool _started = false;
+  bool _disposed = false;
+  final Set<String> _shown = {};
+  final Set<String> _opened = {};
+
+  // Bounded per router lifetime. Separate channels let a banner be tapped
+  // once, even though that delivery has already been shown in the foreground.
+  bool _remember(PushMessage message, Set<String> seen) {
+    final id = message.deduplicationId;
+    if (id == null) return true; // Legacy messages have no provable identity.
+    if (!seen.add(id)) return false;
+    if (seen.length > 128) seen.remove(seen.first);
+    return true;
+  }
 
   /// Routes before the app shell (startup gate, onboarding) would replace a
   /// pushed screen, so a tap waits until the user reaches the shell.
@@ -135,7 +182,7 @@ class PushMessageRouter {
       path == '/start' || path.startsWith('/onboarding');
 
   void start() {
-    if (_started) return;
+    if (_started || _disposed) return;
     _started = true;
     router.routerDelegate.addListener(_flush);
     _subscriptions
@@ -151,13 +198,16 @@ class PushMessageRouter {
   String get _location => router.routerDelegate.currentConfiguration.uri.path;
 
   void open(PushMessage message) {
+    if (_disposed) return;
     final route = message.route;
     if (route == null) return;
+    if (!_remember(message, _opened)) return;
     _pending = route;
     _flush();
   }
 
   void _flush() {
+    if (_disposed) return;
     final route = _pending;
     if (route == null) return;
     final location = _location;
@@ -168,10 +218,12 @@ class PushMessageRouter {
   }
 
   void showBanner(PushMessage message) {
+    if (_disposed) return;
     final state = messenger.currentState;
     final title = message.title?.trim() ?? '';
     final body = message.body?.trim() ?? '';
     if (state == null || (title.isEmpty && body.isEmpty)) return;
+    if (!_remember(message, _shown)) return;
     final route = message.route;
     state
       ..hideCurrentSnackBar()
@@ -226,20 +278,30 @@ class PushMessageRouter {
   }
 
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _pending = null;
     router.routerDelegate.removeListener(_flush);
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
     _subscriptions.clear();
+    _shown.clear();
+    _opened.clear();
   }
 }
 
 /// True when [next] adds a follow to an already loaded [previous] set.
-bool followAdded(Set<String>? previous, Set<String>? next) =>
+/// A follow the user added here: new keys that did not arrive from an
+/// account sync ([synced], see [PushService.syncedFollows]).
+bool followAdded(
+  Set<String>? previous,
+  Set<String>? next, {
+  Set<String> synced = const {},
+}) =>
     previous != null &&
     next != null &&
-    next.length > previous.length &&
-    !previous.containsAll(next);
+    next.difference(previous).difference(synced).isNotEmpty;
 
 /// Offers to enable notifications on this device when
 /// [PushService.shouldPromptForNotifications] allows it (push configured,

@@ -99,11 +99,17 @@ void main() {
   );
 
   testWidgets(
-    'pending discovery that never lands stops after bounded retries',
+    'pending discovery stops automatic retries and offers a manual retry',
     (tester) async {
       final requests = await _pumpExplore(
         tester,
-        (_) => _snapshot(coverage: _pending),
+        (i) => i <= remoteSearchRetryDelays.length
+            ? _snapshot(coverage: _pending)
+            : _snapshot(
+                players: [
+                  {'id': 'fb_player_ja', 'name': 'Julián Álvarez'},
+                ],
+              ),
       );
       for (final delay in remoteSearchRetryDelays) {
         await tester.pump(delay);
@@ -111,14 +117,18 @@ void main() {
       }
       expect(_searches(requests), 1 + remoteSearchRetryDelays.length);
       expect(find.text('Buscando más jugadores…'), findsNothing);
-      expect(find.text('No encontramos resultados'), findsOneWidget);
       expect(
-        find.text('Seguimos buscando; intenta de nuevo en unos segundos.'),
-        findsOneWidget,
+        find.text('No encontramos resultados para “julian alvarez”.'),
+        findsNothing,
       );
       expect(find.byType(CircularProgressIndicator), findsNothing);
       await tester.pump(const Duration(minutes: 1));
       expect(_searches(requests), 1 + remoteSearchRetryDelays.length);
+      await tester.tap(find.text('Reintentar búsqueda'));
+      await tester.pumpAndSettle();
+      expect(_searches(requests), 2 + remoteSearchRetryDelays.length);
+      expect(find.text('Julián Álvarez'), findsOneWidget);
+      expect(find.text('Reintentar búsqueda'), findsNothing);
     },
   );
 
@@ -148,9 +158,9 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         databaseProvider.overrideWithValue(db),
-        entitySnapshotProvider.overrideWith((ref, request) async {
+        entitySnapshotProvider.overrideWith((ref, request) {
           loads.add(loads.length);
-          return Snapshot(payload(loads.length - 1));
+          return Stream.value(Snapshot(payload(loads.length - 1)));
         }),
         followsProvider.overrideWith((ref) => Stream.value({})),
       ],

@@ -156,7 +156,7 @@ Future<void> _pump(
     overrides: [
       databaseProvider.overrideWithValue(db),
       entitySnapshotProvider.overrideWith(
-        (ref, request) async => Snapshot(profile),
+        (ref, request) => Stream.value(Snapshot(profile)),
       ),
       followsProvider.overrideWith((ref) => Stream.value({})),
       // No profile context server in these tests (#161 has its own).
@@ -205,6 +205,25 @@ final _matchRows = find.byWidgetPredicate(
 
 void main() {
   group('Partidos', () {
+    testWidgets('a canonical team keeps a fixture stored under its redirect', (
+      tester,
+    ) async {
+      final profile = _snapshot(
+        matches: [
+          _match(
+            'm_alias_team_synthetic',
+            const Duration(days: 2),
+            home: 'fb_team_alias_synthetic',
+          ),
+        ],
+      );
+      profile['entityRedirects'] = {'fb_team_alias_synthetic': 'fb_team'};
+      expect(Snapshot(profile).match('m_alias_team_synthetic'), isNotNull);
+      await _pump(tester, profile);
+      await _openTab(tester, 'Partidos');
+      expect(_matchRow('m_alias_team_synthetic'), findsOneWidget);
+    });
+
     testWidgets(
       'national team: Próximos and Resultados from every competition',
       (tester) async {
@@ -422,6 +441,36 @@ void main() {
       expect(ids(TeamMatchesBucket.upcoming), ['soon', 'late']);
       expect(ids(TeamMatchesBucket.results), ['stale', 'recent', 'old']);
     });
+
+    test(
+      'same fixture ID is deduped but two IDs are not merged by teams and date',
+      () {
+        final data = Snapshot(
+          _snapshot(
+            matches: [
+              _match(
+                'canonical_final',
+                const Duration(days: -1),
+                status: 'VERIFIED',
+              ),
+              _match(
+                'other_id_pending',
+                const Duration(days: -1),
+                status: 'SCHEDULED',
+              ),
+            ],
+          ),
+        );
+        final rows = [for (final m in data.matches) (match: m, data: data)];
+        final ids = orderedProfileMatches(TeamMatchesBucket.results, [
+          ...rows,
+          rows.first,
+        ]).map((row) => row.match.id).toList();
+        expect(ids, contains('canonical_final'));
+        expect(ids, contains('other_id_pending'));
+        expect(ids, hasLength(2));
+      },
+    );
   });
 
   group('Plantilla', () {
@@ -612,7 +661,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(home: Scaffold(body: Standings(data, 'fb_comp_a'))),
       );
-      expect(find.text('Tabla no disponible'), findsOneWidget);
+      expect(find.text('Tabla no disponible para esta fase.'), findsOneWidget);
       expect(find.text('Equipo'), findsNothing);
       expect(tester.takeException(), isNull);
     });
@@ -705,7 +754,16 @@ void main() {
     final offenders = <String>[];
     for (final file in Directory('lib').listSync(recursive: true)) {
       if (file is! File || !file.path.endsWith('.dart')) continue;
-      final source = file.readAsStringSync().toLowerCase();
+      var source = file.readAsStringSync().toLowerCase();
+      // The exact static-CDN dispatch is exercised by sports_image_cache_test
+      // (including rejection of API paths). Keep scanning the rest of the file
+      // and all other Dart sources for provider API references.
+      if (file.path.replaceAll('\\', '/') == 'lib/core/sports_image_cache.dart') {
+        source = source.replaceFirst(
+          "'r2.thesportsdb.com' => _sportsdbmedia.hasmatch(uri.path),",
+          '',
+        );
+      }
       for (final host in [
         'api.goal-api.com',
         'goal-api.com/v1',

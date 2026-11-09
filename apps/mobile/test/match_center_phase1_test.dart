@@ -356,14 +356,14 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('3-7. Resumida by default (Pos/Equipo/J/DG/Pts); Completa adds '
-      'G/E/P/GF/GC; switching is local (no request)', (tester) async {
+  testWidgets('3-7. Match Center uses compact Pos/Equipo/PJ/DG/Pts and links '
+      'to the complete table without another request', (tester) async {
     final server = _Server((_) => _context());
     final container = await _open(tester, server);
     await _tab(tester, 'Tabla');
     expect(find.byKey(const ValueKey('standings-compact')), findsOneWidget);
     expect(find.byKey(const ValueKey('standings-full')), findsNothing);
-    for (final label in ['Pos', 'Equipo', 'J', 'DG', 'Pts']) {
+    for (final label in ['Pos', 'Equipo', 'PJ', 'DG', 'Pts']) {
       expect(_inTable('standings-compact', find.text(label)), findsOneWidget);
     }
     for (final label in ['G', 'E', 'P', 'GF', 'GC']) {
@@ -372,32 +372,26 @@ void main() {
     // Signed goal difference, emphasized points.
     expect(_inTable('standings-compact', find.text('+7')), findsOneWidget);
     final reads = (server.contextReads, server.detailReads);
-    await tester.tap(find.byKey(const ValueKey('standings-view-full')));
-    await _settle(tester);
-    expect(find.byKey(const ValueKey('standings-full')), findsOneWidget);
-    expect(find.byKey(const ValueKey('standings-compact')), findsNothing);
-    for (final label in [
-      'Pos',
-      'Equipo',
-      'J',
-      'G',
-      'E',
-      'P',
-      'GF',
-      'GC',
-      'DG',
-      'Pts',
-    ]) {
-      expect(_inTable('standings-full', find.text(label)), findsOneWidget);
-    }
-    await tester.tap(find.byKey(const ValueKey('standings-view-compact')));
-    await _settle(tester);
-    expect(find.byKey(const ValueKey('standings-compact')), findsOneWidget);
+    expect(find.byKey(const ValueKey('standings-view-full')), findsNothing);
+    expect(find.byKey(const ValueKey('standings-show-full')), findsOneWidget);
     expect(
       (server.contextReads, server.detailReads),
       reads,
       reason: 'the view switch never makes a request',
     );
+    await tester.tap(find.byKey(const ValueKey('standings-show-full')));
+    await _settle(tester);
+    expect(find.text('Tabla completa'), findsOneWidget);
+    expect(find.byKey(const ValueKey('standings-view-full')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('standings-view-full')));
+    await _settle(tester);
+    expect(find.byKey(const ValueKey('standings-full')), findsOneWidget);
+    expect((server.contextReads, server.detailReads), reads);
+    await tester.pageBack();
+    await _settle(tester);
+    expect(_selectedTab(tester), 'Tabla');
+    expect(find.byKey(const ValueKey('standings-show-full')), findsOneWidget);
+    expect((server.contextReads, server.detailReads), reads);
     expect(tester.takeException(), isNull);
     await _close(tester, container);
   });
@@ -410,11 +404,6 @@ void main() {
     expect(_accent(tester, _away), awaySideColor);
     expect(_accent(tester, _liveA), isNull);
     expect(_accent(tester, _lateA), isNull);
-    // Also in the full view.
-    await tester.tap(find.byKey(const ValueKey('standings-view-full')));
-    await _settle(tester);
-    expect(_accent(tester, _home), lime);
-    expect(_accent(tester, _away), awaySideColor);
     await _close(tester, container);
   });
 
@@ -459,7 +448,7 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('15. stale + pending keeps the table (and the switch) visible', (
+  testWidgets('15. stale + pending keeps the compact table and CTA visible', (
     tester,
   ) async {
     final container = await _open(
@@ -473,7 +462,8 @@ void main() {
     await _tab(tester, 'Tabla');
     expect(find.byKey(const ValueKey('standings-updating')), findsOneWidget);
     expect(find.byKey(const ValueKey('standings-compact')), findsOneWidget);
-    expect(find.byKey(const ValueKey('standings-view-full')), findsOneWidget);
+    expect(find.byKey(const ValueKey('standings-view-full')), findsNothing);
+    expect(find.byKey(const ValueKey('standings-show-full')), findsOneWidget);
     await _elapse(tester, const Duration(seconds: 10));
     expect(find.byKey(const ValueKey('standings-compact')), findsOneWidget);
     await _close(tester, container);
@@ -517,9 +507,7 @@ void main() {
       expect(name.overflow, TextOverflow.ellipsis);
       final pts = _inTable('standings-compact', find.text('13'));
       expect(tester.getRect(pts).right, lessThanOrEqualTo(width));
-      // The full view scrolls horizontally instead of overflowing.
-      await tester.tap(find.byKey(const ValueKey('standings-view-full')));
-      await _settle(tester);
+      expect(find.byKey(const ValueKey('standings-show-full')), findsOneWidget);
       expect(tester.takeException(), isNull);
       await _close(tester, container);
     });
@@ -541,6 +529,25 @@ void main() {
     expect(find.text('Liga Fase Uno · Jornada 5'), findsOneWidget);
     expect(_selectedTab(tester), 'Previa');
     expect(tester.takeException(), isNull);
+    await _close(tester, container);
+  });
+
+  testWidgets('past fixture without a confirmed result skips Previa', (
+    tester,
+  ) async {
+    final container = await _open(
+      tester,
+      _Server(
+        (_) => _context(
+          status: 'SCHEDULED',
+          start: DateTime.now().toUtc().subtract(const Duration(days: 1)),
+        ),
+      ),
+      width: 360,
+    );
+    expect(_selectedTab(tester), 'Hechos');
+    expect(find.text('Previa'), findsNothing);
+    expect(find.text('2 - 1'), findsNothing);
     await _close(tester, container);
   });
 
@@ -613,4 +620,36 @@ void main() {
     expect(find.text('Anotador Parcial'), findsWidgets);
     await _close(tester, container);
   });
+
+  testWidgets('LIVE pitch is illustrative and uses the canonical score', (
+    tester,
+  ) async {
+    final container = await _open(
+      tester,
+      _Server((_) => _context(status: 'LIVE'), detail: (_) => _detail()),
+    );
+    await _tab(tester, 'En vivo');
+    expect(find.byKey(const ValueKey('live-field-card')), findsOneWidget);
+    expect(find.text('2 : 1'), findsOneWidget);
+    expect(find.text('Vista ilustrativa'), findsOneWidget);
+    expect(
+      find.text('Sin seguimiento de balón ni posición de ataque.'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await _close(tester, container);
+  });
+
+  testWidgets(
+    'finished match with no verified video has an honest empty state',
+    (tester) async {
+      final container = await _open(
+        tester,
+        _Server((_) => _context(status: 'FINISHED'), detail: (_) => _detail()),
+      );
+      await _scrollTo(tester, find.text('Videos oficiales'));
+      expect(find.text('Sin videos oficiales verificados'), findsOneWidget);
+      await _close(tester, container);
+    },
+  );
 }

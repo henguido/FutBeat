@@ -39,7 +39,10 @@ Map<String, dynamic> _search({Map<String, String> redirects = const {}}) => {
   'updatedAt': _now(),
   'entityRedirects': redirects,
   'competitions': [_competition],
-  'teams': [_team('fb_team_seed', 'Club Semilla')],
+  'teams': [
+    _team('fb_team_seed', 'Club Semilla'),
+    _team('fb_team_other', 'Club Vecino'),
+  ],
   'players': <dynamic>[],
   'matches': <dynamic>[],
   'standings': <dynamic>[],
@@ -82,12 +85,18 @@ ApiRepository _repository(Map<String, dynamic> search) => ApiRepository(
 );
 
 class _Harness {
-  _Harness(this.entity, this.contextRequests);
+  _Harness(this.entity, this.contextRequests, this.router);
   final Completer<Snapshot> entity;
   final List<String> contextRequests;
+  final GoRouter router;
 }
 
-Future<_Harness> _pump(WidgetTester tester, ApiRepository repository) async {
+Future<_Harness> _pump(
+  WidgetTester tester,
+  ApiRepository repository, {
+  String type = 'team',
+  String id = 'fb_team_seed',
+}) async {
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -95,12 +104,14 @@ Future<_Harness> _pump(WidgetTester tester, ApiRepository repository) async {
   final entity = Completer<Snapshot>();
   final contextRequests = <String>[];
   final router = GoRouter(
-    initialLocation: '/team/fb_team_seed',
+    initialLocation: '/$type/$id',
     routes: [
       GoRoute(
-        path: '/team/:id',
-        builder: (_, state) =>
-            EntityScreen(type: 'team', id: state.pathParameters['id']!),
+        path: '/:type/:id',
+        builder: (_, state) => EntityScreen(
+          type: state.pathParameters['type']!,
+          id: state.pathParameters['id']!,
+        ),
       ),
     ],
   );
@@ -109,7 +120,9 @@ Future<_Harness> _pump(WidgetTester tester, ApiRepository repository) async {
       databaseProvider.overrideWithValue(db),
       repositoryProvider.overrideWithValue(repository),
       // The profile request is still in flight until the test completes it.
-      entitySnapshotProvider.overrideWith((ref, request) => entity.future),
+      entitySnapshotProvider.overrideWith(
+        (ref, request) => Stream.fromFuture(entity.future),
+      ),
       // Never answers here: only records that it was asked (in parallel).
       teamContextProvider.overrideWith((ref, request) {
         contextRequests.add(request.teamId);
@@ -132,7 +145,7 @@ Future<_Harness> _pump(WidgetTester tester, ApiRepository repository) async {
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 100));
-  return _Harness(entity, contextRequests);
+  return _Harness(entity, contextRequests, router);
 }
 
 Future<void> _openTab(WidgetTester tester, String label) async {
@@ -144,6 +157,53 @@ Future<void> _openTab(WidgetTester tester, String label) async {
 }
 
 void main() {
+  for (final type in ['team', 'competition']) {
+    testWidgets(
+      'keeps the known $type visible when its profile service fails',
+      (tester) async {
+        final repository = _repository(_search());
+        await tester.runAsync(() => repository.searchCatalog('semilla', null));
+        final isTeam = type == 'team';
+        final harness = await _pump(
+          tester,
+          repository,
+          type: type,
+          id: isTeam ? 'fb_team_seed' : _competition['id'] as String,
+        );
+        harness.entity.completeError(
+          DioException(
+            requestOptions: RequestOptions(path: '/v1/entity'),
+            type: DioExceptionType.connectionError,
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('No pudimos cargar este perfil'), findsNothing);
+        expect(find.text('Reintentar carga del perfil'), findsOneWidget);
+        expect(
+          find.text(isTeam ? 'Club Semilla' : _competition['name'] as String),
+          findsWidgets,
+        );
+      },
+    );
+  }
+  testWidgets('changing teams paints the new cached team before its response', (
+    tester,
+  ) async {
+    final repository = _repository(_search());
+    await tester.runAsync(() => repository.searchCatalog('semilla', null));
+    final harness = await _pump(tester, repository);
+    expect(find.text('Club Semilla'), findsWidgets);
+
+    harness.router.go('/team/fb_team_other');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(harness.entity.isCompleted, isFalse);
+    expect(find.text('Club Semilla'), findsNothing);
+    expect(find.text('Club Vecino'), findsWidgets);
+  });
+
   testWidgets('a team found by search paints at once, then fills in', (
     tester,
   ) async {
@@ -180,12 +240,13 @@ void main() {
     expect(find.text('FutBeat'), findsNothing);
   });
 
-  testWidgets('an unknown team keeps the spinner until its profile arrives', (
+  testWidgets('an unknown team keeps the skeleton until its profile arrives', (
     tester,
   ) async {
     final harness = await _pump(tester, _repository(_search()));
     expect(find.text('FutBeat'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const ValueKey('content-skeleton')), findsOneWidget);
     expect(find.text('Club Semilla'), findsNothing);
 
     harness.entity.complete(_profile());

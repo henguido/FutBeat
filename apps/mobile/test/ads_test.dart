@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/ads.dart';
 import 'package:futbeat/core/entitlements.dart';
+import 'package:futbeat/features/matches/matches_screen.dart';
 import 'package:futbeat/features/profile/ads_privacy_tile.dart';
 
 class _MemoryStore implements EntitlementStore {
@@ -40,10 +41,12 @@ class _Source implements EntitlementSource {
 }
 
 class _FakeAd implements LoadedAd {
+  _FakeAd({this.size = const Size(320, 50)});
+
   bool disposed = false;
 
   @override
-  Size get size => const Size(320, 50);
+  final Size size;
 
   @override
   Widget widget() => const ColoredBox(
@@ -61,6 +64,7 @@ class _Loader implements AdLoader {
   final loaded = <_FakeAd>[];
   bool noFill = false;
   bool throws = false;
+  Size bannerSize = const Size(320, 50);
 
   @override
   Future<LoadedAd?> loadBanner(
@@ -70,7 +74,7 @@ class _Loader implements AdLoader {
     requests.add((unitId: unitId, personalized: personalized));
     if (throws) throw StateError('AdMob crashed');
     if (noFill) return null;
-    final ad = _FakeAd();
+    final ad = _FakeAd(size: bannerSize);
     loaded.add(ad);
     return ad;
   }
@@ -108,6 +112,7 @@ class _Ump implements UmpPlatform {
   int updates = 0;
   int forms = 0;
   int privacyForms = 0;
+  int privacyReads = 0;
 
   @override
   Future<void> requestConsentInfoUpdate() async {
@@ -129,6 +134,7 @@ class _Ump implements UmpPlatform {
 
   @override
   Future<bool> privacyOptionsRequired() async {
+    privacyReads++;
     if (privacyStatusFails) throw StateError('UMP status failed');
     return privacyRequired;
   }
@@ -155,6 +161,7 @@ class _Harness {
     // says otherwise; [withoutUmp] = no consent platform at all.
     _Ump? ump,
     bool withoutUmp = false,
+    bool inFeedSection = false,
   }) async {
     // Never awaited: unlistened when ads are off.
     addTearDown(() => unawaited(accounts.close()));
@@ -170,16 +177,31 @@ class _Harness {
             withoutUmp ? null : (ump ?? _Ump()),
           ),
         ],
-        child: const MaterialApp(
+        child: MaterialApp(
           home: Scaffold(
-            body: Column(
-              children: [
-                Text('Antes'),
-                AdSlot(AdPlacement.matchesFeed),
-                Text('Después'),
-                AdsPrivacyOptionsTile(),
-              ],
-            ),
+            body: inFeedSection
+                ? const Column(
+                    children: [
+                      CompetitionFeedSection(
+                        group: SizedBox(
+                          key: ValueKey('test-competition-group'),
+                          height: 100,
+                        ),
+                        ad: AdSlot(AdPlacement.matchesFeed),
+                      ),
+                      SizedBox(key: ValueKey('test-next-section'), height: 20),
+                      Text('Antes'),
+                      AdsPrivacyOptionsTile(),
+                    ],
+                  )
+                : const Column(
+                    children: [
+                      Text('Antes'),
+                      AdSlot(AdPlacement.matchesFeed),
+                      Text('Después'),
+                      AdsPrivacyOptionsTile(),
+                    ],
+                  ),
           ),
         ),
       ),
@@ -251,6 +273,99 @@ void main() {
       expect(h.loader.requests, hasLength(1));
     },
   );
+
+  for (final width in [320.0, 360.0, 390.0]) {
+    testWidgets(
+      'fallback-sized banner is centered and unwrapped at ${width.toInt()}px',
+      (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final h = _Harness();
+        await h.pump(tester);
+        await h.account(tester, null);
+
+        final banner = find.byKey(const ValueKey('fake-ad'));
+        final slot = find.byType(AdSlot);
+        final bannerBlock = find.byKey(const ValueKey('ad-matchesFeed'));
+        expect(banner, findsOneWidget);
+        expect(tester.getSize(banner), const Size(320, 50));
+        expect(tester.getSize(bannerBlock), Size(width, 50));
+        expect(tester.getCenter(banner).dx, width / 2);
+        expect(
+          find.descendant(of: slot, matching: find.byType(Card)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: slot, matching: find.byType(DecoratedBox)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: slot, matching: find.byType(Container)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: slot, matching: find.byType(Padding)),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('renders the effective adaptive size returned by Google', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(540, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final h = _Harness();
+    h.loader.bannerSize = const Size(468, 60);
+    await h.pump(tester);
+    await h.account(tester, null);
+
+    final banner = find.byKey(const ValueKey('fake-ad'));
+    final bannerBlock = find.byKey(const ValueKey('ad-matchesFeed'));
+    expect(tester.getSize(banner), const Size(468, 60));
+    expect(tester.getSize(bannerBlock), const Size(540, 60));
+    expect(tester.getCenter(banner).dx, 270);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final size in [const Size(320, 50), const Size(468, 60)]) {
+    testWidgets(
+      'feed section has 0px group-to-ad and 12px after ${size.width.toInt()}x${size.height.toInt()}',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(540, 800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final h = _Harness();
+        h.loader.bannerSize = size;
+        await h.pump(tester, inFeedSection: true);
+        await h.account(tester, null);
+
+        final group = find.byKey(const ValueKey('test-competition-group'));
+        final ad = find.byKey(const ValueKey('ad-matchesFeed'));
+        final next = find.byKey(const ValueKey('test-next-section'));
+        expect(tester.getTopLeft(ad).dy, tester.getBottomLeft(group).dy);
+        expect(tester.getTopLeft(next).dy - tester.getBottomLeft(ad).dy, 12);
+        expect(tester.getSize(find.byKey(const ValueKey('fake-ad'))), size);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('no-fill reserves no ad height and keeps normal 12px spacing', (
+    tester,
+  ) async {
+    final h = _Harness();
+    h.loader.noFill = true;
+    await h.pump(tester, inFeedSection: true);
+    await h.account(tester, null);
+
+    final group = find.byKey(const ValueKey('test-competition-group'));
+    final next = find.byKey(const ValueKey('test-next-section'));
+    expect(find.byKey(const ValueKey('ad-matchesFeed')), findsNothing);
+    expect(tester.getTopLeft(next).dy - tester.getBottomLeft(group).dy, 12);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('PREMIUM never requests an ad, even while its cache loads', (
     tester,
@@ -391,6 +506,10 @@ void main() {
       await h.account(tester, null);
       expect(h.container.read(adsConsentProvider), AdsConsentState.unresolved);
       expect(h.loader.requests, isEmpty);
+      // Offline / no answer: the update times out, fails closed, no hang.
+      await tester.pump(umpUpdateTimeout + const Duration(seconds: 1));
+      expect(h.container.read(adsConsentProvider), AdsConsentState.unresolved);
+      expect(h.loader.requests, isEmpty);
     });
 
     testWidgets('consent required + accepted: ads allowed, form shown once', (
@@ -462,6 +581,12 @@ void main() {
       await h.account(tester, 'user-a');
       expect(ump.updates, 0);
       expect(h.loader.requests, isEmpty);
+      // Not even the privacy options status is read for PREMIUM.
+      expect(
+        await h.container.read(adsPrivacyOptionsRequiredProvider.future),
+        isFalse,
+      );
+      expect(ump.privacyReads, 0);
     });
 
     testWidgets(
@@ -667,6 +792,74 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(tile, findsNothing);
       expect(find.text('Después'), findsOneWidget);
+    });
+  });
+
+  group('release vs debug ad units', () {
+    const real = 'ca-app-pub-1234567890123456/1234567890';
+
+    test('debug accepts Google test ads and real units', () {
+      final test = AdsConfig.resolve(
+        release: false,
+        testAds: true,
+        matchesFeedUnitId: '',
+      );
+      expect(test.configured, isTrue);
+      expect(test.testAds, isTrue);
+      expect(
+        AdsConfig.resolve(
+          release: false,
+          testAds: false,
+          matchesFeedUnitId: real,
+        ).unitFor(AdPlacement.matchesFeed),
+        real,
+      );
+    });
+
+    test('release never runs test ads: flag or test unit = no ads', () {
+      for (final config in [
+        AdsConfig.resolve(release: true, testAds: true, matchesFeedUnitId: ''),
+        AdsConfig.resolve(
+          release: true,
+          testAds: false,
+          matchesFeedUnitId: admobTestBannerUnitId,
+        ),
+        AdsConfig.resolve(
+          release: true,
+          testAds: true,
+          matchesFeedUnitId: real,
+        ),
+      ]) {
+        expect(config.configured, isFalse);
+        expect(config.unitFor(AdPlacement.matchesFeed), isNull);
+      }
+      final production = AdsConfig.resolve(
+        release: true,
+        testAds: false,
+        matchesFeedUnitId: real,
+      );
+      expect(production.configured, isTrue);
+      expect(production.testAds, isFalse);
+    });
+
+    test('explicitly disabled release ads never request a unit', () {
+      final disabled = AdsConfig.resolve(
+        release: true,
+        adsDisabled: true,
+        testAds: false,
+        matchesFeedUnitId: real,
+      );
+      expect(disabled.configured, isFalse);
+      expect(disabled.unitFor(AdPlacement.matchesFeed), isNull);
+    });
+
+    test('Google test ids are recognised by publisher', () {
+      expect(isGoogleTestAdId(admobTestBannerUnitId), isTrue);
+      expect(
+        isGoogleTestAdId('ca-app-pub-3940256099942544~3347511713'),
+        isTrue,
+      );
+      expect(isGoogleTestAdId(real), isFalse);
     });
   });
 }

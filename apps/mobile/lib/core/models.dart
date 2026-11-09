@@ -3,6 +3,11 @@ import 'player_display_identity.dart';
 
 typedef Json = Map<String, dynamic>;
 
+/// Local cache provenance, never provider evidence. A terminal learned from a
+/// LIVE overlay can accept a later terminal correction; a canonical HTTP final
+/// remains absorbing. Network readers remove this local-only annotation.
+const localTerminalObservationKey = '_futbeatLocalTerminalObservation';
+
 String? safePlayerImage(dynamic value) {
   if (value is! String) return null;
   final uri = Uri.tryParse(value.trim());
@@ -46,15 +51,19 @@ String eventMinuteLabel(Json event) {
 
 int _eventTypeOrder(String type) => switch (type) {
   'KICKOFF' => 0,
-  'GOAL' => 1,
+  'GOAL' || 'OWN_GOAL' || 'PENALTY_GOAL' => 1,
   'MISSED_PENALTY' => 2,
   'YELLOW_CARD' => 3,
-  'RED_CARD' => 4,
-  'SUBSTITUTION' => 5,
-  'VAR' => 6,
-  'HALFTIME' => 7,
-  'FULL_TIME' => 8,
-  _ => 9,
+  'SECOND_YELLOW_CARD' || 'YELLOW_RED_CARD' => 4,
+  'RED_CARD' => 5,
+  'SUBSTITUTION' => 6,
+  'VAR' => 7,
+  'HALFTIME' => 8,
+  'SECOND_HALF' => 9,
+  'EXTRA_TIME' => 10,
+  'PENALTIES' => 11,
+  'FULL_TIME' => 12,
+  _ => 13,
 };
 
 // Football phase of an event: kickoff, first half (incl. 45+x), halftime,
@@ -65,10 +74,14 @@ int _timelinePhase(Json event) {
   return switch (event['type']) {
     'KICKOFF' => 0,
     'HALFTIME' => 2,
-    'FULL_TIME' => 5,
-    _ when minute is! int => 4,
+    'SECOND_HALF' => 3,
+    'EXTRA_TIME' => 5,
+    'PENALTIES' => 7,
+    'FULL_TIME' => 9,
+    _ when minute is! int => 8,
     _ when minute <= 45 => 1,
-    _ => 3,
+    _ when minute <= 90 => 4,
+    _ => 6,
   };
 }
 
@@ -92,7 +105,14 @@ int compareTimelineEvents(Json a, Json b) {
   return (a['id'] as String? ?? '').compareTo(b['id'] as String? ?? '');
 }
 
-const _phaseEvents = {'KICKOFF', 'HALFTIME', 'FULL_TIME'};
+const _phaseEvents = {
+  'KICKOFF',
+  'HALFTIME',
+  'SECOND_HALF',
+  'EXTRA_TIME',
+  'PENALTIES',
+  'FULL_TIME',
+};
 const _technicalEventCopy = 'Marcador actualizado';
 
 bool _isSynthetic(Json event) => event['synthetic'] == true;
@@ -357,8 +377,8 @@ class Entity {
   int? get shirtNumber => shirtNumberOf(json['shirtNumber'] ?? json['number']);
 
   String? get imageUrl {
-    final media = json['media'] as Json?;
-    if (media == null || media['verificationStatus'] != 'VERIFIED') return null;
+    final media = json['media'];
+    if (media is! Map || media['verificationStatus'] != 'VERIFIED') return null;
     return safePlayerImage(media['url']);
   }
 
@@ -398,6 +418,7 @@ class LiveMatchUpdate {
     this.events = const [],
     this.hasEventList = false,
     this.receivedAt,
+    this.observedAt,
   });
 
   /// [receivedAt] is the device time the row arrived (realtime), or the
@@ -422,6 +443,7 @@ class LiveMatchUpdate {
             .toList(),
         hasEventList: json['latest_events'] is List,
         receivedAt: receivedAt,
+        observedAt: observationTime(json),
       );
 
   /// Device-clock receipt time for a row fetched by REST: its age on the
@@ -440,12 +462,23 @@ class LiveMatchUpdate {
         staleAfter + const Duration(seconds: 1),
       );
     }
-    final observed =
-        DateTime.tryParse(row['updated_at'] as String? ?? '') ??
-        DateTime.parse(row['changed_at'] as String);
+    final observed = observationTime(row);
     final age = serverNow.toUtc().difference(observed.toUtc());
+    if (age < const Duration(minutes: -1)) {
+      return deviceNow.toUtc().subtract(
+        staleAfter + const Duration(seconds: 1),
+      );
+    }
     return deviceNow.toUtc().subtract(age.isNegative ? Duration.zero : age);
   }
+
+  /// updated_at can be rewritten by publication/maintenance without a new
+  /// provider observation. Without explicit evidence use the last content
+  /// change conservatively; neither HTTP receipt nor an event minute proves
+  /// that the provider has just checked an unchanged score.
+  static DateTime observationTime(Json row) =>
+      DateTime.tryParse(row['provider_observed_at'] as String? ?? '') ??
+      DateTime.parse(row['changed_at'] as String);
 
   final String matchId, provider, externalMatchId, status;
   final int? minute, homeScore, awayScore;
@@ -462,7 +495,10 @@ class LiveMatchUpdate {
   /// Staleness is measured on the device clock only.
   final DateTime? receivedAt;
 
-  /// Same window as the server failsafe: a LIVE row this silent is not live.
+  /// Explicit provider observation, or conservative last content change.
+  final DateTime? observedAt;
+
+  /// Confidence window, not permission to erase a score or invent a final.
   static const staleAfter = Duration(minutes: 15);
 
   Json applyTo(Json match, {DateTime? now}) {
@@ -472,23 +508,33 @@ class LiveMatchUpdate {
       'FINISHED_PENDING_VERIFICATION',
       'VERIFIED',
       'POSTPONED',
+      'SUSPENDED',
       'ABANDONED',
       'CANCELLED',
     };
-    // A terminal snapshot is absorbing (#120): realtime is an overlay and can
-    // never downgrade or rewrite it, however late its changedAt. Corrections
-    // after the final arrive as a new canonical snapshot, not through here.
-    if (terminalStatuses.contains(match['status'] as String?)) return match;
-    // #120: a silent LIVE overlay (missed DELETE, failed refresh) must not
-    // keep a match "EN VIVO"; terminal overlays always apply.
-    const liveStatuses = {'LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'};
-    if (liveStatuses.contains(status) &&
-        (now ?? DateTime.now()).toUtc().difference(
-              (receivedAt ?? changedAt).toUtc(),
-            ) >
-            staleAfter) {
-      return match;
+    // A canonical terminal snapshot is absorbing (#120). A terminal derived
+    // locally from an overlay is not canonical evidence: later terminal
+    // corrections still use the same ordering guards below. Even that local
+    // result cannot be resumed by a LIVE overlay; only canonical HTTP can do so.
+    if (terminalStatuses.contains(match['status'] as String?)) {
+      if (match[localTerminalObservationKey] != true ||
+          !terminalStatuses.contains(status)) {
+        return match;
+      }
     }
+    // A result overlay dated before this fixture's kickoff is contradictory
+    // provisional evidence (or an incorrectly matched provider row). A new
+    // canonical VERIFIED snapshot was accepted above, even if its kickoff is
+    // still future: only the backend can establish that an early final is
+    // genuine. Explicit postponements/cancellations may precede kickoff.
+    if (status == 'FINISHED_PENDING_VERIFICATION' || status == 'VERIFIED') {
+      final kickoff = DateTime.tryParse(match['startTime'] as String? ?? '');
+      if (kickoff != null && changedAt.toUtc().isBefore(kickoff.toUtc())) {
+        return match;
+      }
+    }
+    // Expiry changes confidence, never the last known score/status. Dropping
+    // the overlay here would restore a scheduled snapshot after disconnection.
 
     final previousAt = DateTime.tryParse(
       match['liveChangedAt'] as String? ?? '',
@@ -498,6 +544,27 @@ class LiveMatchUpdate {
         (match['liveRevision'] as int? ?? 0) > revision) {
       return match;
     }
+    if (match['liveProvider'] == provider &&
+        match['liveRevision'] == revision &&
+        previousAt != null &&
+        changedAt.isAtSameMomentAs(previousAt)) {
+      final previousObserved =
+          DateTime.tryParse(match['liveObservedAt'] as String? ?? '') ??
+          previousAt;
+      final observation = observedAt ?? changedAt;
+      if (observation.isBefore(previousObserved)) return match;
+      // Identical content/observation can arrive again from an older REST
+      // response. Keep the later device-clock freshness already persisted.
+      if (observation.isAtSameMomentAs(previousObserved)) {
+        final previousDevice = DateTime.tryParse(
+          match['liveObservationDeviceAt'] as String? ?? '',
+        );
+        final incomingDevice = receivedAt ?? observedAt ?? changedAt;
+        if (previousDevice != null && incomingDevice.isBefore(previousDevice)) {
+          return match;
+        }
+      }
+    }
     // P0-A: latest_events is the provider's complete, already reconciled
     // list (corrections, annulled goals, deleted cards). It REPLACES that
     // provider's events: never a union, so a row it no longer sends is gone.
@@ -505,7 +572,18 @@ class LiveMatchUpdate {
     // copies) the list neither re-sends nor owns. Owned by this provider:
     // its labelled rows and the synthetic score goals (GOAL feed only).
     final current = (match['events'] as List? ?? []).cast<Json>();
-    final latestIds = {for (final event in events) event['id']};
+    // Reject foreign rows before they can claim an existing event's ID.
+    // A discarded row must not erase another provider's retained event.
+    final latest = events.where((event) {
+      return event['id'] is String &&
+          (event['matchId'] == null || event['matchId'] == matchId) &&
+          (event['teamId'] == null ||
+              [
+                match['homeTeamId'],
+                match['awayTeamId'],
+              ].contains(event['teamId']));
+    }).toList();
+    final latestIds = {for (final event in latest) event['id']};
     bool ownedByThisFeed(Json event) {
       final label = event['provider'];
       if (label != null) return label == provider;
@@ -521,7 +599,7 @@ class LiveMatchUpdate {
         )
       else
         ...current,
-      ...events,
+      ...latest,
     ]) {
       final id = event['id'];
       if (id is! String) continue;
@@ -541,7 +619,16 @@ class LiveMatchUpdate {
       ..['minute'] = minute
       ..['liveRevision'] = revision
       ..['liveProvider'] = provider
-      ..['liveChangedAt'] = changedAt.toIso8601String();
+      ..['liveChangedAt'] = changedAt.toIso8601String()
+      ..['liveObservedAt'] = (observedAt ?? changedAt).toIso8601String()
+      ..['liveObservationDeviceAt'] = (receivedAt ?? observedAt ?? changedAt)
+          .toUtc()
+          .toIso8601String();
+    if (terminalStatuses.contains(status)) {
+      result[localTerminalObservationKey] = true;
+    } else {
+      result.remove(localTerminalObservationKey);
+    }
     if (homeScore != null && awayScore != null) {
       result['score'] = {'home': homeScore, 'away': awayScore};
     }
@@ -567,6 +654,14 @@ class MatchDetail {
     'pending': pending,
   }, blockedAliasIds: blockedAliasIds);
 
+  /// Transient read failure. This flag is never written to the detail cache.
+  MatchDetail withOfflineUnavailable() => MatchDetail({
+    ..._sourceJson,
+    'pending': false,
+    'offlineUnavailable': true,
+    if (available) 'offlineStale': true,
+  }, blockedAliasIds: blockedAliasIds);
+
   factory MatchDetail.waiting(String matchId) =>
       MatchDetail({...MatchDetail.empty(matchId).json, 'pending': true});
 
@@ -589,6 +684,10 @@ class MatchDetail {
   /// Something persisted is displayable (score, events, metadata, a partial
   /// provider observation...). It does NOT mean the detail is complete.
   bool get available => json['available'] == true;
+
+  /// Last public detail shown from device storage while revalidating/offline.
+  bool get offlineStale => json['offlineStale'] == true;
+  bool get offlineUnavailable => json['offlineUnavailable'] == true;
   bool get pending => json['pending'] == true;
 
   /// Server-side answer to "would registering demand still help?" (fetchable,
@@ -850,14 +949,29 @@ class FootballMatch {
       DateTime.tryParse(json['liveChangedAt'] as String? ?? '');
 
   bool get liveDataStale {
-    final changedAt = liveChangedAt;
-    if (!isLive || changedAt == null) return false;
-    return DateTime.now().toUtc().difference(changedAt.toUtc()) >
-        const Duration(minutes: 15);
+    return liveDataStaleAt(DateTime.now());
+  }
+
+  bool liveDataStaleAt(DateTime now) {
+    if (!isLive) return false;
+    final at = DateTime.tryParse(
+      (json['liveObservationDeviceAt'] ??
+              json['liveObservedAt'] ??
+              json['liveChangedAt'] ??
+              json['provenance']?['providerObservedAt'] ??
+              '')
+          .toString(),
+    );
+    if (at == null) return true;
+    final age = now.toUtc().difference(at.toUtc());
+    return age < const Duration(minutes: -1) ||
+        age > LiveMatchUpdate.staleAfter;
   }
 
   String get statusLabel {
-    if (isAwaitingUpdate && hasPlayedEvidence) {
+    if (isAwaitingUpdate) {
+      // Kickoff passed, no final yet: never "Programado" (same as the feed).
+      if (!hasPlayedEvidence) return 'Por confirmar';
       return json['score'] != null ? 'Marcador parcial' : '';
     }
     return switch (status) {
@@ -929,8 +1043,16 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
           'assistName',
           'playerId',
           'assistPlayerId',
+          'outPlayerId',
+          'inPlayerId',
+          'teamId',
+          'score',
+          'ownGoal',
+          'penalty',
         ])
-          if (detail.incidents[i][key] != null) key: detail.incidents[i][key],
+          if (detail.incidents[i][key] != null ||
+              (key == 'score' && detail.incidents[i].containsKey(key)))
+            key: detail.incidents[i][key],
         'detailSource': true,
       },
   ];
@@ -965,6 +1087,7 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
   // identity (canonicalPlayerId) for the scorer summary.
   final replaced = <Json>{};
   final paired = <Json, Json>{};
+  final identityPairs = <Json>{};
   for (final row in detailed) {
     final key = _upstreamKey(row);
     if (key == null) continue;
@@ -972,33 +1095,85 @@ List<Json> mergedMatchTimeline(FootballMatch match, MatchDetail detail) {
       if (event['type'] == row['type'] && _upstreamKey(event) == key) {
         replaced.add(event);
         paired.putIfAbsent(row, () => event);
+        identityPairs.add(row);
       }
     }
   }
+  bool compatible(Json row, Json event) {
+    if (event['type'] != row['type']) return false;
+    final ka = _upstreamKey(row), kb = _upstreamKey(event);
+    // Two different upstream rows of the same feed are two occurrences.
+    if (ka != null && kb != null && ka != kb && !kb.contains(':')) return false;
+    final sideA = _eventSide(row, match), sideB = _eventSide(event, match);
+    if (sideA != null && sideB != null && sideA != sideB) return false;
+    final sa = _scoreAfter(row), sb = _scoreAfter(event);
+    if (sa != null && sb != null && sa != sb) return false;
+    return _minutesCompatible(row, event);
+  }
+
   for (final row in detailed) {
     if (paired.containsKey(row)) continue;
     for (final event in canonical) {
-      if (replaced.contains(event) || event['type'] != row['type']) continue;
-      final ka = _upstreamKey(row), kb = _upstreamKey(event);
-      // Two different upstream rows of the same feed are two occurrences.
-      if (ka != null && kb != null && ka != kb && !kb.contains(':')) continue;
-      final sideA = _eventSide(row, match), sideB = _eventSide(event, match);
-      if (sideA != null && sideB != null && sideA != sideB) continue;
-      final sa = _scoreAfter(row), sb = _scoreAfter(event);
-      if (sa != null && sb != null && sa != sb) continue;
-      if (!_minutesCompatible(row, event)) continue;
+      if (replaced.contains(event) || !compatible(row, event)) continue;
       replaced.add(event);
       paired[row] = event;
+      // Counts are over the original sets, not the shrinking unpaired set:
+      // the last of three simultaneous substitutions is still ambiguous.
+      if (canonical.where((e) => compatible(row, e)).length == 1 &&
+          detailed.where((r) => compatible(r, event)).length == 1) {
+        identityPairs.add(row);
+      }
       break;
     }
   }
+  Json retainedScore(Json row) {
+    // Explicit detail presence, even null, is a correction. Never revive a
+    // prior score after it was cleared by the authoritative detail.
+    if (row.containsKey('score') || !identityPairs.contains(row)) return {};
+    final source = paired[row];
+    final score = source?['score'];
+    if (source == null || score is! Map) return {};
+    final home = score['home'], away = score['away'];
+    if (home is! int || away is! int || home < 0 || away < 0) return {};
+    final key = _upstreamKey(row);
+    final sameKey = key != null && key == _upstreamKey(source);
+    final side = _eventSide(row, match);
+    if (!sameKey && (side == null || side != _eventSide(source, match))) {
+      return {};
+    }
+    return {
+      'score': {'home': home, 'away': away},
+    };
+  }
+
   final rich = [
     ...canonical.where((event) => !replaced.contains(event)),
     for (final row in detailed)
-      if (paired[row]?['playerId'] != null)
-        {...row, 'canonicalPlayerId': paired[row]!['playerId']}
+      if (identityPairs.contains(row) && paired[row]?['playerId'] != null)
+        {
+          ...row,
+          ...retainedScore(row),
+          'canonicalPlayerId': paired[row]!['playerId'],
+          if (paired[row]!['assistPlayerId'] != null)
+            'canonicalAssistPlayerId': paired[row]!['assistPlayerId'],
+          // Detail can omit goal qualifiers while canonical events retain
+          // them. An explicit detail false still wins as a correction.
+          if (!row.containsKey('ownGoal') && paired[row]!['ownGoal'] != null)
+            'ownGoal': paired[row]!['ownGoal'],
+          if (!row.containsKey('penalty') && paired[row]!['penalty'] != null)
+            'penalty': paired[row]!['penalty'],
+        }
       else
-        row,
+        {
+          ...row,
+          ...retainedScore(row),
+          if (paired[row] case final source?) ...{
+            if (!row.containsKey('ownGoal') && source['ownGoal'] != null)
+              'ownGoal': source['ownGoal'],
+            if (!row.containsKey('penalty') && source['penalty'] != null)
+              'penalty': source['penalty'],
+          },
+        },
   ];
 
   final merged = <Json>[
@@ -1208,8 +1383,13 @@ class Snapshot {
         .where((row) => row['id'] == id)
         .firstOrNull;
 
+    final canonicalCompetitionId = resolveEntityId(target.competitionId);
     final matchStandings = standings
-        .where((table) => table['competitionId'] == target.competitionId)
+        .where(
+          (table) =>
+              resolveEntityId(table['competitionId']?.toString() ?? '') ==
+              canonicalCompetitionId,
+        )
         .toList();
     final teamIds = <String>{target.homeId, target.awayId};
     for (final table in matchStandings) {
@@ -1219,36 +1399,48 @@ class Snapshot {
         if (teamId != null && teamId.isNotEmpty) teamIds.add(teamId);
       }
     }
+    final canonicalTeamIds = teamIds.map(resolveEntityId).toSet();
 
     final playerIds = <String>{};
+    void retainEventPlayers(Map event) {
+      for (final key in const ['playerId', 'assistPlayerId']) {
+        final id = event[key]?.toString();
+        if (id != null && id.isNotEmpty) playerIds.add(id);
+      }
+    }
+
     for (final event in target.events) {
-      final playerId = event['playerId']?.toString();
-      if (playerId != null && playerId.isNotEmpty) playerIds.add(playerId);
+      retainEventPlayers(event);
     }
     for (final event
         in sourceMatch?['events'] is List
             ? sourceMatch!['events'] as List
             : const []) {
       if (event is! Map) continue;
-      final playerId = event['playerId']?.toString();
-      if (playerId != null && playerId.isNotEmpty) playerIds.add(playerId);
+      retainEventPlayers(event);
     }
+    final canonicalPlayerIds = playerIds.map(resolveEntityId).toSet();
 
     final contextTeams = [
       for (final team in _sourceJson['teams'] as List? ?? const [])
-        if (team is Map && teamIds.contains(team['id']?.toString())) team,
+        if (team is Map &&
+            canonicalTeamIds.contains(
+              resolveEntityId(team['id']?.toString() ?? ''),
+            ))
+          team,
     ];
     final contextPlayers = [
       for (final player in _sourceJson['players'] as List? ?? const [])
         if (player is Map &&
-            (playerIds.contains(player['id']?.toString()) ||
-                teamIds.contains(player['teamId']?.toString())))
+            (canonicalPlayerIds.contains(
+                  resolveEntityId(player['id']?.toString() ?? ''),
+                ) ||
+                canonicalTeamIds.contains(
+                  resolveEntityId(player['teamId']?.toString() ?? ''),
+                )))
           player,
     ];
-    final sourceCompetition = (_sourceJson['competitions'] as List? ?? const [])
-        .whereType<Map>()
-        .where((row) => row['id'] == target.competitionId)
-        .firstOrNull;
+    final sourceCompetition = competition(target.competitionId)?.json;
 
     final source = <String, dynamic>{
       'schemaVersion': 1,
@@ -1273,6 +1465,41 @@ class Snapshot {
     return _presentationEnabled
         ? Snapshot(source, blockedAliasIds: _blockedAliasIds)
         : Snapshot.unpresented(source);
+  }
+
+  /// Joins public favorite batches by entity ID, never by name.
+  static Snapshot combineFavoriteCatalogs(
+    List<Snapshot> batches, {
+    required bool incomplete,
+  }) {
+    if (batches.length == 1) {
+      return incomplete ? batches.single.asStale() : batches.single;
+    }
+    final ordered = [...batches]
+      ..sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+    List<Json> rows(String field) => {
+      for (final batch in ordered)
+        for (final row in (batch._sourceJson[field] as List).cast<Json>())
+          if (row['id'] is String) row['id'] as String: row,
+    }.values.toList();
+    return Snapshot(
+      {
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': ordered.last.updatedAt.toIso8601String(),
+        'freshness': {'stale': incomplete || batches.any((item) => item.stale)},
+        'entityRedirects': {
+          for (final batch in ordered)
+            ...(batch._sourceJson['entityRedirects'] as Map? ?? const {}),
+        },
+        for (final field in ['teams', 'players', 'competitions', 'matches'])
+          field: rows(field),
+        'standings': <Json>[],
+      },
+      blockedAliasIds: {
+        for (final batch in batches) ...batch.blockedDisplayAliases,
+      },
+    );
   }
 
   Snapshot asStale() {
@@ -1312,10 +1539,21 @@ class Snapshot {
         : Snapshot.unpresented(source);
   }
 
-  Entity? team(String id) => _teamsById[id];
-  Entity? player(String id) =>
-      _playersById[id] ?? _playersById[resolveEntityId(id)];
-  Entity? competition(String id) => _competitionsById[id];
+  Entity? team(String id) {
+    final canonicalId = resolveEntityId(id);
+    return _teamsById[canonicalId] ?? _teamsById[id];
+  }
+
+  Entity? player(String id) {
+    final canonicalId = resolveEntityId(id);
+    return _playersById[canonicalId] ?? _playersById[id];
+  }
+
+  Entity? competition(String id) {
+    final canonicalId = resolveEntityId(id);
+    return _competitionsById[canonicalId] ?? _competitionsById[id];
+  }
+
   FootballMatch? match(String id) => _matchesById[id];
   List<FootballMatch> onDate(DateTime date, String filter) =>
       matches

@@ -15,9 +15,14 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
 import 'package:futbeat/features/profile/password_reset_sheet.dart';
+import 'package:futbeat/features/profile/account_security_screen.dart';
 import 'package:futbeat/features/profile/profile_screen.dart';
+import 'package:futbeat/main.dart' show handlePasswordResetLink;
 
 class _Tokens implements PushTokenSource {
+  @override
+  Future<String?> currentToken() => requestToken();
+
   @override
   Future<String?> requestToken() async => null;
 
@@ -35,13 +40,14 @@ class _Fail {
 }
 
 /// A signed-in session that needs no server round trip (widget tests).
-Map<String, dynamic> _session() => {
+Map<String, dynamic> _session({String? provider}) => {
   'access_token': 'access-user-a-0',
   'refresh_token': 'refresh-user-a-0',
   'user': {
     'id': 'user-a',
     'email': 'user@example.com',
     'email_confirmed_at': '2026-09-27T00:00:00Z',
+    if (provider != null) 'app_metadata': {'provider': provider},
   },
 };
 
@@ -207,11 +213,15 @@ class _Http {
       calls.where((c) => c.path.contains(suffix)).length;
   bool called(String suffix) => count(suffix) > 0;
 
-  Future<void> waitFor(String suffix) async {
-    for (var i = 0; i < 200 && !called(suffix); i++) {
+  Future<void> waitFor(String suffix, {int count = 1}) async {
+    for (var i = 0; i < 200 && this.count(suffix) < count; i++) {
       await Future<void>.delayed(Duration.zero);
     }
-    expect(called(suffix), isTrue, reason: 'waiting for $suffix');
+    expect(
+      this.count(suffix),
+      greaterThanOrEqualTo(count),
+      reason: 'waiting for $suffix',
+    );
   }
 }
 
@@ -221,28 +231,130 @@ Future<({PushService service, AppDatabase db, _Http http})> _service({
   Set<String> server = const {},
   _Http? http,
   Duration cleanupTimeout = const Duration(seconds: 5),
+  OAuthBrowser? oauthBrowser,
+  FlutterSecureStorage? secureStorage,
 }) async {
   FlutterSecureStorage.setMockInitialValues(Map.of(storage));
   final db = AppDatabase(NativeDatabase.memory());
   await db.addFollows(local);
   final fake = http ?? _Http();
   if (server.isNotEmpty) fake.server['user-a'] = {...server};
-  final service = PushService(
+  final service = _ServiceWithStorage(
     const LiveRealtimeConfig(
       supabaseUrl: 'https://supabase.test',
       publicKey: 'publishable-test-key',
     ),
     db,
     _Tokens(),
+    secureStorage: secureStorage ?? const FlutterSecureStorage(),
     dio: fake.dio,
     clock: () => fake.now,
     signOutCleanupTimeout: cleanupTimeout,
+    oauthEnabled: true,
+    oauthBrowser: oauthBrowser,
+    oauthAllowedProviders: const {OAuthProvider.google, OAuthProvider.facebook},
   );
   addTearDown(() async {
     service.dispose();
     await db.close();
   });
   return (service: service, db: db, http: fake);
+}
+
+/// Controls storage timing without changing the production storage adapter.
+class _ServiceWithStorage extends PushService {
+  _ServiceWithStorage(
+    super.config,
+    super.database,
+    super.tokens, {
+    required this.secureStorage,
+    super.dio,
+    super.clock,
+    super.signOutCleanupTimeout,
+    super.oauthEnabled,
+    super.oauthAllowedProviders,
+    super.oauthBrowser,
+  });
+
+  final FlutterSecureStorage secureStorage;
+
+  @override
+  FlutterSecureStorage get storage => secureStorage;
+}
+
+class _HeldSessionRead extends FlutterSecureStorage {
+  _HeldSessionRead({this.heldKey = 'futbeat.push.session', this.hold = true});
+
+  final String heldKey;
+  bool hold;
+  final captured = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    final value = await super.read(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+    if (hold && key == heldKey && !captured.isCompleted) {
+      captured.complete();
+      await release.future;
+    }
+    return value;
+  }
+}
+
+class _HeldSessionWrite extends FlutterSecureStorage {
+  _HeldSessionWrite({this.hold = true, this.failHeldWrite = false});
+
+  bool hold;
+  bool failHeldWrite;
+  final captured = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (key == 'futbeat.push.session' && hold && !captured.isCompleted) {
+      captured.complete();
+      await release.future;
+      if (failHeldWrite) {
+        failHeldWrite = false;
+        throw StateError('synthetic storage failure');
+      }
+    }
+    await super.write(
+      key: key,
+      value: value,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
 }
 
 /// A service whose storage already holds a valid session for user-a.
@@ -298,8 +410,9 @@ final _emptySnapshot = Snapshot({
 Future<void> _pumpProfile(
   WidgetTester tester,
   PushService service,
-  AppDatabase db,
-) async {
+  AppDatabase db, {
+  Widget child = const ProfileScreen(),
+}) async {
   tester.view.physicalSize = const Size(800, 3200);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -324,7 +437,7 @@ Future<void> _pumpProfile(
           (ref, keys) async => _emptySnapshot,
         ),
       ],
-      child: const MaterialApp(home: ProfileScreen()),
+      child: MaterialApp(home: child),
     ),
   );
   await tester.pump(const Duration(milliseconds: 500));
@@ -334,6 +447,55 @@ Future<void> _scrollTo(WidgetTester tester, Finder finder) => tester
     .scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
 
 void main() {
+  test('account deletion requires a known user ID before dispatch', () async {
+    final value = await _service();
+    value.http.routes['grant_type=password'] = (_) =>
+        value.http.issue('user-a')..remove('user');
+    value.http.routes['futbeat-delete-account'] = (_) => {'deleted': true};
+    await value.service.signIn('user@example.com', 'password-test');
+    expect(value.service.authenticated, isTrue);
+    expect(value.service.userId, isNull);
+    final saved = await _read('futbeat.push.session');
+    expect(saved, isNotNull);
+
+    await expectLater(value.service.deleteAccount(), throwsStateError);
+
+    expect(value.http.count('futbeat-delete-account'), 0);
+    expect(value.service.authenticated, isTrue);
+    expect(await _read('futbeat.push.session'), saved);
+  });
+  test('a concurrent account deletion does not send another POST', () async {
+    final value = await _service();
+    value.service.session = value.http.issue('user-a');
+    final dispatched = Completer<void>();
+    final release = Completer<void>();
+    var calls = 0;
+    value.http.routes['futbeat-delete-account'] = (_) async {
+      if (++calls == 1) {
+        dispatched.complete();
+        await release.future;
+      }
+      return {'deleted': true};
+    };
+    final first = value.service.deleteAccount().then<Object?>(
+      (_) => null,
+      onError: (Object error) => error,
+    );
+    await dispatched.future;
+    Object? duplicateError;
+    try {
+      await value.service.deleteAccount();
+    } catch (error) {
+      duplicateError = error;
+    } finally {
+      release.complete();
+    }
+    expect(await first, isNull);
+    expect(calls, 1);
+    expect(duplicateError, isA<StateError>());
+    expect(value.service.authenticated, isFalse);
+  });
+
   group('authErrorMessage', () {
     final cases = <String, (Object, String)>{
       'invalid_credentials': (
@@ -603,7 +765,319 @@ void main() {
     );
   });
 
+  group('authentication intent lifecycle', () {
+    test('a delayed session write cannot survive a later sign out', () async {
+      final storage = _HeldSessionWrite();
+      final value = await _service(secureStorage: storage);
+      final signingIn = value.service.signIn(
+        'user@example.com',
+        'password-test',
+      );
+      await storage.captured.future;
+      final signingOut = value.service.signOut();
+      expect(value.service.authenticated, isFalse);
+      await Future<void>.delayed(Duration.zero);
+      storage.release.complete();
+      await Future.wait([signingIn, signingOut]);
+      expect(await _read('futbeat.push.session'), isNull);
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test(
+      'a delayed old session write cannot replace a newer account',
+      () async {
+        final storage = _HeldSessionWrite();
+        final value = await _service(secureStorage: storage);
+        final a = value.service.signIn('user@example.com', 'password-test');
+        await storage.captured.future;
+        final b = value.service.signIn('b@example.com', 'password-test');
+        await value.http.waitFor('grant_type=password', count: 2);
+        await Future<void>.delayed(Duration.zero);
+        storage.release.complete();
+        await Future.wait([a, b]);
+        expect(value.service.userId, 'user-b');
+        expect(
+          jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+          'user-b',
+        );
+      },
+    );
+
+    test('a delayed refresh write cannot replace a newer account', () async {
+      final storage = _HeldSessionWrite(hold: false);
+      final value = await _service(secureStorage: storage);
+      await value.service.signIn('user@example.com', 'password-test');
+      storage.hold = true;
+      final refreshing = value.service.refreshSession();
+      await storage.captured.future;
+      final b = value.service.signIn('b@example.com', 'password-test');
+      await value.http.waitFor('grant_type=password', count: 2);
+      await Future<void>.delayed(Duration.zero);
+      storage.release.complete();
+      await Future.wait([refreshing, b]);
+      expect(value.service.userId, 'user-b');
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
+    test('a failed session write does not poison the next sign-in', () async {
+      final storage = _HeldSessionWrite(failHeldWrite: true);
+      final value = await _service(secureStorage: storage);
+      final a = value.service.signIn('user@example.com', 'password-test');
+      await storage.captured.future;
+      final failed = expectLater(a, throwsStateError);
+      storage.release.complete();
+      await failed;
+      await value.service.signIn('b@example.com', 'password-test');
+      expect(value.service.userId, 'user-b');
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
+    test(
+      'sign out discards an email sign-in response already in flight',
+      () async {
+        final value = await _service(local: {'team:guest'});
+        final gate = value.http.hold('grant_type=password');
+        final signingIn = value.service.signIn(
+          'user@example.com',
+          'password-test',
+        );
+        await value.http.waitFor('grant_type=password');
+
+        await value.service.signOut();
+        gate.complete();
+        await signingIn;
+        await _settle(value.service);
+
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(value.http.called('futbeat_read_user_profile'), isFalse);
+        expect(await value.db.watchFollows().first, {'team:guest'});
+      },
+    );
+
+    test(
+      'the latest sign-in intent wins even when its response is slower',
+      () async {
+        final value = await _service();
+        final first = Completer<void>();
+        final second = Completer<void>();
+        value.http.routes['grant_type=password'] = (options) async {
+          final email = (options.data as Map)['email'];
+          await (email == 'user@example.com' ? first.future : second.future);
+          return value.http.signInRoute(options);
+        };
+        final a = value.service.signIn('user@example.com', 'password-test');
+        await value.http.waitFor('grant_type=password');
+        final b = value.service.signIn('b@example.com', 'password-test');
+        await value.http.waitFor('grant_type=password', count: 2);
+
+        first.complete();
+        await a;
+        final staleResponseAuthenticated = value.service.authenticated;
+        second.complete();
+        await b;
+
+        expect(staleResponseAuthenticated, isFalse);
+        expect(value.service.userId, 'user-b');
+        expect(
+          jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+          'user-b',
+        );
+      },
+    );
+
+    test('an older email sign-in cannot replace the newer account', () async {
+      final value = await _service();
+      final first = Completer<void>();
+      value.http.routes['grant_type=password'] = (options) async {
+        if ((options.data as Map)['email'] == 'user@example.com') {
+          await first.future;
+        }
+        return value.http.signInRoute(options);
+      };
+      final a = value.service.signIn('user@example.com', 'password-test');
+      await value.http.waitFor('grant_type=password');
+      await value.service.signIn('b@example.com', 'password-test');
+      first.complete();
+      await a;
+      expect(value.service.userId, 'user-b');
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
+    test('sign out discards a sign-up session already in flight', () async {
+      final value = await _service();
+      value.http.routes['/auth/v1/signup'] = (_) => value.http.issue('user-a');
+      final gate = value.http.hold('/auth/v1/signup');
+      final signup = value.service.signUp('user@example.com', 'password-test');
+      await value.http.waitFor('/auth/v1/signup');
+      await value.service.signOut();
+      gate.complete();
+      await signup;
+      expect(value.service.authenticated, isFalse);
+      expect(await _read('futbeat.push.session'), isNull);
+    });
+
+    for (final provider in OAuthProvider.values) {
+      test(
+        'sign out during ${provider.id} browser cancels its code exchange',
+        () async {
+          final callback = Completer<String>();
+          final opened = Completer<void>();
+          final value = await _service(
+            oauthBrowser: (_, _) {
+              opened.complete();
+              return callback.future;
+            },
+          );
+          value.http.routes['grant_type=pkce'] = (_) =>
+              value.http.issue('user-a');
+          final signingIn = value.service.signInWithOAuth(provider);
+          await opened.future;
+          await value.service.signOut();
+          callback.complete(
+            'com.futbeat.futbeat://login-callback?code=local-code',
+          );
+          await signingIn;
+          expect(value.service.authenticated, isFalse);
+          expect(value.http.called('grant_type=pkce'), isFalse);
+        },
+      );
+    }
+
+    test('sign out discards password recovery completion in flight', () async {
+      final value = await _service();
+      value.http.routes['/auth/v1/verify'] = (_) => value.http.issue('user-a');
+      value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+      await value.service.beginPasswordRecovery(
+        Uri.parse(
+          'https://futbeat.com/auth/reset?token_hash=local-hash&type=recovery',
+        ),
+      );
+      final gate = value.http.hold('/auth/v1/user');
+      final completing = value.service.completePasswordRecovery(
+        'password-next',
+      );
+      await value.http.waitFor('/auth/v1/user');
+      await value.service.signOut();
+      gate.complete();
+      await completing;
+      expect(value.service.authenticated, isFalse);
+      expect(await _read('futbeat.push.session'), isNull);
+    });
+  });
+
   group('restore', () {
+    test(
+      'a captured storage read cannot restore an account after sign out',
+      () async {
+        final http = _Http();
+        final storage = _HeldSessionRead();
+        final value = await _service(
+          http: http,
+          secureStorage: storage,
+          storage: {'futbeat.push.session': jsonEncode(http.issue('user-a'))},
+          local: {'team:guest'},
+        );
+        final restoring = value.service.restore();
+        await storage.captured.future;
+        await value.service.signOut();
+        storage.release.complete();
+        await restoring;
+        expect(value.service.authenticated, isFalse);
+        expect(value.http.called('grant_type=refresh_token'), isFalse);
+        expect(value.http.called('futbeat_read_user_profile'), isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(await value.db.watchFollows().first, {'team:guest'});
+      },
+    );
+
+    test(
+      'late confirmation metadata cannot replace a newer sign-up intent',
+      () async {
+        final storage = _HeldSessionRead(
+          heldKey: 'futbeat.auth.pendingConfirmationEmail',
+        );
+        final value = await _service(
+          secureStorage: storage,
+          storage: {'futbeat.auth.pendingConfirmationEmail': 'old@example.com'},
+        );
+        value.http.routes['/auth/v1/signup'] = (_) => {
+          'user': {
+            'id': 'user-b',
+            'identities': [
+              <String, dynamic>{'provider': 'email'},
+            ],
+          },
+        };
+        final restoring = value.service.restore();
+        await storage.captured.future;
+        await value.service.signUp('b@example.com', 'password-test');
+        storage.release.complete();
+        await restoring;
+        expect(value.service.pendingConfirmationEmail, 'b@example.com');
+      },
+    );
+
+    test(
+      'captured storage cannot authenticate while a newer sign-in is pending',
+      () async {
+        final http = _Http();
+        final storage = _HeldSessionRead();
+        final value = await _service(
+          http: http,
+          secureStorage: storage,
+          storage: {'futbeat.push.session': jsonEncode(http.issue('user-a'))},
+        );
+        final restoring = value.service.restore();
+        await storage.captured.future;
+        final gate = value.http.hold('grant_type=password');
+        final signingIn = value.service.signIn(
+          'b@example.com',
+          'password-test',
+        );
+        await value.http.waitFor('grant_type=password');
+        storage.release.complete();
+        await restoring;
+        final authenticatedBeforeCurrentResponse = value.service.authenticated;
+        final refreshes = value.http.count('grant_type=refresh_token');
+        gate.complete();
+        await signingIn;
+        expect(authenticatedBeforeCurrentResponse, isFalse);
+        expect(refreshes, 0);
+        expect(value.service.userId, 'user-b');
+      },
+    );
+
+    test('captured storage preserves a newer completed sign-in', () async {
+      final http = _Http();
+      final storage = _HeldSessionRead();
+      final value = await _service(
+        http: http,
+        secureStorage: storage,
+        storage: {'futbeat.push.session': jsonEncode(http.issue('user-a'))},
+      );
+      final restoring = value.service.restore();
+      await storage.captured.future;
+      await value.service.signIn('b@example.com', 'password-test');
+      storage.release.complete();
+      await restoring;
+      expect(value.service.userId, 'user-b');
+      expect(value.http.called('grant_type=refresh_token'), isFalse);
+      expect(
+        jsonDecode((await _read('futbeat.push.session'))!)['user']['id'],
+        'user-b',
+      );
+    });
+
     test(
       'keeps the stored session on a network error, then recovers',
       () async {
@@ -751,123 +1225,415 @@ void main() {
     expect(seen, ['user-a']);
   });
 
-  group('password recovery', () {
-    test('asks Supabase for a code without signing in', () async {
+  group('password recovery (email App Link)', () {
+    final link = Uri.parse(
+      'https://futbeat.com/auth/reset?token_hash=one-time-hash&type=recovery',
+    );
+
+    /// GoTrue verify: the token works once, then it is spent.
+    void verifyOnce(_Http http) {
+      var used = false;
+      http.routes['/auth/v1/verify'] = (options) {
+        final body = options.data as Map;
+        if (used ||
+            body['type'] != 'recovery' ||
+            body['token_hash'] != 'one-time-hash') {
+          return const _Fail(403, {'error_code': 'otp_expired'});
+        }
+        used = true;
+        return http.issue('user-a');
+      };
+    }
+
+    test('asks for the futbeat.com reset link, without signing in', () async {
       final value = await _service();
       await value.service.requestPasswordReset(' user@example.com ');
-      final call = value.http.calls.singleWhere(
+      final call = value.http.calls.lastWhere(
         (c) => c.path.contains('/auth/v1/recover'),
       );
-      expect(call.data, {'email': 'user@example.com'});
-      expect(call.headers['Authorization'], isNull);
-      expect(value.service.authenticated, isFalse);
-    });
-
-    test('a valid code signs in and sets the new password', () async {
-      final value = await _service(server: {'team:a'});
-      value.http.routes['/auth/v1/verify'] = (_) => value.http.issue('user-a');
-      value.http.routes['/auth/v1/user'] = (_) => {'id': 'user-a'};
-
-      await value.service.resetPassword(
-        'user@example.com',
-        ' 123456 ',
-        'nueva-clave-8',
-      );
-
-      final verify = value.http.calls.singleWhere(
-        (c) => c.path.contains('/auth/v1/verify'),
-      );
-      expect(verify.data, {
-        'type': 'recovery',
-        'email': 'user@example.com',
-        'token': '123456',
-      });
-      final update = value.http.calls.singleWhere(
-        (c) => c.path.contains('/auth/v1/user'),
-      );
-      expect(update.method, 'PUT');
-      expect(update.data, {'password': 'nueva-clave-8'});
       expect(
-        update.headers['Authorization'],
-        startsWith('Bearer access-user-a-'),
+        call.queryParameters['redirect_to'],
+        'https://futbeat.com/auth/reset',
       );
-      expect(value.service.accountId, 'user-a');
-      expect(await _read('futbeat.push.session'), isNotNull);
-      // Same account sync as a normal sign-in: server follows merge in.
-      await _settle(value.service);
-      expect(await value.db.watchFollows().first, contains('team:a'));
-    });
-
-    test('an invalid or expired code: clear message, no session', () async {
-      final value = await _service();
-      value.http.routes['/auth/v1/verify'] = (_) => const _Fail(403, {
-        'error_code': 'otp_expired',
-        'msg': 'Token has expired or is invalid',
-      });
-      Object? error;
-      try {
-        await value.service.resetPassword(
-          'user@example.com',
-          '000000',
-          'x' * 8,
-        );
-      } catch (caught) {
-        error = caught;
-      }
-      expect(error, isA<DioException>());
-      expect(authErrorMessage(error!), 'El código no es válido o ya venció.');
+      expect(call.data, {'email': 'user@example.com'});
       expect(value.service.authenticated, isFalse);
-      expect(value.http.called('/auth/v1/user'), isFalse);
+    });
+
+    test(
+      'the link redeems once; signed in only after the new password',
+      () async {
+        final value = await _service();
+        Map? update;
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (options) {
+          update = options.data as Map;
+          return <String, dynamic>{};
+        };
+        await value.service.beginPasswordRecovery(link);
+        expect(value.service.passwordRecoveryPending, isTrue);
+        expect(value.service.authenticated, isFalse);
+        await value.service.completePasswordRecovery('nueva-clave-8');
+        expect(update, {'password': 'nueva-clave-8'});
+        expect(value.service.authenticated, isTrue);
+        expect(value.service.passwordRecoveryPending, isFalse);
+        await expectLater(
+          value.service.beginPasswordRecovery(link),
+          throwsA(
+            isA<RecoveryLinkInvalid>().having(
+              (e) => e.reason,
+              'reason',
+              'rejected',
+            ),
+          ),
+        );
+      },
+    );
+
+    test('expired, rejected or incomplete links never sign in', () async {
+      final value = await _service();
+      verifyOnce(value.http);
+      final before = value.http.calls.length;
+      for (final bad in [
+        'https://futbeat.com/auth/reset#error=access_denied&error_code=otp_expired',
+        'https://futbeat.com/auth/reset',
+        'https://futbeat.com/auth/reset?token_hash=x&type=signup',
+      ]) {
+        await expectLater(
+          value.service.beginPasswordRecovery(Uri.parse(bad)),
+          throwsA(isA<RecoveryLinkInvalid>()),
+          reason: bad,
+        );
+      }
+      expect(value.http.calls.length, before);
+      await expectLater(
+        value.service.beginPasswordRecovery(
+          Uri.parse(
+            'https://futbeat.com/auth/reset?token_hash=bad&type=recovery',
+          ),
+        ),
+        throwsA(
+          isA<RecoveryLinkInvalid>().having(
+            (e) => e.reason,
+            'reason',
+            'rejected',
+          ),
+        ),
+      );
+      expect(value.service.authenticated, isFalse);
+      expect(value.service.passwordRecoveryPending, isFalse);
+    });
+
+    test(
+      'a failed update keeps the recovery for a retry, no session',
+      () async {
+        final value = await _service();
+        var fail = true;
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) =>
+            fail ? const _Fail.offline() : <String, dynamic>{};
+        await value.service.beginPasswordRecovery(link);
+        await expectLater(
+          value.service.completePasswordRecovery('nueva-clave-8'),
+          throwsA(isA<DioException>()),
+        );
+        expect(value.service.authenticated, isFalse);
+        expect(value.service.passwordRecoveryPending, isTrue);
+        fail = false;
+        await value.service.completePasswordRecovery('nueva-clave-8');
+        expect(value.service.authenticated, isTrue);
+      },
+    );
+
+    test(
+      'a rejected replacement link cannot reuse an older recovery session',
+      () async {
+        final value = await _service();
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+        await value.service.beginPasswordRecovery(link);
+        expect(value.service.passwordRecoveryPending, isTrue);
+
+        final replacement = link.replace(
+          queryParameters: {
+            'token_hash': 'replacement-token',
+            'type': 'recovery',
+          },
+        );
+        await expectLater(
+          value.service.beginPasswordRecovery(replacement),
+          throwsA(isA<RecoveryLinkInvalid>()),
+        );
+        await expectLater(
+          value.service.completePasswordRecovery('nueva-clave-8'),
+          throwsA(isA<RecoveryLinkInvalid>()),
+        );
+        expect(value.service.passwordRecoveryPending, isFalse);
+        expect(value.service.authenticated, isFalse);
+      },
+    );
+    test(
+      'a replacement after PUT prevents the previous session from committing',
+      () async {
+        final storage = _HeldSessionRead(
+          heldKey: PushService.leftoverKey,
+          hold: false,
+        );
+        final value = await _service(secureStorage: storage);
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) {
+          storage.hold = true;
+          return <String, dynamic>{};
+        };
+        await value.service.beginPasswordRecovery(link);
+        final completing = value.service.completePasswordRecovery(
+          'nueva-clave-8',
+        );
+        await storage.captured.future;
+        expect(value.http.count('/auth/v1/user'), 1);
+        expect(value.service.authenticated, isFalse);
+        value.http.routes['/auth/v1/verify'] = (_) =>
+            value.http.issue('user-b');
+        try {
+          await value.service.beginPasswordRecovery(link);
+        } finally {
+          storage.release.complete();
+        }
+        await completing;
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+        expect(value.service.passwordRecoveryPending, isTrue);
+
+        await value.service.completePasswordRecovery('nueva-clave-9');
+        expect(value.service.userId, 'user-b');
+      },
+    );
+    test('cancel drops the recovery session', () async {
+      final value = await _service();
+      verifyOnce(value.http);
+      await value.service.beginPasswordRecovery(link);
+      value.service.cancelPasswordRecovery();
+      expect(value.service.passwordRecoveryPending, isFalse);
+      await expectLater(
+        value.service.completePasswordRecovery('nueva-clave-8'),
+        throwsA(isA<RecoveryLinkInvalid>()),
+      );
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test('cancel discards a recovery verification already in flight', () async {
+      final value = await _service();
+      verifyOnce(value.http);
+      final gate = value.http.hold('/auth/v1/verify');
+      final verifying = value.service.beginPasswordRecovery(link);
+      await value.http.waitFor('/auth/v1/verify');
+      value.service.cancelPasswordRecovery();
+      gate.complete();
+      await verifying;
+      expect(value.service.passwordRecoveryPending, isFalse);
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test(
+      'cancel prevents automatic login after a pending password update',
+      () async {
+        final value = await _service();
+        verifyOnce(value.http);
+        value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+        await value.service.beginPasswordRecovery(link);
+        final gate = value.http.hold('/auth/v1/user');
+        final completing = value.service.completePasswordRecovery(
+          'password-next',
+        );
+        await value.http.waitFor('/auth/v1/user');
+        value.service.cancelPasswordRecovery();
+        gate.complete();
+        await completing;
+        expect(value.service.passwordRecoveryPending, isFalse);
+        expect(value.service.authenticated, isFalse);
+        expect(await _read('futbeat.push.session'), isNull);
+      },
+    );
+
+    test('sign out drops a verified recovery session', () async {
+      final value = await _service();
+      verifyOnce(value.http);
+      await value.service.beginPasswordRecovery(link);
+      await value.service.signOut();
+      expect(value.service.passwordRecoveryPending, isFalse);
+      expect(value.service.authenticated, isFalse);
+    });
+
+    test('App Link and web fallback are reset links; OAuth is not', () async {
+      expect(PushService.isPasswordResetLink(link), isTrue);
+      expect(
+        PushService.isPasswordResetLink(
+          Uri.parse(
+            'com.futbeat.futbeat://password-reset?token_hash=x&type=recovery',
+          ),
+        ),
+        isTrue,
+      );
+      final value = await _service();
+      final before = value.http.calls.length;
+      for (final other in [
+        'com.futbeat.futbeat://login-callback?code=x',
+        'https://futbeat.com/privacy',
+        'https://evil.example/auth/reset?token_hash=x&type=recovery',
+      ]) {
+        expect(PushService.isPasswordResetLink(Uri.parse(other)), isFalse);
+        await handlePasswordResetLink(
+          Uri.parse(other),
+          service: value.service,
+          navigator: null,
+          messenger: null,
+        );
+      }
+      expect(value.http.calls.length, before);
+      expect(value.service.passwordRecoveryPending, isFalse);
     });
   });
 
-  test('a failed password update signs nobody in and retries without '
-      'spending the code again', () async {
-    final value = await _service();
-    var verifies = 0;
-    value.http.routes['/auth/v1/verify'] = (_) {
-      verifies++;
-      return value.http.issue('user-a');
-    };
-    var fail = true;
-    value.http.routes['/auth/v1/user'] = (_) => fail
-        ? const _Fail(422, {'error_code': 'same_password'})
-        : {'id': 'user-a'};
-    final seen = <String?>[];
-    final subscription = value.service.accountChanges.listen(seen.add);
-    addTearDown(subscription.cancel);
-
-    Object? error;
-    try {
-      await value.service.resetPassword(
-        'user@example.com',
-        '123456',
-        'vieja-123',
-      );
-    } catch (caught) {
-      error = caught;
-    }
+  testWidgets('recovery sheet: link, no code field, resend', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final db = AppDatabase(NativeDatabase.memory());
+    final service = _ResetService(db);
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PasswordResetSheet(
+            service: service,
+            initialEmail: 'user@example.com',
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Recuperar contraseña'), findsOneWidget);
+    expect(find.textContaining('Código'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('reset-send')));
+    await tester.pumpAndSettle();
+    expect(service.requested, ['user@example.com']);
+    expect(find.text('Revisa tu correo'), findsOneWidget);
     expect(
-      authErrorMessage(error!),
-      'Usa una contraseña distinta a la anterior.',
+      find.text('Te enviamos un enlace para cambiar tu contraseña.'),
+      findsOneWidget,
     );
-    expect(value.service.authenticated, isFalse);
-    expect(await _read('futbeat.push.session'), isNull);
-    await Future<void>.delayed(Duration.zero);
-    expect(seen, isEmpty);
-
-    fail = false;
-    await value.service.resetPassword(
-      'user@example.com',
-      '123456',
-      'nueva-123',
-    );
-    expect(verifies, 1);
-    expect(value.service.accountId, 'user-a');
-    expect(await _read('futbeat.push.session'), isNotNull);
+    expect(find.textContaining('Código'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('reset-resend')));
+    await tester.pumpAndSettle();
+    expect(service.requested, hasLength(2));
+    expect(find.text('Volver a iniciar sesión'), findsOneWidget);
   });
 
-  testWidgets('recovery sheet: email, then code and new password', (
+  testWidgets('a successful reset hands over to the app (to Partidos)', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final db = AppDatabase(NativeDatabase.memory());
+    final service = _ResetService(db);
+    addTearDown(() async {
+      service.dispose();
+      await db.close();
+    });
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(navigatorKey: navigator, home: const Text('perfil')),
+    );
+    var signedIn = 0;
+    final done = handlePasswordResetLink(
+      Uri.parse(
+        'https://futbeat.com/auth/reset?token_hash=one-time&type=recovery',
+      ),
+      service: service,
+      navigator: navigator.currentState,
+      messenger: null,
+      onSignedIn: () async => signedIn++,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Nueva contraseña'), findsWidgets);
+    await tester.enterText(
+      find.byKey(const ValueKey('new-password')),
+      'nueva-clave-8',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('confirm-password')),
+      'nueva-clave-8',
+    );
+    await tester.tap(find.byKey(const ValueKey('new-password-save')));
+    await tester.pumpAndSettle();
+    await done;
+    expect(service.completed, ['nueva-clave-8']);
+    expect(signedIn, 1);
+  });
+
+  testWidgets('reset screen does not acknowledge sign-in superseded by logout', (
+    tester,
+  ) async {
+    final value = (await tester.runAsync(() async {
+      final value = await _service();
+      value.http.routes['/auth/v1/verify'] = (_) => value.http.issue('user-a');
+      value.http.routes['/auth/v1/user'] = (_) => <String, dynamic>{};
+      await value.service.beginPasswordRecovery(
+        Uri.parse(
+          'https://futbeat.com/auth/reset?token_hash=local-hash&type=recovery',
+        ),
+      );
+      return value;
+    }))!;
+    final gate = value.http.hold('/auth/v1/user');
+    bool? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async => result = await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => NewPasswordScreen(service: value.service),
+              ),
+            ),
+            child: const Text('abrir'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('abrir'));
+    await tester.pumpAndSettle();
+    for (final key in ['new-password', 'confirm-password']) {
+      await tester.enterText(find.byKey(ValueKey(key)), 'nueva-clave-8');
+    }
+    final save = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('new-password-save')),
+    );
+    await tester.runAsync(() async {
+      save.onPressed!();
+      try {
+        await value.http
+            .waitFor('/auth/v1/user')
+            .timeout(const Duration(seconds: 3));
+        await value.service.signOut();
+      } finally {
+        gate.complete();
+      }
+    });
+    for (var turn = 0; turn < 100; turn++) {
+      await tester.pump(const Duration(milliseconds: 10));
+      if (result != null ||
+          find.text('La recuperación se interrumpió.').evaluate().isNotEmpty) {
+        break;
+      }
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+    }
+    expect(value.service.authenticated, isFalse);
+    expect(result, isNot(isTrue));
+    expect(find.text('La recuperación se interrumpió.'), findsOneWidget);
+  });
+  testWidgets('new password: length and match first, then saved', (
     tester,
   ) async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -880,64 +1646,45 @@ void main() {
     bool? result;
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: Builder(
-            builder: (context) => TextButton(
-              onPressed: () async {
-                result = await showModalBottomSheet<bool>(
-                  context: context,
-                  isScrollControlled: true,
-                  builder: (_) => PasswordResetSheet(
-                    service: service,
-                    initialEmail: 'user@example.com',
-                  ),
-                );
-              },
-              child: const Text('abrir'),
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async => result = await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => NewPasswordScreen(service: service),
+              ),
             ),
+            child: const Text('abrir'),
           ),
         ),
       ),
     );
     await tester.tap(find.text('abrir'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('reset-code')), findsNothing);
-
-    await tester.tap(find.text('Enviar código'));
-    await tester.pumpAndSettle();
-    expect(service.requested, ['user@example.com']);
-    expect(find.text('Te enviamos un código a tu correo.'), findsOneWidget);
-
-    // Local validation first: no request with a bad code / short password.
-    await tester.enterText(find.byKey(const ValueKey('reset-code')), '12');
-    await tester.enterText(find.byKey(const ValueKey('reset-password')), 'x');
-    await tester.tap(find.text('Cambiar contraseña'));
-    await tester.pumpAndSettle();
-    expect(find.text('Escribe el código del correo.'), findsOneWidget);
-    expect(service.resets, isEmpty);
-
-    // A rejected code shows the clear message and keeps the sheet open.
-    service.failNext = true;
-    await tester.enterText(find.byKey(const ValueKey('reset-code')), '000000');
+    await tester.enterText(find.byKey(const ValueKey('new-password')), '123');
+    await tester.tap(find.byKey(const ValueKey('new-password-save')));
+    await tester.pump();
+    expect(service.completed, isEmpty);
     await tester.enterText(
-      find.byKey(const ValueKey('reset-password')),
+      find.byKey(const ValueKey('new-password')),
       'nueva-clave-8',
     );
-    await tester.tap(find.text('Cambiar contraseña'));
-    await tester.pumpAndSettle();
-    expect(find.text('El código no es válido o ya venció.'), findsOneWidget);
-    expect(result, isNull);
-
-    await tester.enterText(find.byKey(const ValueKey('reset-code')), '123456');
-    await tester.tap(find.text('Cambiar contraseña'));
-    await tester.pumpAndSettle();
-    expect(service.resets.last, (
-      'user@example.com',
-      '123456',
+    await tester.enterText(
+      find.byKey(const ValueKey('confirm-password')),
+      'otra-clave-8',
+    );
+    await tester.tap(find.byKey(const ValueKey('new-password-save')));
+    await tester.pump();
+    expect(find.text('Las contraseñas no coinciden.'), findsOneWidget);
+    expect(service.completed, isEmpty);
+    await tester.enterText(
+      find.byKey(const ValueKey('confirm-password')),
       'nueva-clave-8',
-    ));
+    );
+    await tester.tap(find.byKey(const ValueKey('new-password-save')));
+    await tester.pumpAndSettle();
+    expect(service.completed, ['nueva-clave-8']);
     expect(result, isTrue);
-    expect(find.byType(PasswordResetSheet), findsNothing);
   });
 
   test(
@@ -953,6 +1700,27 @@ void main() {
   );
 
   group('follow merge', () {
+    test(
+      'sign in and sign out preserve the local country preference',
+      () async {
+        final value = await _service(local: {'team:guest'});
+        await value.db.savePreference(
+          detectedCountry: 'CR',
+          selectedCountry: 'MX',
+        );
+
+        await value.service.signIn('user@example.com', 'password-test');
+        await _settle(value.service);
+        await value.service.signOut();
+
+        final preference = await value.db.watchPreference().first;
+        expect(preference.detectedCountry, 'CR');
+        expect(preference.selectedCountry, 'MX');
+        expect(preference.effectiveCountry, 'MX');
+        expect(await value.db.watchFollows().first, contains('team:guest'));
+      },
+    );
+
     test('first login unions server and local follows', () async {
       final value = await _service(
         server: {'team:a', 'team:b'},
@@ -1162,6 +1930,56 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Correo verificado'), findsNothing);
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(find.text('Orden de competiciones'), findsNothing);
+    expect(find.text('Cerrar sesión'), findsNothing);
+    expect(find.text('Eliminar cuenta'), findsNothing);
+  });
+
+  testWidgets('Google account delegates its password to Google', (
+    tester,
+  ) async {
+    final value = await _service();
+    value.service.session = _session(provider: 'google');
+    await _pumpProfile(
+      tester,
+      value.service,
+      value.db,
+      child: const AccountSecurityScreen(),
+    );
+    expect(find.text('Gestionada por Google'), findsOneWidget);
+    expect(find.byKey(const ValueKey('account-password-reset')), findsNothing);
+  });
+
+  testWidgets('Facebook account delegates its password to Facebook', (
+    tester,
+  ) async {
+    final value = await _service();
+    value.service.session = _session(provider: 'facebook');
+    await _pumpProfile(
+      tester,
+      value.service,
+      value.db,
+      child: const AccountSecurityScreen(),
+    );
+    expect(find.text('Gestionada por Facebook'), findsOneWidget);
+    expect(find.byKey(const ValueKey('account-password-reset')), findsNothing);
+  });
+
+  testWidgets('email account exposes password recovery', (tester) async {
+    final value = await _service();
+    value.service.session = _session(provider: 'email');
+    await _pumpProfile(
+      tester,
+      value.service,
+      value.db,
+      child: const AccountSecurityScreen(),
+    );
+    expect(
+      find.byKey(const ValueKey('account-password-reset')),
+      findsOneWidget,
+    );
+    expect(find.text('Gestionada por Google'), findsNothing);
   });
 
   testWidgets('signed-in profile shows email and verification badge', (
@@ -1190,16 +2008,47 @@ void main() {
     expect(find.text('Reenviar correo'), findsOneWidget);
   });
 
+  testWidgets('Perfil guest: login and sign-up open the AuthSheet', (
+    tester,
+  ) async {
+    final value = await _service();
+    await _pumpProfile(tester, value.service, value.db);
+    await _scrollTo(tester, find.byKey(const ValueKey('profile-signup')));
+    // No mixed form in Perfil: one entry per mode.
+    expect(find.widgetWithText(TextField, 'Correo'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('profile-signup')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('auth-title'))).data,
+      'Crear cuenta',
+    );
+    expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+    expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+    Navigator.of(tester.element(find.byKey(const ValueKey('auth-title'))))
+        .pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('profile-login')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('auth-title'))).data,
+      'Iniciar sesión',
+    );
+    expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+    expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+  });
+
   testWidgets('invalid input is caught before any request', (tester) async {
     final value = await _service();
     await _pumpProfile(tester, value.service, value.db);
-    await _scrollTo(tester, find.text('Crear cuenta'));
-    await tester.enterText(find.widgetWithText(TextField, 'Correo'), 'bad');
-    await tester.enterText(find.widgetWithText(TextField, 'Contraseña'), '123');
-    await tester.tap(find.text('Crear cuenta'));
+    await _scrollTo(tester, find.byKey(const ValueKey('profile-signup')));
+    await tester.tap(find.byKey(const ValueKey('profile-signup')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('auth-email')), 'bad');
+    await tester.enterText(find.byKey(const ValueKey('auth-password')), '123');
+    await tester.tap(find.byKey(const ValueKey('auth-submit')));
     await tester.pump();
     expect(find.text('Escribe un correo válido.'), findsOneWidget);
-    expect(find.text('Mínimo 8 caracteres.'), findsOneWidget);
+    expect(find.text('Mínimo 8 caracteres.'), findsWidgets);
     expect(value.http.called('/auth/v1/signup'), isFalse);
   });
 
@@ -1210,22 +2059,41 @@ void main() {
       'msg': 'Invalid login credentials',
     });
     await _pumpProfile(tester, value.service, value.db);
-    await _scrollTo(tester, find.text('Crear cuenta'));
+    await _scrollTo(tester, find.byKey(const ValueKey('profile-login')));
+    await tester.tap(find.byKey(const ValueKey('profile-login')));
+    await tester.pumpAndSettle();
     await tester.enterText(
-      find.widgetWithText(TextField, 'Correo'),
+      find.byKey(const ValueKey('auth-email')),
       'user@example.com',
     );
     await tester.enterText(
-      find.widgetWithText(TextField, 'Contraseña'),
+      find.byKey(const ValueKey('auth-password')),
       'wrong-password',
     );
-    await tester.tap(find.text('Iniciar sesión'));
+    await tester.tap(find.byKey(const ValueKey('auth-submit')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    await _scrollTo(tester, find.text('Correo o contraseña incorrectos.'));
     expect(find.text('Correo o contraseña incorrectos.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('auth-title')), findsOneWidget);
     expect(value.service.authenticated, isFalse);
   });
+
+  test(
+    'sign-up of an existing address is not a pending confirmation',
+    () async {
+      final value = await _service();
+      value.http.routes['/auth/v1/signup'] = (_) => {
+        'id': 'obfuscated',
+        'email': 'user@example.com',
+        'identities': <dynamic>[],
+      };
+      await expectLater(
+        value.service.signUp('user@example.com', 'secreta-123'),
+        throwsA(isA<AccountAlreadyExists>()),
+      );
+      expect(value.service.pendingConfirmationEmail, isNull);
+    },
+  );
 }
 
 /// PushService whose recovery calls are recorded (UI tests of the sheet).
@@ -1241,32 +2109,18 @@ class _ResetService extends PushService {
       );
 
   final requested = <String>[];
-  final resets = <(String, String, String)>[];
-  bool failNext = false;
+  final completed = <String>[];
 
   @override
   Future<void> requestPasswordReset(String emailAddress) async =>
       requested.add(emailAddress.trim());
 
   @override
-  Future<void> resetPassword(
-    String emailAddress,
-    String code,
-    String newPassword,
-  ) async {
-    if (failNext) {
-      failNext = false;
-      final options = RequestOptions(path: '/auth/v1/verify');
-      throw DioException(
-        requestOptions: options,
-        type: DioExceptionType.badResponse,
-        response: Response(
-          requestOptions: options,
-          statusCode: 403,
-          data: {'error_code': 'otp_expired'},
-        ),
-      );
-    }
-    resets.add((emailAddress.trim(), code, newPassword));
+  Future<void> beginPasswordRecovery(Uri link) async {}
+
+  @override
+  Future<bool> completePasswordRecovery(String newPassword) async {
+    completed.add(newPassword);
+    return true;
   }
 }

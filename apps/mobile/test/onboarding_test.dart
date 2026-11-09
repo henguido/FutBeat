@@ -1,5 +1,9 @@
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +14,7 @@ import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
+import 'package:futbeat/features/auth/auth_sheet.dart';
 import 'package:futbeat/features/onboarding/onboarding_screen.dart';
 import 'package:futbeat/main.dart';
 
@@ -85,6 +90,7 @@ Future<void> pumpOnboarding(
   bool livePreference = false,
   bool liveFollows = false,
   bool offline = false,
+  Object? catalogError,
   bool atWelcome = false,
   OnboardingProgressStore? progress,
   PushService? pushService,
@@ -110,9 +116,18 @@ Future<void> pumpOnboarding(
               ? database.watchPreference()
               : Stream.value(preference),
         ),
+        playerSuggestionsProvider.overrideWith(
+          (ref, teams) async => const <Entity>[],
+        ),
         exploreSnapshotProvider.overrideWith(
-          (ref) => offline
-              ? Stream<Snapshot>.error(Exception('offline'))
+          (ref) => offline || catalogError != null
+              ? Stream<Snapshot>.error(
+                  catalogError ??
+                      DioException(
+                        requestOptions: RequestOptions(path: '/v1/explore'),
+                        type: DioExceptionType.connectionError,
+                      ),
+                )
               : Stream.value(catalog()),
         ),
         profileSettingsProvider.overrideWith(
@@ -157,12 +172,14 @@ void main() {
     WidgetTester tester, {
     required AppDatabase database,
     required bool dismissed,
+    PushService? pushService,
   }) async {
     final router = createRouter();
     addTearDown(router.dispose);
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          onboardingProgressStoreProvider.overrideWithValue(MemoryProgress()),
           databaseProvider.overrideWithValue(database),
           repositoryProvider.overrideWithValue(DemoRepository()),
           preferenceProvider.overrideWith(
@@ -178,12 +195,152 @@ void main() {
           profileSettingsProvider.overrideWith(
             (ref) async => const UserProfileSettings(),
           ),
+          if (pushService != null) ...[
+            pushServiceProvider.overrideWithValue(pushService),
+            liveRealtimeConfigProvider.overrideWithValue(pushService.config),
+            // No realtime socket in tests.
+            liveMatchUpdatesProvider.overrideWith(
+              (ref) => Stream.value(const <String, LiveMatchUpdate>{}),
+            ),
+          ],
         ],
         child: FutBeatApp(router: router),
       ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 30));
+  }
+
+  for (final hadData in [true, false]) {
+    testWidgets(
+      'AUTH-GOOGLE-01: Google routes and survives reopen ($hadData)',
+      (tester) async {
+        FlutterSecureStorage.setMockInitialValues({});
+        final db = _GateDatabase();
+        final service = _SheetAuth(db, hadData: hadData);
+        addTearDown(db.close);
+        addTearDown(service.dispose);
+        await service.restore();
+        await pumpGate(
+          tester,
+          database: db,
+          dismissed: false,
+          pushService: service,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('onboarding-welcome-login')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('auth-google')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(service.registered, isTrue);
+        expect(db.dismissed, hadData);
+        expect(
+          find.byKey(const ValueKey('onboarding-quick-setup')),
+          findsNothing,
+        );
+        expect(
+          find.byType(NavigationBar),
+          hadData ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('onboarding-country')),
+          hadData ? findsNothing : findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
+
+        // A cold process owns both its service queue and restoration in the
+        // same real clock zone; a fake-zone Future cannot progress in runAsync.
+        final restored = (await tester.runAsync(() async {
+          final service = _SheetAuth(db);
+          try {
+            await service.restore().timeout(const Duration(seconds: 5));
+            return service;
+          } catch (_) {
+            service.dispose();
+            rethrow;
+          }
+        }))!;
+        addTearDown(restored.dispose);
+        await pumpGate(
+          tester,
+          database: db,
+          dismissed: db.dismissed,
+          pushService: restored,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(restored.registered, isTrue);
+        expect(restored.authProvider, 'google');
+        expect(
+          find.byKey(const ValueKey('onboarding-quick-setup')),
+          findsNothing,
+        );
+        expect(
+          find.byType(NavigationBar),
+          hadData ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('onboarding-country')),
+          hadData ? findsNothing : findsOneWidget,
+        );
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pumpWidget(const SizedBox());
+      },
+      timeout: const Timeout(Duration(seconds: 45)),
+    );
+  }
+
+  for (final hadData in [true, false]) {
+    testWidgets(
+      'Welcome sign-in: ${hadData ? 'an existing account goes to Partidos' : 'a new account stays to set up'}',
+      (tester) async {
+        FlutterSecureStorage.setMockInitialValues({});
+        final db = _GateDatabase();
+        final service = _SheetAuth(db, hadData: hadData);
+        addTearDown(() async {
+          service.dispose();
+          await db.close();
+        });
+        await service.restore();
+        await pumpGate(
+          tester,
+          database: db,
+          dismissed: false,
+          pushService: service,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('onboarding-welcome-login')),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey('auth-email')),
+          'qa@example.com',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('auth-password')),
+          'secreta-1',
+        );
+        await tester.tap(find.byKey(const ValueKey('auth-submit')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(db.dismissed, hadData);
+        expect(
+          find.byKey(const ValueKey('onboarding-quick-setup')),
+          hadData ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.byType(NavigationBar),
+          hadData ? findsOneWidget : findsNothing,
+        );
+        // Let the screen's own timers (feed, sheets) run out.
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pumpWidget(const SizedBox());
+      },
+      timeout: const Timeout(Duration(seconds: 45)),
+    );
   }
 
   testWidgets('first launch gate opens onboarding without network', (
@@ -250,6 +407,32 @@ void main() {
       await db.close();
     },
   );
+
+  test('the SIM country beats the locale region (es-US phone in CR)', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel = MethodChannel('futbeat/device');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async => 'cr');
+    addTearDown(() async {
+      messenger.setMockMethodCallHandler(channel, null);
+      await loadDeviceRegion(android: false);
+    });
+    await loadDeviceRegion(android: true);
+    expect(deviceCountry('US'), 'CR');
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final preference = await refreshCountryForLocales(db, const [
+      Locale('es', 'US'),
+    ]);
+    expect(preference.detectedCountry, 'CR');
+    expect(onboardingCountryCode(preference), 'CR');
+
+    // No SIM answer: the locale region.
+    messenger.setMockMethodCallHandler(channel, (call) async => null);
+    await loadDeviceRegion(android: true);
+    expect(deviceCountry('US'), 'US');
+  });
 
   test('automatic country refreshes when the device locale changes', () async {
     final db = AppDatabase(NativeDatabase.memory());
@@ -359,58 +542,25 @@ void main() {
     expect(countryMatches('ES', 'espana'), isTrue);
   });
 
-  test('only the manual country is shown, never the device locale', () {
+  test('manual country wins; the device region is only a suggestion', () {
+    CountryPreference pref(String? detected, String? selected) =>
+        CountryPreference(
+          detectedCountry: detected,
+          selectedCountry: selected,
+          bootstrapDismissed: false,
+        );
     // Device locale en-US, user chose Costa Rica.
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: 'US',
-          selectedCountry: 'CR',
-          bootstrapDismissed: false,
-        ),
-      ),
-      'CR',
-    );
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: 'US',
-          selectedCountry: null,
-          bootstrapDismissed: false,
-        ),
-      ),
-      isNull,
-    );
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: 'CR',
-          selectedCountry: null,
-          bootstrapDismissed: false,
-        ),
-      ),
-      isNull,
-    );
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: 'ZZ',
-          selectedCountry: null,
-          bootstrapDismissed: false,
-        ),
-      ),
-      isNull,
-    );
-    expect(
-      onboardingCountryCode(
-        const CountryPreference(
-          detectedCountry: null,
-          selectedCountry: null,
-          bootstrapDismissed: false,
-        ),
-      ),
-      isNull,
-    );
+    expect(onboardingCountryCode(pref('US', 'CR')), 'CR');
+    expect(isSuggestedOnboardingCountry(pref('US', 'CR')), isFalse);
+    // No choice: the device region is suggested.
+    expect(onboardingCountryCode(pref('CR', null)), 'CR');
+    expect(isSuggestedOnboardingCountry(pref('CR', null)), isTrue);
+    expect(onboardingCountryCode(pref('US', null)), 'US');
+    // Unknown or missing: nothing (the UI shows "Elegir país").
+    expect(onboardingCountryCode(pref('ZZ', null)), isNull);
+    expect(onboardingCountryCode(pref('GB-ENG', null)), isNull);
+    expect(onboardingCountryCode(pref(null, null)), isNull);
+    expect(isSuggestedOnboardingCountry(pref(null, null)), isFalse);
   });
 
   test(
@@ -433,7 +583,8 @@ void main() {
     addTearDown(db.close);
     final first = await refreshDetectedCountry(db, 'US');
     expect(first.selectedCountry, isNull);
-    expect(onboardingCountryCode(first), isNull);
+    expect(onboardingCountryCode(first), 'US');
+    expect(isSuggestedOnboardingCountry(first), isTrue);
     final again = await refreshDetectedCountry(db, 'CR');
     expect(again.selectedCountry, isNull);
   });
@@ -495,10 +646,10 @@ void main() {
     expect(find.byType(NavigationBar), findsNothing);
     await tester.tap(find.byKey(const ValueKey('onboarding-quick-setup')));
     await tester.pump(const Duration(milliseconds: 300));
-    // Even a locale that matches is never auto-selected.
-    expect(find.text('Elegir país'), findsOneWidget);
-    expect(find.text('Costa Rica'), findsNothing);
-    expect(find.text('Cambiar'), findsNothing);
+    // The device region is suggested, ready to change.
+    expect(find.text('Costa Rica'), findsOneWidget);
+    expect(find.text('Cambiar'), findsOneWidget);
+    expect(find.text('Elegir país'), findsNothing);
     expect(find.text('Continuar'), findsOneWidget);
     expect(find.text('Saltar'), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
@@ -518,13 +669,44 @@ void main() {
     expect(visibleTexts(tester).where(isRawCode), isEmpty);
   });
 
+  testWidgets('progress reflects the real step without changing the flow', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+    await pumpOnboarding(tester, database: db);
+
+    expect(find.text('Paso 1 de 7'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('onboarding-next')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Paso 2 de 7'), findsOneWidget);
+    expect(find.text('Equipos'), findsOneWidget);
+  });
+
+  testWidgets('compact width uses a readable two-column choice grid', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+    await pumpOnboarding(tester, database: db, width: 320);
+    await tester.tap(find.byKey(const ValueKey('onboarding-next')));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final grid = tester.widget<GridView>(find.byType(GridView).first);
+    final delegate =
+        grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+    expect(delegate.crossAxisCount, 2);
+  });
+
   testWidgets('offline: country and steps still work without a catalog', (
     tester,
   ) async {
     final db = AppDatabase(NativeDatabase.memory());
     addTearDown(db.close);
     await pumpOnboarding(tester, database: db, offline: true);
-    expect(find.text('Elegir país'), findsOneWidget);
+    expect(find.text('Costa Rica'), findsOneWidget);
     await tester.tap(find.text('Continuar'));
     await tester.pump(const Duration(milliseconds: 20));
     expect(find.text('Equipos'), findsOneWidget);
@@ -535,7 +717,7 @@ void main() {
     expect(find.text('Ligas'), findsOneWidget);
   });
 
-  testWidgets('device US without a choice shows Elegir país and saves none', (
+  testWidgets('device US without a choice suggests it and saves none', (
     tester,
   ) async {
     final db = AppDatabase(NativeDatabase.memory());
@@ -543,9 +725,9 @@ void main() {
     await db.savePreference(detectedCountry: 'US', selectedCountry: null);
     await pumpOnboarding(tester, database: db, livePreference: true);
     await tester.pump(const Duration(milliseconds: 20));
-    expect(find.text('Elegir país'), findsOneWidget);
-    expect(find.text('Estados Unidos'), findsNothing);
-    expect(find.text('Cambiar'), findsNothing);
+    expect(find.text('Estados Unidos'), findsOneWidget);
+    expect(find.text('Cambiar'), findsOneWidget);
+    expect(visibleTexts(tester).where(isRawCode), isEmpty);
     await tester.tap(find.text('Continuar'));
     await tester.pump(const Duration(milliseconds: 20));
     final saved = await tester.runAsync(() => db.watchPreference().first);
@@ -586,6 +768,69 @@ void main() {
     expect(find.text('Elegir país'), findsOneWidget);
   });
 
+  testWidgets('unknown device region shows Elegir país, never a code', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await pumpOnboarding(
+      tester,
+      database: db,
+      preference: const CountryPreference(
+        detectedCountry: 'ZZ',
+        selectedCountry: null,
+        bootstrapDismissed: false,
+      ),
+    );
+    expect(find.text('Elegir país'), findsOneWidget);
+    expect(find.text('ZZ'), findsNothing);
+  });
+
+  testWidgets('a server error is not shown as "Sin conexión"', (tester) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    final options = RequestOptions(path: '/v1/explore');
+    await pumpOnboarding(
+      tester,
+      database: db,
+      catalogError: DioException(
+        requestOptions: options,
+        response: Response(requestOptions: options, statusCode: 503),
+        type: DioExceptionType.badResponse,
+      ),
+    );
+    await tester.tap(find.text('Continuar'));
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('Equipos'), findsOneWidget);
+    expect(find.text('Servicio no disponible por ahora'), findsOneWidget);
+    expect(find.text('Sin conexión'), findsNothing);
+    expect(find.text('Reintentar'), findsOneWidget);
+  });
+
+  testWidgets('picking the suggested country saves it as the choice', (
+    tester,
+  ) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.savePreference(detectedCountry: 'CR', selectedCountry: null);
+    await pumpOnboarding(tester, database: db, livePreference: true);
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.text('Costa Rica'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('onboarding-country')));
+    await settle(tester);
+    await tester.enterText(
+      find.byKey(const ValueKey('country-picker-search')),
+      'costa',
+    );
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('country-CR')));
+    await settle(tester);
+    final saved = await tester.runAsync(() => db.watchPreference().first);
+    expect(saved?.selectedCountry, 'CR');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(Duration.zero);
+  });
+
   testWidgets('picker lists localized names and saves a manual choice', (
     tester,
   ) async {
@@ -594,8 +839,7 @@ void main() {
     await db.savePreference(detectedCountry: 'US', selectedCountry: null);
     await pumpOnboarding(tester, database: db, livePreference: true);
     await tester.pump(const Duration(milliseconds: 20));
-    expect(find.text('Elegir país'), findsOneWidget);
-    expect(find.text('Estados Unidos'), findsNothing);
+    expect(find.text('Estados Unidos'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('onboarding-country')));
     await settle(tester);
     expect(find.byKey(const ValueKey('country-picker')), findsOneWidget);
@@ -649,6 +893,9 @@ void main() {
                 bootstrapDismissed: true,
               ),
             ),
+          ),
+          playerSuggestionsProvider.overrideWith(
+            (ref, teams) async => const <Entity>[],
           ),
           exploreSnapshotProvider.overrideWith(
             (ref) => Stream.value(catalog()),
@@ -729,7 +976,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
       }
       final goals = tester.widget<SwitchListTile>(
-        find.widgetWithText(SwitchListTile, 'Gol'),
+        find.widgetWithText(SwitchListTile, 'Avísame cuando haya un gol'),
       );
       expect(goals.value, isFalse);
       expect(find.text('Alertas guardadas'), findsOneWidget);
@@ -785,7 +1032,7 @@ void main() {
     );
   });
 
-  testWidgets('account step shows the session once signed in from Perfil', (
+  testWidgets('account step shows the session once signed in elsewhere', (
     tester,
   ) async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -822,6 +1069,184 @@ void main() {
     expect(find.text('Sesión iniciada · qa@example.com'), findsOneWidget);
     expect(find.text('Crear cuenta'), findsNothing);
     expect(find.text('Continuar'), findsOneWidget);
+  });
+
+  group('auth from onboarding', () {
+    Future<_SheetAuth> start(
+      WidgetTester tester, {
+      bool atWelcome = false,
+    }) async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final db = AppDatabase(NativeDatabase.memory());
+      final service = _SheetAuth(db);
+      addTearDown(() async {
+        service.dispose();
+        await db.close();
+      });
+      await tester.runAsync(service.restore);
+      await pumpOnboarding(
+        tester,
+        database: db,
+        pushService: service,
+        atWelcome: atWelcome,
+      );
+      return service;
+    }
+
+    String sheetTitle(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(const ValueKey('auth-title'))).data!;
+
+    Future<void> toAccount(WidgetTester tester) async {
+      for (var i = 0; i < 5; i++) {
+        await tester.tap(find.text('Continuar'));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+    }
+
+    testWidgets('Welcome > Iniciar sesión opens the login sheet', (
+      tester,
+    ) async {
+      await start(tester, atWelcome: true);
+      await tester.tap(find.byKey(const ValueKey('onboarding-welcome-login')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AuthSheet), findsOneWidget);
+      expect(sheetTitle(tester), 'Iniciar sesión');
+      expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+    });
+
+    testWidgets('Account > Crear cuenta opens the signup sheet', (
+      tester,
+    ) async {
+      await start(tester);
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-signup')));
+      await tester.pumpAndSettle();
+      expect(sheetTitle(tester), 'Crear cuenta');
+      expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
+    });
+
+    testWidgets('Account > Iniciar sesión signs in and stays on the step', (
+      tester,
+    ) async {
+      final service = await start(tester);
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-login')));
+      await tester.pumpAndSettle();
+      expect(sheetTitle(tester), 'Iniciar sesión');
+      await tester.enterText(
+        find.byKey(const ValueKey('auth-email')),
+        'qa@example.com',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('auth-password')),
+        'secreta-1',
+      );
+      await tester.tap(find.byKey(const ValueKey('auth-submit')));
+      await tester.pumpAndSettle();
+      expect(service.authenticated, isTrue);
+      expect(find.byType(AuthSheet), findsNothing);
+      expect(find.text('Sesión iniciada · qa@example.com'), findsOneWidget);
+      expect(find.text('Continuar'), findsOneWidget);
+    });
+
+    testWidgets('Account > Iniciar sesión exposes complete shared auth UI', (
+      tester,
+    ) async {
+      await start(tester);
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-login')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AuthSheet), findsOneWidget);
+      expect(sheetTitle(tester), 'Iniciar sesión');
+      expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
+      expect(find.byKey(const ValueKey('auth-forgot')), findsOneWidget);
+    });
+
+    testWidgets('closing the sheet keeps the onboarding step', (tester) async {
+      final service = await start(tester);
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-login')));
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.byType(AuthSheet))).pop();
+      await tester.pumpAndSettle();
+      expect(service.authenticated, isFalse);
+      expect(find.text('Crear cuenta'), findsOneWidget);
+      expect(find.text('Continuar sin cuenta'), findsOneWidget);
+    });
+
+    testWidgets('opening and closing auth preserves country and follows', (
+      tester,
+    ) async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final db = AppDatabase(NativeDatabase.memory());
+      final service = _SheetAuth(db);
+      addTearDown(() async {
+        service.dispose();
+        await db.close();
+      });
+      await db.savePreference(detectedCountry: 'CR', selectedCountry: 'CR');
+      await db.addFollows({'team:team_cr', 'player:player_cr'});
+      await tester.runAsync(service.restore);
+      await pumpOnboarding(
+        tester,
+        database: db,
+        pushService: service,
+        livePreference: true,
+        liveFollows: true,
+      );
+      await toAccount(tester);
+      await tester.tap(find.byKey(const ValueKey('onboarding-account-signup')));
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.byType(AuthSheet))).pop();
+      await tester.pumpAndSettle();
+
+      final preference = await tester.runAsync(
+        () => db.watchPreference().first,
+      );
+      final follows = await tester.runAsync(() => db.watchFollows().first);
+      expect(preference?.selectedCountry, 'CR');
+      expect(follows, {'team:team_cr', 'player:player_cr'});
+      expect(find.text('Crear cuenta'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    for (final width in [320.0, 360.0, 390.0]) {
+      testWidgets('Account auth sheet has no overflow at ${width.toInt()}px', (
+        tester,
+      ) async {
+        FlutterSecureStorage.setMockInitialValues({});
+        final db = AppDatabase(NativeDatabase.memory());
+        final service = _SheetAuth(db);
+        addTearDown(() async {
+          service.dispose();
+          await db.close();
+        });
+        await tester.runAsync(service.restore);
+        await pumpOnboarding(
+          tester,
+          database: db,
+          pushService: service,
+          width: width,
+        );
+        await toAccount(tester);
+        await tester.tap(
+          find.byKey(const ValueKey('onboarding-account-signup')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('auth-google')), findsOneWidget);
+        expect(find.byKey(const ValueKey('auth-facebook')), findsOneWidget);
+        expect(find.byKey(const ValueKey('auth-email')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
   });
 
   group('onboarding v2', () {
@@ -1155,6 +1580,9 @@ void main() {
                 ),
               ),
             ),
+            playerSuggestionsProvider.overrideWith(
+              (ref, teams) async => const <Entity>[],
+            ),
             exploreSnapshotProvider.overrideWith((ref) => Stream.value(data)),
             profileSettingsProvider.overrideWith(
               (ref) async => const UserProfileSettings(),
@@ -1291,8 +1719,95 @@ void main() {
 
 class _NoTokens implements PushTokenSource {
   @override
+  Future<String?> currentToken() => requestToken();
+
+  @override
   Future<String?> requestToken() async => null;
 
   @override
   Stream<String> get rotations => const Stream.empty();
+}
+
+/// Configured account service whose sign-in needs no server.
+/// Isolates route assertions from Drift streams crossing the widget test
+/// clock. Secure session storage is still exercised by the restored service.
+class _GateDatabase extends AppDatabase {
+  _GateDatabase() : super(NativeDatabase.memory());
+
+  bool dismissed = false;
+
+  @override
+  Future<void> markBootstrapDismissed() async => dismissed = true;
+
+  @override
+  Stream<Set<String>> watchFollows() => Stream.value(<String>{});
+}
+
+class _SheetAuth extends PushService {
+  _SheetAuth(AppDatabase db, {this.hadData})
+    : super(
+        const LiveRealtimeConfig(
+          supabaseUrl: 'https://supabase.test',
+          publicKey: 'publishable-test-key',
+        ),
+        db,
+        _NoTokens(),
+        dio: Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) => handler.reject(
+                DioException(
+                  requestOptions: options,
+                  type: DioExceptionType.connectionError,
+                ),
+              ),
+            ),
+          ),
+        oauthEnabled: true,
+        oauthAllowedProviders: const {
+          OAuthProvider.google,
+          OAuthProvider.facebook,
+        },
+      );
+
+  /// What the account had on the server (see [PushService.accountHadData]).
+  final bool? hadData;
+
+  @override
+  Future<OAuthProviderAvailability> oauthProviderAvailability() async =>
+      OAuthProviderAvailability.fromServer(
+        buildProviders: const {OAuthProvider.google, OAuthProvider.facebook},
+        enabledProviders: const {OAuthProvider.google, OAuthProvider.facebook},
+      );
+
+  @override
+  Future<void> signInWithOAuth(OAuthProvider provider) async {
+    accountHadData = hadData;
+    session = {
+      'access_token': 'access',
+      'refresh_token': 'refresh',
+      'user': {
+        'id': 'google-user',
+        'email': 'qa@example.com',
+        'app_metadata': {'provider': provider.id},
+      },
+    };
+    await storage.write(
+      key: 'futbeat.push.session',
+      value: jsonEncode(session),
+    );
+  }
+
+  @override
+  Future<void> refreshSession() async {}
+
+  @override
+  Future<void> signIn(String email, String password) async {
+    accountHadData = hadData;
+    session = {
+      'access_token': 'access',
+      'refresh_token': 'refresh',
+      'user': {'id': 'user-a', 'email': email.trim()},
+    };
+  }
 }

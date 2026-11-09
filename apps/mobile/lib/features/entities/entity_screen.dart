@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/interests.dart';
+import '../../core/load_errors.dart';
 import '../../core/models.dart';
 import '../../core/profile_context.dart';
 import '../../core/providers.dart';
@@ -11,6 +12,8 @@ import '../../core/relevance.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../matches/matches_screen.dart';
+import '../matches/match_screen.dart' show PlayerProfileMatchContext;
+import 'competition_profile.dart';
 import 'player_profile.dart';
 import 'standings.dart';
 import 'team_profile.dart';
@@ -94,11 +97,13 @@ class EntityScreen extends ConsumerStatefulWidget {
     required this.id,
     this.competitionId,
     this.season,
+    this.playerMatchContext,
   });
   final String type, id;
 
   /// Initial profile context (opened from a match), when given.
   final String? competitionId, season;
+  final PlayerProfileMatchContext? playerMatchContext;
   @override
   ConsumerState<EntityScreen> createState() => _EntityScreenState();
 }
@@ -116,9 +121,29 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(
-      () => recordTemporaryInterest(ref, widget.type, widget.id),
-    );
+    _openProfile();
+  }
+
+  @override
+  void didUpdateWidget(EntityScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.type == widget.type && oldWidget.id == widget.id) return;
+    // The same route can reuse this State for a different entity.
+    enrichmentRetry?.cancel();
+    enrichmentRetry = null;
+    enrichmentAttempts = 0;
+    _seed = null;
+    _seedLooked = false;
+    _openProfile();
+  }
+
+  void _openProfile() {
+    final identity = (type: widget.type, id: widget.id);
+    Future.microtask(() {
+      if (mounted && identity == (type: widget.type, id: widget.id)) {
+        recordTemporaryInterest(ref, identity.type, identity.id);
+      }
+    });
     // Re-entering a profile shows its last answer at once and revalidates
     // it when older than entityRevalidateAfter.
     revalidateEntitySnapshot(ref, (type: widget.type, id: widget.id));
@@ -179,6 +204,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     List<FootballMatch> matches,
     List<Entity> competitions, {
     bool loading = false,
+    VoidCallback? retry,
   }) => TeamProfileView(
     data: data,
     team: team,
@@ -187,6 +213,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     initialCompetitionId: widget.competitionId,
     initialSeason: widget.season,
     loading: loading,
+    retry: retry,
   );
 
   /// Looked up once per screen: the seed only changes with new reads.
@@ -196,7 +223,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
   /// The team profile painted from what this session already read about the
   /// team (see [ApiRepository.entitySeed]) while `/v1/entity` loads; null
   /// when nothing is known (then the screen keeps its spinner).
-  Widget? _seededTeamView() {
+  Widget? _seededTeamView({VoidCallback? retry}) {
     if (widget.type != 'team') return null;
     if (!_seedLooked) {
       _seedLooked = true;
@@ -215,7 +242,31 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       team,
       const [],
       orderedTeamCompetitions(seed, canonicalId),
-      loading: true,
+      loading: retry == null,
+      retry: retry,
+    );
+  }
+
+  Widget? _seededCompetitionView(VoidCallback retry) {
+    if (widget.type != 'competition') return null;
+    final repository = ref.read(repositoryProvider);
+    if (repository is! ApiRepository) return null;
+    final seed = repository.entitySeed(widget.type, widget.id);
+    if (seed == null) return null;
+    final data = presentSnapshotForSession(ref, seed);
+    final id = data.resolveEntityId(widget.id);
+    final competition = data.competition(id);
+    if (competition == null) return null;
+    return CompetitionProfileView(
+      data: data,
+      competition: competition,
+      matches:
+          data.matches
+              .where((match) => data.resolveEntityId(match.competitionId) == id)
+              .toList()
+            ..sort((a, b) => a.startTime.compareTo(b.startTime)),
+      teams: competitionTeams(data, id),
+      retry: retry,
     );
   }
 
@@ -242,29 +293,36 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
           _seededTeamView() ??
           Scaffold(
             appBar: AppBar(title: const Text('FutBeat')),
-            body: const Center(child: CircularProgressIndicator()),
+            body: const ContentSkeleton(layout: SkeletonLayout.profile),
           ),
-      error: (_, stack) => Scaffold(
-        appBar: AppBar(title: const Text('FutBeat')),
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const EmptyState(
-                'No pudimos cargar este perfil',
-                'Revisa tu conexión e intenta nuevamente.',
-                icon: Icons.cloud_off,
-              ),
-              FilledButton(
-                onPressed: () => ref.invalidate(
-                  entitySnapshotProvider((type: type, id: id)),
+      error: (error, _) {
+        void retry() =>
+            ref.invalidate(entitySnapshotProvider((type: type, id: id)));
+        final failure = classifyLoadError(error);
+        if (failure != LoadFailure.other) {
+          final cached =
+              _seededTeamView(retry: retry) ?? _seededCompetitionView(retry);
+          if (cached != null) return cached;
+        }
+        return Scaffold(
+          appBar: AppBar(title: const Text('FutBeat')),
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                EmptyState(
+                  'No pudimos cargar este perfil',
+                  loadErrorMessage(error),
+                  icon: failure == LoadFailure.offline
+                      ? Icons.cloud_off
+                      : Icons.sync_problem_outlined,
                 ),
-                child: const Text('Reintentar'),
-              ),
-            ],
+                FilledButton(onPressed: retry, child: const Text('Reintentar')),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
       data: (data) {
         final canonicalId = data.resolveEntityId(id);
         final entity = switch (type) {
@@ -281,20 +339,24 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ),
           );
         }
-        final teamId = switch (type) {
+        final rawTeamId = switch (type) {
           'player' => entity.json['teamId']?.toString(),
           'team' => canonicalId,
           _ => null,
         };
+        final teamId = rawTeamId == null
+            ? null
+            : data.resolveEntityId(rawTeamId);
         final team = teamId == null ? null : data.team(teamId);
         final matches = type == 'player'
-            ? playerMatches(data, entity)
+            ? playerProfileMatches(data, entity)
             : (data.matches
                   .where(
                     (m) => type == 'competition'
-                        ? m.competitionId == canonicalId
+                        ? data.resolveEntityId(m.competitionId) == canonicalId
                         : teamId != null &&
-                              (m.homeId == teamId || m.awayId == teamId),
+                              (data.resolveEntityId(m.homeId) == teamId ||
+                                  data.resolveEntityId(m.awayId) == teamId),
                   )
                   .toList()
                 ..sort((a, b) => a.startTime.compareTo(b.startTime)));
@@ -302,10 +364,11 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             ? const <Entity>[]
             : orderedTeamCompetitions(data, teamId);
         if (type == 'team') {
-          return _teamView(data, entity, matches, teamCompetitions);
+          final view = _teamView(data, entity, matches, teamCompetitions);
+          return view;
         }
         if (type == 'player') {
-          return PlayerProfileView(
+          final view = PlayerProfileView(
             data: data,
             player: entity,
             team: team,
@@ -313,7 +376,18 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
             enriching:
                 data.enrichmentPending &&
                 enrichmentAttempts < profileEnrichmentRetryDelays.length,
+            matchContext: widget.playerMatchContext,
           );
+          return view;
+        }
+        if (type == 'competition') {
+          final view = CompetitionProfileView(
+            data: data,
+            competition: entity,
+            matches: matches,
+            teams: competitionTeams(data, canonicalId),
+          );
+          return view;
         }
         // Teams and players have dedicated profiles; this is the competition
         // profile.

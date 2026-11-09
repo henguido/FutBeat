@@ -7,6 +7,7 @@ import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/entities/entity_screen.dart';
 import 'package:futbeat/shared/widgets.dart';
 import 'package:go_router/go_router.dart';
@@ -45,12 +46,57 @@ Map<String, dynamic> _payload({
 };
 
 bool _showsCrest(WidgetTester tester, Finder within) => tester
-    .widgetList<Image>(
-      find.descendant(of: within, matching: find.byType(Image)),
+    .widgetList<SportsImage>(
+      find.descendant(of: within, matching: find.byType(SportsImage)),
     )
-    .any((image) => (image.image as NetworkImage).url == _crest);
+    .any((image) => image.url == _crest);
 
 void main() {
+  test(
+    'a known calendar alias receives a crest hydrated in a later snapshot',
+    () {
+      final memory = EntityMediaMemory();
+      addTearDown(memory.dispose);
+      const alias = 'fb_team_calendar';
+      memory.absorb(Snapshot(_payload(redirects: {alias: 'fb_team'})));
+      expect(memory.imageFor(alias), isNull);
+      memory.absorb(Snapshot(_payload(crest: true)));
+      expect(memory.imageFor(alias), _crest);
+      expect(memory.imageFor('fb_team_unrelated'), isNull);
+    },
+  );
+  testWidgets('invalid optional colors do not hide crests or initials', (
+    tester,
+  ) async {
+    const crestKey = ValueKey('verified-crest');
+    const fallbackKey = ValueKey('initials-fallback');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              EntityAvatar(
+                Entity({..._team(crest: true), 'color': 12}),
+                key: crestKey,
+              ),
+              EntityAvatar(
+                Entity({..._team(id: 'fb_other'), 'color': '#bad-value'}),
+                key: fallbackKey,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(_showsCrest(tester, find.byKey(crestKey)), isTrue);
+    expect(
+      find.descendant(of: find.byKey(fallbackKey), matching: find.text('DS')),
+      findsOneWidget,
+    );
+  });
+
   test('memory keeps verified media only, shares it with aliases and '
       'notifies only on change', () {
     final memory = EntityMediaMemory();
@@ -166,7 +212,8 @@ void main() {
         databaseProvider.overrideWithValue(db),
         // The server hydrates the crest while the profile is open.
         entitySnapshotProvider.overrideWith(
-          (ref, request) async => Snapshot(_payload(crest: reads++ > 0)),
+          (ref, request) =>
+              Stream.value(Snapshot(_payload(crest: reads++ > 0))),
         ),
         followsProvider.overrideWith((ref) => Stream.value({})),
       ],

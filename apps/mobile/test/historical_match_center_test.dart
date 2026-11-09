@@ -269,6 +269,40 @@ Map<String, dynamic> _waiting() => _detail(
 );
 
 void main() {
+  test('connection failure preserves available detail and marks it stale', () {
+    final cached = MatchDetail(_full());
+    final offline = cached.withOfflineUnavailable();
+    expect(offline.available, isTrue);
+    expect(offline.homeStarters, isNotEmpty);
+    expect(offline.statistics, isNotEmpty);
+    expect(offline.pending, isFalse);
+    expect(offline.offlineStale, isTrue);
+    expect(offline.offlineUnavailable, isTrue);
+    expect(cached.sourceJson.containsKey('offlineUnavailable'), isFalse);
+  });
+
+  testWidgets('offline detail failure ends lineup and statistics loading', (
+    tester,
+  ) async {
+    final server = _Server((_, _) => null);
+    final container = await _open(tester, server);
+    await _elapse(tester, const Duration(seconds: 3));
+    await _tab(tester, 'Alineación');
+    expect(find.text('Cargando alineaciones…'), findsNothing);
+    expect(
+      find.text('No se pudo conectar. Alineaciones no disponibles.'),
+      findsOneWidget,
+    );
+    await _tab(tester, 'Estadísticas');
+    expect(find.text('Cargando estadísticas…'), findsNothing);
+    expect(
+      find.text('No se pudo conectar. Estadísticas no disponibles.'),
+      findsOneWidget,
+    );
+    expect(server.detailCalls.length, 1, reason: 'no offline recheck loop');
+    await _close(tester, container);
+  });
+
   testWidgets('1. a partial historical detail paints immediately', (
     tester,
   ) async {
@@ -312,7 +346,10 @@ void main() {
     await _elapse(tester, const Duration(minutes: 1));
     expect(server.detailCalls, [true]);
     await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+      findsWidgets,
+    );
     await _close(tester, container);
   });
 
@@ -335,7 +372,10 @@ void main() {
     expect(find.text('Cargando alineaciones…'), findsOneWidget);
     await _elapse(tester, const Duration(milliseconds: 2500));
     expect(server.detailCalls, [true, false]);
-    expect(find.text('AS'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+      findsWidgets,
+    );
     expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
     await _elapse(tester, const Duration(minutes: 1));
     expect(server.detailCalls, [
@@ -389,7 +429,11 @@ void main() {
       expect(find.text('Cargando alineaciones…'), findsOneWidget);
       await _elapse(tester, const Duration(seconds: 10));
       expect(server.detailCalls.length, 6);
-      expect(find.text('AS'), findsWidgets, reason: 'appears without reopen');
+      expect(
+        find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+        findsWidgets,
+        reason: 'appears without reopen',
+      );
       expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
       await _elapse(tester, const Duration(minutes: 3));
       expect(server.detailCalls.length, 6, reason: 'no reads after complete');
@@ -412,7 +456,10 @@ void main() {
       await _elapse(tester, const Duration(seconds: 7));
       expect(server.detailCalls, [true, false, false]);
       await _tab(tester, 'Alineación');
-      expect(find.text('AS'), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+        findsWidgets,
+      );
       await _elapse(tester, const Duration(minutes: 2));
       expect(server.detailCalls.length, 3);
       await _close(tester, container);
@@ -461,7 +508,10 @@ void main() {
     expect(server.requestAware, 1);
     expect(server.readOnly, _scheduleLength);
     await _tab(tester, 'Alineación');
-    expect(find.text('Sin alineaciones'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay alineaciones disponibles.'),
+      findsOneWidget,
+    );
     expect(find.byType(CircularProgressIndicator), findsNothing);
     await _elapse(tester, const Duration(minutes: 3));
     expect(server.detailCalls.length, 1 + _scheduleLength);
@@ -501,7 +551,10 @@ void main() {
     await _tab(tester, 'Estadísticas');
     expect(find.text('Tiros a puerta'), findsWidgets);
     await _tab(tester, 'Alineación');
-    expect(find.text('Sin alineaciones'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay alineaciones disponibles.'),
+      findsOneWidget,
+    );
     await _close(tester, container);
   });
 
@@ -515,7 +568,11 @@ void main() {
     );
     final container = await _open(tester, server);
     await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets, reason: 'initials without a photo');
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+      findsWidgets,
+      reason: 'fallback without a photo',
+    );
     expect(find.text('Cargando alineaciones…'), findsNothing);
     await _elapse(tester, const Duration(minutes: 1));
     await _close(tester, container);
@@ -1132,13 +1189,16 @@ void main() {
     await _mount(tester, container);
     await _elapse(tester, const Duration(seconds: 1));
     await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_hist1')),
+      findsWidgets,
+    );
     await _tab(tester, 'Estadísticas');
     expect(find.text('Tiros a puerta'), findsWidgets);
     await _close(tester, container);
   });
 
-  testWidgets('formation alone keeps a pending lineup in its loading state', (
+  testWidgets('formation alone stays visible without inventing an XI', (
     tester,
   ) async {
     Map<String, dynamic> formationOnly({required bool pending}) {
@@ -1165,8 +1225,10 @@ void main() {
     await _mount(tester, container);
     await _elapse(tester, const Duration(seconds: 1));
     await _tab(tester, 'Alineación');
-    expect(find.text('Cargando alineaciones…'), findsOneWidget);
-    expect(find.text('Sin alineaciones'), findsNothing);
+    expect(find.text('4-3-3'), findsOneWidget);
+    expect(find.text('Titulares no disponibles'), findsOneWidget);
+    expect(find.text('Cargando alineaciones…'), findsNothing);
+    expect(find.text('Todavía no hay alineaciones disponibles.'), findsNothing);
     await _close(tester, container);
   });
 
@@ -1233,7 +1295,10 @@ void main() {
       await _tab(tester, 'En vivo');
       expect(find.text('Anotador Parcial'), findsWidgets);
       await _tab(tester, 'Alineación');
-      expect(find.text('Sin alineaciones'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsOneWidget,
+      );
       expect(find.byType(CircularProgressIndicator), findsNothing);
       await _elapse(tester, const Duration(minutes: 2));
       expect(server.detailCalls, [
