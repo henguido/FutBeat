@@ -73,6 +73,8 @@ Future<_Harness> _pump(
   Size size = const Size(390, 844),
   bool aliases = false,
   Stream<Set<String>>? followChanges,
+  Stream<String?>? accountChanges,
+  Future<void> Function(ProviderContainer)? beforeMount,
   Future<Snapshot> Function(String keys, int request)? snapshotLoader,
 }) async {
   tester.view.physicalSize = size;
@@ -101,6 +103,8 @@ Future<_Harness> _pump(
   final container = ProviderContainer(
     overrides: [
       databaseProvider.overrideWithValue(db),
+      if (accountChanges != null)
+        favoritesAccountChangesProvider.overrideWith((ref) => accountChanges),
       if (followChanges != null)
         followsProvider.overrideWith((ref) async* {
           yield follows;
@@ -130,6 +134,7 @@ Future<_Harness> _pump(
     container.dispose();
     await tester.runAsync(db.close);
   });
+  await beforeMount?.call(container);
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
@@ -146,6 +151,120 @@ Future<void> _tab(WidgetTester tester, String label) async {
 }
 
 void main() {
+  testWidgets('same favorites recover when Google changes the account scope', (
+    tester,
+  ) async {
+    final accounts = StreamController<String?>.broadcast();
+    addTearDown(accounts.close);
+    final harness = await _pump(
+      tester,
+      accountChanges: accounts.stream,
+      snapshotLoader: (_, request) async {
+        if (request == 1) throw StateError('Obsolete guest request');
+        return Snapshot(_payload());
+      },
+    );
+    expect(find.text('No pudimos cargar tus seguidos'), findsOneWidget);
+    expect(harness.requests, hasLength(1));
+    // Simulate the account event emitted by PushService after Google login.
+    accounts.add('registered-user');
+    await tester.pumpAndSettle();
+    expect(find.text('No pudimos cargar tus seguidos'), findsNothing);
+    expect(find.text('Equipos'), findsOneWidget);
+    expect(harness.requests, hasLength(2));
+    expect(harness.requests.first, harness.requests.last);
+  });
+  testWidgets('Google transition before mounting does not retain guest error', (
+    tester,
+  ) async {
+    final accounts = StreamController<String?>.broadcast();
+    addTearDown(accounts.close);
+    const follows = {'team:team_a'};
+    var registered = false;
+    final harness = await _pump(
+      tester,
+      follows: follows,
+      accountChanges: accounts.stream,
+      beforeMount: (container) async {
+        await expectLater(
+          container.read(favoritesSnapshotProvider(follows.single).future),
+          throwsStateError,
+        );
+        registered = true;
+        // No Favorites listener is attached yet.
+        accounts.add('registered-user');
+      },
+      snapshotLoader: (_, _) async {
+        if (!registered) throw StateError('Obsolete guest request');
+        return Snapshot(_payload());
+      },
+    );
+    expect(find.text('No pudimos cargar tus seguidos'), findsNothing);
+    expect(find.text('Equipos'), findsOneWidget);
+    expect(harness.requests, [follows.single, follows.single]);
+  });
+
+  testWidgets('same-ID Google reconciliation recovers retained guest error', (
+    tester,
+  ) async {
+    final follows = StreamController<Set<String>>();
+    final accounts = StreamController<String?>.broadcast();
+    addTearDown(follows.close);
+    addTearDown(accounts.close);
+    const selection = {'team:team_a'};
+    var reconciled = false;
+    final harness = await _pump(
+      tester,
+      follows: selection,
+      followChanges: follows.stream,
+      accountChanges: accounts.stream,
+      snapshotLoader: (_, _) async {
+        if (!reconciled) throw StateError('Read before reconciliation');
+        return Snapshot(_payload());
+      },
+    );
+    expect(find.text('No pudimos cargar tus seguidos'), findsOneWidget);
+    // The guest was linked in place; accountChanges emits no new ID.
+    reconciled = true;
+    follows.add({...selection});
+    await tester.pumpAndSettle();
+    expect(find.text('No pudimos cargar tus seguidos'), findsNothing);
+    expect(find.text('Equipos'), findsOneWidget);
+    expect(harness.requests, [selection.single, selection.single]);
+  });
+
+  testWidgets('late guest request cannot replace registered favorites', (
+    tester,
+  ) async {
+    final accounts = StreamController<String?>.broadcast();
+    addTearDown(accounts.close);
+    final old = Completer<Snapshot>();
+    final harness = await _pump(
+      tester,
+      accountChanges: accounts.stream,
+      snapshotLoader: (_, request) =>
+          request == 1 ? old.future : Future.value(Snapshot(_payload())),
+    );
+    expect(harness.requests, hasLength(1));
+    accounts.add('registered-user');
+    await tester.pumpAndSettle();
+    expect(find.text('Equipos'), findsOneWidget);
+    old.complete(
+      Snapshot({
+        ..._payload(),
+        'teams': [
+          {'id': 'team_a', 'name': 'Catalogo invitado anterior'},
+          {'id': 'team_b', 'name': 'Rival FC'},
+        ],
+      }),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('No pudimos cargar tus seguidos'), findsNothing);
+    expect(find.text('Equipos'), findsOneWidget);
+    expect(find.text('Catalogo invitado anterior'), findsNothing);
+    expect(harness.requests, hasLength(2));
+  });
+
   test('hub data is canonical, deduplicated and alphabetically stable', () {
     final data = Snapshot(_payload(aliases: true));
     final hub = FollowingHubData.from(data, const {'team:team_alias'});
