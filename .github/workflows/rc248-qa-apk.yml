@@ -1,0 +1,115 @@
+name: RC248 Android QA APK
+on:
+  push:
+    branches: [codex/rc248-4111-qa-apk]
+    paths: ['.github/workflows/rc248-qa-apk.yml']
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      APPROVED_SHA: 4111e9964e99b618a647dea689fcee77e7b5c63e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.APPROVED_SHA }}
+          persist-credentials: false
+      - name: Check source and prepare public QA defines
+        run: |
+          test "$(git rev-parse HEAD)" = "$APPROVED_SHA"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          config = json.loads('{"FUTBEAT_API_URL":"https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-api","FUTBEAT_API_PUBLIC_TOKEN":"","FUTBEAT_SUPABASE_URL":"https://izlmruqawgagwdcsjhte.supabase.co","FUTBEAT_SUPABASE_PUBLISHABLE_KEY":"sb_publishable_iSH4S3fKou_EEkdG3W_Azg_9E4HXzWE"}')
+          config.update(FUTBEAT_USER_SESSION_ACCESS=True, FUTBEAT_ADS_DISABLED=True,
+                        FUTBEAT_OAUTH_GOOGLE_ENABLED=True, FUTBEAT_OAUTH_FACEBOOK_ENABLED=False,
+                        FUTBEAT_PUSH_ENABLED=False, FUTBEAT_USE_DEMO=False, FUTBEAT_R05_ENABLED=False)
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'rc248-qa.json').write_text(json.dumps(config))
+          PY
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - name: Prepare an isolated debug signer
+        run: |
+          mkdir -p "$RUNNER_TEMP/.android"
+          keytool -genkeypair -keystore "$RUNNER_TEMP/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 365 -dname 'CN=Android Debug,O=Android,C=US'
+          echo "ANDROID_USER_HOME=$RUNNER_TEMP/.android" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_HOME=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Build one debug APK
+        working-directory: apps/mobile
+        run: |
+          flutter pub get --enforce-lockfile
+          dart run build_runner build
+          flutter build apk --debug --no-pub --build-name=1.0.0 --build-number=16 --dart-define-from-file="$RUNNER_TEMP/rc248-qa.json"
+      - name: Verify APK identity and signature
+        run: |
+          set -euo pipefail
+          tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          apk=apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          mkdir qa-apk
+          cp "$apk" qa-apk/FutBeat-RC248-4111e99-debug.apk
+          apk=qa-apk/FutBeat-RC248-4111e99-debug.apk
+          "$tools/aapt" dump badging "$apk" > "$RUNNER_TEMP/rc248-badging"
+          grep '^package:' "$RUNNER_TEMP/rc248-badging" || true
+          "$tools/apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/rc248-certs"
+          cat "$RUNNER_TEMP/rc248-certs"
+          keytool -exportcert -keystore "$RUNNER_TEMP/.android/debug.keystore" -storepass android -alias androiddebugkey -file "$RUNNER_TEMP/rc248-debug.der"
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          apk = pathlib.Path('qa-apk/FutBeat-RC248-4111e99-debug.apk')
+          badging = (temp / 'rc248-badging').read_text()
+          certs = (temp / 'rc248-certs').read_text()
+          package_lines = [line for line in badging.splitlines() if line.startswith('package:')]
+          if len(package_lines) != 1:
+              raise SystemExit(f'Expected one package record, got {len(package_lines)}')
+          fields = {}
+          for key, expected in [('name', 'com.futbeat.futbeat'), ('versionCode', '16'), ('versionName', '1.0.0')]:
+              values = re.findall(r"(?:^|\s)" + key + r"='([^']*)'", package_lines[0])
+              print(f'{key}: observed={values!r}; expected={expected!r}', flush=True)
+              if values != [expected]:
+                  raise SystemExit(f'APK identity mismatch: {key}')
+              fields[key] = values[0]
+          digests = re.findall(r'^(?:Signer #\d+|V\d+(?:\.\d+)? Signer(?: #\d+)?):? certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$', certs, re.M)
+          expected_cert = hashlib.sha256((temp / 'rc248-debug.der').read_bytes()).hexdigest()
+          if [d.lower() for d in digests] != [expected_cert]:
+              raise SystemExit(f'APK signer mismatch: observed={digests!r}; debug keystore={expected_cert}')
+          with apk.open('rb') as f:
+              apk_hash = hashlib.file_digest(f, 'sha256').hexdigest()
+          report = (
+              f"source={os.environ['APPROVED_SHA']}\n"
+              f"applicationId={fields['name']}\n"
+              f"versionCode={fields['versionCode']}\n"
+              f"versionName={fields['versionName']}\n"
+              f"apk_sha256={apk_hash}\n"
+              f"certificate_sha256={expected_cert}\n"
+          )
+          print(report, end='')
+          (apk.parent / 'verification.txt').write_text(report)
+          PY
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: FutBeat-RC248-4111e99-debug
+          path: qa-apk/
+          if-no-files-found: error
+          retention-days: 5
+      - name: Record artifact link on the isolated workflow commit
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          BUILD_STATUS: ${{ job.status }}
+        run: |
+          target="${ARTIFACT_URL:-$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID}"
+          state=failure
+          if [[ "$BUILD_STATUS" == success && -n "$ARTIFACT_URL" ]]; then state=success; fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -f state="$state" -f context=rc248-qa-apk -f target_url="$target" -f description="Exact RC248 source 4111e99; debug QA" --silent
