@@ -90,7 +90,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         : FollowingHubData.from(data, follows);
     final refreshing = request?.isLoading == true && data != null;
     final staleError =
-        followState.hasError || (request?.hasError == true && data != null);
+        followState.hasError ||
+        data?.stale == true ||
+        (request?.hasError == true && data != null);
 
     if (follows.isNotEmpty && data == null) {
       return Scaffold(

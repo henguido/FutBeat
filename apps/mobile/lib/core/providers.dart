@@ -732,7 +732,9 @@ class ApiRepository implements FootballRepository {
           return null;
         }
         final requested = encoded.split(',').toSet();
-        // Removing a favorite offline must not require downloading a new
+        Snapshot? best;
+        var bestCoverage = 0;
+        // Changing favorites offline must not require downloading a new
         // catalog. The hub still filters by the current personal follows.
         for (final entry
             in await database?.readPublicFavoriteCatalogs() ??
@@ -740,12 +742,30 @@ class ApiRepository implements FootballRepository {
           final storedKey = entry.cacheKey.substring('public:'.length);
           if (storedKey == key) continue;
           final storedKeys = storedKey.substring('favorites:'.length);
-          if (!storedKeys.split(',').toSet().containsAll(requested)) continue;
+          final overlap = storedKeys.split(',').toSet().intersection(requested);
+          if (overlap.length <= bestCoverage) continue;
           final cached = await _readPublicSnapshot(storedKey, {
             'keys': storedKeys,
           }, allowFavoriteSubset: false);
-          if (cached != null) return cached;
+          if (cached == null) continue;
+          final coverage = overlap.where((value) {
+            final separator = value.indexOf(':');
+            final id = value.substring(separator + 1);
+            return switch (value.substring(0, separator)) {
+              'team' => cached.team(id) != null,
+              'player' => cached.player(id) != null,
+              'competition' => cached.competition(id) != null,
+              'match' => cached.match(id) != null,
+              _ => false,
+            };
+          }).length;
+          if (coverage > bestCoverage) {
+            best = cached;
+            bestCoverage = coverage;
+            if (coverage == requested.length) break;
+          }
         }
+        return best;
       }
       if (row == null ||
           DateTime.now().toUtc().difference(row.savedAt.toUtc()) >

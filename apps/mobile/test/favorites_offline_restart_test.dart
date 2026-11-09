@@ -191,6 +191,49 @@ void main() {
     }
   });
 
+  test(
+    'HTTP 503 after adding a follow keeps the overlapping catalog',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final online = _client(payload: _catalog());
+      final unavailable = Dio(BaseOptions(baseUrl: 'https://fixture.invalid'))
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (request, handler) {
+              handler.reject(
+                DioException.badResponse(
+                  statusCode: 503,
+                  requestOptions: request,
+                  response: Response(requestOptions: request, statusCode: 503),
+                ),
+              );
+            },
+          ),
+        );
+      try {
+        final seed = ApiRepository(online, db);
+        await seed.loadFavorites(_keys);
+        await seed.settleBackground();
+        final follows = {..._keys, 'team:fb_team_new'};
+        await db.addFollows(follows);
+        final cached = await ApiRepository(
+          unavailable,
+          db,
+        ).loadFavorites(follows.toList());
+        expect(cached.stale, isTrue);
+        expect(
+          FollowingHubData.from(cached, follows).teams.map((e) => e.id),
+          contains('fb_team_a'),
+        );
+        expect(await db.watchFollows().first, follows);
+      } finally {
+        online.close();
+        unavailable.close();
+        await db.close();
+      }
+    },
+  );
+
   test('offline session restoration retains guest and never signs up another anonymous user', () async {
     final db = AppDatabase(NativeDatabase.memory());
     final storage = InstallSecureStorage();
