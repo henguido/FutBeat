@@ -19,6 +19,7 @@ import 'live_realtime.dart';
 import 'providers.dart';
 
 part 'user_session_access.dart';
+part 'account_deletion_receipts.dart';
 
 String? reconcileSelectedCountry({
   required String? local,
@@ -543,6 +544,9 @@ class PushService {
     Dio? dio,
     FlutterSecureStorage? secureStorage,
     this.userSessionAccess = false,
+    this.deletionReceiptsEnabled = const bool.fromEnvironment(
+      'FUTBEAT_R05_ENABLED',
+    ),
     DateTime Function()? clock,
     this.signOutCleanupTimeout = const Duration(seconds: 5),
     bool? pushConfigured,
@@ -673,6 +677,7 @@ class PushService {
   /// server; later saves go straight to the legacy RPC.
   bool _preferencesRpcMissing = false;
   final FlutterSecureStorage storage;
+  final bool deletionReceiptsEnabled;
 
   Map<String, dynamic>? _session;
   Map<String, dynamic>? get session => _session;
@@ -1391,6 +1396,26 @@ class PushService {
     } catch (_) {
       session = null;
     }
+    if (deletionReceiptsEnabled && registered && userId != null) {
+      try {
+        final id = await _receiptFor(userId!);
+        if (id != null &&
+            await _receiptStatus(id) == AccountDeletionStatus.deleted) {
+          if (_stale(generation) || _authenticationStale(attempt)) return;
+          try {
+            await _deleteAccount(locallyConfirmed: true, onConfirmed: () {});
+          } catch (_) {
+            // A confirmed deletion must not fall through to refresh/sync.
+            _restoreStorageRetryNeeded = true;
+          }
+          return;
+        }
+      } catch (_) {
+        // Unavailable or unconfirmed receipts never authorize local cleanup.
+      }
+      if (_stale(generation) || _authenticationStale(attempt)) return;
+    }
+
     if (authenticated) _markAccountKnown();
     if (!authenticated) {
       await _clearLocalSession();
@@ -2869,6 +2894,9 @@ class PushService {
     if (!accountConfigured || !authenticated || uid == null) {
       throw StateError('Authentication with a known account is required');
     }
+    if (deletionReceiptsEnabled && !registered) {
+      throw StateError('Registered account required');
+    }
     final previous = _deletionIntents[uid];
     if (previous?.inFlight == true) {
       throw StateError('Account deletion is in progress');
@@ -2936,15 +2964,19 @@ class PushService {
         throw StateError('Account changed during deletion');
       }
       if (!confirmed) {
-        final response = await dio.post<Map<String, dynamic>>(
-          '${config.supabaseUrl}/functions/v1/futbeat-delete-account',
-          options: authHeaders,
-        );
-        if (_stale(generation)) {
-          throw StateError('Account changed during deletion');
-        }
-        if (response.data?['deleted'] != true) {
-          throw StateError('Account deletion was not confirmed');
+        if (deletionReceiptsEnabled) {
+          await _requestDeletionWithReceipt(deletedUser!, generation);
+        } else {
+          final response = await dio.post<Map<String, dynamic>>(
+            '${config.supabaseUrl}/functions/v1/futbeat-delete-account',
+            options: authHeaders,
+          );
+          if (_stale(generation)) {
+            throw StateError('Account changed during deletion');
+          }
+          if (response.data?['deleted'] != true) {
+            throw StateError('Account deletion was not confirmed');
+          }
         }
         confirmed = true;
         onConfirmed();
@@ -2983,6 +3015,11 @@ class PushService {
     }
     if (_stale(generation)) {
       throw StateError('Account changed during deletion');
+    }
+
+    if (deletionReceiptsEnabled && deletedUser != null) {
+      await _forgetDeletionReceipt(deletedUser);
+      if (_stale(generation)) return;
     }
 
     final cleanupGeneration = ++_generation;

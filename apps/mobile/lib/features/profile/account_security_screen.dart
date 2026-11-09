@@ -79,7 +79,17 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
       await work();
       if (mounted) setState(() => message = success);
     } catch (error) {
-      if (mounted) setState(() => message = authErrorMessage(error));
+      if (mounted) {
+        setState(
+          () => message = switch (error) {
+            AccountDeletionUnconfirmed(status: AccountDeletionStatus.pending) =>
+              'La eliminación está pendiente. Puedes volver a intentarlo.',
+            AccountDeletionUnconfirmed() =>
+              'No pudimos confirmar la eliminación. Inténtalo nuevamente.',
+            _ => authErrorMessage(error),
+          },
+        );
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
