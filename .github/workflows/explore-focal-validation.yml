@@ -19,12 +19,15 @@ jobs:
         with:
           path: validation
           persist-credentials: false
-          sparse-checkout: apps/mobile/test/favorites_hub_v2_test.dart
+          sparse-checkout: |
+            apps/mobile/test/favorites_hub_v2_test.dart
+            apps/mobile/lib/features/favorites/favorites_screen.dart
           sparse-checkout-cone-mode: false
-      - name: Overlay only the local regression tests
+      - name: Overlay the regression tests and minimal fix
         run: |
           test "$(git -C source rev-parse HEAD)" = "a0008b0a17ed50bd5c15e635e4aed7fd1336a602"
           cp "validation/apps/mobile/test/favorites_hub_v2_test.dart" "source/apps/mobile/test/favorites_hub_v2_test.dart"
+          cp "validation/apps/mobile/lib/features/favorites/favorites_screen.dart" "source/apps/mobile/lib/features/favorites/favorites_screen.dart"
           git -C source diff --check
       - uses: subosito/flutter-action@v2
         with:

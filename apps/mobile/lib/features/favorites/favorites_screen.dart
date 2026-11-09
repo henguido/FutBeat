@@ -20,6 +20,8 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   LiveRealtimeClient? _liveClient;
   late final String _liveScope = 'favorites:${identityHashCode(this)}';
   Set<String>? _lastFollows;
+  String? _observedKeys;
+  String? _retriedFollowEmission;
   ({String keys, Snapshot snapshot})? _lastSnapshot;
 
   @override
@@ -30,6 +32,23 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(followsProvider, (previous, next) {
+      final old = previous?.asData?.value;
+      final current = next.asData?.value;
+      if (old == null ||
+          current == null ||
+          current.isEmpty ||
+          old.length != current.length ||
+          !old.containsAll(current)) {
+        return;
+      }
+      final keys = (current.toList()..sort()).join(',');
+      final provider = favoritesSnapshotProvider(keys);
+      if (_retriedFollowEmission != keys && ref.read(provider).hasError) {
+        _retriedFollowEmission = keys;
+        ref.invalidate(provider);
+      }
+    });
     final followState = ref.watch(followsProvider);
     final follows = _lastFollows = followState.asData?.value ?? _lastFollows;
     if (follows == null) {
@@ -43,9 +62,34 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
 
     final sortedKeys = follows.toList()..sort();
     final encodedKeys = sortedKeys.join(',');
+    ref.listen(favoritesAccountChangesProvider, (_, next) {
+      if (next is! AsyncData<String?>) return;
+      // A request started under the guest scope can be cancelled by the
+      // transport on sign-in. The same follow keys still need a fresh read.
+      _lastSnapshot = null;
+      _retriedFollowEmission = null;
+      if (encodedKeys.isNotEmpty) {
+        ref.invalidate(favoritesSnapshotProvider(encodedKeys));
+      }
+    });
     final request = follows.isEmpty
         ? null
         : ref.watch(favoritesSnapshotProvider(encodedKeys));
+    if (_observedKeys != encodedKeys) {
+      _observedKeys = encodedKeys;
+      _retriedFollowEmission = null;
+      // A kept-alive provider may have failed before this screen subscribed
+      // to account changes. Retry that retained error once on entry.
+      if (request?.hasError == true) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted &&
+              _observedKeys == encodedKeys &&
+              ref.read(favoritesSnapshotProvider(encodedKeys)).hasError) {
+            ref.invalidate(favoritesSnapshotProvider(encodedKeys));
+          }
+        });
+      }
+    }
     final current = request?.asData?.value;
     if (current != null) {
       _lastSnapshot = (keys: encodedKeys, snapshot: current);
@@ -81,7 +125,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         : FollowingHubData.from(data, follows);
     final refreshing = request?.isLoading == true && data != null;
     final staleError =
-        followState.hasError || (request?.hasError == true && data != null);
+        followState.hasError ||
+        data?.stale == true ||
+        (request?.hasError == true && data != null);
 
     if (follows.isNotEmpty && data == null) {
       return Scaffold(
