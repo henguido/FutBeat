@@ -432,7 +432,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     }
 
     final rawDetail =
-        ref.watch(matchDetailProvider(widget.id)).asData?.value ??
+        ref.watch(matchDetailProvider(widget.id)).value ??
         MatchDetail.waiting(widget.id);
     final detail = rawDetail.withBlockedAliases(
       ref.watch(playerDisplayBlockedAliasesProvider).asData?.value ??

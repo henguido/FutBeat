@@ -1505,6 +1505,41 @@ class ApiRepository implements FootballRepository {
     }
   }
 
+  Future<bool> _canReuseStoredMatchDetail(
+    String id,
+    MatchDetail detail,
+    LiveMatchUpdate? Function() latestLive,
+  ) async {
+    final observedAt = DateTime.tryParse(detail.fetchedAt ?? '');
+    if (!detail.available ||
+        detail.matchId != id ||
+        observedAt == null ||
+        detail.pending ||
+        detail.hydrationNeeded ||
+        detail.lineupEnrichmentPending ||
+        detail.coverage?['stale'] == true ||
+        !['lineup', 'statistics'].every(
+          (section) => const {
+            'available',
+            'unavailable',
+          }.contains(detail.sectionState(section)),
+        )) {
+      return false;
+    }
+    final key = 'match-context:$id';
+    final context =
+        _snapshotCache[key] ?? await _readPublicSnapshot(key, {'id': id});
+    final match = (_snapshotCache[key] ?? context)?.match(id);
+    if (match?.status != 'VERIFIED') return false;
+    final update = latestLive();
+    if (update != null &&
+        (update.status != 'VERIFIED' || update.changedAt.isAfter(observedAt))) {
+      return false;
+    }
+    final changedAt = match?.liveChangedAt;
+    return changedAt == null || !changedAt.isAfter(observedAt);
+  }
+
   void persistMatchDetail(String id, MatchDetail detail) {
     final db = database;
     if (db == null ||
@@ -1523,6 +1558,10 @@ class ApiRepository implements FootballRepository {
         .then((_) async {
           MatchDetail accepted = detail;
           final row = await db.readPublicSnapshot(key);
+          if (row?.payload == jsonEncode(detail.sourceJson)) {
+            diagnostics?.record('/v1/match-detail', 'sqliteUnchanged');
+            return;
+          }
           if (row != null &&
               DateTime.now().toUtc().difference(row.savedAt.toUtc()) <=
                   publicSnapshotRetention) {
@@ -1536,7 +1575,12 @@ class ApiRepository implements FootballRepository {
             }
           }
           if (!_containsPrivateCacheField(accepted.sourceJson)) {
-            await db.savePublicSnapshot(key, jsonEncode(accepted.sourceJson));
+            final payload = jsonEncode(accepted.sourceJson);
+            if (payload == row?.payload) {
+              diagnostics?.record('/v1/match-detail', 'sqliteUnchanged');
+              return;
+            }
+            await db.savePublicSnapshot(key, payload);
           }
         })
         .catchError((Object _) {})
@@ -2824,6 +2868,32 @@ final matchDetailProvider = StreamProvider.autoDispose
         if (current.available) remember(current);
       }
       yield current;
+      if (disposed) return;
+      if (repository is ApiRepository &&
+          await repository._canReuseStoredMatchDetail(
+            id,
+            current,
+            () => disposed
+                ? null
+                : ref.read(liveMatchUpdatesProvider).asData?.value[id],
+          )) {
+        if (!disposed) {
+          repository.diagnostics?.record('/v1/match-detail', 'settledCacheHit');
+          ref.listen(
+            liveMatchUpdatesProvider.select((value) => value.asData?.value[id]),
+            (_, next) {
+              if (next != null &&
+                  (next.status != 'VERIFIED' ||
+                      next.changedAt.isAfter(
+                        DateTime.parse(current.fetchedAt!),
+                      ))) {
+                ref.invalidateSelf();
+              }
+            },
+          );
+        }
+        return;
+      }
       if (disposed) return;
       try {
         final loaded =

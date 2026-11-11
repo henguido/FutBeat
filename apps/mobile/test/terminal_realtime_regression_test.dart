@@ -67,6 +67,42 @@ LiveMatchUpdate _update({
 
 void main() {
   test(
+    'late HTTP base keeps the LIVE overlay and accepts a newer correction',
+    () {
+      final http = _match(
+        status: 'LIVE',
+        score: {'home': 1, 'away': 1},
+        liveRevision: 4,
+        liveProvider: 'goal_api',
+        liveChangedAt: _kickoff
+            .add(const Duration(minutes: 40))
+            .toIso8601String(),
+      );
+      final live = _update(
+        status: 'LIVE',
+        home: 2,
+        away: 1,
+        revision: 5,
+        changedAt: _kickoff.add(const Duration(minutes: 44)),
+      );
+      final afterLateHttp = live.applyTo(http);
+      expect(FootballMatch(afterLateHttp).score, '2 - 1');
+      expect(afterLateHttp['liveRevision'], 5);
+
+      final correction = _update(
+        status: 'HALFTIME',
+        home: 1,
+        away: 1,
+        revision: 6,
+        changedAt: _kickoff.add(const Duration(minutes: 45)),
+      ).applyTo(afterLateHttp);
+      expect(FootballMatch(correction).score, '1 - 1');
+      expect(correction['status'], 'HALFTIME');
+      expect(correction['liveRevision'], 6);
+    },
+  );
+
+  test(
     'A. canonical VERIFIED 3-4 + later realtime LIVE 3-3 => stays VERIFIED 3-4',
     () {
       final canonical = _match(
