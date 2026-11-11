@@ -136,6 +136,8 @@ class _Service extends PushService {
         _Tokens(),
         dio: dio,
         pushConfigured: false,
+        // This fixture exercises the legacy response without a receipt ID.
+        deletionReceiptsEnabled: false,
       );
   final FlutterSecureStorage testStorage;
   bool? firstBAcceptedAfterClear;

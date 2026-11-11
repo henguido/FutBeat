@@ -23,6 +23,7 @@ void main() {
   const storage = FlutterSecureStorage();
   const receiptKey = 'futbeat.account.deletionReceipt';
   for (final (code, status) in [
+    (200, 'unknown'),
     (401, 'pending'),
     (401, 'unknown'),
     (202, 'pending'),
@@ -56,6 +57,7 @@ void main() {
                   requestOptions: r,
                   statusCode: code,
                   data: switch (code) {
+                    200 => {'deleted': true, 'deletionId': 'wrong-receipt'},
                     202 => {
                       'deleted': false,
                       'pending': true,
