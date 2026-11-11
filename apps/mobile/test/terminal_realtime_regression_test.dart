@@ -51,6 +51,7 @@ LiveMatchUpdate _update({
   String provider = 'goal_api',
   DateTime? changedAt,
   List<Json> events = const [],
+  bool hasEventList = false,
 }) => LiveMatchUpdate(
   matchId: _id,
   provider: provider,
@@ -63,9 +64,82 @@ LiveMatchUpdate _update({
   eventCount: events.length,
   changedAt: changedAt ?? _kickoff.add(const Duration(hours: 3)),
   events: events,
+  hasEventList: hasEventList,
 );
 
 void main() {
+  test(
+    'BE14 head stamp cannot revive cached incidents over a LIVE correction',
+    () {
+      final update = _update(
+        status: 'LIVE',
+        home: 0,
+        away: 0,
+        revision: 6,
+        hasEventList: true,
+      );
+      final match = FootballMatch(update.applyTo(_match(status: 'LIVE')));
+      final cached = MatchDetail({
+        'matchId': _id,
+        'available': true,
+        'live': {
+          'provider': update.provider,
+          'revision': update.revision,
+          'changedAt': update.changedAt.toIso8601String(),
+        },
+        'sections': {'events': 'old', 'statistics': 'kept'},
+        'incidents': [
+          {'type': 'GOAL', 'minute': 9, 'side': 'home'},
+        ],
+        'statistics': [
+          {'label': 'shots', 'home': 2, 'away': 1},
+        ],
+      });
+      final presented = cached.withCurrentIncidents(match);
+      expect(presented.incidents, isEmpty);
+      expect(presented.statistics.single['home'], 2);
+      expect(cached.incidents, hasLength(1));
+      final scoreOnly = _update(status: 'LIVE', home: 0, away: 0, revision: 6);
+      final matchWithoutEvents = FootballMatch(
+        scoreOnly.applyTo(_match(status: 'LIVE')),
+      );
+      expect(
+        cached.withCurrentIncidents(matchWithoutEvents).incidents,
+        hasLength(1),
+      );
+    },
+  );
+
+  test('a newer verified correction can reduce a stamped canonical final', () {
+    final changedAt = _kickoff.add(const Duration(hours: 2));
+    final canonical = _match(
+      status: 'VERIFIED',
+      score: {'home': 2, 'away': 0},
+      liveRevision: 5,
+      liveProvider: 'goal_api',
+      liveChangedAt: changedAt.toIso8601String(),
+    );
+    final correction = _update(
+      status: 'VERIFIED',
+      revision: 6,
+      home: 1,
+      away: 0,
+      changedAt: changedAt.add(const Duration(minutes: 1)),
+    );
+    expect(FootballMatch(correction.applyTo(canonical)).score, '1 - 0');
+    expect(
+      identical(
+        _update(
+          status: 'VERIFIED',
+          revision: 6,
+          provider: 'other',
+        ).applyTo(canonical),
+        canonical,
+      ),
+      isTrue,
+    );
+  });
+
   test(
     'late HTTP base keeps the LIVE overlay and accepts a newer correction',
     () {

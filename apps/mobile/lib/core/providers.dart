@@ -36,6 +36,11 @@ LiveMatchUpdate? _storedTerminalObservation(Json match) {
       : null;
 }
 
+LiveMatchUpdate? _retainedSportingObservation(Json match) =>
+    match[localLiveObservationKey] == true
+    ? _storedSportingObservation(match)
+    : _storedTerminalObservation(match);
+
 LiveMatchUpdate? _storedSportingObservation(Json match) {
   if (match['id'] is! String ||
       match['status'] is! String ||
@@ -74,26 +79,30 @@ String? _overlayStoredTerminals(
   Map<String, LiveMatchUpdate> updates,
 ) {
   try {
-    final raw = jsonDecode(payload) as Json;
-    if (raw['demo'] == true || raw['matches'] is! List) return null;
-    var changed = false;
-    final matches = [
-      for (final row in raw['matches'] as List)
-        if (row is Map)
-          () {
-            final match = Map<String, dynamic>.from(row);
-            final observation = updates[match['id']];
-            final next = observation?.applyTo(match) ?? match;
-            if (!identical(next, match)) changed = true;
-            return next;
-          }()
-        else
-          row,
-    ];
-    return changed ? jsonEncode({...raw, 'matches': matches}) : null;
+    final raw = _overlaySportingRows(jsonDecode(payload) as Json, updates);
+    return raw == null ? null : jsonEncode(raw);
   } catch (_) {
     return null; // A malformed cache row is not evidence of a final result.
   }
+}
+
+Json? _overlaySportingRows(Json raw, Map<String, LiveMatchUpdate> updates) {
+  if (raw['demo'] == true || raw['matches'] is! List) return null;
+  var changed = false;
+  final matches = [
+    for (final row in raw['matches'] as List)
+      if (row is Map)
+        () {
+          final match = Map<String, dynamic>.from(row);
+          final observation = updates[match['id']];
+          final next = observation?.applyTo(match) ?? match;
+          if (!identical(next, match)) changed = true;
+          return next;
+        }()
+      else
+        row,
+  ];
+  return changed ? {...raw, 'matches': matches} : null;
 }
 
 String _preserveStoredTerminals(String? previous, String incoming) {
@@ -103,7 +112,9 @@ String _preserveStoredTerminals(String? previous, String incoming) {
     final updates = <String, LiveMatchUpdate>{};
     for (final row in raw['matches'] as List? ?? const []) {
       if (row is! Map) continue;
-      final update = _storedTerminalObservation(Map<String, dynamic>.from(row));
+      final update = _retainedSportingObservation(
+        Map<String, dynamic>.from(row),
+      );
       if (update != null) updates[update.matchId] = update;
     }
     final next = jsonDecode(incoming) as Json;
@@ -118,12 +129,20 @@ String _preserveStoredTerminals(String? previous, String incoming) {
           () {
             final current = Map<String, dynamic>.from(row);
             final before = updates[row['id']]!;
+            final known = previousMatches[row['id']]!;
             final candidate = _storedSportingObservation(current);
+            if (known[localLiveObservationKey] == true &&
+                _persistedTerminalStatuses.contains(current['status']) &&
+                candidate == null) {
+              return current;
+            }
             // Envelope generation/request times are not sporting observations.
             // A provider revision may advance only without moving changedAt back;
             // otherwise require a strictly later explicit sporting observation.
             final newer =
                 candidate != null &&
+                (known[localLiveObservationKey] != true ||
+                    candidate.provider == before.provider) &&
                 !candidate.changedAt.isBefore(before.changedAt) &&
                 (candidate.provider != before.provider ||
                     candidate.revision >= before.revision) &&
@@ -134,7 +153,6 @@ String _preserveStoredTerminals(String? previous, String incoming) {
                       before.observedAt ?? before.changedAt,
                     ));
             if (newer) return current;
-            final known = previousMatches[row['id']]!;
             return {
               ...current,
               for (final key in [
@@ -148,6 +166,8 @@ String _preserveStoredTerminals(String? previous, String incoming) {
                 'liveObservedAt',
                 'liveObservationDeviceAt',
                 localTerminalObservationKey,
+                localLiveObservationKey,
+                localLiveEventsObservationKey,
               ])
                 if (known.containsKey(key)) key: known[key],
             };
@@ -162,7 +182,8 @@ String _preserveStoredTerminals(String? previous, String incoming) {
     final missing = [
       for (final row in raw['matches'] as List? ?? const [])
         if (row is Map &&
-            updates.containsKey(row['id']) &&
+            _storedTerminalObservation(Map<String, dynamic>.from(row)) !=
+                null &&
             !present.contains(row['id']))
           row,
     ];
@@ -546,10 +567,13 @@ class ApiRepository implements FootballRepository {
   }
 
   Json _carryMemoryTerminals(String key, Json incoming) {
+    if (_latestLiveForHttp.isNotEmpty) {
+      incoming = _overlaySportingRows(incoming, _latestLiveForHttp) ?? incoming;
+    }
     final previous = _snapshotCache[key];
     if (previous == null ||
         !previous.matches.any(
-          (m) => _storedTerminalObservation(m.json) != null,
+          (m) => _retainedSportingObservation(m.json) != null,
         )) {
       return incoming;
     }
@@ -575,7 +599,10 @@ class ApiRepository implements FootballRepository {
       'matches': [
         for (final row in raw['matches'] as List)
           if (row is Map)
-            Map<String, dynamic>.from(row)..remove(localTerminalObservationKey)
+            Map<String, dynamic>.from(row)
+              ..remove(localTerminalObservationKey)
+              ..remove(localLiveObservationKey)
+              ..remove(localLiveEventsObservationKey)
           else
             row,
       ],
@@ -968,17 +995,35 @@ class ApiRepository implements FootballRepository {
     await Future.wait([..._diskWrites]);
   }
 
-  /// Persist only explicitly observed terminal states. The UI never waits for
-  /// disk: a failed write is reported and can retry from bounded memory on resume.
+  final _persistedLiveClocks = <String, (String, int, DateTime)>{};
+  final _latestLiveForHttp = <String, LiveMatchUpdate>{};
+
+  /// Persist accepted sporting observations without extending SQLite retention.
   Future<void> persistTerminalObservations(
-    Map<String, LiveMatchUpdate> updates,
-  ) {
+    Map<String, LiveMatchUpdate> updates, {
+    bool includeLive = false,
+  }) {
+    if (includeLive) {
+      _persistedLiveClocks.removeWhere((id, _) => !updates.containsKey(id));
+      _latestLiveForHttp.removeWhere((id, _) => !updates.containsKey(id));
+    }
+    (String, int, DateTime) clock(LiveMatchUpdate update) =>
+        (update.provider, update.revision, update.changedAt);
     final terminal = {
       for (final entry in updates.entries)
-        if (_persistedTerminalStatuses.contains(entry.value.status))
+        if (_persistedTerminalStatuses.contains(entry.value.status) ||
+            (includeLive &&
+                const {
+                  'LIVE',
+                  'HALFTIME',
+                  'EXTRA_TIME',
+                  'PENALTIES',
+                }.contains(entry.value.status) &&
+                _persistedLiveClocks[entry.key] != clock(entry.value)))
           entry.key: entry.value,
     };
     if (terminal.isEmpty) return Future<void>.value();
+    if (includeLive) _latestLiveForHttp.addAll(terminal);
     terminal.removeWhere((_, update) {
       final rejected = _containsPrivateCacheField(update.events);
       if (rejected) {
@@ -1000,6 +1045,11 @@ class ApiRepository implements FootballRepository {
               ),
             )
             .then((_) {
+              if (includeLive) {
+                for (final entry in terminal.entries) {
+                  _persistedLiveClocks[entry.key] = clock(entry.value);
+                }
+              }
               diagnostics?.record('/local/terminal', 'sqliteWrite');
             })
             .catchError((Object _) {
@@ -1510,7 +1560,9 @@ class ApiRepository implements FootballRepository {
     MatchDetail detail,
     LiveMatchUpdate? Function() latestLive,
   ) async {
-    final observedAt = DateTime.tryParse(detail.fetchedAt ?? '');
+    final observedAt = detail.sectionHashes != null
+        ? detail.observedAt
+        : DateTime.tryParse(detail.fetchedAt ?? '');
     if (!detail.available ||
         detail.matchId != id ||
         observedAt == null ||
@@ -1532,9 +1584,13 @@ class ApiRepository implements FootballRepository {
     final match = (_snapshotCache[key] ?? context)?.match(id);
     if (match?.status != 'VERIFIED') return false;
     final update = latestLive();
-    if (update != null &&
-        (update.status != 'VERIFIED' || update.changedAt.isAfter(observedAt))) {
+    if (update != null && _invalidatesSettledDetail(detail, update)) {
       return false;
+    }
+    if (detail.sectionHashes != null) {
+      final contextClock = _storedSportingObservation(match!.json);
+      return contextClock == null ||
+          !_invalidatesSettledDetail(detail, contextClock);
     }
     final changedAt = match?.liveChangedAt;
     return changedAt == null || !changedAt.isAfter(observedAt);
@@ -2708,17 +2764,62 @@ bool _hasVisibleLineup(Json home, Json away) {
   return sideHasData(home) || sideHasData(away);
 }
 
+bool _acceptDetailEventClock(Object? current, Object? next) {
+  if (current is! Map || current['revision'] is! int) return true;
+  if (next is! Map ||
+      next['provider'] != current['provider'] ||
+      next['revision'] is! int) {
+    return false;
+  }
+  final before = DateTime.tryParse(current['changedAt']?.toString() ?? '');
+  final after = DateTime.tryParse(next['changedAt']?.toString() ?? '');
+  return (next['revision'] as int) >= (current['revision'] as int) &&
+      before != null &&
+      after != null &&
+      !after.isBefore(before);
+}
+
+bool _invalidatesSettledDetail(MatchDetail detail, LiveMatchUpdate update) {
+  if (update.status != 'VERIFIED') return true;
+  if (detail.sectionHashes == null) {
+    final fetchedAt = DateTime.tryParse(detail.fetchedAt ?? '');
+    return fetchedAt == null || update.changedAt.isAfter(fetchedAt);
+  }
+  return !_acceptDetailEventClock({
+    'provider': update.provider,
+    'revision': update.revision,
+    'changedAt': update.changedAt.toIso8601String(),
+  }, detail.sourceJson['live']);
+}
+
 /// Merges persisted detail monotonically while taking liveness from the
 /// latest answer. Rechecks may add data, but never erase richer UI state.
 MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   if (!current.available) return next;
+  if (next.matchId.isNotEmpty && current.matchId != next.matchId) {
+    return current;
+  }
   // Both timestamps describe the stored provider observations, not when the
   // HTTP requests finished. A delayed older answer cannot restore an annulled
   // event or roll back corrected statistics. Equal/missing timestamps retain
   // the legacy authoritative replacement contract.
-  final currentObservation = DateTime.tryParse(current.fetchedAt ?? '');
-  final nextObservation = DateTime.tryParse(next.fetchedAt ?? '');
-  if (currentObservation != null &&
+  final currentHashes = current.sectionHashes;
+  final nextHashes = next.sectionHashes;
+  final versioned = currentHashes != null || nextHashes != null;
+  final beforeProvider = current.sourceJson['provider'];
+  final afterProvider = next.sourceJson['provider'];
+  final sameSource =
+      beforeProvider == null ||
+      afterProvider == null ||
+      beforeProvider == afterProvider;
+  final currentObservation = versioned
+      ? current.observedAt
+      : DateTime.tryParse(current.fetchedAt ?? '');
+  final nextObservation = versioned
+      ? next.observedAt
+      : DateTime.tryParse(next.fetchedAt ?? '');
+  if (sameSource &&
+      currentObservation != null &&
       nextObservation != null &&
       nextObservation.isBefore(currentObservation)) {
     return current.withBlockedAliases({
@@ -2730,12 +2831,32 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   // that must be restorable if the adjudication is revoked later.
   final currentRaw = current.sourceJson;
   final nextRaw = next.sourceJson;
+  bool advancesSection(String section) {
+    if (!versioned) return true;
+    final hash = nextHashes?[section];
+    if (!next.available || hash is! String || hash == currentHashes?[section]) {
+      return false;
+    }
+    return currentHashes?[section] == null ||
+        (sameSource &&
+            nextObservation != null &&
+            (currentObservation == null ||
+                nextObservation.isAfter(currentObservation)));
+  }
+
+  final takesLineup = advancesSection('lineup');
+  final takesStatistics = advancesSection('statistics');
+  final takesEvents =
+      nextRaw['incidents'] is List &&
+      advancesSection('events') &&
+      (!versioned ||
+          _acceptDetailEventClock(currentRaw['live'], nextRaw['live']));
   Json side(Json detail, String key) =>
       detail[key] is Map ? Map<String, dynamic>.from(detail[key] as Map) : {};
   final currentHome = side(currentRaw, 'home');
   final currentAway = side(currentRaw, 'away');
-  final nextHome = side(nextRaw, 'home');
-  final nextAway = side(nextRaw, 'away');
+  final nextHome = takesLineup ? side(nextRaw, 'home') : currentHome;
+  final nextAway = takesLineup ? side(nextRaw, 'away') : currentAway;
   final replaceExisting =
       _detailLevelRank(next.detailLevel) >=
       _detailLevelRank(current.detailLevel);
@@ -2777,9 +2898,10 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
   );
   final currentStatistics = current.json['statistics'];
   final statistics =
-      !replaceExisting &&
-          currentStatistics is List &&
-          currentStatistics.isNotEmpty
+      !takesStatistics ||
+          (!replaceExisting &&
+              currentStatistics is List &&
+              currentStatistics.isNotEmpty)
       ? currentStatistics
       : _latestNonEmptyList(currentStatistics, next.json['statistics']);
   final videos = next.sectionState('videos') == 'unavailable'
@@ -2799,6 +2921,21 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
     {
       ...currentRaw,
       ...nextRaw,
+      if (versioned) ...{
+        'observedAt':
+            (sameSource
+                    ? nextObservation ?? currentObservation
+                    : currentObservation)
+                ?.toIso8601String(),
+        if (!sameSource) 'provider': beforeProvider,
+        'live': takesEvents ? nextRaw['live'] : currentRaw['live'],
+        'sections': {
+          ...?currentHashes,
+          if (takesEvents) 'events': nextHashes!['events'],
+          if (takesLineup) 'lineup': nextHashes!['lineup'],
+          if (takesStatistics) 'statistics': nextHashes!['statistics'],
+        },
+      },
       'available': true,
       'detailLevel': detailLevel,
       'stadium': _latestNonEmpty(current.json['stadium'], next.json['stadium']),
@@ -2811,9 +2948,9 @@ MatchDetail _monotonicDetail(MatchDetail current, MatchDetail next) {
       // P0-A: the incidents list is the provider's current answer (a
       // corrected or annulled goal, a deleted card): a present list replaces,
       // even when shorter or empty; only a missing section keeps the old one.
-      'incidents': next.available && next.json['incidents'] is List
-          ? next.json['incidents']
-          : current.json['incidents'],
+      'incidents': takesEvents && next.available && nextRaw['incidents'] is List
+          ? nextRaw['incidents']
+          : currentRaw['incidents'],
       'videos': videos,
       'pending': next.pending,
       'hydrationNeeded': next.hydrationNeeded,
@@ -2882,11 +3019,7 @@ final matchDetailProvider = StreamProvider.autoDispose
           ref.listen(
             liveMatchUpdatesProvider.select((value) => value.asData?.value[id]),
             (_, next) {
-              if (next != null &&
-                  (next.status != 'VERIFIED' ||
-                      next.changedAt.isAfter(
-                        DateTime.parse(current.fetchedAt!),
-                      ))) {
+              if (next != null && _invalidatesSettledDetail(current, next)) {
                 ref.invalidateSelf();
               }
             },
@@ -3025,7 +3158,12 @@ final liveMatchUpdatesProvider = StreamProvider<Map<String, LiveMatchUpdate>>(
       : ref.watch(liveRealtimeClientProvider).watch().map((updates) {
           final repository = ref.read(repositoryProvider);
           if (repository is ApiRepository) {
-            unawaited(repository.persistTerminalObservations(updates));
+            unawaited(
+              repository.persistTerminalObservations(
+                updates,
+                includeLive: true,
+              ),
+            );
           }
           return updates;
         }),

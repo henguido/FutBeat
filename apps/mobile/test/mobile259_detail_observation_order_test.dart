@@ -43,6 +43,163 @@ class _DelayedDetailRepository implements FootballRepository {
 }
 
 void main() {
+  test('LIVE survives a late HTTP response and reopening SQLite', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'futbeat-be14-live-',
+    );
+    final file = File.fromUri(directory.uri.resolve('match.sqlite'));
+    var db = AppDatabase(NativeDatabase(file));
+    final dio = Dio(BaseOptions(baseUrl: 'https://fixture.invalid'));
+    addTearDown(() async {
+      dio.close();
+      await db.close();
+      for (final entry in directory.listSync().whereType<File>()) {
+        await entry.delete();
+      }
+      await directory.delete();
+    });
+    final now = DateTime.now().toUtc();
+    final raw = {
+      'schemaVersion': 1,
+      'demo': false,
+      'updatedAt': now.toIso8601String(),
+      'teams': [
+        {'id': 'fb_h', 'name': 'Local'},
+        {'id': 'fb_a', 'name': 'Visita'},
+      ],
+      'competitions': [
+        {'id': 'fb_c', 'name': 'Competición'},
+      ],
+      'players': [],
+      'standings': [],
+      'matches': [
+        {
+          'id': matchId,
+          'competitionId': 'fb_c',
+          'homeTeamId': 'fb_h',
+          'awayTeamId': 'fb_a',
+          'startTime': now.subtract(const Duration(hours: 1)).toIso8601String(),
+          'status': 'LIVE',
+          'score': {'home': 1, 'away': 0},
+        },
+      ],
+    };
+    final released = Completer<void>();
+    final started = Completer<void>();
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (request, handler) async {
+          started.complete();
+          await released.future;
+          handler.resolve(Response(requestOptions: request, data: raw));
+        },
+      ),
+    );
+    final repository = ApiRepository(dio, db);
+    final lateHttp = repository.loadMatchContext(matchId);
+    await started.future;
+    final update = LiveMatchUpdate(
+      matchId: matchId,
+      provider: 'goal_api',
+      externalMatchId: 'fixture',
+      status: 'HALFTIME',
+      minute: 45,
+      homeScore: 0,
+      awayScore: 0,
+      revision: 2,
+      eventCount: 0,
+      changedAt: now,
+      events: const [],
+    );
+    await repository.persistTerminalObservations({
+      matchId: update,
+    }, includeLive: true);
+    released.complete();
+    expect((await lateHttp).match(matchId)!.score, '0 - 0');
+    await repository.settleBackground();
+    await db.close();
+    db = AppDatabase(NativeDatabase(file));
+    final reopened = ApiRepository(dio, db);
+    final match = (await reopened.watchPublicMatchContext(matchId).first).match(
+      matchId,
+    )!;
+    expect(match.status, 'HALFTIME');
+    expect(match.score, '0 - 0');
+    expect(match.json['liveRevision'], 2);
+  });
+
+  test(
+    'BE14 keeps omitted sections and rejects stale or incomparable clocks',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final dio = Dio();
+      final repository = ApiRepository(dio, db);
+      addTearDown(() async {
+        await repository.settleBackground();
+        dio.close();
+        await db.close();
+      });
+      Json stamp(int? revision, [String provider = 'goal_api']) => {
+        'provider': provider,
+        'revision': revision,
+        'changedAt': '2026-11-11T20:00:00Z',
+      };
+      Future<MatchDetail> save(Json raw) async {
+        repository.persistMatchDetail(matchId, MatchDetail(raw));
+        await repository.settleBackground();
+        return (await repository.readStoredMatchDetail(matchId))!;
+      }
+
+      final first = detail(null, cancelled: false)
+        ..addAll({
+          'observedAt': '2026-11-11T20:00:00Z',
+          'sections': {'events': 'a', 'lineup': 'a', 'statistics': 'a'},
+          'live': stamp(4),
+          'home': {
+            'starters': [
+              {'name': 'Titular'},
+            ],
+          },
+        });
+      await save(first);
+      final partial = await save({
+        ...detail(null, cancelled: true),
+        'observedAt': '2026-11-11T20:02:00Z',
+        'sections': {'statistics': 'b'},
+        'live': stamp(5),
+      });
+      expect(partial.homeStarters.single['name'], 'Titular');
+      expect(partial.statistics.single['home'], 2);
+      expect(partial.incidents, hasLength(1));
+      expect((partial.sourceJson['live'] as Map)['revision'], 4);
+
+      for (final (observation, live) in [
+        ('2026-11-11T20:01:00Z', stamp(6)),
+        (null, stamp(6)),
+        ('2026-11-11T20:03:00Z', stamp(null)),
+        ('2026-11-11T20:04:00Z', stamp(99, 'other')),
+        ('2026-11-11T20:05:00Z', stamp(3)),
+      ]) {
+        final rejected = await save({
+          ...detail(null, cancelled: true),
+          'observedAt': observation,
+          'sections': {'events': 'b'},
+          'live': live,
+        });
+        expect(rejected.incidents, hasLength(1));
+      }
+      final corrected = await save({
+        ...detail(null, cancelled: true),
+        'observedAt': '2026-11-11T20:06:00Z',
+        'sections': {'events': 'b'},
+        'live': stamp(6),
+      });
+      expect(corrected.incidents, isEmpty);
+      expect(corrected.homeStarters.single['name'], 'Titular');
+      expect(corrected.statistics.single['home'], 2);
+    },
+  );
+
   test(
     'verified detail from yesterday survives database reopen and ten opens',
     () async {

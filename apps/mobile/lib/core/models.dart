@@ -7,6 +7,8 @@ typedef Json = Map<String, dynamic>;
 /// LIVE overlay can accept a later terminal correction; a canonical HTTP final
 /// remains absorbing. Network readers remove this local-only annotation.
 const localTerminalObservationKey = '_futbeatLocalTerminalObservation';
+const localLiveObservationKey = '_futbeatLocalLiveObservation';
+const localLiveEventsObservationKey = '_futbeatLocalLiveEventsObservation';
 
 String? safePlayerImage(dynamic value) {
   if (value is! String) return null;
@@ -503,6 +505,10 @@ class LiveMatchUpdate {
 
   Json applyTo(Json match, {DateTime? now}) {
     if (match['id'] != matchId) return match;
+    if (match[localLiveObservationKey] == true &&
+        match['liveProvider'] != provider) {
+      return match;
+    }
 
     const terminalStatuses = {
       'FINISHED_PENDING_VERIFICATION',
@@ -517,8 +523,19 @@ class LiveMatchUpdate {
     // corrections still use the same ordering guards below. Even that local
     // result cannot be resumed by a LIVE overlay; only canonical HTTP can do so.
     if (terminalStatuses.contains(match['status'] as String?)) {
-      if (match[localTerminalObservationKey] != true ||
-          !terminalStatuses.contains(status)) {
+      final baselineRevision = match['liveRevision'];
+      final baselineChangedAt = DateTime.tryParse(
+        match['liveChangedAt']?.toString() ?? '',
+      );
+      final officialCorrection =
+          status == 'VERIFIED' &&
+          match['liveProvider'] == provider &&
+          baselineRevision is int &&
+          revision > baselineRevision &&
+          baselineChangedAt != null &&
+          !changedAt.isBefore(baselineChangedAt);
+      if (!terminalStatuses.contains(status) ||
+          (match[localTerminalObservationKey] != true && !officialCorrection)) {
         return match;
       }
     }
@@ -626,9 +643,12 @@ class LiveMatchUpdate {
           .toIso8601String();
     if (terminalStatuses.contains(status)) {
       result[localTerminalObservationKey] = true;
+      result.remove(localLiveObservationKey);
     } else {
       result.remove(localTerminalObservationKey);
+      result[localLiveObservationKey] = true;
     }
+    if (hasEventList) result[localLiveEventsObservationKey] = true;
     if (homeScore != null && awayScore != null) {
       result['score'] = {'home': homeScore, 'away': awayScore};
     }
@@ -695,6 +715,41 @@ class MatchDetail {
   bool get hydrationNeeded => json['hydrationNeeded'] == true;
   String get detailLevel => json['detailLevel'] as String? ?? 'none';
   String? get fetchedAt => json['fetchedAt'] as String?;
+  DateTime? get observedAt =>
+      DateTime.tryParse(_optional(_sourceJson['observedAt']) ?? '');
+  Json? get sectionHashes => _nullableMap(_sourceJson['sections']);
+  MatchDetail withCurrentIncidents(FootballMatch match) {
+    final provider = match.json['liveProvider'];
+    final revision = match.json['liveRevision'];
+    final changedAt = DateTime.tryParse(
+      _optional(match.json['liveChangedAt']) ?? '',
+    );
+    if (provider is! String || revision is! int || changedAt == null) {
+      return this;
+    }
+    final live = _sourceJson['live'];
+    if (live == null && sectionHashes == null) return this;
+    final detailChangedAt = live is Map
+        ? DateTime.tryParse(_optional(live['changedAt']) ?? '')
+        : null;
+    final detailRevision = live is Map ? live['revision'] : null;
+    // BE14's LIVE row describes the current head, not which revision produced
+    // the cached incidents. Keep the authoritative overlay's events visible.
+    if (match.json[localLiveEventsObservationKey] != true &&
+        live is Map &&
+        live['provider'] == provider &&
+        detailRevision is int &&
+        detailRevision >= revision &&
+        detailChangedAt != null &&
+        !detailChangedAt.isBefore(changedAt)) {
+      return this;
+    }
+    return MatchDetail({
+      ..._sourceJson,
+      'incidents': <Json>[],
+    }, blockedAliasIds: blockedAliasIds);
+  }
+
   String? get referee => _optional(json['referee']);
   String? get stadium => _optional(json['stadium']);
   String? get round => _optional(json['round']);
