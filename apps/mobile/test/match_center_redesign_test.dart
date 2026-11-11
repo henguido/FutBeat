@@ -380,7 +380,7 @@ void main() {
               'position': 'Defender',
             },
           ],
-          'coach': {'name': 'Entrenador Local'},
+          'coach': {'name': 'Entrenador Local', 'lineupPosition': null},
         },
         away: {
           'starters': [
