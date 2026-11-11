@@ -43,90 +43,162 @@ class _DelayedDetailRepository implements FootballRepository {
 }
 
 void main() {
-  test('LIVE survives a late HTTP response and reopening SQLite', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'futbeat-be14-live-',
-    );
-    final file = File.fromUri(directory.uri.resolve('match.sqlite'));
-    var db = AppDatabase(NativeDatabase(file));
-    final dio = Dio(BaseOptions(baseUrl: 'https://fixture.invalid'));
-    addTearDown(() async {
-      dio.close();
+  test(
+    'a VERIFIED correction survives late HTTP and reopening SQLite',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'futbeat-be14-live-',
+      );
+      final file = File.fromUri(directory.uri.resolve('match.sqlite'));
+      var db = AppDatabase(NativeDatabase(file));
+      final dio = Dio(BaseOptions(baseUrl: 'https://fixture.invalid'));
+      addTearDown(() async {
+        dio.close();
+        await db.close();
+        for (final entry in directory.listSync().whereType<File>()) {
+          await entry.delete();
+        }
+        await directory.delete();
+      });
+      final now = DateTime.now().toUtc();
+      final raw = {
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': now.toIso8601String(),
+        'teams': [
+          {'id': 'fb_h', 'name': 'Local'},
+          {'id': 'fb_a', 'name': 'Visita'},
+        ],
+        'competitions': [
+          {'id': 'fb_c', 'name': 'Competición'},
+        ],
+        'players': [],
+        'standings': [],
+        'matches': [
+          {
+            'id': matchId,
+            'competitionId': 'fb_c',
+            'homeTeamId': 'fb_h',
+            'awayTeamId': 'fb_a',
+            'startTime': now
+                .subtract(const Duration(hours: 1))
+                .toIso8601String(),
+            'status': 'LIVE',
+            'score': {'home': 1, 'away': 0},
+          },
+        ],
+      };
+      final released = Completer<void>();
+      final started = Completer<void>();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (request, handler) async {
+            started.complete();
+            await released.future;
+            handler.resolve(Response(requestOptions: request, data: raw));
+          },
+        ),
+      );
+      final repository = ApiRepository(dio, db);
+      final lateHttp = repository.loadMatchContext(matchId);
+      await started.future;
+      final update = LiveMatchUpdate(
+        matchId: matchId,
+        provider: 'goal_api',
+        externalMatchId: 'fixture',
+        status: 'VERIFIED',
+      minute: null,
+        homeScore: 0,
+        awayScore: 0,
+        revision: 2,
+        eventCount: 0,
+        changedAt: now,
+        events: const [],
+      );
+      await repository.persistTerminalObservations({
+        matchId: update,
+      }, includeLive: true);
+      released.complete();
+      final immediate = (await lateHttp).match(matchId)!;
+      expect(immediate.status, 'VERIFIED');
+      expect(immediate.score, '0 - 0');
+      await repository.settleBackground();
       await db.close();
-      for (final entry in directory.listSync().whereType<File>()) {
-        await entry.delete();
+      db = AppDatabase(NativeDatabase(file));
+      final reopened = ApiRepository(dio, db);
+      final match = (await reopened.watchPublicMatchContext(matchId).first)
+          .match(matchId)!;
+      expect(match.status, 'VERIFIED');
+      expect(match.score, '0 - 0');
+      expect(match.json['liveRevision'], 2);
+    },
+  );
+
+  test(
+    'legacy and BE14 v3 detail envelopes survive reopening SQLite',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'futbeat-be14-v3-',
+      );
+      addTearDown(() async {
+        for (final entry in directory.listSync().whereType<File>()) {
+          await entry.delete();
+        }
+        await directory.delete();
+      });
+      final file = File.fromUri(directory.uri.resolve('detail.sqlite'));
+      final dio = Dio();
+      addTearDown(dio.close);
+      const timestamp = '2026-11-11T20:00:00Z';
+      final legacy = detail(timestamp, cancelled: false);
+      final versioned = {
+        ...detail(null, cancelled: true),
+        'detailLevel': 'live',
+        'fetchedAt': null,
+        'observedAt': timestamp,
+        'live': null,
+        'sections': {'events': 'd751713988987e9331980363e24189ce'},
+      };
+      final stamped = {
+        ...versioned,
+        'live': {
+          'provider': 'goal_api',
+          'revision': 3,
+          'changedAt': timestamp,
+          'status': 'VERIFIED',
+        },
+      };
+      for (final (index, raw) in [legacy, versioned, stamped].indexed) {
+        final id = '${matchId}_$index';
+        final db = AppDatabase(NativeDatabase(file));
+        try {
+          final repository = ApiRepository(dio, db);
+          repository.persistMatchDetail(
+            id,
+            MatchDetail({...raw, 'matchId': id}),
+          );
+          await repository.settleBackground();
+        } finally {
+          await db.close();
+        }
+        final reopened = AppDatabase(NativeDatabase(file));
+        try {
+          final restored = await ApiRepository(
+            dio,
+            reopened,
+          ).readStoredMatchDetail(id);
+          expect(restored, isNotNull);
+          for (final key in ['observedAt', 'live', 'sections', 'fetchedAt']) {
+            expect(restored!.sourceJson.containsKey(key), raw.containsKey(key));
+            expect(restored.sourceJson[key], raw[key]);
+          }
+          expect(restored!.incidents, raw['incidents']);
+        } finally {
+          await reopened.close();
+        }
       }
-      await directory.delete();
-    });
-    final now = DateTime.now().toUtc();
-    final raw = {
-      'schemaVersion': 1,
-      'demo': false,
-      'updatedAt': now.toIso8601String(),
-      'teams': [
-        {'id': 'fb_h', 'name': 'Local'},
-        {'id': 'fb_a', 'name': 'Visita'},
-      ],
-      'competitions': [
-        {'id': 'fb_c', 'name': 'Competición'},
-      ],
-      'players': [],
-      'standings': [],
-      'matches': [
-        {
-          'id': matchId,
-          'competitionId': 'fb_c',
-          'homeTeamId': 'fb_h',
-          'awayTeamId': 'fb_a',
-          'startTime': now.subtract(const Duration(hours: 1)).toIso8601String(),
-          'status': 'LIVE',
-          'score': {'home': 1, 'away': 0},
-        },
-      ],
-    };
-    final released = Completer<void>();
-    final started = Completer<void>();
-    dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (request, handler) async {
-          started.complete();
-          await released.future;
-          handler.resolve(Response(requestOptions: request, data: raw));
-        },
-      ),
-    );
-    final repository = ApiRepository(dio, db);
-    final lateHttp = repository.loadMatchContext(matchId);
-    await started.future;
-    final update = LiveMatchUpdate(
-      matchId: matchId,
-      provider: 'goal_api',
-      externalMatchId: 'fixture',
-      status: 'HALFTIME',
-      minute: 45,
-      homeScore: 0,
-      awayScore: 0,
-      revision: 2,
-      eventCount: 0,
-      changedAt: now,
-      events: const [],
-    );
-    await repository.persistTerminalObservations({
-      matchId: update,
-    }, includeLive: true);
-    released.complete();
-    expect((await lateHttp).match(matchId)!.score, '0 - 0');
-    await repository.settleBackground();
-    await db.close();
-    db = AppDatabase(NativeDatabase(file));
-    final reopened = ApiRepository(dio, db);
-    final match = (await reopened.watchPublicMatchContext(matchId).first).match(
-      matchId,
-    )!;
-    expect(match.status, 'HALFTIME');
-    expect(match.score, '0 - 0');
-    expect(match.json['liveRevision'], 2);
-  });
+    },
+  );
 
   test(
     'BE14 keeps omitted sections and rejects stale or incomparable clocks',
