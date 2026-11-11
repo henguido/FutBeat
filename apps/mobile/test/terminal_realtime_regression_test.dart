@@ -68,6 +68,43 @@ LiveMatchUpdate _update({
 );
 
 void main() {
+  test('BE14 v2 wire rows verify and correct a provisional final', () {
+    final changedAt = _kickoff.add(const Duration(hours: 3));
+    LiveMatchUpdate row(int revision, String status, int away, int offset) =>
+        LiveMatchUpdate.fromJson({
+          'match_id': _id,
+          'provider': 'goal_api',
+          'external_match_id': 'ext-terminal-guard',
+          'status': status,
+          'home_score': 0,
+          'away_score': away,
+          'revision': revision,
+          'changed_at': changedAt
+              .add(Duration(milliseconds: offset))
+              .toIso8601String(),
+          'latest_events': <Json>[],
+        });
+
+    final pending = row(
+      2,
+      'FINISHED_PENDING_VERIFICATION',
+      4,
+      0,
+    ).applyTo(_match(status: 'LIVE'));
+    final verified = row(3, 'VERIFIED', 3, 1).applyTo(pending);
+    expect(FootballMatch(verified).status, 'VERIFIED');
+    expect(FootballMatch(verified).score, '0 - 3');
+    expect(row(4, 'VERIFIED', 2, 0).applyTo(verified), same(verified));
+    expect(
+      row(2, 'FINISHED_PENDING_VERIFICATION', 4, 3).applyTo(verified),
+      same(verified),
+    );
+    final corrected = row(4, 'VERIFIED', 2, 2).applyTo(verified);
+    expect(FootballMatch(corrected).status, 'VERIFIED');
+    expect(FootballMatch(corrected).score, '0 - 2');
+    expect(corrected['liveRevision'], 4);
+  });
+
   test(
     'BE14 head stamp cannot revive cached incidents over a LIVE correction',
     () {
