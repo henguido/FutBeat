@@ -239,6 +239,7 @@ class PassivePreviewTransport extends Interceptor {
         statusCode: cached.response.statusCode,
         data: cached.response.data,
         headers: cached.response.headers,
+        extra: {...cached.response.extra, 'futbeatTransportCacheHit': true},
       );
       if (response.statusCode == 404) {
         handler.reject(

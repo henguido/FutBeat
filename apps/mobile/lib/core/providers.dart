@@ -412,6 +412,7 @@ class ApiRepository implements FootballRepository {
   final Map<String, DateTime> _catalogFetchedAt = {};
   final Set<String> _detailRequested = {};
   final Map<String, Future<MatchDetail>> _detailRequestInFlight = {};
+  final Map<String, Future<MatchPreview>> _previewInFlight = {};
 
   final Map<String, Snapshot> _snapshotCache = <String, Snapshot>{};
 
@@ -488,6 +489,7 @@ class ApiRepository implements FootballRepository {
     int maxAttempts = 2,
     CancelToken? cancelToken,
     Duration? receiveTimeout,
+    void Function(Response<Json>)? onResponse,
   }) async {
     Object? lastError;
     StackTrace? lastStack;
@@ -520,6 +522,7 @@ class ApiRepository implements FootballRepository {
               ? null
               : int.tryParse(response.headers.value('content-length')!),
         );
+        onResponse?.call(response);
         return data;
       } catch (error, stack) {
         diagnostics?.record(path, 'httpError', elapsed: stopwatch.elapsed);
@@ -1650,15 +1653,66 @@ class ApiRepository implements FootballRepository {
     _diskWrites.add(write);
   }
 
-  /// Recent form + head-to-head (DB-only on the server: never registers
-  /// demand nor calls a provider). One attempt: it is optional content.
-  Future<MatchPreview> loadMatchPreview(String id) async => MatchPreview(
-    await _getJson(
-      '/v1/match-preview',
-      queryParameters: {'id': id},
-      maxAttempts: 1,
-    ),
-  );
+  /// Recent form and head-to-head share the endpoint's short freshness window.
+  Future<MatchPreview> loadMatchPreview(String id) =>
+      _previewInFlight.putIfAbsent(id, () async {
+        try {
+          final key = 'match-preview:$id';
+          try {
+            final stored = await database?.readPublicSnapshot('public:$key');
+            if (stored != null) {
+              final age = DateTime.now().toUtc().difference(stored.savedAt);
+              if (!age.isNegative && age < const Duration(seconds: 30)) {
+                final raw = jsonDecode(stored.payload) as Json;
+                if (raw['matchId'] == id && !_containsPrivateCacheField(raw)) {
+                  return MatchPreview(raw);
+                }
+              }
+            }
+          } catch (_) {
+            // A failed cache read must leave the network read available.
+          }
+          var canStore = true;
+          final raw = await _getJson(
+            '/v1/match-preview',
+            queryParameters: {'id': id},
+            maxAttempts: 1,
+            onResponse: (response) {
+              final headers = response.headers;
+              final directives = (headers['cache-control'] ?? const <String>[])
+                  .join(',')
+                  .toLowerCase()
+                  .split(',')
+                  .map((part) => part.trim());
+              final age = headers['age']?.firstOrNull;
+              canStore =
+                  response.extra['futbeatTransportCacheHit'] != true &&
+                  (age == null || int.tryParse(age) == 0) &&
+                  directives.contains('public') &&
+                  directives.contains('max-age=30') &&
+                  !directives.contains('no-store') &&
+                  !directives.contains('no-cache') &&
+                  !directives.contains('private');
+            },
+          );
+          if (raw.containsKey('matchId') && raw['matchId'] != id) {
+            throw const FormatException('Match preview identity mismatch');
+          }
+          final preview = MatchPreview(raw);
+          if (canStore &&
+              id.startsWith('fb_') &&
+              raw['matchId'] == id &&
+              const {
+                'AVAILABLE',
+                'CONFIRMED_EMPTY',
+              }.contains(preview.h2hAvailability)) {
+            _persistPublicJson(key, raw);
+          }
+          return preview;
+        } finally {
+          _previewInFlight.remove(id);
+        }
+      });
 
   /// One page of the pair's stored head-to-head (#155). `extend` asks the
   /// server to extend both teams' central coverage one step back (never a
@@ -2557,7 +2611,7 @@ final matchPreviewProvider = FutureProvider.autoDispose
       final repository = ref.watch(repositoryProvider);
       if (repository is! ApiRepository) return MatchPreview.empty(id);
       final value = await repository.loadMatchPreview(id);
-      if (ref.mounted) _retainSettled(ref);
+      if (ref.mounted && repository.database == null) _retainSettled(ref);
       return value;
       // No automatic retries: a failure stays a quiet error state (manual
       // "Reintentar" in Cara a cara only).

@@ -44,6 +44,107 @@ class _DelayedDetailRepository implements FootballRepository {
 
 void main() {
   test(
+    'pending, no-store and transport-cached previews do not seed SQLite',
+    () async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final dio = Dio(BaseOptions(baseUrl: 'https://fixture.invalid'));
+      final repository = ApiRepository(dio, db);
+      addTearDown(() async {
+        await repository.settleBackground();
+        dio.close();
+        await db.close();
+      });
+      var requests = 0;
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            requests++;
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                headers: Headers.fromMap({
+                  'cache-control': [
+                    'public, max-age=30',
+                    if (requests == 2) 'no-store',
+                  ],
+                }),
+                extra: {if (requests == 3) 'futbeatTransportCacheHit': true},
+                data: {
+                  'matchId': matchId,
+                  'h2h': {
+                    'availability': requests == 1 ? 'PENDING' : 'AVAILABLE',
+                  },
+                },
+              ),
+            );
+          },
+        ),
+      );
+      for (var open = 0; open < 4; open++) {
+        await repository.loadMatchPreview(matchId);
+        await repository.settleBackground();
+      }
+      expect(requests, 4);
+    },
+  );
+
+  test('expired match preview refreshes and shares concurrent reads', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final dio = Dio(BaseOptions(baseUrl: 'https://fixture.invalid'));
+    final repository = ApiRepository(dio, db);
+    addTearDown(() async {
+      await repository.settleBackground();
+      dio.close();
+      await db.close();
+    });
+    await db
+        .into(db.catalogSnapshots)
+        .insert(
+          CatalogSnapshotsCompanion.insert(
+            cacheKey: 'public:match-preview:$matchId',
+            payload: jsonEncode({'matchId': matchId, 'matches': []}),
+            savedAt: DateTime.now().toUtc().subtract(
+              matchCacheRetention + const Duration(seconds: 5),
+            ),
+          ),
+        );
+    var requests = 0;
+    final fresh = {
+      'matchId': matchId,
+      'h2h': {'availability': 'AVAILABLE'},
+      'matches': [
+        {'matchId': 'fb_match_new'},
+      ],
+    };
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (request, handler) {
+          requests++;
+          handler.resolve(
+            Response(
+              requestOptions: request,
+              data: fresh,
+              headers: Headers.fromMap({
+                'cache-control': ['public, max-age=30'],
+              }),
+            ),
+          );
+        },
+      ),
+    );
+    final first = repository.loadMatchPreview(matchId);
+    final second = repository.loadMatchPreview(matchId);
+    expect(second, same(first));
+    expect((await first).json, fresh);
+    await repository.settleBackground();
+    expect(
+      (await ApiRepository(dio, db).loadMatchPreview(matchId)).json,
+      fresh,
+    );
+    expect(requests, 1);
+  });
+
+  test(
     'a VERIFIED correction survives late HTTP and reopening SQLite',
     () async {
       final directory = await Directory.systemTemp.createTemp(
@@ -107,7 +208,7 @@ void main() {
         provider: 'goal_api',
         externalMatchId: 'fixture',
         status: 'VERIFIED',
-      minute: null,
+        minute: null,
         homeScore: 0,
         awayScore: 0,
         revision: 2,
@@ -349,11 +450,23 @@ void main() {
             }
             final response = switch (options.path) {
               '/v1/match-context' => context,
-              '/v1/match-preview' => {'matchId': matchId},
+              '/v1/match-preview' => {
+                'matchId': matchId,
+                'h2h': {'availability': 'AVAILABLE'},
+              },
               '/v1/match-detail' => raw,
               _ => throw StateError('Unexpected route: ${options.path}'),
             };
-            handler.resolve(Response(requestOptions: options, data: response));
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: response,
+                headers: Headers.fromMap({
+                  if (options.path == '/v1/match-preview')
+                    'cache-control': ['public, max-age=30'],
+                }),
+              ),
+            );
           },
         ),
       );
@@ -420,12 +533,9 @@ void main() {
           await container.read(matchPreviewProvider(matchId).future);
           await repository.settleBackground();
           if (open == 9) {
-            expect(requests, {
-              '/v1/match-context': 10,
-              '/v1/match-preview': 10,
-            });
+            expect(requests, {'/v1/match-context': 10, '/v1/match-preview': 1});
             debugPrint(
-              'MATCH-CACHE-01 opens=10 detail=0 context=10 preview=10 other=0',
+              'MATCH-CACHE-01 opens=10 detail=0 context=10 preview=1 other=0',
             );
             updates.add({
               matchId: LiveMatchUpdate(
@@ -456,7 +566,7 @@ void main() {
       }
       expect(requests, {
         '/v1/match-context': 10,
-        '/v1/match-preview': 10,
+        '/v1/match-preview': 1,
         '/v1/match-detail': 1,
       });
       debugPrint('MATCH-CACHE-01 correction=1 detail=1 other=0');
