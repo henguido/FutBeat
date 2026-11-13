@@ -629,7 +629,12 @@ class PushService {
     if (googleOAuthConfigured) OAuthProvider.google,
     if (facebookOAuthConfigured) OAuthProvider.facebook,
   };
-  static const oauthCallbackScheme = 'com.futbeat.futbeat';
+  static const oauthCallbackScheme =
+      bool.fromEnvironment('FUTBEAT_R05_TEST_PACKAGE')
+      ? 'com.futbeat.futbeat.r05test'
+      : bool.fromEnvironment('FUTBEAT_QA_ISOLATED_PACKAGE')
+      ? 'com.futbeat.futbeat.qa'
+      : 'com.futbeat.futbeat';
   static const oauthRedirect = '$oauthCallbackScheme://login-callback';
 
   static bool _isOAuthCallback(Uri callback) =>

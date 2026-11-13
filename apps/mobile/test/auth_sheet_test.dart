@@ -314,6 +314,13 @@ void main() {
   });
 
   group('PKCE sign-in', () {
+    const qa = bool.fromEnvironment('FUTBEAT_QA_ISOLATED_PACKAGE');
+    const qaScheme = 'com.futbeat.futbeat.qa';
+    const officialScheme = 'com.futbeat.futbeat';
+    const expectedScheme = qa ? qaScheme : officialScheme;
+    const otherScheme = qa ? officialScheme : qaScheme;
+    const callbackUrl = '$expectedScheme://login-callback';
+
     test('code exchange with the verifier of the challenge signs in', () async {
       Uri? opened;
       final http = _GoTrue();
@@ -321,8 +328,8 @@ void main() {
         http,
         browser: (url, scheme) async {
           opened = url;
-          expect(scheme, 'com.futbeat.futbeat');
-          return 'com.futbeat.futbeat://login-callback?code=one-time';
+          expect(scheme, expectedScheme);
+          return '$callbackUrl?code=one-time';
         },
       );
       await value.signInWithOAuth(OAuthProvider.google);
@@ -330,7 +337,7 @@ void main() {
       final params = opened!.queryParameters;
       expect(opened!.path, '/auth/v1/authorize');
       expect(params['provider'], 'google');
-      expect(params['redirect_to'], 'com.futbeat.futbeat://login-callback');
+      expect(params['redirect_to'], callbackUrl);
       expect(params['code_challenge_method'], 's256');
       final exchange = http.called('grant_type=pkce').single;
       final body = exchange.data as Map;
@@ -362,23 +369,15 @@ void main() {
 
     test('a denied or failed redirect never signs in', () async {
       for (final (callback, matcher) in [
+        ('$callbackUrl?error=access_denied', isA<OAuthCancelled>()),
+        ('$callbackUrl#error=server_error', isA<OAuthFailed>()),
+        (callbackUrl, isA<OAuthFailed>()),
         (
-          'com.futbeat.futbeat://login-callback?error=access_denied',
-          isA<OAuthCancelled>(),
-        ),
-        (
-          'com.futbeat.futbeat://login-callback#error=server_error',
+          '$expectedScheme://password-reset?code=unexpected',
           isA<OAuthFailed>(),
         ),
-        ('com.futbeat.futbeat://login-callback', isA<OAuthFailed>()),
-        (
-          'com.futbeat.futbeat://password-reset?code=unexpected',
-          isA<OAuthFailed>(),
-        ),
-        (
-          'https://login-callback?code=unexpected',
-          isA<OAuthFailed>(),
-        ),
+        ('$otherScheme://login-callback?code=unexpected', isA<OAuthFailed>()),
+        ('https://login-callback?code=unexpected', isA<OAuthFailed>()),
       ]) {
         final http = _GoTrue();
         final value = service(http, browser: (_, _) async => callback);

@@ -22,6 +22,96 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const storage = FlutterSecureStorage();
   const receiptKey = 'futbeat.account.deletionReceipt';
+  test(
+    'R05 recovers a committed deletion after losing the POST response',
+    () async {
+      const sessionKey = 'futbeat.push.session';
+      const session = {
+        'access_token': 'synthetic-token',
+        'user': {'id': 'test-user'},
+      };
+      FlutterSecureStorage.setMockInitialValues({
+        sessionKey: jsonEncode(session),
+      });
+      final db = AppDatabase(NativeDatabase.memory());
+      final postIds = <String>[];
+      final lookupIds = <String>[];
+      var online = true;
+      final interceptor = InterceptorsWrapper(
+        onRequest: (request, handler) async {
+          if (request.path.endsWith('/futbeat-delete-account')) {
+            final id = request.headers['X-FutBeat-Deletion-Id'] as String;
+            final stored = jsonDecode((await storage.read(key: receiptKey))!);
+            expect(stored['deletionId'], id);
+            postIds.add(
+              id,
+            ); // The test server commits before losing the response.
+            online = false;
+          } else if (request.path.endsWith(
+            '/futbeat_account_deletion_status',
+          )) {
+            lookupIds.add((request.data as Map)['p_deletion_id'] as String);
+            if (online) {
+              handler.resolve(
+                Response(
+                  requestOptions: request,
+                  statusCode: 200,
+                  data: {'status': 'deleted'},
+                ),
+              );
+              return;
+            }
+          } else if (online) {
+            fail('Unexpected online request: ${request.path}');
+          }
+          handler.reject(
+            DioException(
+              requestOptions: request,
+              type: DioExceptionType.connectionError,
+            ),
+          );
+        },
+      );
+      PushService createService() => PushService(
+        const LiveRealtimeConfig(
+          supabaseUrl: 'https://fixture.invalid',
+          publicKey: 'synthetic',
+        ),
+        db,
+        _Tokens(),
+        dio: Dio()..interceptors.add(interceptor),
+        secureStorage: storage,
+        deletionReceiptsEnabled: true,
+        pushConfigured: false,
+      );
+      var service = createService()..session = Map<String, dynamic>.of(session);
+      addTearDown(() async {
+        service.dispose();
+        await db.close();
+      });
+      await expectLater(
+        service.deleteAccount(),
+        throwsA(isA<AccountDeletionUnconfirmed>()),
+      );
+      expect(service.userId, 'test-user');
+      final retainedReceipt = await storage.read(key: receiptKey);
+      expect(retainedReceipt, isNotNull);
+      service.dispose();
+      service = createService();
+      await service.restore();
+      expect(await storage.read(key: receiptKey), retainedReceipt);
+      service.dispose();
+      online = true;
+      service = createService();
+      await service.restore();
+      expect(postIds, hasLength(1));
+      expect(lookupIds, hasLength(3));
+      expect(lookupIds, everyElement(postIds.single));
+      expect(service.authenticated, isFalse);
+      expect(await storage.read(key: receiptKey), isNull);
+      expect(await storage.read(key: sessionKey), isNull);
+    },
+  );
   for (final (code, status) in [
     (200, 'unknown'),
     (401, 'pending'),

@@ -9,10 +9,23 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val releaseSigningPropertiesFile = rootProject.file("key.properties")
+val releaseSigningPropertiesFile = rootProject.file(
+    System.getenv("FUTBEAT_SIGNING_PROPERTIES") ?: "key.properties",
+)
 val releaseSigningProperties = Properties()
 if (releaseSigningPropertiesFile.exists()) {
     releaseSigningPropertiesFile.inputStream().use(releaseSigningProperties::load)
+}
+System.getenv("FUTBEAT_SIGNING_STORE_FILE")?.let { store ->
+    check(System.getenv("FUTBEAT_SIGNING_PROPERTIES") == null) {
+        "Choose one release signing configuration."
+    }
+    releaseSigningProperties.clear()
+    releaseSigningProperties.setProperty("storeFile", store)
+    releaseSigningProperties.setProperty("keyAlias", System.getenv("FUTBEAT_SIGNING_ALIAS").orEmpty())
+    val password = System.getenv("FUTBEAT_SIGNING_PASSWORD").orEmpty()
+    releaseSigningProperties.setProperty("storePassword", password)
+    releaseSigningProperties.setProperty("keyPassword", password)
 }
 
 val requiredReleaseSigningProperties =
@@ -24,6 +37,7 @@ val releaseArtifactTaskPrefixes =
 val appProjectPath = project.path
 val offlinePreview = System.getenv("FUTBEAT_OFFLINE_PREVIEW") == "true"
 val passivePreview = System.getenv("FUTBEAT_PASSIVE_PREVIEW") == "true"
+val r05TestPackage = System.getenv("FUTBEAT_R05_TEST_PACKAGE") == "true"
 check(!(offlinePreview && passivePreview)) { "Preview modes are mutually exclusive." }
 
 // --- Release ads configuration (fail closed) ------------------------------
@@ -203,12 +217,15 @@ android {
         manifestPlaceholders["futbeatAppLabel"] = "FutBeat"
         manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat"
         manifestPlaceholders["futbeatAppLinkHost"] = "futbeat.com"
+        manifestPlaceholders["futbeatAllowBackup"] = "true"
     }
 
     signingConfigs {
         if (missingReleaseSigningProperties.isEmpty()) {
             create("release") {
-                storeFile = rootProject.file(releaseSigningProperties.getProperty("storeFile"))
+                storeFile = releaseSigningPropertiesFile.parentFile.resolve(
+                    releaseSigningProperties.getProperty("storeFile"),
+                )
                 storePassword = releaseSigningProperties.getProperty("storePassword")
                 keyAlias = releaseSigningProperties.getProperty("keyAlias")
                 keyPassword = releaseSigningProperties.getProperty("keyPassword")
@@ -226,7 +243,13 @@ android {
         debug {
             // Opt-in QA install alongside the Play-signed app. Never changes
             // the normal debug or release package when the flag is absent.
-            if (passivePreview) {
+            if (r05TestPackage) {
+                applicationIdSuffix = ".r05test"
+                manifestPlaceholders["futbeatAppLabel"] = "FutBeat R05 Test"
+                manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.r05test"
+                manifestPlaceholders["futbeatAppLinkHost"] = "r05test.invalid"
+                manifestPlaceholders["futbeatAllowBackup"] = "false"
+            } else if (passivePreview) {
                 applicationIdSuffix = ".preview.connected"
                 manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.preview.connected"
                 manifestPlaceholders["futbeatAppLinkHost"] = "preview.invalid"
@@ -272,6 +295,23 @@ gradle.taskGraph.whenReady(
                 }
 
             val defines = dartDefines()
+            val qaCallback = defines["FUTBEAT_QA_ISOLATED_PACKAGE"] == "true"
+            val qaPackage = System.getenv("FUTBEAT_QA_ISOLATED_PACKAGE") == "true"
+            val r05Test = defines["FUTBEAT_R05_TEST_PACKAGE"] == "true"
+            check(r05Test || defines.keys.none {
+                it == "FUTBEAT_R05_PHYSICAL_DIAGNOSTICS" || it.startsWith("FUTBEAT_R05_CASE_")
+            }) { "R05 physical diagnostics require the isolated test package." }
+            check(r05Test == r05TestPackage && (!r05Test || (
+                !releaseArtifactRequested && !qaPackage && !offlinePreview && !passivePreview &&
+                    defines["FUTBEAT_R05_ENABLED"] == "true" &&
+                    defines["FUTBEAT_ADS_DISABLED"] == "true" &&
+                    listOf("FUTBEAT_PUSH_ENABLED", "FUTBEAT_USE_DEMO",
+                        "FUTBEAT_OAUTH_GOOGLE_ENABLED", "FUTBEAT_OAUTH_FACEBOOK_ENABLED",
+                        "FUTBEAT_USER_SESSION_ACCESS").all { defines[it] == "false" }
+                ))) { "R05 Test requires its isolated debug package, R05, and explicit disabled features." }
+            check(qaCallback == qaPackage && (!qaCallback || (!releaseArtifactRequested && !offlinePreview && !passivePreview))) {
+                "QA callback and isolated debug package must be enabled together; neither is allowed in release or preview."
+            }
             if ((offlinePreview || passivePreview || defines["FUTBEAT_PASSIVE_PREVIEW"] == "true" ||
                 defines["FUTBEAT_PASSIVE_PREVIEW_ENABLED"] == "true") && releaseArtifactRequested) {
                 throw GradleException("FutBeat Preview is available only as an isolated debug artifact.")
