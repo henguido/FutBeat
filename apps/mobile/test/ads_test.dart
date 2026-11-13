@@ -102,7 +102,7 @@ class _Ump implements UmpPlatform {
 
   /// What the user picks in Google's form.
   bool accepts;
-  final bool updateFails;
+  bool updateFails;
   final bool formFails;
   final bool updateHangs;
   bool privacyRequired = false;
@@ -567,6 +567,36 @@ void main() {
         expect(h.loader.requests, isEmpty);
         await tester.pumpWidget(const SizedBox());
       }
+    });
+
+    testWidgets('offline UMP retries once on resume before allowing ads', (
+      tester,
+    ) async {
+      final ump = _Ump(updateFails: true);
+      final h = _Harness();
+      await h.pump(tester, ump: ump);
+      await h.account(tester, null);
+      expect(h.loader.requests, isEmpty);
+
+      ump.updateFails = false;
+      final consent = h.container.read(adsConsentProvider.notifier);
+      await consent.retryAfterResume();
+      await consent.retryAfterResume();
+      await tester.pumpAndSettle();
+      expect(ump.updates, 2);
+      expect(h.loader.requests, hasLength(1));
+    });
+
+    test('commercial UMP keeps the Google test unit and requires consent', () {
+      final config = AdsConfig.resolve(
+        release: false,
+        testAds: true,
+        requireTestConsent: true,
+        matchesFeedUnitId: '',
+      );
+      expect(config.requiresConsent, isTrue);
+      expect(config.testAds, isTrue);
+      expect(config.unitFor(AdPlacement.matchesFeed), admobTestBannerUnitId);
     });
 
     testWidgets('PREMIUM: no UMP and no ads even when consent would allow', (

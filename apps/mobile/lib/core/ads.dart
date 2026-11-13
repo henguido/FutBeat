@@ -25,7 +25,11 @@ bool isGoogleTestAdId(String id) => id.startsWith(admobTestPublisher);
 /// `--dart-define=FUTBEAT_ADMOB_TEST_ADS=true` for Google's test ads
 /// (development / QA). Nothing configured = no ads at all.
 class AdsConfig {
-  const AdsConfig({this.matchesFeedUnitId = '', this.testAdsBuild = false});
+  const AdsConfig({
+    this.matchesFeedUnitId = '',
+    this.testAdsBuild = false,
+    this.requireTestConsent = false,
+  });
 
   factory AdsConfig.fromEnvironment() {
     if (!Platform.isAndroid) return const AdsConfig();
@@ -33,6 +37,7 @@ class AdsConfig {
       release: kReleaseMode,
       adsDisabled: const bool.fromEnvironment('FUTBEAT_ADS_DISABLED'),
       testAds: const bool.fromEnvironment('FUTBEAT_ADMOB_TEST_ADS'),
+      requireTestConsent: const bool.fromEnvironment('FUTBEAT_COMMERCIAL_UMP'),
       matchesFeedUnitId: const String.fromEnvironment(
         'FUTBEAT_ADMOB_MATCHES_FEED_ID',
       ),
@@ -47,6 +52,7 @@ class AdsConfig {
     required bool release,
     bool adsDisabled = false,
     required bool testAds,
+    bool requireTestConsent = false,
     required String matchesFeedUnitId,
   }) {
     if (adsDisabled) return const AdsConfig();
@@ -56,9 +62,10 @@ class AdsConfig {
           : AdsConfig(matchesFeedUnitId: matchesFeedUnitId);
     }
     return testAds
-        ? const AdsConfig(
+        ? AdsConfig(
             matchesFeedUnitId: admobTestBannerUnitId,
             testAdsBuild: true,
+            requireTestConsent: requireTestConsent,
           )
         : AdsConfig(matchesFeedUnitId: matchesFeedUnitId);
   }
@@ -67,12 +74,14 @@ class AdsConfig {
 
   /// Built with `FUTBEAT_ADMOB_TEST_ADS=true`.
   final bool testAdsBuild;
+  final bool requireTestConsent;
 
   bool get configured => matchesFeedUnitId.isNotEmpty;
 
   /// Google test units only: QA may run them without production consent
   /// (UMP is not involved).
   bool get testAds => testAdsBuild || isGoogleTestAdId(matchesFeedUnitId);
+  bool get requiresConsent => !testAds || requireTestConsent;
 
   String? unitFor(AdPlacement placement) {
     final unit = switch (placement) {
@@ -174,6 +183,8 @@ const umpUpdateTimeout = Duration(seconds: 15);
 
 class AdsConsentController extends Notifier<AdsConsentState> {
   Future<void>? _gathering;
+  bool _retryOnResume = false;
+  bool _privacyFormOpen = false;
 
   @override
   AdsConsentState build() => AdsConsentState.unresolved;
@@ -181,6 +192,13 @@ class AdsConsentController extends Notifier<AdsConsentState> {
   /// Idempotent: the first call runs UMP (update, then Google's form only if
   /// required); later calls reuse it, so no form is shown repeatedly.
   Future<void> ensure() => _gathering ??= _gather();
+
+  Future<void> retryAfterResume() async {
+    if (!_retryOnResume || _privacyFormOpen) return;
+    _retryOnResume = false;
+    _gathering = null;
+    await ensure();
+  }
 
   Future<void> _gather() async {
     final ump = ref.read(umpPlatformProvider);
@@ -196,7 +214,8 @@ class AdsConsentController extends Notifier<AdsConsentState> {
           ? AdsConsentState.canRequestAds
           : AdsConsentState.cannotRequestAds;
     } catch (_) {
-      // Fail closed for this session; retried on the next app start.
+      // Keep ads blocked, but recover from an offline launch on resume.
+      _retryOnResume = true;
     }
   }
 
@@ -214,8 +233,12 @@ class AdsConsentController extends Notifier<AdsConsentState> {
   /// Opens Google's privacy options form and re-reads the decision.
   Future<void> showPrivacyOptions() async {
     final ump = ref.read(umpPlatformProvider);
-    if (ump == null) return;
+    if (ump == null || _privacyFormOpen) return;
+    _privacyFormOpen = true;
     try {
+      await ensure();
+      if (!ref.mounted) return;
+      state = AdsConsentState.unresolved;
       await ump.showPrivacyOptionsForm();
       final allowed = await ump.canRequestAds();
       if (!ref.mounted) return;
@@ -224,6 +247,8 @@ class AdsConsentController extends Notifier<AdsConsentState> {
           : AdsConsentState.cannotRequestAds;
     } catch (_) {
       if (ref.mounted) state = AdsConsentState.unresolved;
+    } finally {
+      _privacyFormOpen = false;
     }
   }
 }
@@ -424,13 +449,12 @@ final adsConfigProvider = Provider<AdsConfig>(
 
 final adLoaderProvider = Provider<AdLoader>((ref) => GoogleAdLoader());
 
-/// Production consent; fails closed until a real CMP is wired here.
 /// Google requires a privacy options entry point for this user. Re-read
 /// whenever the consent decision changes; unknown or any error = hidden.
 final adsPrivacyOptionsRequiredProvider = FutureProvider<bool>((ref) {
-  // Only someone who would get production ads: Premium, unconfigured and
-  // test-ads builds never query UMP.
-  if (!ref.watch(adsEligibleProvider) || ref.watch(adsConfigProvider).testAds) {
+  // Privacy options apply only when this build and account use UMP.
+  if (!ref.watch(adsEligibleProvider) ||
+      !ref.watch(adsConfigProvider).requiresConsent) {
     return false;
   }
   ref.watch(adsConsentProvider);
@@ -447,19 +471,27 @@ final adsEligibleProvider = Provider<bool>((ref) {
 });
 
 /// The ONLY ads switch: eligible, and for production units UMP said
-/// [AdsConsentState.canRequestAds]. Google test ads (QA) need no
-/// production consent.
+/// [AdsConsentState.canRequestAds]. The commercial UMP build applies the
+/// same consent gate to its Google test units.
 final adsAllowedProvider = Provider<bool>((ref) {
   if (!ref.watch(adsEligibleProvider)) return false;
-  if (ref.watch(adsConfigProvider).testAds) return true;
+  if (!ref.watch(adsConfigProvider).requiresConsent) return true;
   return ref.watch(adsConsentProvider) == AdsConsentState.canRequestAds;
 });
 
 /// Starts UMP as soon as someone is eligible for ads (app start), so
 /// Google's form, when required, never appears mid-scroll.
 void ensureAdsConsent(WidgetRef ref) {
-  if (ref.read(adsEligibleProvider) && !ref.read(adsConfigProvider).testAds) {
+  if (ref.read(adsEligibleProvider) &&
+      ref.read(adsConfigProvider).requiresConsent) {
     unawaited(ref.read(adsConsentProvider.notifier).ensure());
+  }
+}
+
+void resumeAdsConsent(WidgetRef ref) {
+  if (ref.read(adsEligibleProvider) &&
+      ref.read(adsConfigProvider).requiresConsent) {
+    unawaited(ref.read(adsConsentProvider.notifier).retryAfterResume());
   }
 }
 

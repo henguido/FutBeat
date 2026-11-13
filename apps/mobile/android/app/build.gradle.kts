@@ -39,6 +39,7 @@ val offlinePreview = System.getenv("FUTBEAT_OFFLINE_PREVIEW") == "true"
 val passivePreview = System.getenv("FUTBEAT_PASSIVE_PREVIEW") == "true"
 val r05TestPackage = System.getenv("FUTBEAT_R05_TEST_PACKAGE") == "true"
 val commercialQaPackage = System.getenv("FUTBEAT_COMMERCIAL_QA") == "true"
+val commercialUmpAppId = System.getenv("FUTBEAT_COMMERCIAL_UMP_APP_ID")?.trim().orEmpty()
 check(!(offlinePreview && passivePreview)) { "Preview modes are mutually exclusive." }
 
 // --- Release ads configuration (fail closed) ------------------------------
@@ -254,7 +255,8 @@ android {
                 manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.commercialqa"
                 manifestPlaceholders["futbeatAppLinkHost"] = "commercialqa.invalid"
                 manifestPlaceholders["futbeatAllowBackup"] = "false"
-                manifestPlaceholders["admobAppId"] = "ca-app-pub-3940256099942544~3347511713"
+                manifestPlaceholders["admobAppId"] =
+                    commercialUmpAppId.ifEmpty { "ca-app-pub-3940256099942544~3347511713" }
             } else if (r05TestPackage) {
                 applicationIdSuffix = ".r05test"
                 manifestPlaceholders["futbeatAppLabel"] = "FutBeat R05 Test"
@@ -311,6 +313,13 @@ gradle.taskGraph.whenReady(
             val qaPackage = System.getenv("FUTBEAT_QA_ISOLATED_PACKAGE") == "true"
             val r05Test = defines["FUTBEAT_R05_TEST_PACKAGE"] == "true"
             val commercialQa = defines["FUTBEAT_COMMERCIAL_QA"] == "true"
+            val commercialUmp = defines["FUTBEAT_COMMERCIAL_UMP"] == "true"
+            check(if (commercialUmp) {
+                commercialQa && admobAppIdPattern.matches(commercialUmpAppId) &&
+                    !commercialUmpAppId.startsWith(googleTestAdPublisher)
+            } else commercialUmpAppId.isEmpty()) {
+                "Commercial UMP requires the isolated QA package and an approved AdMob App ID."
+            }
             check(commercialQa == commercialQaPackage && (!commercialQa || (
                 !releaseArtifactRequested && !qaPackage && !r05Test &&
                     !offlinePreview && !passivePreview &&

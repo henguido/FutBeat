@@ -327,6 +327,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final sportsActive = state == AppLifecycleState.resumed;
+    if (sportsActive) resumeAdsConsent(ref);
     ref.read(sportsAppActiveProvider).value = sportsActive;
     if (ref.exists(repositoryProvider)) {
       final repository = ref.read(repositoryProvider);
