@@ -414,7 +414,7 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
     var changed = false;
     for (final event in events) {
       if (!premium.contains(event.productId)) continue;
-      if (event.needsCompletion) {
+      if (event.outcome == PurchaseOutcome.purchased && event.needsCompletion) {
         // A failure is retried by the next check (start, resume, restore).
         await ref
             .read(purchaseAcknowledgerProvider)

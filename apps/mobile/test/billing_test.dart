@@ -231,10 +231,13 @@ void main() {
       PurchaseEvent(
         productId: offer.productId,
         outcome: PurchaseOutcome.pending,
+        needsCompletion: true,
+        handle: 'pending-purchase',
       ),
     ]);
     expect(await h.billing.buy(_offer(_monthly)), PremiumActionResult.pending);
     expect(h.container.read(premiumBillingProvider).pending, isTrue);
+    expect(h.gateway.completed, isEmpty);
     expect(h.plan.plan, Plan.free);
   });
 

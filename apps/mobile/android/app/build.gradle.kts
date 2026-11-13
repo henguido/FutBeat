@@ -38,6 +38,7 @@ val appProjectPath = project.path
 val offlinePreview = System.getenv("FUTBEAT_OFFLINE_PREVIEW") == "true"
 val passivePreview = System.getenv("FUTBEAT_PASSIVE_PREVIEW") == "true"
 val r05TestPackage = System.getenv("FUTBEAT_R05_TEST_PACKAGE") == "true"
+val commercialQaPackage = System.getenv("FUTBEAT_COMMERCIAL_QA") == "true"
 check(!(offlinePreview && passivePreview)) { "Preview modes are mutually exclusive." }
 
 // --- Release ads configuration (fail closed) ------------------------------
@@ -80,6 +81,10 @@ fun isPublicClientKey(value: String): Boolean {
 // Release must never ship fixture data or a QA-only network blocker.
 fun releaseRuntimeProblems(defines: Map<String, String> = dartDefines()): List<String> {
     val problems = mutableListOf<String>()
+    if (listOf("FUTBEAT_PREMIUM_MONTHLY_ID", "FUTBEAT_PREMIUM_YEARLY_ID")
+            .any { !defines[it].isNullOrBlank() }) {
+        problems += "Premium release products require server-side purchase verification."
+    }
     for (key in listOf("FUTBEAT_API_PUBLIC_TOKEN", "FUTBEAT_SUPABASE_PUBLISHABLE_KEY")) {
         if (!isPublicClientKey(defines[key].orEmpty())) {
             // Never include the rejected value, its payload or part of it.
@@ -243,7 +248,14 @@ android {
         debug {
             // Opt-in QA install alongside the Play-signed app. Never changes
             // the normal debug or release package when the flag is absent.
-            if (r05TestPackage) {
+            if (commercialQaPackage) {
+                applicationIdSuffix = ".commercialqa"
+                manifestPlaceholders["futbeatAppLabel"] = "FutBeat Comercial QA"
+                manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.commercialqa"
+                manifestPlaceholders["futbeatAppLinkHost"] = "commercialqa.invalid"
+                manifestPlaceholders["futbeatAllowBackup"] = "false"
+                manifestPlaceholders["admobAppId"] = "ca-app-pub-3940256099942544~3347511713"
+            } else if (r05TestPackage) {
                 applicationIdSuffix = ".r05test"
                 manifestPlaceholders["futbeatAppLabel"] = "FutBeat R05 Test"
                 manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.r05test"
@@ -298,6 +310,19 @@ gradle.taskGraph.whenReady(
             val qaCallback = defines["FUTBEAT_QA_ISOLATED_PACKAGE"] == "true"
             val qaPackage = System.getenv("FUTBEAT_QA_ISOLATED_PACKAGE") == "true"
             val r05Test = defines["FUTBEAT_R05_TEST_PACKAGE"] == "true"
+            val commercialQa = defines["FUTBEAT_COMMERCIAL_QA"] == "true"
+            check(commercialQa == commercialQaPackage && (!commercialQa || (
+                !releaseArtifactRequested && !qaPackage && !r05Test &&
+                    !offlinePreview && !passivePreview &&
+                    listOf("FUTBEAT_R05_ENABLED", "FUTBEAT_ADMOB_TEST_ADS",
+                        "FUTBEAT_USER_SESSION_ACCESS").all { defines[it] == "true" } &&
+                    listOf("FUTBEAT_ADS_DISABLED", "FUTBEAT_USE_DEMO",
+                        "FUTBEAT_QA_LOCAL_CACHE_ONLY", "FUTBEAT_PUSH_ENABLED",
+                        "FUTBEAT_OAUTH_GOOGLE_ENABLED", "FUTBEAT_OAUTH_FACEBOOK_ENABLED")
+                        .all { defines[it] == "false" } &&
+                    listOf("FUTBEAT_ADMOB_MATCHES_FEED_ID", "FUTBEAT_PREMIUM_MONTHLY_ID",
+                        "FUTBEAT_PREMIUM_YEARLY_ID").all { defines[it].isNullOrBlank() }
+                ))) { "Commercial QA requires its isolated debug package, test ads, and no store products." }
             check(r05Test || defines.keys.none {
                 it == "FUTBEAT_R05_PHYSICAL_DIAGNOSTICS" || it.startsWith("FUTBEAT_R05_CASE_")
             }) { "R05 physical diagnostics require the isolated test package." }

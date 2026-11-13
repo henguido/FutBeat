@@ -630,7 +630,9 @@ class PushService {
     if (facebookOAuthConfigured) OAuthProvider.facebook,
   };
   static const oauthCallbackScheme =
-      bool.fromEnvironment('FUTBEAT_R05_TEST_PACKAGE')
+      bool.fromEnvironment('FUTBEAT_COMMERCIAL_QA')
+      ? 'com.futbeat.futbeat.commercialqa'
+      : bool.fromEnvironment('FUTBEAT_R05_TEST_PACKAGE')
       ? 'com.futbeat.futbeat.r05test'
       : bool.fromEnvironment('FUTBEAT_QA_ISOLATED_PACKAGE')
       ? 'com.futbeat.futbeat.qa'
