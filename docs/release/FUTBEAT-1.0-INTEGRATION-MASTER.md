@@ -43,3 +43,11 @@ Si falla la integración local, revertir únicamente el commit de interfaz en la
 | M4 | Bloqueado | Procedimiento de firma y config pública con SHA registrado | Certificado activo y código 16 por confirmar; falta aceptación exacta | Verificar Play y firmar únicamente al pasar las compuertas |
 | M5 | Bloqueado | Paquete com.futbeat.futbeat documentado | AAB oficial y autorización de primera subida | Internal Testing y prueba de binario distribuido |
 | M6 | Bloqueado | Health BE14 SQL histórico GREEN | Aceptación Internal Testing y autorización de publicación | Rollout supervisado y métricas |
+
+### Evidencia de aceptación en curso
+
+- APK universal local: artifacts/FutBeat-1.0-integration-qa.apk, SHA-256 B216DCA0679A3418F683F9353E46E023FB854370D0CDBDF39C180EAFFE4BBAF1. Paquete com.futbeat.futbeat.qa, 1.0.0 (16), target 36, firma debug SHA-256 6533b820f58ee837e6bbedb29f09b26a8384760ee3de13c5cb6185ad114c0362, callback QA presente. Es diagnóstico del árbol comercial con cambios locales; el diff rastreado sobre HEAD se identificó con d7f2d13c51bd5ed855eb52af998499f15cc05267 y no identifica archivos sin seguimiento. No acredita aún un snapshot release reproducible.
+- Flutter analyze limpio, 170 focales y seis goldens PASS. La primera suite completa concurrente se interrumpió tras un crash JIT de Flutter. Reintento serial en curso. Contracts rastreados en ejecución; el primer fallo de caché histórico pasó al repetirlo en aislamiento. Los demás fallos aún requieren clasificación.
+- A32: el paquete QA no estaba instalado. Streaming no completó; la transferencia no streaming avanzó de 5,9 a 30,7 MB sin modificar los otros paquetes. Se inició compilación arm64 para reducir la transferencia.
+- El AAB de inspección 99A1A5AA2C2A585A9AC18823DA7D8910F12AF4E18470F33A323DB7B1A7C469E4 corresponde a 5663cc6 y una clave anterior. No acredita la línea actual. El APK QA sí cumple el target API 36 exigido por Google Play desde agosto de 2026.
+- Checkpoint de esta ejecución: segunda compilación arm64 sin split produjo un APK de tamaño comparable al universal. Se inició un split por ABI para abordar la transferencia. La suite serial superó el punto de caída JIT; Contracts mostró otros fallos aún sin diagnóstico definitivo. Mantener M2 y M3 abiertos hasta que terminen las pruebas y el A32 complete el recorrido.
