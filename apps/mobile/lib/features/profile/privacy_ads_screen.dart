@@ -18,7 +18,7 @@ class PrivacyAdsScreen extends StatelessWidget {
               leading: Icon(Icons.campaign_outlined),
               title: Text('Anuncios en FutBeat'),
               subtitle: Text(
-                'El plan Gratis puede mostrar anuncios. Premium elimina los anuncios.',
+                'FutBeat puede mostrar anuncios según tus opciones de privacidad.',
               ),
             ),
             AdsPrivacyOptionsTile(),
