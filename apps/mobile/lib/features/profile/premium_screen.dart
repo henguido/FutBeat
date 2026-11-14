@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/billing.dart';
 import '../../core/entitlements.dart';
 import 'premium_card.dart';
 
@@ -8,6 +9,13 @@ class PremiumScreen extends ConsumerWidget {
   const PremiumScreen({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (ref.watch(billingGatewayProvider) == null ||
+        ref.watch(premiumProductsProvider).isEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Perfil')),
+        body: const Center(child: Text('Premium no está disponible.')),
+      );
+    }
     final plan = ref.watch(entitlementsProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Premium')),

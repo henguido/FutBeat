@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/billing.dart';
 import '../../core/entitlements.dart';
 import '../../core/providers.dart';
 import '../../core/push.dart';
@@ -74,6 +75,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Widget build(BuildContext context) {
     final service = ref.watch(pushServiceProvider);
     final plan = ref.watch(entitlementsProvider);
+    final billingEnabled =
+        ref.watch(billingGatewayProvider) != null &&
+        ref.watch(premiumProductsProvider).isNotEmpty;
     final follows =
         ref.watch(followsProvider).asData?.value ?? const <String>{};
     int count(String type) =>
@@ -117,14 +121,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 subtitle: summary,
                 onTap: () => context.go('/favorites'),
               ),
-              ProfileDestinationTile(
-                icon: Icons.workspace_premium_outlined,
-                title: plan.isPremium ? 'FutBeat Premium' : 'Premium',
-                subtitle: plan.isPremium
-                    ? 'Sin anuncios'
-                    : 'Disfruta FutBeat sin anuncios',
-                onTap: () => context.push('/profile/premium'),
-              ),
+              if (billingEnabled)
+                ProfileDestinationTile(
+                  icon: Icons.workspace_premium_outlined,
+                  title: plan.isPremium ? 'FutBeat Premium' : 'Premium',
+                  subtitle: plan.isPremium
+                      ? 'Sin anuncios'
+                      : 'Disfruta FutBeat sin anuncios',
+                  onTap: () => context.push('/profile/premium'),
+                ),
             ],
           ),
           ProfileSection(
