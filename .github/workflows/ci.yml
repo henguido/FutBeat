@@ -16,7 +16,48 @@ permissions:
   contents: read
 
 jobs:
+  rc-focal:
+    if: github.event.pull_request.number == 248
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      TZ: America/Costa_Rica
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - name: Verify the three mobile provider guards
+        run: >-
+          node --test --test-name-pattern='mobile contains no provider URL or call'
+          backend/test/h2h_full_history.test.mjs
+          backend/test/match_h2h_v2.test.mjs
+          backend/test/team_match_coverage.test.mjs
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+        working-directory: apps/mobile
+      - run: dart run build_runner build
+        working-directory: apps/mobile
+      - name: Verify RC auth and favorites
+        working-directory: apps/mobile
+        run: >-
+          flutter test --no-pub --concurrency=1 --reporter=expanded
+          test/onboarding_test.dart test/auth_sheet_test.dart
+          test/auth_flows_test.dart test/password_reset_cold_start_test.dart
+          test/favorites_hub_v2_test.dart
+
+      - name: Verify the six reviewed Linux screen goldens
+        working-directory: apps/mobile
+        run: flutter test --no-pub --concurrency=1 --reporter=expanded test/visual_test.dart
+
   contracts:
+    needs: rc-focal
+    if: always() && (needs.rc-focal.result == 'success' || needs.rc-focal.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -66,8 +107,10 @@ jobs:
         run: deno check supabase/functions/_shared/news_pipeline.ts supabase/functions/_shared/news_collector.ts supabase/functions/futbeat-news-collect/index.ts
 
   mobile:
+    needs: rc-focal
+    if: always() && (needs.rc-focal.result == 'success' || needs.rc-focal.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     env:
       TZ: America/Costa_Rica
     defaults:
@@ -136,7 +179,21 @@ jobs:
         shell: bash
         run: |
           find test -type f -name '*_test.dart' ! -name 'visual_test.dart' -print0 |
-            xargs -0 flutter test
+            xargs -0 flutter test --no-pub --concurrency=2
+
+      - name: Run visual goldens
+        if: "!cancelled() && steps.changes.outputs.run == 'true'"
+        run: flutter test --no-pub --concurrency=1 test/visual_test.dart
+
+      - name: Verify public user-session configuration offline
+        if: steps.changes.outputs.run == 'true'
+        run: >-
+          flutter test test/public_access_auth_test.dart
+          test/public_access_transport_test.dart test/public_access_wiring_test.dart
+          --dart-define=FUTBEAT_USER_SESSION_ACCESS=true
+          --dart-define=FUTBEAT_SUPABASE_URL=https://fixture.invalid
+          --dart-define=FUTBEAT_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture
+          --dart-define=FUTBEAT_API_URL=https://fixture.invalid/functions/v1/futbeat-api
 
       - name: Upload Flutter golden failures
         if: failure() && steps.changes.outputs.run == 'true'

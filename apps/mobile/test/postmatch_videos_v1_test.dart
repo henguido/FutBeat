@@ -30,7 +30,56 @@ void main() {
     expect(detail.videos, hasLength(1));
     expect(detail.videos.first['videoId'], 'abcDEF12345');
     expect(detail.videos.first['verificationStatus'], 'VERIFIED_CHANNEL');
+    expect(verifiedVideoLinks(detail), hasLength(1));
   });
+
+  test('unverified and mismatched video links are never displayed', () {
+    final detail = MatchDetail({
+      'matchId': 'fb_match_video',
+      'videos': [
+        {
+          'videoId': 'abcDEF12345',
+          'channelId': 'UC123',
+          'verificationStatus': 'PENDING',
+          'url': 'https://www.youtube.com/watch?v=abcDEF12345',
+        },
+        {
+          'videoId': 'abcDEF12345',
+          'channelId': 'UC123',
+          'verificationStatus': 'VERIFIED_CHANNEL',
+          'url': 'https://www.youtube.com/watch?v=otherVIDEO',
+        },
+        {
+          'videoId': 'abcDEF12345',
+          'channelId': 'UC123',
+          'verificationStatus': 'VERIFIED_CHANNEL',
+          'url': 'https://www.youtube.com.evil.invalid/watch?v=abcDEF12345',
+        },
+      ],
+    });
+    expect(verifiedVideoLinks(detail), isEmpty);
+  });
+
+  for (final url in [
+    'https://www.youtube.com/watch?v=abcDEF12345&v=otherVIDEO1',
+    'https://www.youtube.com/watch?v=otherVIDEO1&v=abcDEF12345',
+    'https://www.youtube.com:8443/watch?v=abcDEF12345',
+  ]) {
+    test('video link must identify one video at the verified origin: $url', () {
+      final detail = MatchDetail({
+        'matchId': 'fb_match_video',
+        'videos': [
+          {
+            'videoId': 'abcDEF12345',
+            'channelId': 'UC123',
+            'verificationStatus': 'VERIFIED_CHANNEL',
+            'url': url,
+          },
+        ],
+      });
+      expect(verifiedVideoLinks(detail), isEmpty);
+    });
+  }
 
   testWidgets('post-match video card shows verified source and copy action', (
     tester,

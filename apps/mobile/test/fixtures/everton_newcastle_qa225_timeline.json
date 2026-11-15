@@ -1,0 +1,574 @@
+{
+  "provenance": "A32 QA225-C SQLite read-only export; 2026-10-31; real stored API responses, not synthetic",
+  "match": {
+    "id": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+    "score": {
+      "away": 1,
+      "home": 3
+    },
+    "events": [
+      {
+        "id": "fb_event_f94ff6a627a551019ab2f0003638ad7a",
+        "type": "KICKOFF",
+        "score": {
+          "away": 0,
+          "home": 0
+        },
+        "minute": 0,
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "extraMinute": null
+      },
+      {
+        "id": "fb_event_a9f7527f28f34e58e1381205fc7bd4b2",
+        "type": "GOAL",
+        "score": {
+          "away": 0,
+          "home": 1
+        },
+        "minute": 34,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_e74195f4bb054ff78351eb8b05317f48",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_9a8730a074cc416a880fe61db6c95961",
+        "providerEventKey": "fallback:2625302e973a69a0:1"
+      },
+      {
+        "id": "fb_event_561815a19f1b5b90c5d1491a52596b98",
+        "type": "GOAL",
+        "score": {
+          "away": 0,
+          "home": 2
+        },
+        "minute": 45,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_9a8730a074cc416a880fe61db6c95961",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_fa73186586544919a7bef2cca58325f9",
+        "providerEventKey": "fallback:c2e6891ae6249ce3:1"
+      },
+      {
+        "id": "fb_event_7b15af0d4b79d077ca2b429cc2627fb2",
+        "type": "HALFTIME",
+        "score": {
+          "away": 0,
+          "home": 2
+        },
+        "minute": 45,
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "extraMinute": null
+      },
+      {
+        "id": "fb_event_2a4201f90eb69e8e75e3da1919d137c6",
+        "type": "SUBSTITUTION",
+        "minute": 46,
+        "teamId": "fb_team_2b7a545f853241f8b256483759866195",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_3c92e3b25cc447d19e1710eceda43691",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_f9c7af0fc9e04707ac7be324ea5b21d0",
+        "providerEventKey": "fallback:8c54bc8a0c0b197a:1"
+      },
+      {
+        "id": "fb_event_684189bdd16af0859018c87993ccc6ff",
+        "type": "SUBSTITUTION",
+        "minute": 46,
+        "teamId": "fb_team_2b7a545f853241f8b256483759866195",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_9e15c91fb2e64158b1ee9e87728fdd90",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_e65733c6542e412b9a218c21ea445c5e",
+        "providerEventKey": "fallback:420c59299d7d72be:1"
+      },
+      {
+        "id": "fb_event_a2c6d33ff07f8e3a5c76aa9efd76cb81",
+        "type": "SUBSTITUTION",
+        "minute": 46,
+        "teamId": "fb_team_2b7a545f853241f8b256483759866195",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_602df7036fad46e68fd6233c6459ed26",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_4de6ebd1fa0a4a4b9e5ad3a44e507964",
+        "providerEventKey": "fallback:8a5b3c731fff30d3:1"
+      },
+      {
+        "id": "fb_event_a8d78324d0561dd48c3a39f9cf0de00f",
+        "type": "YELLOW_CARD",
+        "minute": 60,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_9a8730a074cc416a880fe61db6c95961",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "providerEventKey": "fallback:57773db178d8255a:1"
+      },
+      {
+        "id": "fb_event_d749db505652aaa3b8bc6c9c87c1dd21",
+        "type": "SUBSTITUTION",
+        "minute": 65,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_9a8730a074cc416a880fe61db6c95961",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_9498bdc8bece406aa48d7805a0640317",
+        "providerEventKey": "fallback:c38dc881adcba3bb:1"
+      },
+      {
+        "id": "fb_event_6e84f7bb4d0e73425b138ce56fd879ca",
+        "type": "SUBSTITUTION",
+        "minute": 67,
+        "teamId": "fb_team_2b7a545f853241f8b256483759866195",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_23c1b59c663c4c788c51662cb2bfc406",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_198e41514ad549f5be8636784f317499",
+        "providerEventKey": "fallback:116cd6bb88f5e9f2:1"
+      },
+      {
+        "id": "fb_event_3a6ea1d2e1e3cc06ea68c47c738f214f",
+        "type": "GOAL",
+        "score": {
+          "away": 0,
+          "home": 3
+        },
+        "minute": 69,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_fa73186586544919a7bef2cca58325f9",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_6737a264cb344929b5994f5bcd249b18",
+        "providerEventKey": "fallback:5c145e6ae6dbe925:1"
+      },
+      {
+        "id": "fb_event_b8d43ad28691a551439273cfc78954dc",
+        "type": "YELLOW_CARD",
+        "minute": 74,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_6737a264cb344929b5994f5bcd249b18",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "providerEventKey": "fallback:e1ea2a99e19d4c04:1"
+      },
+      {
+        "id": "fb_event_4fed0d61a451d04686b91dbf11fe8d63",
+        "type": "SUBSTITUTION",
+        "minute": 77,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_d926ab85c81a4c7ca146dc14533db924",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_13b970e17b1a41cba393e346111c5728",
+        "providerEventKey": "fallback:23a543af4befd8ec:1"
+      },
+      {
+        "id": "fb_event_f176942886e9c846acab67d878fd9e84",
+        "type": "SUBSTITUTION",
+        "minute": 77,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_80b979188e0b4f9cb9d8e97eee854791",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_0551f8ba40aa41a599a9fdf613b669ad",
+        "providerEventKey": "fallback:5c88259a2d545e15:1"
+      },
+      {
+        "id": "fb_event_303b2e5f60341cd8b00199fa1b1f1bc8",
+        "type": "SUBSTITUTION",
+        "minute": 81,
+        "teamId": "fb_team_2b7a545f853241f8b256483759866195",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_7a7e3b9fc1414cd7b9d9d80f6e05470d",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_2cbea65e029c48cf9143476c8995f0a0",
+        "providerEventKey": "fallback:30d743a8e12630e0:1"
+      },
+      {
+        "id": "fb_event_9890e17e5ab3f8128d5d49d164090cfa",
+        "type": "YELLOW_CARD",
+        "minute": 81,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_1d65630fb90947a5afdc05c2ba7b0230",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "providerEventKey": "fallback:3854f1b966ccf9db:1"
+      },
+      {
+        "id": "fb_event_e79bea99b2c3c8409a4985abbaf15b04",
+        "type": "YELLOW_CARD",
+        "minute": 81,
+        "teamId": "fb_team_2b7a545f853241f8b256483759866195",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_8c83ca64c92e489f82cff2258fd93b11",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "providerEventKey": "fallback:4a580681da409776:1"
+      },
+      {
+        "id": "fb_event_7acf3302e7606dfc52ae1eb739bea05a",
+        "type": "SUBSTITUTION",
+        "minute": 86,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_6737a264cb344929b5994f5bcd249b18",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_cb54fa9d75394d72984de4702f67ed25",
+        "providerEventKey": "fallback:b390d3e22da60f1b:1"
+      },
+      {
+        "id": "fb_event_fde794c7807896254c4fb8efedb8a1f6",
+        "type": "SUBSTITUTION",
+        "minute": 86,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_1d65630fb90947a5afdc05c2ba7b0230",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_e1695b0bc04345bbba3f19553598e7ca",
+        "providerEventKey": "fallback:6247412b4852b97e:1"
+      },
+      {
+        "id": "fb_event_746100c3952e8cd16da1ae844d8a09d5",
+        "type": "GOAL",
+        "score": {
+          "away": 1,
+          "home": 3
+        },
+        "minute": 88,
+        "teamId": "fb_team_2b7a545f853241f8b256483759866195",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_26d20ef0fcc240fea84781bb711199dc",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "assistPlayerId": "fb_player_c55cf5cc98e94395b3ec8b70712a6178",
+        "providerEventKey": "fallback:3a07c68408abde53:1"
+      },
+      {
+        "id": "fb_event_0e6b73919241cf1fa4c86d6ff8eb5856",
+        "type": "YELLOW_CARD",
+        "minute": 89,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_deb5c39377184de99dbf53e32b5ffe97",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "providerEventKey": "fallback:69097a116cedc056:1"
+      },
+      {
+        "id": "fb_event_acaf2a878e5eca4c97578f14758364db",
+        "type": "YELLOW_CARD",
+        "minute": 89,
+        "teamId": "fb_team_2b7a545f853241f8b256483759866195",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_f9c7af0fc9e04707ac7be324ea5b21d0",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "providerEventKey": "fallback:fc68fd94ffd4f03e:1"
+      },
+      {
+        "id": "fb_event_ccfe0e279b4122b0a791f14976081b54",
+        "type": "YELLOW_CARD",
+        "minute": 89,
+        "teamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_cf4a067788b94440991b8a9a0471c6b9",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "providerEventKey": "fallback:a1539e0dbdab7206:1"
+      },
+      {
+        "id": "fb_event_dcfc15b525df05bc1d70055be2c0855b",
+        "type": "YELLOW_CARD",
+        "minute": 89,
+        "teamId": "fb_team_2b7a545f853241f8b256483759866195",
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "playerId": "fb_player_26d20ef0fcc240fea84781bb711199dc",
+        "provider": "goal_api",
+        "extraMinute": null,
+        "providerEventKey": "fallback:fff32e0e9920c491:1"
+      },
+      {
+        "id": "fb_event_1d3dc40efd57bfdb4472b73756fadf40",
+        "type": "FULL_TIME",
+        "score": {
+          "away": 1,
+          "home": 3
+        },
+        "minute": null,
+        "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+        "extraMinute": null
+      }
+    ],
+    "status": "VERIFIED",
+    "startTime": "2026-10-29T19:45:00.000Z",
+    "awayTeamId": "fb_team_2b7a545f853241f8b256483759866195",
+    "homeTeamId": "fb_team_0050de79fb5a474880797be75c50c6ea",
+    "competitionId": "fb_competition_b4bc904a633849e5af3d89be3ceeafc6"
+  },
+  "detail": {
+    "matchId": "fb_match_e1a2f376dd034af69f203f5bb959c73e",
+    "available": true,
+    "incidents": [
+      {
+        "type": "GOAL",
+        "minute": 34,
+        "providerEventId": "cmvu37iqv7ypyp707voduk72s",
+        "extraMinute": null,
+        "label": "Gol",
+        "detail": "J. Garner · Asistencia: H. Hackney · 1 - 0",
+        "playerId": "3769992001",
+        "assistPlayerId": "2049149239",
+        "playerName": "J. Garner",
+        "assistName": "H. Hackney",
+        "info": null,
+        "side": "home"
+      },
+      {
+        "type": "GOAL",
+        "minute": 45,
+        "providerEventId": "cmvu37iqv7ypzp707xl5gktkf",
+        "extraMinute": null,
+        "label": "Gol",
+        "detail": "H. Hackney · Asistencia: T. Barry · 2 - 0",
+        "playerId": "2049149239",
+        "assistPlayerId": "2796859808",
+        "playerName": "H. Hackney",
+        "assistName": "T. Barry",
+        "info": null,
+        "side": "home"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 46,
+        "providerEventId": "cmvu37iyr7z09p707uwxnmb80",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "W. Osula | Y. Wissa",
+        "team": "away",
+        "outPlayerId": "778280555",
+        "inPlayerId": "3997136875"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 46,
+        "providerEventId": "cmvu37iyr7z0bp707bn4s7gim",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "J. Ramsey | Joelinton",
+        "team": "away",
+        "outPlayerId": "1954339457",
+        "inPlayerId": "310238476"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 46,
+        "providerEventId": "cmvu37iyr7z0ap707oqr9xw2i",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "H. Barnes | A. Elanga",
+        "team": "away",
+        "outPlayerId": "1067884178",
+        "inPlayerId": "2287492793"
+      },
+      {
+        "type": "YELLOW_CARD",
+        "minute": 60,
+        "providerEventId": "cmvu37iym7yzwp707czi0fq8u",
+        "extraMinute": null,
+        "label": "yellow card",
+        "detail": "H. Hackney",
+        "playerId": "2049149239",
+        "side": "home"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 65,
+        "providerEventId": "cmvu37iyr7z04p707vtafwjuf",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "H. Hackney | H. Armstrong",
+        "team": "home",
+        "outPlayerId": "2049149239",
+        "inPlayerId": "1367865721"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 67,
+        "providerEventId": "cmvu37iyr7z0cp7079r3sbsif",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "J. Murphy | B. Toure",
+        "team": "away",
+        "outPlayerId": "2802751417",
+        "inPlayerId": "1690550683"
+      },
+      {
+        "type": "GOAL",
+        "minute": 69,
+        "providerEventId": "cmvu37iqv7yq0p707labbqtwb",
+        "extraMinute": null,
+        "label": "Gol",
+        "detail": "T. Barry · Asistencia: K. Dewsbury-Hall · 3 - 0",
+        "playerId": "2796859808",
+        "assistPlayerId": "179187128",
+        "playerName": "T. Barry",
+        "assistName": "K. Dewsbury-Hall",
+        "info": null,
+        "side": "home"
+      },
+      {
+        "type": "YELLOW_CARD",
+        "minute": 74,
+        "providerEventId": "cmvu37iym7yzxp707s82hkl19",
+        "extraMinute": null,
+        "label": "yellow card",
+        "detail": "K. Dewsbury-Hall",
+        "playerId": "179187128",
+        "side": "home"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 77,
+        "providerEventId": "cmvu37iyr7z06p707f4hbvz3z",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "T. Dibling | B. Johnson",
+        "team": "home",
+        "outPlayerId": "766825337",
+        "inPlayerId": "3235726555"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 77,
+        "providerEventId": "cmvu37iyr7z05p707o0n1xax6",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "T. George | C. Alcaraz",
+        "team": "home",
+        "outPlayerId": "3486270577",
+        "inPlayerId": "1042060216"
+      },
+      {
+        "type": "YELLOW_CARD",
+        "minute": 81,
+        "providerEventId": "cmvu37iym7yzyp707vfp8e3qn",
+        "extraMinute": null,
+        "label": "yellow card",
+        "detail": "V. Mykolenko",
+        "playerId": "3077866264",
+        "side": "home"
+      },
+      {
+        "type": "YELLOW_CARD",
+        "minute": 81,
+        "providerEventId": "cmvu37iym7yzzp707vc2oar3o",
+        "extraMinute": null,
+        "label": "yellow card",
+        "detail": "F. Schar",
+        "playerId": "2223376254",
+        "side": "away"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 81,
+        "providerEventId": "cmvu37iyr7z0dp707rhy8vzal",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "Nico | S. Steur",
+        "team": "away",
+        "outPlayerId": "2690268063",
+        "inPlayerId": "653471197"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 86,
+        "providerEventId": "cmvu37iyr7z08p7076uxo4rk3",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "V. Mykolenko | A. Maitland-Niles",
+        "team": "home",
+        "outPlayerId": "3077866264",
+        "inPlayerId": "1311398224"
+      },
+      {
+        "type": "SUBSTITUTION",
+        "minute": 86,
+        "providerEventId": "cmvu37iyr7z07p707ck92z8kw",
+        "extraMinute": null,
+        "label": "Sustitución",
+        "detail": "K. Dewsbury-Hall | C. Norgaard",
+        "team": "home",
+        "outPlayerId": "179187128",
+        "inPlayerId": "1544800926"
+      },
+      {
+        "type": "GOAL",
+        "minute": 88,
+        "providerEventId": "cmvu37iqw7yq1p7071m73ce16",
+        "extraMinute": null,
+        "label": "Gol",
+        "detail": "D. Burn · Asistencia: J. Willock · 3 - 1",
+        "playerId": "1235443171",
+        "assistPlayerId": "2886133965",
+        "playerName": "D. Burn",
+        "assistName": "J. Willock",
+        "info": null,
+        "side": "away"
+      },
+      {
+        "type": "YELLOW_CARD",
+        "minute": 89,
+        "providerEventId": "cmvu37iym7z00p707dmae7m96",
+        "extraMinute": null,
+        "label": "yellow card",
+        "detail": "J. Tarkowski",
+        "playerId": "4032345715",
+        "side": "home"
+      },
+      {
+        "type": "YELLOW_CARD",
+        "minute": 89,
+        "providerEventId": "cmvu37iym7z01p7070m15uw8r",
+        "extraMinute": null,
+        "label": "yellow card",
+        "detail": "J. Pickford",
+        "playerId": "171540400",
+        "side": "home"
+      },
+      {
+        "type": "YELLOW_CARD",
+        "minute": 89,
+        "providerEventId": "cmvu37iym7z02p707u11brgcp",
+        "extraMinute": null,
+        "label": "yellow card",
+        "detail": "D. Burn",
+        "playerId": "1235443171",
+        "side": "away"
+      },
+      {
+        "type": "YELLOW_CARD",
+        "minute": 89,
+        "providerEventId": "cmvu37iym7z03p707zaw373j7",
+        "extraMinute": null,
+        "label": "yellow card",
+        "detail": "Joelinton",
+        "playerId": "310238476",
+        "side": "away"
+      }
+    ]
+  }
+}

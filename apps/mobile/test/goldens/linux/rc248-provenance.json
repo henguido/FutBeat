@@ -1,0 +1,48 @@
+{
+  "source_head": "30c7042111820d498344a5991a28939a708375b7",
+  "source_run": 42461426770,
+  "source_artifact": 13610207077,
+  "review_run": 42491206079,
+  "flutter": "3.47.4",
+  "platform": "linux",
+  "tolerance": 0,
+  "comparison": "Full-screen original, Linux render and pixel diff: content and layout preserved; differences concentrated on text and icon edges. Original references retained.",
+  "entries": [
+    {
+      "name": "matches.png",
+      "linux_sha256": "b655a989d108b9a2759a3579d2b604da5c3a3ac16ce7624650d1eaf32a3de3ec",
+      "original_sha256": "c7c2d3904dd2125e0a70f7d7e0440920969a26265aca7f67e1b37977aa6d32aa",
+      "changed_pixels": 11861
+    },
+    {
+      "name": "match.png",
+      "linux_sha256": "1061761c841738e80179e6a07b602c9bea3fdbeb632f6645fc5649f8e9702de2",
+      "original_sha256": "48a23ef326e4879f87930f7586cb7b7ed75c5895b22912b2241e01bfc9e83842",
+      "changed_pixels": 12818
+    },
+    {
+      "name": "competition.png",
+      "linux_sha256": "72a070215adaa4550c2c13506c5f7eda7619fd2ac8cc7b3781919341021c95b7",
+      "original_sha256": "9566bd437d059a7ba10eb9412a3e7351ff4ed79107ceb126bf1d79a2fef23763",
+      "changed_pixels": 12912
+    },
+    {
+      "name": "team.png",
+      "linux_sha256": "4d82ca46cc4c4ecee0b98a98bb83fae7f3f678addad9c5bbad6592125a816e4b",
+      "original_sha256": "efa6d44c628a4efe9fc93d3b239f8e3b6822657137edd11df0ccdbce9bbfbbf4",
+      "changed_pixels": 12965
+    },
+    {
+      "name": "explore.png",
+      "linux_sha256": "75cc70b79c663206ab123a668fd5f5b0e0c5b755c1dd9897cc6387352b9eaa8c",
+      "original_sha256": "ae634904be1b1d8955f582399098c8636ac3aea63daf28eb3bcdf92ed49b39c2",
+      "changed_pixels": 15590
+    },
+    {
+      "name": "player.png",
+      "linux_sha256": "c9434653b0fb6008373b5507864717d50a745e68e6ffe23f85b9b158ed61d5f5",
+      "original_sha256": "5d0dfc39dfb3bdfb2fad9953af1e6cb58aba4025201eb2d7503bfbf2ee28e27a",
+      "changed_pixels": 12109
+    }
+  ]
+}

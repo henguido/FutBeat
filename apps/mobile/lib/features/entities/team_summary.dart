@@ -47,21 +47,67 @@ class TeamSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     final next = nextTeamMatch(matches, data);
     final form = lastResults(matches, team.id);
+    final upcoming = upcomingTeamMatches(matches, data, limit: 3);
     final main = competitions.firstOrNull;
     final tableRows = _tableRows();
+    final info = <(IconData, String, String)>[
+      if (team.country.isNotEmpty) (Icons.public, 'País', team.country),
+      if (main != null)
+        (Icons.emoji_events_outlined, 'Competición principal', main.name),
+      if (players > 0) (Icons.groups_outlined, 'Jugadores', '$players'),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (next != null) ...[
-          ProfileSectionTitle(next.isLive ? 'En vivo' : 'Partido siguiente'),
-          NextMatchCard(match: next, data: data, teamId: team.id),
+        if (next case final live? when live.isLive) ...[
+          const ProfileSectionTitle('En vivo'),
+          NextMatchCard(match: live, data: data, teamId: team.id),
+        ],
+        if (upcoming.isNotEmpty) ...[
+          _SectionHeader(
+            'Próximos partidos',
+            action: onOpenTab == null ? null : () => onOpenTab!('Partidos'),
+          ),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                for (final (index, match) in upcoming.indexed) ...[
+                  if (index > 0) const Divider(height: 1),
+                  TeamSummaryMatchRow(
+                    match: match,
+                    data: data,
+                    teamId: team.id,
+                    primary: index == 0,
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
         if (form.isNotEmpty) ...[
           _SectionHeader(
-            'Últimos partidos',
+            'Forma reciente',
             action: onOpenTab == null ? null : () => onOpenTab!('Partidos'),
           ),
           TeamFormStrip(results: form, data: data),
+          const ProfileSectionTitle('Últimos resultados'),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                for (final (index, item) in form.take(3).indexed) ...[
+                  if (index > 0) const Divider(height: 1),
+                  TeamSummaryMatchRow(
+                    match: item.match,
+                    data: data,
+                    teamId: team.id,
+                    result: item.result,
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
         if (tableRows != null) ...[
           _SectionHeader(
@@ -84,13 +130,10 @@ class TeamSummary extends StatelessWidget {
           ),
           for (final article in data.news.take(2)) NewsArticleCard(article),
         ],
-        const ProfileSectionTitle('Información'),
-        ProfileInfoCard([
-          if (team.country.isNotEmpty) (Icons.public, 'País', team.country),
-          if (main != null)
-            (Icons.emoji_events_outlined, 'Competición principal', main.name),
-          if (players > 0) (Icons.groups_outlined, 'Jugadores', '$players'),
-        ]),
+        if (info.isNotEmpty) ...[
+          const ProfileSectionTitle('Información'),
+          ProfileInfoCard(info),
+        ],
       ],
     );
   }
@@ -112,14 +155,141 @@ class TeamSummary extends StatelessWidget {
     // Exactly one group: never pick one of several phases silently.
     if (holding == null || holding.length != 1) return null;
     final group = holding.single;
-    final rows = group.rows;
-    final at = rows.indexWhere((row) => row['teamId'] == team.id);
-    final start = (at - 2).clamp(0, (rows.length - 5).clamp(0, rows.length));
-    return SummaryTable(
-      data: source,
-      rows: rows.skip(start).take(5).toList(),
-      teamId: team.id,
-      title: group.label,
+    final row = group.rows.where((row) => row['teamId'] == team.id).single;
+    return TeamStandingSummary(row: row, teamId: team.id, title: group.label);
+  }
+}
+
+/// The next real scheduled matches whose participants are available.
+List<FootballMatch> upcomingTeamMatches(
+  List<FootballMatch> matches,
+  Snapshot data, {
+  int limit = 3,
+}) {
+  final result =
+      matches
+          .where(
+            (match) =>
+                match.isUpcoming &&
+                data.team(match.homeId) != null &&
+                data.team(match.awayId) != null,
+          )
+          .toList()
+        ..sort((a, b) => a.startTime.compareTo(b.startTime));
+  return result.take(limit).toList();
+}
+
+/// Compact fixture/result row used only with matches already in the profile
+/// snapshot. It never fetches and never infers a result from an unclear state.
+class TeamSummaryMatchRow extends StatelessWidget {
+  const TeamSummaryMatchRow({
+    required this.match,
+    required this.data,
+    required this.teamId,
+    this.result,
+    this.primary = false,
+    super.key,
+  });
+
+  final FootballMatch match;
+  final Snapshot data;
+  final String teamId;
+  final String? result;
+  final bool primary;
+
+  @override
+  Widget build(BuildContext context) {
+    final home = data.team(match.homeId);
+    final away = data.team(match.awayId);
+    if (home == null || away == null) return const SizedBox.shrink();
+    final opponent = home.id == teamId ? away : home;
+    final homeMatch = home.id == teamId;
+    final competition = data.competition(match.competitionId);
+    return Semantics(
+      button: true,
+      label: [
+        opponent.displayName,
+        homeMatch ? 'local' : 'visitante',
+        matchDayLabel(match.startTime),
+        if (result != null)
+          match.score
+        else
+          localTime(context, match.startTime),
+        if (competition != null) competition.name,
+      ].join(', '),
+      excludeSemantics: true,
+      onTap: () =>
+          context.push('/match/${match.id}', extra: data.forMatch(match.id)),
+      child: InkWell(
+        key: primary
+            ? const ValueKey('team-next-match')
+            : ValueKey('team-summary-match-${match.id}'),
+        onTap: () =>
+            context.push('/match/${match.id}', extra: data.forMatch(match.id)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              EntityAvatar(opponent, size: 34),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      opponent.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    Text(
+                      [
+                        homeMatch ? 'Local' : 'Visitante',
+                        matchDayLabel(match.startTime),
+                        if (competition != null) competition.name,
+                      ].join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: muted, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (result != null)
+                Container(
+                  width: 25,
+                  height: 25,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: TeamFormStrip.colorOf(result!),
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Text(
+                    result!,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 48,
+                child: Text(
+                  result != null
+                      ? match.score
+                      : localTime(context, match.startTime),
+                  maxLines: 1,
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -418,38 +588,34 @@ class TeamFormStrip extends StatelessWidget {
   );
 }
 
-/// A few rows of the team's group: Pos, Equipo, J, DG, Pts.
-class SummaryTable extends StatelessWidget {
-  const SummaryTable({
-    required this.data,
-    required this.rows,
+/// One real standings row for this team: the summary does not reproduce the
+/// full table, which remains available through "Ver todo".
+class TeamStandingSummary extends StatelessWidget {
+  const TeamStandingSummary({
+    required this.row,
     required this.teamId,
     this.title,
     super.key,
   });
 
-  final Snapshot data;
-  final List<Json> rows;
+  final Json row;
   final String teamId;
   final String? title;
 
   @override
   Widget build(BuildContext context) {
-    Widget cell(String text, {bool bold = false, double width = 34}) =>
-        SizedBox(
-          width: width,
-          child: Text(
-            text,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
-            ),
-          ),
-        );
+    final columns = <(String, String)>[
+      ('Pos', '${row['position'] ?? ''}'),
+      ('PJ', '${row['played'] ?? ''}'),
+      ('G', '${row['won'] ?? ''}'),
+      ('E', '${row['drawn'] ?? ''}'),
+      ('P', '${row['lost'] ?? ''}'),
+      ('DG', _goalDifference(row)),
+      ('Pts', '${row['points'] ?? ''}'),
+    ];
     return Container(
       key: const ValueKey('team-summary-table'),
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: .03),
         borderRadius: BorderRadius.circular(14),
@@ -468,66 +634,40 @@ class SummaryTable extends StatelessWidget {
                 ),
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: DefaultTextStyle.merge(
-              style: const TextStyle(color: muted),
-              child: Row(
-                children: [
-                  cell('#', width: 28),
-                  const Expanded(
-                    child: Text('Equipo', style: TextStyle(fontSize: 11)),
-                  ),
-                  cell('J'),
-                  cell('DG'),
-                  cell('Pts'),
-                ],
-              ),
+          Container(
+            key: ValueKey('team-summary-row-$teamId'),
+            decoration: BoxDecoration(
+              color: lime.withValues(alpha: .08),
+              borderRadius: BorderRadius.circular(10),
             ),
-          ),
-          for (final row in rows)
-            Container(
-              key: ValueKey('team-summary-row-${row['teamId']}'),
-              color: row['teamId'] == teamId
-                  ? lime.withValues(alpha: .10)
-                  : null,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Row(
-                children: [
-                  cell('${row['position'] ?? ''}', width: 28),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                for (final (label, value) in columns)
                   Expanded(
-                    child: Row(
+                    child: Column(
                       children: [
-                        if (standingsTeam(data, '${row['teamId']}')
-                            case final team?)
-                          EntityAvatar(team, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            standingsTeam(
-                                  data,
-                                  '${row['teamId']}',
-                                )?.displayName ??
-                                '',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: row['teamId'] == teamId
-                                  ? FontWeight.w800
-                                  : FontWeight.w500,
-                            ),
+                        Text(
+                          label,
+                          style: const TextStyle(color: muted, fontSize: 10),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          value,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: label == 'Pts'
+                                ? FontWeight.w900
+                                : FontWeight.w700,
                           ),
                         ),
                       ],
                     ),
                   ),
-                  cell('${row['played'] ?? ''}'),
-                  cell(_goalDifference(row)),
-                  cell('${row['points'] ?? ''}', bold: true),
-                ],
-              ),
+              ],
             ),
+          ),
         ],
       ),
     );

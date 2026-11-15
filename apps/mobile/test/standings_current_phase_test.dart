@@ -106,6 +106,26 @@ void main() {
     expect(rows.every((row) => row['group'] == 'Clausura'), isTrue);
   });
 
+  test('a lone table from another explicit stage is not shown', () {
+    final data = _snapshot(groups: const ['Clausura']);
+    final table = standingsTableFor(data, _comp)!;
+    final otherStage = {
+      ...table,
+      'rows': [
+        for (final row in (table['rows'] as List).cast<Map<String, dynamic>>())
+          {...row, 'stage': 'Clausura'},
+      ],
+    };
+    expect(
+      standingsGroups(otherStage, data, focusTeamIds: _match, stage: 'Apertura'),
+      isNull,
+    );
+    expect(
+      standingsGroups(otherStage, data, focusTeamIds: _match, stage: 'Clausura'),
+      hasLength(1),
+    );
+  });
+
   test('server currentGroup picks the phase without a match stage', () {
     final data = _snapshot(currentGroup: 'Clausura');
     // Team profile (one focus team) and Match Center before its detail.
@@ -113,6 +133,14 @@ void main() {
     expect(_labels(data, _match), ['Clausura']);
     // The match's own stage wins over the table hint.
     expect(_labels(data, _match, stage: 'Apertura'), ['Apertura']);
+  });
+
+  test('an explicit unmatched match stage never borrows the current phase', () {
+    final data = _snapshot(currentGroup: 'Clausura');
+    expect(_labels(data, _match, stage: 'Cuartos de final'), [
+      overallStandingsLabel,
+    ]);
+    expect(_labels(data, _match, stage: 'Apertura - final'), ['Apertura']);
   });
 
   test('no reliable signal: the annual table, labelled "Tabla general"', () {

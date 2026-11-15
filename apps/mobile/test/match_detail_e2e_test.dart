@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 
 // Mobile half of backend/test/match_detail_e2e.test.mjs: the fixture is the
@@ -119,6 +120,8 @@ Future<void> _tab(WidgetTester tester, String label) async {
 }
 
 List<String> _networkImages(WidgetTester tester) => [
+  for (final image in tester.widgetList<SportsImage>(find.byType(SportsImage)))
+    if (image.url case final String url) url,
   for (final image in tester.widgetList<Image>(find.byType(Image)))
     if (image.image case ResizeImage(imageProvider: NetworkImage(:final url)))
       url
@@ -135,17 +138,26 @@ void main() {
       await _open(tester, container);
       await _tab(tester, 'Alineación');
 
-      expect(find.text('Sin alineaciones'), findsNothing);
-      // Starters sit on the pitch (initials + surname); bench shows full name.
-      for (final label in ['PC', 'DS', 'DV', 'Suplente Canonico', 'DT Local']) {
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsNothing,
+      );
+      // Starters sit on the pitch (silhouette/photo + surname); bench shows
+      // the full name.
+      for (final label in ['Suplente Canonico', 'DT Local']) {
         expect(find.text(label), findsWidgets, reason: label);
       }
       expect(find.text('4-4-2'), findsOneWidget);
       final images = _networkImages(tester);
       expect(images, contains('https://media.goal-api.com/players/h1.png'));
       expect(images, contains('https://media.goal-api.com/players/a1.png'));
-      // The player without any photo shows initials, never a broken image.
-      expect(find.text('DS'), findsWidgets);
+      // The player without any photo shows a silhouette, never a broken image.
+      expect(
+        find.byKey(
+          const ValueKey('lineup-photo-fallback-fb_player_fixture_e2e_h2'),
+        ),
+        findsWidgets,
+      );
       expect(images.where((url) => url.isEmpty), isEmpty);
       expect(tester.takeException(), isNull);
       await _close(tester, container);
@@ -186,9 +198,15 @@ void main() {
     final container = await _container(tester, api);
     await _open(tester, container);
     await _tab(tester, 'Alineación');
-    expect(find.text('Sin alineaciones'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay alineaciones disponibles.'),
+      findsOneWidget,
+    );
     await _tab(tester, 'Estadísticas');
-    expect(find.text('Sin estadísticas'), findsOneWidget);
+    expect(
+      find.text('Todavía no hay estadísticas disponibles.'),
+      findsOneWidget,
+    );
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('0'), findsNothing);
     await _close(tester, container);

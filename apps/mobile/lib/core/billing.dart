@@ -9,6 +9,7 @@ import 'package:in_app_purchase_android/billing_client_wrappers.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 import 'package:in_app_purchase_platform_interface/in_app_purchase_platform_interface.dart';
 
+import 'qa_development.dart';
 import 'entitlements.dart';
 
 /// Google Play product ids of FutBeat Premium. Set at build time
@@ -329,7 +330,11 @@ class PlayBillingEntitlementSource implements EntitlementSource {
 /// Store gateway, or null when billing is off (not Android or no product
 /// ids configured).
 final billingGatewayProvider = Provider<BillingGateway?>((ref) {
-  if (!Platform.isAndroid || PremiumProducts.configured.isEmpty) return null;
+  if (isolatedPreview ||
+      !Platform.isAndroid ||
+      PremiumProducts.configured.isEmpty) {
+    return null;
+  }
   return PlayBillingGateway();
 });
 
@@ -409,7 +414,7 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
     var changed = false;
     for (final event in events) {
       if (!premium.contains(event.productId)) continue;
-      if (event.needsCompletion) {
+      if (event.outcome == PurchaseOutcome.purchased && event.needsCompletion) {
         // A failure is retried by the next check (start, resume, restore).
         await ref
             .read(purchaseAcknowledgerProvider)
