@@ -30,13 +30,26 @@ export const safeImage = (value: unknown) => {
   }
 };
 
+// GOAL sends playerKey "0" for players it has no id for (seen in stored
+// China League Two lineups). "0" is a placeholder, not an identity: it must
+// never resolve to the one catalog player that happens to own external id 0.
+export const providerPlayerId = (value: unknown) => {
+  const id = cleanText(value);
+  return id && !/^0+$/.test(id) ? id : '';
+};
+
+const lineupRowId = (row: Record<string, unknown>) =>
+  providerPlayerId(row.playerId) || providerPlayerId(row.playerKey) ||
+  providerPlayerId(asRecord(row.player).id);
+
+// "" (GOAL coach rows) is no position; Number('') would be 0.
+const lineupPositionValue = (value: unknown) =>
+  cleanText(value) !== '' && Number.isFinite(Number(value)) ? Number(value) : null;
+
 export function normalizeLineupPlayer(value: unknown, media: PlayerMedia = {}) {
   const row = asRecord(value);
   const nested = asRecord(row.player);
-  const providerId =
-    cleanText(row.playerId) ||
-    cleanText(row.playerKey) ||
-    cleanText(nested.id);
+  const providerId = lineupRowId(row);
   const canonical = asRecord(media[providerId]);
   const name =
     cleanText(row.lineupPlayer) ||
@@ -49,9 +62,7 @@ export function normalizeLineupPlayer(value: unknown, media: PlayerMedia = {}) {
     name,
     number: cleanText(row.lineupNumber) || null,
     position: cleanText(row.playerPosition) || null,
-    lineupPosition: Number.isFinite(Number(row.lineupPosition))
-      ? Number(row.lineupPosition)
-      : null,
+    lineupPosition: lineupPositionValue(row.lineupPosition),
     country: cleanText(row.playerCountry) || null,
     age: Number.isFinite(Number(row.playerAge)) ? Number(row.playerAge) : null,
     image: safeImage(canonical.image) ?? safeImage(row.playerImage ?? nested.image),
@@ -123,9 +134,7 @@ export function lineupPlayerIds(raw: unknown) {
   const lineups = payload.lineups;
   const ids = new Set<string>();
   const add = (value: unknown) => {
-    const row = asRecord(value);
-    const nested = asRecord(row.player);
-    const id = cleanText(row.playerId) || cleanText(row.playerKey) || cleanText(nested.id);
+    const id = lineupRowId(asRecord(value));
     if (id) ids.add(id);
   };
   if (Array.isArray(lineups)) {
@@ -153,9 +162,7 @@ export function lineupPlayerIdsBySection(raw: unknown) {
   const starters = new Set<string>();
   const substitutes = new Set<string>();
   const add = (set: Set<string>, value: unknown) => {
-    const row = asRecord(value);
-    const nested = asRecord(row.player);
-    const id = cleanText(row.playerId) || cleanText(row.playerKey) || cleanText(nested.id);
+    const id = lineupRowId(asRecord(value));
     if (id) set.add(id);
   };
   if (Array.isArray(lineups)) {
@@ -239,6 +246,27 @@ export function normalizeStatistics(value: unknown): StatRow[] {
       .map((label) => ({ type: label, home: home[label], away: away[label] })),
   );
 }
+
+const FIRST_HALF_PERIODS = new Set(['1half', '1sthalf', 'firsthalf', '1st', 'ht', 'halftime']);
+
+/**
+ * First-half statistics as stored (GOAL array rows with half '1half').
+ * Only explicitly labelled first-half rows; [] otherwise (never derived
+ * from full-time minus anything).
+ */
+export function normalizeFirstHalfStatistics(value: unknown): StatRow[] {
+  if (!Array.isArray(value)) return [];
+  return statRows(value.map(asRecord).filter((row) => FIRST_HALF_PERIODS.has(periodKey(row.half))));
+}
+
+// Low-coverage GOAL leagues (stored K3 League detail, 2026-11-07) send goals
+// with no scorer and info "home"/"away": the team that scored (the running
+// score confirms it). That marker is a side, not text to show.
+const infoSide = (value: unknown) => {
+  const info = cleanText(value).toLowerCase();
+  return info === 'home' || info === 'away' ? info : null;
+};
+const infoText = (value: unknown) => infoSide(value) ? '' : cleanText(value);
 
 const minuteParts = parseEventMinute;
 
@@ -367,12 +395,15 @@ export function normalizeMatchDetail(
         : cleanText(row.awayScorer) || cleanText(row.awayAssist)
         ? 'away'
         : null;
+      const info = infoText(row.info);
       // Same (UNVERIFIED) own-goal rule as the LIVE normalizer: listed under
       // the scorer's side, credited to the other team.
       const ownGoal = type === 'GOAL' && isOwnGoalRow(row);
-      const side = ownGoal && scorerSide
-        ? (scorerSide === 'home' ? 'away' : 'home')
-        : scorerSide;
+      // A side-only marker is the scoring team; for an own goal its meaning
+      // is unverified, so it is not used there.
+      const side = ownGoal
+        ? (scorerSide ? (scorerSide === 'home' ? 'away' : 'home') : null)
+        : scorerSide ?? infoSide(row.info);
       return {
         type,
         minute: minuteValue(row.time),
@@ -389,14 +420,14 @@ export function normalizeMatchDetail(
           scorer,
           assist ? `Asistencia: ${assist}` : '',
           score,
-          cleanText(row.info),
+          info,
         ].filter((part) => part.length > 0).join(' · ') || null,
-        playerId: cleanText(row.homeScorerId) || cleanText(row.awayScorerId) || null,
-        assistPlayerId: cleanText(row.homeAssistId) || cleanText(row.awayAssistId) || null,
+        playerId: providerPlayerId(row.homeScorerId) || providerPlayerId(row.awayScorerId) || null,
+        assistPlayerId: providerPlayerId(row.homeAssistId) || providerPlayerId(row.awayAssistId) || null,
         // Structured names (only what the provider sent; never inferred).
         playerName: scorer || null,
         assistName: assist || null,
-        info: cleanText(row.info) || null,
+        info: info || null,
         side,
         ...(ownGoal ? { ownGoal: true } : {}),
       };
@@ -413,22 +444,23 @@ export function normalizeMatchDetail(
         detail:
           cleanText(row.homeFault) ||
           cleanText(row.awayFault) ||
-          cleanText(row.info) ||
+          infoText(row.info) ||
           null,
-        playerId: cleanText(row.homePlayerId) || cleanText(row.awayPlayerId) || null,
+        playerId: providerPlayerId(row.homePlayerId) || providerPlayerId(row.awayPlayerId) || null,
         side: cleanText(row.homeFault)
           ? 'home'
           : cleanText(row.awayFault)
           ? 'away'
-          : null,
+          : infoSide(row.info),
       };
     }),
     ...asList(payload.substitutions).map((value) => {
       const row = asRecord(value);
+      // Positional pair "out | in": keep both slots so a placeholder on one
+      // side never shifts the other id into the wrong role.
       const playerIds = cleanText(row.substitutionPlayerId)
         .split('|')
-        .map((part) => part.trim())
-        .filter(Boolean);
+        .map(providerPlayerId);
       return {
         type: 'SUBSTITUTION',
         minute: minuteValue(row.time),
@@ -489,6 +521,8 @@ export function normalizeMatchDetail(
     home,
     away,
     statistics: fullTime,
+    // Additive: stored first-half rows (GOAL half '1half'); older apps ignore it.
+    firstHalfStatistics: normalizeFirstHalfStatistics(payload.statistics),
     incidents,
     videos,
   };
