@@ -334,16 +334,35 @@ class UserProfileSettings {
 
 /// Initializes Firebase from the public build flags. Only call it when
 /// [PushService.configured] is true.
-Future<void> ensureFirebase() async {
-  if (Firebase.apps.isNotEmpty) return;
-  await Firebase.initializeApp(
-    options: const FirebaseOptions(
-      apiKey: String.fromEnvironment('FUTBEAT_FIREBASE_API_KEY'),
-      appId: String.fromEnvironment('FUTBEAT_FIREBASE_APP_ID'),
-      messagingSenderId: String.fromEnvironment('FUTBEAT_FIREBASE_SENDER_ID'),
-      projectId: String.fromEnvironment('FUTBEAT_FIREBASE_PROJECT_ID'),
-    ),
-  );
+Future<void>? _firebaseInitialization;
+
+Future<void> ensureFirebase() {
+  if (Firebase.apps.any((app) => app.name == defaultFirebaseAppName)) {
+    return Future.value();
+  }
+  final active = _firebaseInitialization;
+  if (active != null) return active;
+  // Foreground, opened, initial-message and token consumers start together.
+  // Duplicate native initialization can end their streams before any event.
+  late final Future<void> operation;
+  operation =
+      Future<void>.sync(() async {
+        await Firebase.initializeApp(
+          options: const FirebaseOptions(
+            apiKey: String.fromEnvironment('FUTBEAT_FIREBASE_API_KEY'),
+            appId: String.fromEnvironment('FUTBEAT_FIREBASE_APP_ID'),
+            messagingSenderId: String.fromEnvironment(
+              'FUTBEAT_FIREBASE_SENDER_ID',
+            ),
+            projectId: String.fromEnvironment('FUTBEAT_FIREBASE_PROJECT_ID'),
+          ),
+        );
+      }).whenComplete(() {
+        if (identical(_firebaseInitialization, operation)) {
+          _firebaseInitialization = null;
+        }
+      });
+  return _firebaseInitialization = operation;
 }
 
 abstract interface class PushTokenSource {
