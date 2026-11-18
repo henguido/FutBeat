@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'billing.dart';
+import 'premium_qa_transport.dart';
 import 'providers.dart';
 import 'push.dart';
 
@@ -209,6 +210,13 @@ String entitlementStorageKey(String accountKey) =>
 final entitlementSourceProvider = Provider<EntitlementSource>((ref) {
   final gateway = ref.watch(billingGatewayProvider);
   if (gateway == null) return const UnavailableEntitlementSource();
+  if (premiumPlayQaEnabled) {
+    return PremiumQaEntitlementSource(
+      gateway,
+      ref.watch(premiumQaTransportFactoryProvider),
+      ref.watch(premiumProductsProvider),
+    );
+  }
   return PlayBillingEntitlementSource(
     gateway,
     acknowledger: ref.watch(purchaseAcknowledgerProvider),

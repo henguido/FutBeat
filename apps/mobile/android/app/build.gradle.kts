@@ -92,10 +92,13 @@ fun releaseRuntimeProblems(defines: Map<String, String> = dartDefines()): List<S
             problems += "$key must be a publishable or legacy anon key"
         }
     }
-    for (flag in listOf("FUTBEAT_USE_DEMO", "FUTBEAT_QA_LOCAL_CACHE_ONLY", "FUTBEAT_QA_DIAGNOSTICS", "FUTBEAT_PASSIVE_PREVIEW", "FUTBEAT_PASSIVE_PREVIEW_ENABLED", "FUTBEAT_OFFLINE_PREVIEW")) {
+    for (flag in listOf("FUTBEAT_USE_DEMO", "FUTBEAT_QA_LOCAL_CACHE_ONLY", "FUTBEAT_QA_DIAGNOSTICS", "FUTBEAT_PASSIVE_PREVIEW", "FUTBEAT_PASSIVE_PREVIEW_ENABLED", "FUTBEAT_OFFLINE_PREVIEW", "FUTBEAT_PREMIUM_PLAY_QA")) {
         if (defines[flag]?.trim()?.lowercase() == "true") {
             problems += "$flag is QA-only and must be false in a release"
         }
+    }
+    if (!defines["BILLING_BASE"].isNullOrBlank()) {
+        problems += "BILLING_BASE is staging-only until G1 is accepted."
     }
     if (!defines["FUTBEAT_PASSIVE_CLIENT_KEY"].isNullOrBlank()) {
         problems += "Preview client keys are not allowed in the official release"

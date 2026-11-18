@@ -10,16 +10,23 @@ import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 import 'package:in_app_purchase_platform_interface/in_app_purchase_platform_interface.dart';
 
 import 'qa_development.dart';
+import 'premium_qa_transport.dart';
 import 'entitlements.dart';
 
 /// Google Play product ids of FutBeat Premium. Set at build time
 /// (`--dart-define`); they are not final yet, so there is no default. With
 /// none configured, billing is off and everyone stays FREE.
 class PremiumProducts {
+  static const productId = 'futbeat_premium';
+  static const basePlans = {
+    'monthly': PremiumPeriod.monthly,
+    'yearly': PremiumPeriod.yearly,
+  };
   static const monthly = String.fromEnvironment('FUTBEAT_PREMIUM_MONTHLY_ID');
   static const yearly = String.fromEnvironment('FUTBEAT_PREMIUM_YEARLY_ID');
 
   static Set<String> get configured => {
+    if (premiumPlayQaEnabled) productId,
     for (final id in [monthly, yearly])
       if (id.isNotEmpty) id,
   };
@@ -175,6 +182,9 @@ class PlayBillingGateway implements BillingGateway {
   Future<List<PremiumOffer>> offers(Set<String> productIds) async {
     final response = await _store.queryProductDetails(productIds);
     if (response.error != null) throw const BillingUnavailable();
+    if (premiumPlayQaEnabled) {
+      return selectPremiumBasePlans(response.productDetails);
+    }
     final byProduct = <String, ProductDetails>{};
     for (final details in response.productDetails) {
       // One entry per subscription offer: keep the first (base plan).
@@ -262,6 +272,31 @@ class PlayBillingGateway implements BillingGateway {
     }
     await _store.completePurchase(purchase);
   }
+}
+
+List<PremiumOffer> selectPremiumBasePlans(Iterable<ProductDetails> products) {
+  final offers = <PremiumPeriod, PremiumOffer>{};
+  for (final details in products.whereType<GooglePlayProductDetails>()) {
+    if (details.id != PremiumProducts.productId) continue;
+    final index = details.subscriptionIndex;
+    final plans = details.productDetails.subscriptionOfferDetails;
+    if (index == null || plans == null || index < 0 || index >= plans.length) {
+      continue;
+    }
+    final plan = plans[index];
+    final period = PremiumProducts.basePlans[plan.basePlanId];
+    if (period == null || plan.offerId != null) continue;
+    offers.putIfAbsent(
+      period,
+      () => PremiumOffer(
+        productId: details.id,
+        period: period,
+        price: details.price,
+        handle: details,
+      ),
+    );
+  }
+  return [for (final period in PremiumPeriod.values) ?offers[period]];
 }
 
 /// Premium is whatever Play reports for THIS account right now: an active
@@ -406,6 +441,7 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
 
   /// App resumed: Play may have renewed, cancelled or expired the plan.
   Future<void> onResume() async {
+    if (premiumPlayQaEnabled) ref.invalidate(premiumPurchasesAllowedProvider);
     if (enabled) await _refresh();
   }
 
@@ -414,7 +450,22 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
     var changed = false;
     for (final event in events) {
       if (!premium.contains(event.productId)) continue;
-      if (event.outcome == PurchaseOutcome.purchased && event.needsCompletion) {
+      final source = ref.read(entitlementSourceProvider);
+      if (source is PremiumQaEntitlementSource &&
+          event.outcome == PurchaseOutcome.purchased) {
+        final owner = ref.read(currentAccountProvider).asData?.value;
+        if (owner != null && event.token?.isNotEmpty == true) {
+          final result = await source.verify(owner, event.token!);
+          if (ref.mounted &&
+              ref.read(currentAccountProvider).asData?.value == owner &&
+              result.available) {
+            await ref.read(entitlementsProvider.notifier).apply(result.grant);
+          }
+        }
+      }
+      if (source is! PremiumQaEntitlementSource &&
+          event.outcome == PurchaseOutcome.purchased &&
+          event.needsCompletion) {
         // A failure is retried by the next check (start, resume, restore).
         await ref
             .read(purchaseAcknowledgerProvider)
@@ -459,6 +510,20 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
     final waiting = Completer<PurchaseOutcome>();
     _waiting[offer.productId] = waiting;
     try {
+      if (ref.read(entitlementSourceProvider) is PremiumQaEntitlementSource) {
+        final owner = ref.read(currentAccountProvider).asData?.value;
+        final transport = owner == null
+            ? null
+            : ref.read(premiumQaTransportFactoryProvider)(owner);
+        if (transport == null ||
+            !(await transport.read()).available ||
+            !transport.purchasesEnabled ||
+            !ref.mounted ||
+            ref.read(entitlementsProvider).accountKey != plan.accountKey) {
+          _waiting.remove(offer.productId);
+          return PremiumActionResult.unavailable;
+        }
+      }
       final tag = billingAccountTag(plan.accountKey);
       if (!await gateway.buy(offer, accountTag: tag)) {
         _waiting.remove(offer.productId);
@@ -481,6 +546,9 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
       return PremiumActionResult.failed;
     } finally {
       if (ref.mounted) {
+        if (premiumPlayQaEnabled) {
+          ref.invalidate(premiumPurchasesAllowedProvider);
+        }
         state = PremiumBillingState(pending: state.pending);
       }
     }

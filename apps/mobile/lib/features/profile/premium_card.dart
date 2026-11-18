@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/billing.dart';
+import '../../core/premium_qa_transport.dart';
 import '../../core/entitlements.dart';
 
 const premiumMessages = {
@@ -24,6 +25,8 @@ class PremiumCard extends ConsumerWidget {
     final billing = ref.watch(premiumBillingProvider);
     final controller = ref.read(premiumBillingProvider.notifier);
     final enabled = controller.enabled;
+    final purchasesAllowed =
+        ref.watch(premiumPurchasesAllowedProvider).asData?.value ?? false;
 
     void show(PremiumActionResult result) {
       if (!context.mounted) return;
@@ -52,7 +55,9 @@ class PremiumCard extends ConsumerWidget {
             children: [
               for (final offer in offers)
                 ListTile(
-                  key: ValueKey('premium-offer-${offer.productId}'),
+                  key: ValueKey(
+                    'premium-offer-${offer.productId}-${offer.period.name}',
+                  ),
                   title: Text(
                     offer.period == PremiumPeriod.yearly ? 'Anual' : 'Mensual',
                   ),
@@ -104,7 +109,7 @@ class PremiumCard extends ConsumerWidget {
               Wrap(
                 spacing: 8,
                 children: [
-                  if (!plan.isPremium)
+                  if (!plan.isPremium && purchasesAllowed)
                     FilledButton(
                       key: const ValueKey('premium-upgrade'),
                       onPressed: billing.busy || !plan.accountResolved

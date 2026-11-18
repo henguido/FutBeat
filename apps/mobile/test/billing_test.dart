@@ -13,6 +13,7 @@ import 'package:futbeat/core/entitlements.dart';
 import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
+import 'package:futbeat/core/premium_qa_transport.dart';
 import 'package:futbeat/features/profile/premium_card.dart';
 
 // Test-only placeholders: the real Play product ids are not defined yet.
@@ -102,8 +103,24 @@ class _Gateway implements BillingGateway {
 
 final _now = DateTime.utc(2026, 10, 4, 12);
 
+class _ServerFixture extends PremiumQaEntitlementSource {
+  _ServerFixture(BillingGateway g) : super(g, (_) => null, {_monthly});
+  EntitlementCheck answer = const EntitlementCheck.answered(null);
+  final tokens = <String>[];
+  @override
+  Future<EntitlementCheck> check(String? accountId) async => answer;
+  @override
+  Future<EntitlementCheck> verify(String accountId, String token) async {
+    tokens.add(token);
+    return answer;
+  }
+}
+
 class _Harness {
-  _Harness({Map<String, String> stored = const {}}) {
+  _Harness({
+    Map<String, String> stored = const {},
+    EntitlementSource Function(BillingGateway)? sourceFor,
+  }) {
     store.values.addAll(stored);
     container = ProviderContainer(
       overrides: [
@@ -112,6 +129,8 @@ class _Harness {
         premiumProductsProvider.overrideWithValue(const {_monthly, _yearly}),
         entitlementStoreProvider.overrideWithValue(store),
         entitlementClockProvider.overrideWithValue(() => now),
+        if (sourceFor != null)
+          entitlementSourceProvider.overrideWithValue(sourceFor(gateway)),
       ],
     );
     final plan = container.listen(entitlementsProvider, (_, _) {});
@@ -160,6 +179,41 @@ PremiumOffer _offer(String id) => PremiumOffer(
 );
 
 void main() {
+  test('G1 purchase callback cannot grant locally or acknowledge; only server active removes ads', () async {
+    late _ServerFixture source;
+    final h = _Harness(sourceFor: (g) => source = _ServerFixture(g));
+    await h.signIn('user-a');
+    h.gateway.emit([
+      const PurchaseEvent(
+        productId: _monthly,
+        outcome: PurchaseOutcome.purchased,
+        token: 'fixture-token',
+        needsCompletion: true,
+        handle: 'fixture',
+      ),
+    ]);
+    await pump();
+    expect(source.tokens, ['fixture-token']);
+    expect(h.gateway.completed, isEmpty);
+    expect(h.plan.isPremium, false);
+    source.answer = EntitlementCheck.answered(
+      EntitlementGrant(
+        plan: Plan.premium,
+        verifiedAt: _now,
+        expiresAt: _now.add(const Duration(hours: 2)),
+      ),
+    );
+    await h.billing.onResume();
+    expect(h.plan.showsAds, false);
+    source.answer = const EntitlementCheck.unavailable();
+    await h.billing.onResume();
+    expect(h.plan.isPremium, true); // connection error does not revoke
+    source.answer = const EntitlementCheck.answered(null);
+    await h.billing.onResume();
+    expect(h.plan.showsAds, true); // authoritative revocation
+    await h.signIn('user-b');
+    expect(h.plan.isPremium, false);
+  });
   test('product ids are configuration only: none set means billing off', () {
     // No --dart-define in tests: nothing invented, nothing enabled.
     expect(PremiumProducts.configured, isEmpty);

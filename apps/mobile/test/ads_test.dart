@@ -258,6 +258,28 @@ class _FakeBanner implements PlatformBanner {
 }
 
 void main() {
+  test('UMP EEA QA mode requires every gate and never enters release', () {
+    for (var mask = 0; mask < 16; mask++) {
+      final settings = umpQaDebugSettings(
+        debug: mask & 1 != 0,
+        qaBuild: mask & 2 != 0,
+        enabled: mask & 4 != 0,
+        testAds: mask & 8 != 0,
+        device: 'synthetic-test-device',
+      );
+      expect(settings != null, mask == 15);
+    }
+    expect(
+      umpQaDebugSettings(
+        debug: true,
+        qaBuild: true,
+        enabled: true,
+        testAds: true,
+        device: '',
+      ),
+      null,
+    );
+  });
   testWidgets(
     'FREE with ads configured requests one ad (UMP decides personalization)',
     (tester) async {

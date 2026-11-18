@@ -254,6 +254,56 @@ void main() {
     );
     expect(requests, isEmpty);
   });
+  test(
+    'all N1 catalog choices are isolated RPC patches, including lineup roles',
+    () async {
+      for (final scope in notificationScopeKinds.entries) {
+        for (final kind in scope.value) {
+          await service.setNotificationScope(scope.key, kind, false);
+          expect(requests.last.data, {
+            'p_scopes': {
+              scope.key: {kind: false},
+            },
+          });
+        }
+      }
+      expect(
+        requests.every(
+          (r) => r.path.endsWith('futbeat_set_notification_scopes'),
+        ),
+        true,
+      );
+    },
+  );
+  test(
+    'latest offline choice wins without changing another follow scope',
+    () async {
+      offline = true;
+      for (final value in [true, false, true, false]) {
+        await expectLater(
+          service.setNotificationScope('player', 'goal', value),
+          throwsA(isA<DioException>()),
+        );
+      }
+      await expectLater(
+        service.setNotificationScope('team', 'goal_for', true),
+        throwsA(isA<DioException>()),
+      );
+      offline = false;
+      await service.readNotificationScopes();
+      expect(requests[5].data, {
+        'p_scopes': {
+          'player': {'goal': false},
+          'team': {'goal_for': true},
+        },
+      });
+      expect(requests[6].path, endsWith('futbeat_read_notification_scopes'));
+      expect(
+        await service.storage.read(key: 'futbeat.notificationScopes.pending.A'),
+        null,
+      );
+    },
+  );
   test('confirmed deletion purges pending scoped preferences', () async {
     offline = true;
     await expectLater(

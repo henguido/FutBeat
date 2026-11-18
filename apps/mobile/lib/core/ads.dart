@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kReleaseMode;
+import 'package:flutter/foundation.dart' show kReleaseMode, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
@@ -124,7 +124,19 @@ class GoogleUmpPlatform implements UmpPlatform {
   Future<void> requestConsentInfoUpdate() {
     final done = Completer<void>();
     _info.requestConsentInfoUpdate(
-      ConsentRequestParameters(),
+      ConsentRequestParameters(
+        consentDebugSettings: umpQaDebugSettings(
+          debug: kDebugMode,
+          qaBuild:
+              const bool.fromEnvironment('FUTBEAT_COMMERCIAL_QA') ||
+              const bool.fromEnvironment('FUTBEAT_PREMIUM_PLAY_QA'),
+          enabled: const bool.fromEnvironment('FUTBEAT_COMMERCIAL_UMP'),
+          testAds: const bool.fromEnvironment('FUTBEAT_ADMOB_TEST_ADS'),
+          device: const String.fromEnvironment(
+            'FUTBEAT_COMMERCIAL_UMP_TEST_DEVICE',
+          ),
+        ),
+      ),
       () => done.complete(),
       (error) => done.completeError(StateError(error.message)),
     );
@@ -165,6 +177,21 @@ class GoogleUmpPlatform implements UmpPlatform {
     return done.future;
   }
 }
+
+/// Existing EEA acceptance mode is restricted to a named QA test device.
+/// Never resets Google's persisted consent and never affects release builds.
+ConsentDebugSettings? umpQaDebugSettings({
+  required bool debug,
+  required bool qaBuild,
+  required bool enabled,
+  required bool testAds,
+  required String device,
+}) => debug && qaBuild && enabled && testAds && device.isNotEmpty
+    ? ConsentDebugSettings(
+        debugGeography: DebugGeography.debugGeographyEea,
+        testIdentifiers: [device],
+      )
+    : null;
 
 /// UMP on Android; nowhere else (no consent = no production ads).
 final umpPlatformProvider = Provider<UmpPlatform?>(
