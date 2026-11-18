@@ -3,9 +3,16 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const script = path.join(root, 'scripts', 'canary', 'v39-preflight.ps1');
+// The positive local test must not inherit this checkout's production link.
+// Exercise the unchanged guard in a temporary fixture, never unlink the repo.
+const fixture = mkdtempSync(path.join(tmpdir(), 'futbeat-canary-test-'));
+const script = path.join(fixture, 'scripts', 'canary', 'v39-preflight.ps1');
+mkdirSync(path.dirname(script), { recursive: true });
+copyFileSync(path.join(root, 'scripts', 'canary', 'v39-preflight.ps1'), script);
 const shell = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
 
 function run(args) {

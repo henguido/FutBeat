@@ -946,10 +946,12 @@ void main() {
         .cast<Map<String, dynamic>>()
         .firstWhere((m) => m['id'] == _match);
     match['minute'] = 90;
-    match['liveChangedAt'] = DateTime.now()
+    final observedAt = DateTime.now()
         .toUtc()
         .subtract(silentFor)
         .toIso8601String();
+    match['liveChangedAt'] = observedAt;
+    match['provenance'] = {'providerObservedAt': observedAt};
     return context;
   }
 

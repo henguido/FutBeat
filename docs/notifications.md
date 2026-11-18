@@ -147,3 +147,31 @@ cambio de favoritos, y se reintenta cada 10 minutos y al volver a primer
 plano. `futbeat_read_user_profile` crea la fila de preferencias del usuario
 en el servidor en la primera lectura, así que una cuenta sin fila de
 preferencias nunca completó una lectura autenticada desde la app.
+
+## Preferencias independientes N1 (integración local previa a Alpha)
+
+La siguiente candidata integra los RPC existentes del kit N1 de Claude:
+`futbeat_read_notification_scopes()` y
+`futbeat_set_notification_scopes(p_scopes jsonb)`.
+El feature flag `FUTBEAT_NOTIFICATION_SCOPES_ENABLED` es false por defecto.
+Habilitarlo solo después de validar el despliegue N1 o contra fixtures QA.
+
+Perfil → Notificaciones → Alertas por jugador, equipo y partido muestra la
+matriz efectiva del servidor. Una elección explícita prevalece sobre el
+valor global solo para ese par ámbito/evento; reinicio envía null. No emula
+ámbitos escribiendo notify_* y nunca añade follows. GOAL partial y rare se
+explican en pantalla; eventos no soportados no se ofrecen.
+
+PushService comparte sesión, refresh, transporte y almacenamiento seguro con
+el resto de la cuenta. Persiste el patch pendiente por UID antes de enviarlo,
+serializa cambios y reintentos, descarta respuestas tardías de otra sesión y
+no transfiere preferencias entre usuarios. La reconciliación existente
+reintenta al reconectar. Un fallo no se presenta como confirmación del
+servidor. El borrado confirmado de cuenta elimina su patch después de las
+escrituras en curso. SQLite y los follows existentes no cambian.
+
+La entrega continúa usando el dispatcher existente. N1 decide atribución,
+deduplicación y revalidación al enviar; Flutter no infiere protagonistas ni
+consulta GOAL. El destino con matchId sigue siendo Match Center en primer
+plano, segundo plano y arranque desde notificación. Las pruebas simuladas
+no acreditan recepción real FCM.

@@ -390,7 +390,7 @@ void main() {
   }
 
   testWidgets(
-    'unknown LIVE observation is labelled without adding context polling',
+    'unknown LIVE observation has no false stale warning or context polling',
     (tester) async {
       final raw = _context(standingsState: 'unavailable');
       (raw['matches'] as List).single['status'] = 'LIVE';
@@ -401,8 +401,8 @@ void main() {
       final container = await _open(tester, server);
       expect(
         find.byIcon(Icons.sync_problem_outlined),
-        findsOneWidget,
-        reason: 'the discreet freshness indicator remains on the initial facts tab',
+        findsNothing,
+        reason: 'an optional missing observation is not evidence of stale data',
       );
       await _elapse(tester, const Duration(minutes: 2));
       expect(

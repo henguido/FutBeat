@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/push.dart';
+import '../../core/notification_scopes.dart';
 import '../../core/theme.dart';
 import 'notification_options.dart';
 import 'profile_section.dart';
+import 'notification_scopes_screen.dart';
 
 class NotificationsScreenV2 extends ConsumerStatefulWidget {
   const NotificationsScreenV2({super.key});
@@ -209,6 +211,16 @@ class _NotificationsScreenV2State extends ConsumerState<NotificationsScreenV2> {
                 if (actionError case final message?)
                   _InlineMessage(message: message),
                 const _FollowContext(),
+                if (notificationScopesEnabled)
+                  ListTile(
+                    title: const Text('Alertas por jugador, equipo y partido'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const NotificationScopesScreen(),
+                      ),
+                    ),
+                  ),
                 for (final group in NotificationOptionGroup.values)
                   _options(group, value),
               ],

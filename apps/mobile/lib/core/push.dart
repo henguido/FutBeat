@@ -17,9 +17,11 @@ import 'auth_errors.dart';
 import 'database.dart';
 import 'live_realtime.dart';
 import 'providers.dart';
+import 'notification_scopes.dart';
 
 part 'user_session_access.dart';
 part 'account_deletion_receipts.dart';
+part 'notification_scopes_access.dart';
 
 String? reconcileSelectedCountry({
   required String? local,
@@ -683,6 +685,15 @@ class PushService {
   /// `futbeat_sync_user_profile_v3` answered "not found" on this
   /// server; later saves go straight to the legacy RPC.
   bool _preferencesRpcMissing = false;
+  Future<void> _scopeWrites = Future.value();
+  Future<NotificationScopes> readNotificationScopes() =>
+      _readNotificationScopes();
+  Future<NotificationScopes> setNotificationScope(
+    String scope,
+    String kind,
+    bool? enabled,
+  ) => _setNotificationScope(scope, kind, enabled);
+  Future<void> flushNotificationScopes() => _flushNotificationScopes();
   final FlutterSecureStorage storage;
   final bool deletionReceiptsEnabled;
 
@@ -2326,6 +2337,9 @@ class PushService {
       }
     }
 
+    if (notificationScopesEnabled) {
+      await step('notification scopes', flushNotificationScopes);
+    }
     var followsSucceeded = false;
     var profileSucceeded = false;
     await step('follows', () async {
@@ -3047,6 +3061,8 @@ class PushService {
     await storage.delete(key: lastUserKey);
     if (_stale(cleanupGeneration)) return;
     if (deletedUser != null) {
+      await _clearNotificationScopes(deletedUser);
+      if (_stale(cleanupGeneration)) return;
       await storage.delete(key: pushedKey(deletedUser));
       if (_stale(cleanupGeneration)) return;
       await storage.delete(key: linkedFlagKey(deletedUser));
