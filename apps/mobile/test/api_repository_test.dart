@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/providers.dart';
 
 void main() {
@@ -193,6 +195,115 @@ void main() {
     } finally {
       dio.close(force: true);
       await server.close(force: true);
+    }
+  });
+
+  test(
+    'match detail contributes canonical player media to shared memory',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'matchId': 'fb_match_media',
+            'available': true,
+            'pending': false,
+            'detailLevel': 'lineup',
+            'home': {
+              'starters': [
+                {
+                  'id': 'provider-17',
+                  'canonicalId': 'fb_player_person',
+                  'name': 'Mismo Nombre',
+                  'image': 'https://media.example.test/person.png',
+                },
+              ],
+              'substitutes': <dynamic>[],
+            },
+            'away': {
+              'starters': [
+                {
+                  'id': 'provider-99',
+                  'canonicalId': 'fb_player_homonym',
+                  'name': 'Mismo Nombre',
+                },
+              ],
+              'substitutes': <dynamic>[],
+            },
+            'statistics': <dynamic>[],
+            'incidents': <dynamic>[],
+            'videos': <dynamic>[],
+          }),
+        );
+        await request.response.close();
+      });
+      final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
+      final memory = EntityMediaMemory();
+      try {
+        await ApiRepository(
+          dio,
+          null,
+          const CalendarCachePolicy(),
+          memory,
+        ).loadMatchDetail('fb_match_media');
+        expect(
+          memory.imageFor('fb_player_person'),
+          'https://media.example.test/person.png',
+        );
+        expect(memory.imageFor('provider-17'), isNull);
+        expect(memory.imageFor('fb_player_homonym'), isNull);
+      } finally {
+        memory.dispose();
+        dio.close(force: true);
+        await server.close(force: true);
+      }
+    },
+  );
+
+  test('stored match detail restores canonical player media offline', () async {
+    final database = AppDatabase(NativeDatabase.memory());
+    final memory = EntityMediaMemory();
+    final dio = Dio();
+    try {
+      await database.savePublicSnapshot(
+        'public:match-detail:fb_match_cached_media',
+        jsonEncode({
+          'matchId': 'fb_match_cached_media',
+          'available': true,
+          'home': {
+            'starters': [
+              {
+                'id': 'legacy-provider-id',
+                'canonicalId': 'fb_player_cached',
+                'name': 'Persona Guardada',
+                'image': 'https://media.example.test/cached.png',
+              },
+            ],
+            'substitutes': <dynamic>[],
+          },
+          'away': {'starters': <dynamic>[], 'substitutes': <dynamic>[]},
+          'statistics': <dynamic>[],
+          'incidents': <dynamic>[],
+          'videos': <dynamic>[],
+        }),
+      );
+      final detail = await ApiRepository(
+        dio,
+        database,
+        const CalendarCachePolicy(),
+        memory,
+      ).readStoredMatchDetail('fb_match_cached_media');
+      expect(detail?.offlineStale, isTrue);
+      expect(
+        memory.imageFor('fb_player_cached'),
+        'https://media.example.test/cached.png',
+      );
+      expect(memory.imageFor('legacy-provider-id'), isNull);
+    } finally {
+      memory.dispose();
+      dio.close(force: true);
+      await database.close();
     }
   });
 

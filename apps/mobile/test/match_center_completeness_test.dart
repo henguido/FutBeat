@@ -1,10 +1,15 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/qa_development.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 
 // Generic Match Center completeness on the phone: data that arrives after
@@ -87,16 +92,20 @@ Map<String, dynamic> _detail({
   bool lineup = false,
   bool stats = false,
   bool pending = false,
+  bool enrichmentPending = false,
+  bool hydrationNeeded = false,
 }) => {
   'matchId': _match,
   'available': true,
   'pending': pending,
+  'hydrationNeeded': hydrationNeeded,
   'detailLevel': 'full',
   'coverage': {
     'detail': 'available',
     'lineup': lineup ? 'available' : (pending ? 'pending' : 'missing'),
     'statistics': stats ? 'available' : (pending ? 'pending' : 'missing'),
     'stale': false,
+    'lineupEnrichmentPending': enrichmentPending,
   },
   'home': lineup
       ? {
@@ -169,10 +178,39 @@ class _Server {
     );
 }
 
+class _StoredWire implements HttpClientAdapter {
+  _StoredWire(this.server);
+  final _Server server;
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? body,
+    Future<void>? cancellation,
+  ) async {
+    final context = options.path == '/v1/qa-stored/match-context';
+    final data = context
+        ? server.context(server.contextReads++)
+        : server.detail(server.detailReads++);
+    return ResponseBody.fromString(
+      jsonEncode(data),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+        'x-futbeat-qa-stored': ['v1'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
 Future<ProviderContainer> _open(
   WidgetTester tester,
   _Server server, {
   double width = 360,
+  bool storedOnly = false,
+  Snapshot? initialData,
 }) async {
   tester.view.physicalSize = Size(width, 780);
   tester.view.devicePixelRatio = 1;
@@ -181,10 +219,23 @@ Future<ProviderContainer> _open(
   final db = AppDatabase(NativeDatabase.memory());
   await tester.runAsync(() => db.customSelect('select 1').get());
   addTearDown(() => tester.runAsync(db.close));
+  final dio = storedOnly
+      ? (Dio(BaseOptions(baseUrl: 'https://127.0.0.1:9'))
+          ..httpClientAdapter = _StoredWire(server))
+      : server.dio();
+  QaStoredReadInterceptor? policy;
+  if (storedOnly) {
+    policy = QaStoredReadInterceptor(origin: Uri.parse('https://127.0.0.1:9'));
+    dio.interceptors.add(policy);
+  }
+  addTearDown(() {
+    policy?.close();
+    dio.close(force: true);
+  });
   final container = ProviderContainer(
     overrides: [
       databaseProvider.overrideWithValue(db),
-      repositoryProvider.overrideWithValue(ApiRepository(server.dio())),
+      repositoryProvider.overrideWithValue(ApiRepository(dio)),
       followsProvider.overrideWith((ref) => Stream.value({})),
       liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
     ],
@@ -192,7 +243,9 @@ Future<ProviderContainer> _open(
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: const MaterialApp(home: MatchScreen(id: _match)),
+      child: MaterialApp(
+        home: MatchScreen(id: _match, initialData: initialData),
+      ),
     ),
   );
   await tester.pump();
@@ -235,6 +288,263 @@ String _selectedTab(WidgetTester tester) {
 }
 
 void main() {
+  for (final hydrationNeeded in [false, true]) {
+    testWidgets(
+      'stored lineup enrichment does not refresh or resume hydration=$hydrationNeeded',
+      (tester) async {
+        final server = _Server(
+          context: (_) => _context(),
+          detail: (_) => _detail(
+            lineup: true,
+            stats: true,
+            enrichmentPending: true,
+            hydrationNeeded: hydrationNeeded,
+          ),
+        );
+        final container = await _open(tester, server, storedOnly: true);
+        await _tab(tester, 'Alineación');
+        await _elapse(tester, const Duration(minutes: 2));
+        expect(
+          server.detailReads,
+          1,
+          reason: 'passive enrichment cannot start hydration',
+        );
+        expect(
+          find.byKey(const ValueKey('lineup-photo-fallback-fb_player_mc1')),
+          findsWidgets,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump(const Duration(seconds: 30));
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await _elapse(tester, const Duration(seconds: 30));
+        expect(
+          server.detailReads,
+          1,
+          reason: 'resume is not a passive enrichment demand',
+        );
+        expect(server.contextReads, 1);
+        await _close(tester, container);
+      },
+    );
+  }
+
+  for (final hasRows in [false, true]) {
+    testWidgets(
+      'stored pending standings stays settled without polling rows=$hasRows',
+      (tester) async {
+        final server = _Server(
+          detail: (_) => _detail(lineup: true, stats: true),
+          context: (_) => _context(standings: hasRows, standingsPending: true),
+        );
+        final container = await _open(tester, server, storedOnly: true);
+        await _tab(tester, 'Tabla');
+        final initiallyLoading = find
+            .text('Cargando tabla…')
+            .evaluate()
+            .isNotEmpty;
+        final initiallyRefreshing = find
+            .byKey(const ValueKey('match-refreshing'))
+            .evaluate()
+            .isNotEmpty;
+        await _elapse(tester, const Duration(minutes: 10));
+        expect(server.contextReads, 1);
+        expect(initiallyLoading, isFalse);
+        expect(initiallyRefreshing, isFalse);
+        expect(
+          find.text(hasRows ? 'Clasificación' : 'Tabla aún no disponible'),
+          findsOneWidget,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await tester.pump();
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await _elapse(tester, const Duration(seconds: 2));
+        expect(
+          server.contextReads,
+          1,
+          reason: 'pending passive data is not a resume demand',
+        );
+        if (!hasRows) {
+          final retry = find.byKey(const ValueKey('standings-retry'));
+          await tester.ensureVisible(retry);
+          await tester.tap(retry);
+          await _elapse(tester, const Duration(seconds: 2));
+          expect(
+            server.contextReads,
+            2,
+            reason: 'an explicit retry still reads once',
+          );
+          await _elapse(tester, const Duration(minutes: 10));
+          expect(
+            server.contextReads,
+            2,
+            reason: 'manual read cannot start automatic polling',
+          );
+        }
+        await _close(tester, container);
+      },
+    );
+  }
+
+  testWidgets(
+    'unknown LIVE observation is labelled without adding context polling',
+    (tester) async {
+      final raw = _context(standingsState: 'unavailable');
+      (raw['matches'] as List).single['status'] = 'LIVE';
+      final server = _Server(
+        detail: (_) => _detail(lineup: true, stats: true),
+        context: (_) => raw,
+      );
+      final container = await _open(tester, server);
+      expect(
+        find.byIcon(Icons.sync_problem_outlined),
+        findsOneWidget,
+        reason: 'the discreet freshness indicator remains on the initial facts tab',
+      );
+      await _elapse(tester, const Duration(minutes: 2));
+      expect(
+        server.contextReads,
+        1,
+        reason:
+            'missing observation metadata cannot be repaired by repeated reads',
+      );
+      await _close(tester, container);
+    },
+  );
+
+  testWidgets('other-season standings do not offer a full-table link', (
+    tester,
+  ) async {
+    final source = _context(standings: true);
+    final table = Map<String, dynamic>.from(
+      (source['standings'] as List).single as Map,
+    )..['season'] = '2025/2026';
+    final data = Snapshot({
+      ...source,
+      'standings': [table],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MatchStandingsTab(
+            data,
+            'fb_comp_mc',
+            season: '2026/2027',
+            refreshing: false,
+            compactContext: true,
+          ),
+        ),
+      ),
+    );
+    expect(find.byKey(const ValueKey('standings-show-full')), findsNothing);
+    expect(find.text('Tabla aún no descargada'), findsOneWidget);
+  });
+
+  testWidgets('partial context without a team hides only that match safely', (
+    tester,
+  ) async {
+    final server = _Server(
+      detail: (_) => _detail(),
+      context: (_) => {
+        ..._context(),
+        'teams': [
+          {'id': 'fb_team_mc_h', 'name': 'Local Sintético'},
+        ],
+      },
+    );
+    final container = await _open(tester, server);
+    expect(tester.takeException(), isNull);
+    expect(find.text('Partido no encontrado'), findsOneWidget);
+    await _close(tester, container);
+  });
+
+  testWidgets('incomplete context keeps the already visible exact match', (
+    tester,
+  ) async {
+    final server = _Server(
+      detail: (_) => _detail(),
+      context: (read) => {
+        ..._context(),
+        'teams': [
+          {'id': 'fb_team_mc_h', 'name': 'Local Sintético'},
+          if (read > 0) {'id': 'fb_team_mc_a', 'name': 'Visita Actualizada'},
+        ],
+      },
+    );
+    final container = await _open(
+      tester,
+      server,
+      initialData: Snapshot(_context()),
+    );
+    try {
+      expect(server.contextReads, 1);
+      expect(
+        container.read(matchContextSnapshotProvider(_match)).asData,
+        isNotNull,
+      );
+      expect(tester.takeException(), isNull);
+      expect(find.text('Partido no encontrado'), findsNothing);
+      expect(find.text('Visita Sintética'), findsWidgets);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is Banner && w.message == 'Datos guardados',
+        ),
+        findsNothing,
+      );
+      container.invalidate(matchContextSnapshotProvider(_match));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(server.contextReads, 2);
+      expect(find.text('Visita Actualizada'), findsWidgets);
+    } finally {
+      await _close(tester, container);
+    }
+  });
+
+  testWidgets('deep link keeps its last complete context after partial refresh', (
+    tester,
+  ) async {
+    final server = _Server(
+      detail: (_) => _detail(),
+      context: (read) => {
+        ..._context(),
+        'teams': [
+          {'id': 'fb_team_mc_h', 'name': 'Local Sintético'},
+          if (read != 1) {'id': 'fb_team_mc_a', 'name': 'Visita $read'},
+        ],
+      },
+    );
+    final container = await _open(tester, server);
+    try {
+      expect(server.contextReads, 1);
+      expect(find.text('Visita 0'), findsWidgets);
+
+      container.invalidate(matchContextSnapshotProvider(_match));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(server.contextReads, 2);
+      expect(find.text('Partido no encontrado'), findsNothing);
+      expect(find.text('Visita 0'), findsWidgets);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is Banner && w.message == 'Datos guardados',
+        ),
+        findsNothing,
+      );
+
+      container.invalidate(matchContextSnapshotProvider(_match));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(server.contextReads, 3);
+      expect(find.text('Visita 2'), findsWidgets);
+    } finally {
+      await _close(tester, container);
+    }
+  });
+
   testWidgets('21. lineup that arrives later appears in place; tab kept', (
     tester,
   ) async {
@@ -267,7 +577,10 @@ void main() {
     expect(find.byKey(const ValueKey('match-refreshing')), findsOneWidget);
     await _elapse(tester, const Duration(seconds: 20));
     expect(find.text('Cargando alineaciones…'), findsNothing);
-    expect(find.text('AS'), findsWidgets); // starter on the pitch (initials)
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_mc1')),
+      findsWidgets,
+    ); // starter fallback on the pitch
     expect(_selectedTab(tester), 'Alineación');
     expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
     semantics.dispose();
@@ -385,7 +698,7 @@ void main() {
       );
       final container = await _open(tester, server);
       await _tab(tester, 'Tabla');
-      expect(find.text('Sin tabla disponible'), findsOneWidget);
+      expect(find.text('Tabla aún no descargada'), findsOneWidget);
       expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
       await _elapse(tester, const Duration(minutes: 1));
       expect(server.contextReads, 1);
@@ -635,15 +948,21 @@ void main() {
     );
     final container = await _open(tester, server);
     await _tab(tester, 'Alineación');
-    expect(find.text('AS'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('lineup-photo-fallback-fb_player_mc1')),
+      findsWidgets,
+    );
     for (var step = 0; step < 150; step++) {
       await tester.pump(const Duration(milliseconds: 500));
       expect(
-        find.text('AS'),
+        find.byKey(const ValueKey('lineup-photo-fallback-fb_player_mc1')),
         findsWidgets,
         reason: 'no flash/loss at step $step',
       );
-      expect(find.text('Sin alineaciones'), findsNothing);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsNothing,
+      );
     }
     await _close(tester, container);
   });
@@ -665,7 +984,10 @@ void main() {
         1 + standingsRetryDelays.length + standingsSilentRetryDelays.length,
       );
       await _tab(tester, 'Alineación');
-      expect(find.text('Sin alineaciones'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
       await _elapse(tester, const Duration(minutes: 2));
       expect(server.detailReads, detailReads);

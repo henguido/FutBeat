@@ -55,7 +55,11 @@ test('persistent identity, atomic rollback, partial windows, durable job dedup a
     await store.import(partial, 'third', '2026-09-16T03:00:00Z');
     assert.equal((await store.read()).matches.length, 1);
     await assert.rejects(store.import(raw(), 'old', '2026-09-15T00:00:00Z'));
-    await db.close(); db = await openDatabase(folder); store = new PersistentStore(db);
+    await db.close();
+    // If reopening throws, cleanup must not close the previous instance again.
+    db = undefined;
+    db = await openDatabase(folder);
+    store = new PersistentStore(db);
     assert.equal((await store.import({}, 'first')).duplicate, true);
     assert.equal((await store.read()).matches[0].id, before.matches[0].id);
     await db.exec('create role futbeat_test_reader; set role futbeat_test_reader;');

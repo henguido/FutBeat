@@ -9,20 +9,17 @@ class CompetitionOrderPanel extends ConsumerWidget {
   const CompetitionOrderPanel({super.key});
 
   Future<void> _save(
-    WidgetRef ref,
-    CountryPreference current, {
+    WidgetRef ref, {
     String? mode,
     List<String>? pinnedIds,
   }) async {
     await ref
         .read(databaseProvider)
         .savePreference(
-          detectedCountry: current.detectedCountry,
-          selectedCountry: current.selectedCountry,
-          bootstrapDismissed: current.bootstrapDismissed,
-          competitionOrderMode: mode ?? current.competitionOrderMode,
-          competitionOrderPreference: current.competitionOrderPreference,
-          pinnedCompetitionIds: pinnedIds ?? current.pinnedCompetitionIds,
+          // Only persist the field edited by this control. Country,
+          // onboarding and other order fields may have changed since build.
+          competitionOrderMode: mode,
+          pinnedCompetitionIds: pinnedIds,
         );
   }
 
@@ -68,8 +65,7 @@ class CompetitionOrderPanel extends ConsumerWidget {
                 ),
               ],
               selected: {current.competitionOrderMode},
-              onSelectionChanged: (values) =>
-                  _save(ref, current, mode: values.first),
+              onSelectionChanged: (values) => _save(ref, mode: values.first),
             ),
             const SizedBox(height: 10),
             const Text(
@@ -92,7 +88,7 @@ class CompetitionOrderPanel extends ConsumerWidget {
                     final next = [...orderedIds];
                     final moved = next.removeAt(oldIndex);
                     next.insert(newIndex, moved);
-                    _save(ref, current, pinnedIds: next);
+                    _save(ref, pinnedIds: next);
                   },
                   itemBuilder: (context, index) {
                     final id = orderedIds[index];

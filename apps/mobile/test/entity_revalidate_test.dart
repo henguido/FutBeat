@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -42,7 +45,124 @@ class _Repository implements FootballRepository {
   Future<MatchDetail> loadMatchDetail(String id) async => MatchDetail.empty(id);
 }
 
+class _PendingProfileRepository extends ApiRepository {
+  _PendingProfileRepository(super.dio);
+
+  final finish = Completer<void>();
+  int attempts = 0;
+
+  @override
+  Stream<Snapshot> watchPublicEntity(String type, String id) async* {
+    attempts++;
+    if (attempts == 1) {
+      yield _payload('Perfil guardado').asStale();
+      await finish.future;
+      return;
+    }
+    yield _payload('Perfil actualizado');
+  }
+}
+
 void main() {
+  testWidgets('reopening a cached profile reuses pending revalidation', (
+    tester,
+  ) async {
+    final dio = Dio();
+    final repository = _PendingProfileRepository(dio);
+    final container = ProviderContainer(
+      overrides: [repositoryProvider.overrideWithValue(repository)],
+    );
+    addTearDown(dio.close);
+    addTearDown(container.dispose);
+    final request = (type: 'player', id: 'fb_player');
+    bool? retried;
+    Widget screen({required bool reopened}) => UncontrolledProviderScope(
+      container: container,
+      child: Consumer(
+        builder: (_, ref, _) {
+          if (reopened && retried == null) {
+            retried = revalidateEntitySnapshot(ref, request);
+          }
+          final profile = ref.watch(entitySnapshotProvider(request));
+          return Text(
+            profile.value?.player('fb_player')?.name ?? '',
+            textDirection: TextDirection.ltr,
+          );
+        },
+      ),
+    );
+    await tester.pumpWidget(screen(reopened: false));
+    await tester.pumpAndSettle();
+    expect(find.text('Perfil guardado'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(screen(reopened: true));
+    await tester.pumpAndSettle();
+    expect(retried, isFalse);
+    expect(repository.attempts, 1);
+    expect(find.text('Perfil guardado'), findsOneWidget);
+
+    repository.finish.complete();
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+    retried = null;
+    await tester.pumpWidget(screen(reopened: true));
+    await tester.pumpAndSettle();
+    expect(retried, isTrue);
+    expect(repository.attempts, 2);
+    expect(find.text('Perfil actualizado'), findsOneWidget);
+  });
+
+  for (final initialError in [true, false]) {
+    testWidgets('reopening retries a completed offline profile '
+        '(${initialError ? 'cache miss' : 'stale cache'})', (tester) async {
+      final request = (type: 'player', id: 'fb_player');
+      var attempts = 0;
+      final container = ProviderContainer(
+        overrides: [
+          entitySnapshotProvider(request).overrideWith((ref) async* {
+            attempts++;
+            if (attempts == 1) {
+              if (initialError) throw StateError('offline');
+              yield _payload('Perfil guardado').asStale();
+            } else {
+              yield _payload('Perfil actualizado');
+            }
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+      var reopen = false;
+      var retried = false;
+      Widget screen() => UncontrolledProviderScope(
+        container: container,
+        child: Consumer(
+          builder: (_, ref, _) {
+            if (reopen) {
+              // Match the screen lifecycle: its re-entry check runs once.
+              reopen = false;
+              retried = revalidateEntitySnapshot(ref, request);
+            }
+            ref.watch(entitySnapshotProvider(request));
+            return const SizedBox();
+          },
+        ),
+      );
+      await tester.pumpWidget(screen());
+      await tester.pumpAndSettle();
+      expect(attempts, 1);
+      await tester.pumpWidget(const SizedBox());
+      reopen = true;
+      await tester.pumpWidget(screen());
+      await tester.pumpAndSettle();
+      expect(retried, isTrue);
+      expect(attempts, 2);
+      expect(
+        container.read(entitySnapshotProvider(request)).requireValue.stale,
+        isFalse,
+      );
+    });
+  }
+
   testWidgets('a re-opened profile paints its last answer at once and '
       'revalidates it once it is old enough', (tester) async {
     tester.view.physicalSize = const Size(400, 900);

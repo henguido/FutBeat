@@ -1,0 +1,42 @@
+# Android 1.0.0+4 — physical QA plan
+
+Prepared 2026-10-13 from `95b10b5`. This is a plan, not an executed test report or permission to build, upload, install or change production. The pending LIVE gate is recorded separately in `ANDROID-1.0.0-4-GATES.md`.
+
+## Entry conditions and evidence
+
+- Claude has finished production work; the separately authorized, bounded LIVE contract check has passed. Until then: **NO-GO for AAB generation or tester distribution**.
+- A separately approved `1.0.0+4` artifact has been checked for package `com.futbeat.futbeat`, code `4`, upload signature, R8, and effective release flags. Google on; Facebook, Push and Premium off; production AdMob IDs, no test IDs. Recheck code availability before upload.
+- After separate authorization for a controlled Internal Testing upload, use a **Play-distributed** installation, not a sideload, to test the Play signing certificate. This limited QA installation is distinct from inviting the broader tester group. Arrange two disposable test accounts and test mailboxes. Never record links containing tokens, credentials, full email addresses, access tokens, or unredacted device logs.
+- Record for each case: build identifier and SHA-256, device/model and Android version, installation source, UTC time, account alias, network condition, result PASS/FAIL/BLOCKED, sanitized screenshot/video, and short reproduction steps. For LIVE cases, record match ID/status and observed times without private data. A 503 may be exercised only in an approved staging/test environment or through an authorized non-production fault setup; do not induce errors in production.
+- Run the smoke set on **both** Galaxy A32 and S25 Ultra. Run extended network/LIVE cases on both when the required real event and approved conditions are available. A missing LIVE event or inability to produce a safe 503 is BLOCKED, not PASS.
+
+## Physical test matrix
+
+| ID | Case and steps | Expected result | Device | Evidence |
+| --- | --- | --- | --- | --- |
+| QA-01 | Install the approved Play candidate; clear it from recents and launch cold twice, once after device restart. Navigate Calendar, Match Center and a profile. | No startup/R8 crash, blank screen or indefinite spinner; package/version correct and content usable. | Both | Sanitized launch video; build/version; crash-free result. |
+| QA-02 | Put app in background for 5 minutes, return, then force-close and reopen; revisit same date and match. | Session and selected context recover appropriately; no duplicate screens, stale overlay replacing newer data, or crash. | Both | Before/after captures with UTC times. |
+| QA-03 | Sign in with Google from a logged-out state; sign out and cancel the provider flow on a second attempt. | Successful flow creates the intended session; cancellation creates none and leaves app usable. Facebook button absent. | Both | Redacted auth-screen video and account alias; no OAuth callback URLs. |
+| QA-04 | Request password reset for a test account; open the fresh email link with app closed, then repeat with app in background. Complete password change and sign in with the new password. | Play-installed App Link reaches the recovery screen in both states; reset succeeds once; no token shown in UI or copied into evidence. | Both | Redacted screen sequence; delivery/open/result times; no link text. |
+| QA-05 | Use an expired/used recovery link and cancel a fresh recovery flow. Test browser fallback only through the published web flow. | No false success/session; useful retry guidance; cancellation drops recovery state. Browser-to-app transfer requires user action. | Both | Sanitized UI capture and outcome. |
+| QA-06 | Open matches feed as free user with network; inspect ad space, then use privacy options/consent where available. Repeat with consent declined or unavailable. | No test ad identifiers; ad never obscures content; no ad request before required consent or after withdrawal; Profile remains usable. Push permission and Premium purchase UI remain off. Ad no-fill is not a failure. | Both | Screenshots of layout/consent state; redacted diagnostic result if available. |
+| QA-07 | During a real LIVE match, open Calendar and Match Center, background/foreground, briefly disconnect/reconnect. | All matches for the selected date remain visible, not only favorites; score/status converge after reconnection without duplicate cards or lost valid matches. | Both | Time-stamped before/after captures and match ID. |
+| QA-08 | Observe a real score correction and final-state transition if one occurs; otherwise mark the specific subcase BLOCKED. | Newer revision wins; old REST/cache does not revert a correction; final state remains final and agrees across views. | Both | Time-stamped captures and sanitized match ID/revision if observable. |
+| QA-09 | With valid Match Center, team and player profiles loaded, force-close, enable airplane mode and reopen each. | Last valid public data appears promptly with a clear “Datos guardados” indication; no endless loading, fabricated data or cross-entity substitution. | Both | Offline screen video, entity IDs, freshness indicator. |
+| QA-10 | While cached screens are open, exercise an approved non-production HTTP 503 or documented natural outage; reconnect to a valid response. | Cached content stays visible during failure; indicator persists until a newer valid response arrives; recent LIVE score is never replaced by older cache. | Both, when safe setup exists | Redacted status/timestamps and before/after captures. |
+| QA-11 | Switch between two test accounts; revisit favorites, Match Center and profiles, including an offline reopening. | Favorites and other account-specific state do not bleed across accounts; public cache does not expose private data. Sign-out works offline without blocking. | Both | Account aliases and sanitized before/after captures. |
+| QA-12 | Change country and date repeatedly, including adjacent UTC dates; open matches/profiles then return. | Correct country/date and canonical match/entity remain selected; every valid date match is present; no stale content masquerades as the new selection. | Both | Selection and resulting fixture IDs/screenshots. |
+| QA-13 | On slow network and after background/forced close, inspect scrolling, accessibility text size, back navigation and ad placement on a small/large screen. | No frozen UI, clipped controls, blocked primary actions, duplicate routes or unreadable stale indicators. | Both | Short videos and device display settings. |
+
+## Existing automated coverage; avoid redundant reruns
+
+- Auth: `auth_sheet_test.dart`, `auth_flows_test.dart`, `password_reset_cold_start_test.dart` cover provider flags/cancellation, reset link validation, cold/background delivery and duplicate links. Physical Play-installed App Link and real OAuth remain unproven.
+- LIVE: `live_bootstrap_test.dart`, `live_realtime_test.dart` cover paging, partial answers, 503 recovery, revisions, score corrections, terminal states and REST/Realtime precedence. Production contract and a real match remain unproven.
+- Offline: `public_offline_cache_test.dart` covers cache-before-network, stale indication, 503, recovery, limits, privacy and LIVE precedence; `calendar_cache_explore_test.dart` covers existing calendar/Explore behavior. Process restart and device-specific rendering still require physical QA.
+- Ads: `ads_test.dart` covers consent gating, withdrawal, no-fill, account changes and release test-ID rejection. Effective AAB IDs and device consent UI still require inspection.
+
+## Decision rule
+
+**GO to invite the broader tester group** only after a separately authorized controlled Internal Testing build has been installed for QA, all entry conditions are verified, QA-01 through QA-06 and QA-09 through QA-13 PASS on both devices, QA-07/08 PASS when a suitable real LIVE event occurs, no P0/P1 issue remains, and any unavailable LIVE/503 subcase has an explicit owner-approved disposition. This plan alone does not approve a build or upload.
+
+**NO-GO** for crash/startup failure, broken Google sign-in or password recovery, token/PII exposure, wrong account or entity data, missing valid matches, LIVE score regression, incorrect final state, stale data shown as fresh, ads before required consent or test AdMob IDs in release, wrong package/signature/version, failed production LIVE contract, or unresolved external gates. Record each failure with sanitized reproduction evidence; fix and rerun only the affected cases plus their dependent smoke cases.

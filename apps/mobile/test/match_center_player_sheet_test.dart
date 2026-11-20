@@ -7,6 +7,7 @@ import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/matches/match_screen.dart';
 import 'package:go_router/go_router.dart';
 
@@ -222,8 +223,20 @@ Future<_Server> _open(
       ),
       GoRoute(
         path: '/player/:id',
-        builder: (_, state) =>
-            Scaffold(body: Text('Perfil ${state.pathParameters['id']}')),
+        builder: (_, state) {
+          final matchContext = state.extra;
+          return Scaffold(
+            body: Column(
+              children: [
+                Text('Perfil ${state.pathParameters['id']}'),
+                if (matchContext is PlayerProfileMatchContext) ...[
+                  Text('Eventos ${matchContext.events.length}'),
+                  Text('Rating ${matchContext.summary.rating}'),
+                ],
+              ],
+            ),
+          );
+        },
       ),
     ],
   );
@@ -486,6 +499,26 @@ void main() {
     await _close(tester);
   });
 
+  testWidgets('sparse player sheet does not cover most of Match Center', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      detail: _detail(
+        starters: [
+          _player('p77', 'Jugador de prueba', canonicalId: 'fb_player_77'),
+        ],
+        substitutes: const [],
+      ),
+    );
+    await _tab(tester, 'Alineación');
+    await _tapPlayer(tester, find.text('Jugador de prueba').first);
+    final screenHeight = tester.getSize(find.byType(MaterialApp)).height;
+    expect(tester.getSize(_sheet).height, lessThan(screenHeight * .45));
+    expect(_profile, findsOneWidget);
+    await _close(tester);
+  });
+
   testWidgets('14. the summary groups the real rating and events', (
     tester,
   ) async {
@@ -519,6 +552,8 @@ void main() {
     await tester.tap(_profile);
     await tester.pumpAndSettle();
     expect(find.text('Perfil fb_player_9'), findsOneWidget);
+    expect(find.textContaining('Eventos '), findsOneWidget);
+    expect(find.text('Rating 8.4'), findsOneWidget);
     await _close(tester);
   });
 
@@ -580,7 +615,10 @@ void main() {
       ),
     );
     await _tab(tester, 'Alineación');
-    await _tapPlayer(tester, find.text('Trinidad').first);
+    await _tapPlayer(
+      tester,
+      find.text('Maximiliano Alejandro de la Santísima Trinidad').first,
+    );
     expect(_sheet, findsOneWidget);
     expect(tester.takeException(), isNull);
     await _close(tester);
@@ -754,7 +792,7 @@ void main() {
             ],
     );
     await _tab(tester, 'Alineación');
-    await _tapPlayer(tester, find.text('Local').first);
+    await _tapPlayer(tester, find.text('Defensor Local').first);
     expect(_inSheet(find.text('Autogol')), findsWidgets);
     expect(_inSheet(find.text('Gol')), findsNothing);
     expect(
@@ -774,7 +812,7 @@ void main() {
       ),
     );
     await _tab(tester, 'Alineación');
-    await _tapPlayer(tester, find.text('Panel').first);
+    await _tapPlayer(tester, find.text('Arquero Panel').first);
     final team = _inSheet(find.byKey(const ValueKey('player-sheet-team')));
     expect(team, findsOneWidget);
     expect(
@@ -815,15 +853,11 @@ void main() {
     await _open(tester, media: media);
     await _tab(tester, 'Alineación');
     await _tapPlayer(tester, find.text('Nasibov').first);
-    final images = tester.widgetList<Image>(_inSheet(find.byType(Image)));
+    final images = tester.widgetList<SportsImage>(
+      _inSheet(find.byType(SportsImage)),
+    );
     expect(
-      images.map((image) {
-        final provider = image.image;
-        final network = provider is ResizeImage
-            ? provider.imageProvider
-            : provider;
-        return (network as NetworkImage).url;
-      }),
+      images.map((image) => image.url),
       contains('https://media.example.com/p9.png'),
     );
     await _close(tester);

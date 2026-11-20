@@ -128,7 +128,7 @@ void main() {
           databaseProvider.overrideWithValue(db),
           repositoryProvider.overrideWithValue(repo),
           matchContextSnapshotProvider.overrideWith(
-            (ref, id) async => Snapshot(payload()),
+            (ref, id) => Stream.value(Snapshot(payload())),
           ),
           followsProvider.overrideWith((ref) => Stream.value({})),
           liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
@@ -161,7 +161,10 @@ void main() {
       await _showTab(tester, 'Alineación');
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
-      expect(find.text('Sin alineaciones'), findsNothing);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsNothing,
+      );
       expect(
         find.byKey(
           const ValueKey('match-section-loading-Cargando alineaciones…'),
@@ -174,10 +177,16 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
       }
       await tester.pumpAndSettle();
-      expect(find.text('Sin alineaciones'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsOneWidget,
+      );
       await _showTab(tester, 'Estadísticas');
       await tester.pumpAndSettle();
-      expect(find.text('Sin estadísticas'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay estadísticas disponibles.'),
+        findsOneWidget,
+      );
       expect(repo.loads, 1);
       expect(repo.reads, 5);
       await tester.pumpWidget(const SizedBox());
@@ -257,7 +266,7 @@ void main() {
   );
 
   for (final slow in [false, true]) {
-    test('initial detail failure keeps finite pending window (slow=$slow)', () async {
+    test('initial detail failure resolves within its failure policy (slow=$slow)', () async {
       final dio = Dio();
       var reads = 0;
       var central = 0;
@@ -308,12 +317,15 @@ void main() {
       });
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(values, isNotEmpty);
-      expect(values.every((value) => value.pending), true);
+      expect(values.first.pending, true);
+      if (slow) expect(values.every((value) => value.pending), true);
       await done.future.timeout(const Duration(seconds: 17));
-      // Initial open + one read-only refresh per bounded schedule step.
-      expect(reads, 6);
+      // A proven connection failure ends immediately; a timed-out read still
+      // gets the bounded read-only schedule because connectivity is unknown.
+      expect(reads, slow ? 6 : 1);
       expect(central, 1, reason: 'rechecks never request the provider');
       expect(values.last.pending, false);
+      expect(values.last.offlineUnavailable, !slow);
       expect(values.last.statistics, isEmpty);
       expect(values.last.homeStarters, isEmpty);
       if (slow) {
@@ -385,10 +397,13 @@ void main() {
       final dio = Dio();
       final gate = Completer<void>();
       var requests = 0;
+      final requestStarted = Completer<void>();
+      final localShown = Completer<void>();
       dio.interceptors.add(
         InterceptorsWrapper(
           onRequest: (options, handler) async {
             requests++;
+            if (!requestStarted.isCompleted) requestStarted.complete();
             await gate.future;
             handler.resolve(Response(requestOptions: options, data: payload()));
           },
@@ -399,17 +414,26 @@ void main() {
       final values = <Snapshot>[];
       final stream = ApiRepository(dio, db).watchDate(DateTime(2026, 8, 20));
       final complete = Completer<void>();
-      final subscription = stream.listen(values.add, onDone: complete.complete);
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(values, hasLength(1));
-      expect(requests, 1);
-      gate.complete();
-      await complete.future;
-      expect(values, hasLength(2));
-      expect(requests, 1); // No historical prefetch cascade.
-      await subscription.cancel();
-      dio.close();
-      await db.close();
+      final subscription = stream.listen((value) {
+        values.add(value);
+        if (!localShown.isCompleted) localShown.complete();
+      }, onDone: complete.complete);
+      try {
+        // Observe causal milestones; host scheduling speed is not correctness.
+        await localShown.future.timeout(const Duration(seconds: 5));
+        await requestStarted.future.timeout(const Duration(seconds: 5));
+        expect(values, hasLength(1));
+        expect(requests, 1);
+        gate.complete();
+        await complete.future;
+        expect(values, hasLength(2));
+        expect(requests, 1); // No historical prefetch cascade.
+      } finally {
+        if (!gate.isCompleted) gate.complete();
+        await subscription.cancel();
+        dio.close();
+        await db.close();
+      }
     },
   );
 
@@ -600,7 +624,7 @@ void main() {
             databaseProvider.overrideWithValue(db),
             repositoryProvider.overrideWithValue(ApiRepository(Dio())),
             matchContextSnapshotProvider.overrideWith(
-              (ref, id) async => Snapshot(payload(table: hasTable)),
+              (ref, id) => Stream.value(Snapshot(payload(table: hasTable))),
             ),
             matchDetailProvider.overrideWith((ref, id) {
               detailStarts++;
@@ -644,7 +668,7 @@ void main() {
         expect(identical(_controller(tester), controller), isTrue);
         expect(controller.index, _tabIndex(tester, 'Tabla'));
         expect(controller.length, 6);
-        expect(find.text('Sin tabla disponible'), findsOneWidget);
+        expect(find.text('Tabla aún no descargada'), findsOneWidget);
         expect(detailStarts, 1);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
@@ -668,7 +692,7 @@ void main() {
           databaseProvider.overrideWithValue(db),
           repositoryProvider.overrideWithValue(ApiRepository(Dio())),
           matchContextSnapshotProvider.overrideWith(
-            (ref, id) => context.stream.first,
+            (ref, id) => context.stream,
           ),
           matchDetailProvider.overrideWith(
             (ref, id) => Stream.value(MatchDetail.empty(id)),
@@ -695,10 +719,16 @@ void main() {
       expect(find.text('Tabla'), findsOneWidget);
       await tester.tap(find.text('Estadísticas'));
       await tester.pumpAndSettle();
-      expect(find.text('Sin estadísticas'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay estadísticas disponibles.'),
+        findsOneWidget,
+      );
       await tester.tap(find.text('Alineación'));
       await tester.pumpAndSettle();
-      expect(find.text('Sin alineaciones'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay alineaciones disponibles.'),
+        findsOneWidget,
+      );
       context.add(Snapshot(payload(table: true)));
       await tester.pumpAndSettle();
       expect(find.text('Tabla'), findsOneWidget);

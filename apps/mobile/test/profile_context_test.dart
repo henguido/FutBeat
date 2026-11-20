@@ -262,7 +262,7 @@ Future<ProviderContainer> _pump(
             AppDatabase(NativeDatabase.memory()),
           ),
           entitySnapshotProvider.overrideWith(
-            (ref, request) async => Snapshot(profile),
+            (ref, request) => Stream.value(Snapshot(profile)),
           ),
           followsProvider.overrideWith((ref) => Stream.value({})),
           repositoryProvider.overrideWithValue(repository),

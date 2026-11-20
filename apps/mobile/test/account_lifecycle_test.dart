@@ -13,8 +13,12 @@ import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/core/push.dart';
 import 'package:futbeat/features/profile/profile_screen.dart';
+import 'package:futbeat/features/profile/account_security_screen.dart';
 
 class _Tokens implements PushTokenSource {
+  @override
+  Future<String?> currentToken() => requestToken();
+
   @override
   Future<String?> requestToken() async => null;
 
@@ -271,7 +275,7 @@ void main() {
       value.service.session = {
         'access_token': 'a',
         'refresh_token': 'r',
-        'user': {'email': 'a@b.test'},
+        'user': {'id': 'user-a', 'email': 'a@b.test'},
       };
       await value.service.deleteAccount();
       expect(value.service.authenticated, isFalse);
@@ -354,7 +358,7 @@ void main() {
       });
       value.service.session = {
         'access_token': 'a',
-        'user': {'email': 'a@b.test', 'email_confirmed_at': 'now'},
+        'user': {'id': 'u1', 'email': 'a@b.test', 'email_confirmed_at': 'now'},
       };
       await tester.pumpWidget(
         ProviderScope(
@@ -376,7 +380,7 @@ void main() {
               (ref, keys) async => _emptySnapshot,
             ),
           ],
-          child: const MaterialApp(home: ProfileScreen()),
+          child: const MaterialApp(home: AccountSecurityScreen()),
         ),
       );
       await tester.pump(const Duration(milliseconds: 500));
@@ -407,7 +411,11 @@ void main() {
       });
       value.service.session = {
         'access_token': 'a',
-        'user': {'email': 'a@b.test', 'email_confirmed_at': 'now'},
+        'user': {
+          'id': 'user-a',
+          'email': 'a@b.test',
+          'email_confirmed_at': 'now',
+        },
       };
       FlutterSecureStorage.setMockInitialValues({
         'futbeat.profile.settings': '{"hourFormat":"12h"}',
@@ -444,7 +452,7 @@ void main() {
                     key: const Key('global-hour-format'),
                   ),
                 ),
-                const Expanded(child: ProfileScreen()),
+                const Expanded(child: AccountSecurityScreen()),
               ],
             ),
           ),

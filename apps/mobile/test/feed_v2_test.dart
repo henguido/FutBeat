@@ -10,6 +10,7 @@ import 'package:futbeat/core/database.dart';
 import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
+import 'package:futbeat/core/sports_image_cache.dart';
 import 'package:futbeat/features/matches/matches_screen.dart';
 import 'package:go_router/go_router.dart';
 
@@ -51,8 +52,90 @@ class _Repository implements FootballRepository {
 
 const _longHome = 'Club Deportivo Universitario Metropolitano de Occidente';
 const _longAway = 'Asociación Deportiva Atlética Internacional Fronteriza';
+const _competitionLogo = 'https://media.example.test/liga-fpd.png';
+const _interCrest = 'https://media.example.test/inter-san-carlos.png';
+const _perezCrest = 'https://media.example.test/perez-zeledon.png';
 
-Snapshot _snapshot({bool adjacentMatches = false}) {
+String? _networkUrl(Image image) {
+  final provider = image.image;
+  return provider is NetworkImage ? provider.url : null;
+}
+
+Snapshot _costaRicaMediaSnapshot({bool verifiedMedia = true}) {
+  final today = costaRicaNow();
+  Map<String, dynamic> media(String url) => {
+    'url': url,
+    'verificationStatus': verifiedMedia ? 'VERIFIED' : 'PENDING',
+  };
+  return Snapshot({
+    'schemaVersion': 1,
+    'demo': false,
+    'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    'entityRedirects': {
+      'fb_comp_cr': 'fb_comp_cr_canonical',
+      'fb_team_inter_alias': 'fb_team_inter_canonical',
+      'fb_team_pz_alias': 'fb_team_pz_canonical',
+    },
+    'competitions': [
+      {
+        'id': 'fb_comp_cr',
+        'name': 'Costa-Rica Liga FPD',
+        'shortName': 'CL',
+        'country': 'Costa Rica',
+      },
+      {
+        'id': 'fb_comp_cr_canonical',
+        'name': 'Primera División',
+        'country': 'Costa Rica',
+        'media': media(_competitionLogo),
+      },
+    ],
+    'teams': [
+      {
+        'id': 'fb_team_inter_alias',
+        'name': 'Inter de San Carlos',
+        'shortName': 'Id',
+      },
+      {
+        'id': 'fb_team_inter_canonical',
+        'name': 'Inter San Carlos',
+        'media': media(_interCrest),
+      },
+      {'id': 'fb_team_pz_alias', 'name': 'Pérez Zeledón', 'shortName': 'PZ'},
+      {
+        'id': 'fb_team_pz_canonical',
+        'name': 'Municipal Pérez Zeledón',
+        'media': media(_perezCrest),
+      },
+    ],
+    'players': <dynamic>[],
+    'matches': [
+      {
+        'id': 'm_cr_media',
+        'competitionId': 'fb_comp_cr',
+        'homeTeamId': 'fb_team_inter_alias',
+        'awayTeamId': 'fb_team_pz_alias',
+        'startTime': DateTime.utc(
+          today.year,
+          today.month,
+          today.day,
+          18,
+        ).toIso8601String(),
+        'status': 'SCHEDULED',
+        'score': const <String, dynamic>{},
+        'events': <dynamic>[],
+        'statistics': <dynamic>[],
+      },
+    ],
+    'standings': <dynamic>[],
+  });
+}
+
+Snapshot _snapshot({
+  bool adjacentMatches = false,
+  bool subgroupData = false,
+  bool exactlyThreeOneCompetition = false,
+}) {
   final today = costaRicaNow();
   String startAt(int hour, int dayOffset) => DateTime.utc(
     today.year,
@@ -72,6 +155,8 @@ Snapshot _snapshot({bool adjacentMatches = false}) {
     Map<String, dynamic>? latestEvent,
     bool played = false,
     int dayOffset = 0,
+    String? group,
+    String? round,
   }) => {
     'id': id,
     'competitionId': comp,
@@ -83,6 +168,8 @@ Snapshot _snapshot({bool adjacentMatches = false}) {
     'score': score,
     'latestEvent': ?latestEvent,
     if (played) 'hasPlayedEvidence': true,
+    'group': ?group,
+    'round': ?round,
     'events': <dynamic>[],
     'statistics': <dynamic>[],
   };
@@ -135,31 +222,49 @@ Snapshot _snapshot({bool adjacentMatches = false}) {
         minute: 63,
         score: {'home': 1, 'away': 0},
         latestEvent: {'type': 'GOAL', 'minute': 64},
+        group: subgroupData ? 'A' : null,
       ),
-      match('m_cr_next', 'c_cr', 't_her', 't_car', 'SCHEDULED', 23),
-      match('m_es_1', 'c_es', 't_bet', 't_get', 'SCHEDULED', 23),
       match(
-        'm_es_long',
-        'c_es',
-        't_long1',
-        't_long2',
-        'LIVE',
-        12,
-        minute: 88,
-        score: {'home': 12, 'away': 10},
-        latestEvent: {'type': 'SUBSTITUTION', 'minute': 88},
-      ),
-      match('m_es_awaiting', 'c_es', 't_get', 't_bet', 'SCHEDULED', 0),
-      match(
-        'm_es_partial',
-        'c_es',
-        't_bet',
-        't_long2',
+        'm_cr_next',
+        'c_cr',
+        't_her',
+        't_car',
         'SCHEDULED',
-        0,
-        score: {'home': 2, 'away': 1},
-        played: true,
+        23,
+        group: subgroupData ? 'B' : null,
       ),
+      match(
+        'm_es_1',
+        exactlyThreeOneCompetition ? 'c_cr' : 'c_es',
+        't_bet',
+        't_get',
+        'SCHEDULED',
+        23,
+      ),
+      if (!exactlyThreeOneCompetition) ...[
+        match(
+          'm_es_long',
+          'c_es',
+          't_long1',
+          't_long2',
+          'LIVE',
+          12,
+          minute: 88,
+          score: {'home': 12, 'away': 10},
+          latestEvent: {'type': 'SUBSTITUTION', 'minute': 88},
+        ),
+        match('m_es_awaiting', 'c_es', 't_get', 't_bet', 'SCHEDULED', 0),
+        match(
+          'm_es_partial',
+          'c_es',
+          't_bet',
+          't_long2',
+          'SCHEDULED',
+          0,
+          score: {'home': 2, 'away': 1},
+          played: true,
+        ),
+      ],
       if (adjacentMatches) ...[
         match(
           'm_yesterday_final',
@@ -193,6 +298,7 @@ Future<List<String>> _pump(
   AppDatabase? db,
   String? country,
   DateTime Function()? now,
+  bool adsAllowed = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -247,6 +353,7 @@ Future<List<String>> _pump(
         temporaryInterestsProvider.overrideWith(
           (ref) => Stream.value(<String>{}),
         ),
+        if (adsAllowed) adsAllowedProvider.overrideWithValue(true),
       ],
       child: MaterialApp.router(routerConfig: router),
     ),
@@ -255,9 +362,42 @@ Future<List<String>> _pump(
   return opened;
 }
 
-Finder _row(String matchId) => find.byKey(ValueKey('match-card-$matchId'));
+Finder _row(String matchId) => find.byKey(ValueKey('match-row-$matchId'));
+
+Finder _rowInGroup(String matchId, String scope, String competitionId) =>
+    find.descendant(
+      of: find.byKey(ValueKey('feed-section-$scope-$competitionId')),
+      matching: _row(matchId),
+    );
 
 void main() {
+  testWidgets('#220: favorites from two leagues remain once in each league', (
+    tester,
+  ) async {
+    final data = _snapshot();
+    await _pump(tester, data: data, follows: {'team:t_sap', 'team:t_bet'});
+    expect(find.text('FAVORITOS'), findsOneWidget);
+    const favoriteIds = {
+      'm_cr_live',
+      'm_es_1',
+      'm_es_awaiting',
+      'm_es_partial',
+    };
+    for (final match in data.matches) {
+      expect(
+        _rowInGroup(match.id, 'competition', match.competitionId),
+        findsOneWidget,
+        reason: 'Every match remains in its league: ${match.id}',
+      );
+      expect(
+        _rowInGroup(match.id, 'favorite', match.competitionId),
+        favoriteIds.contains(match.id) ? findsOneWidget : findsNothing,
+        reason: 'Only favorite-team matches enter Favoritos: ${match.id}',
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   test('date transition clears only LIVE and never reapplies it', () {
     final today = DateTime(2026, 10, 2);
     final yesterday = today.subtract(const Duration(days: 1));
@@ -298,7 +438,7 @@ void main() {
           .selected,
       isTrue,
     );
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(
       tester
           .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'En vivo'))
@@ -320,26 +460,60 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  test('the feed ad goes after the third group, never in LIVE', () {
-    expect(feedAdAfterGroup(1, 'Todos'), isFalse);
-    expect(feedAdAfterGroup(2, 'Todos'), isFalse);
-    expect(feedAdAfterGroup(3, 'Todos'), isTrue);
-    expect(feedAdAfterGroup(3, 'Próximos'), isTrue);
-    expect(feedAdAfterGroup(4, 'Todos'), isFalse);
-    expect(feedAdAfterGroup(3, 'En vivo'), isFalse);
+  group('feed ad slots', () {
+    List<int> slots(int groups, {bool favorites = false, String f = 'Todos'}) =>
+        feedAdSlots(favorites: favorites, groups: groups, filter: f);
+
+    test('with favourites: after them, then every 4 groups from the 3rd', () {
+      expect(slots(20, favorites: true), [0, 3, 7, 11, 15]);
+    });
+
+    test('without favourites: approved spaced candidates, capped at 5', () {
+      expect(slots(20), [1, 3, 6, 9, 12]);
+      expect(slots(13), [1, 3, 6, 9, 12]);
+      // Group 18 is the next policy candidate, but the daily cap is 5.
+      expect(slots(200), isNot(contains(18)));
+    });
+
+    test('never more than 5 per day', () {
+      expect(slots(200, favorites: true), hasLength(feedAdMaxSlots));
+      expect(slots(200), hasLength(feedAdMaxSlots));
+    });
+
+    test('short feeds: few or no slots, never at the end', () {
+      expect(slots(0), isEmpty);
+      expect(slots(1), isEmpty);
+      expect(slots(2), [1]);
+      expect(slots(3), [1]);
+      expect(slots(4), [1, 3]);
+      expect(slots(0, favorites: true), isEmpty);
+      expect(slots(1, favorites: true), [0]);
+      expect(slots(3, favorites: true), [0]);
+      expect(slots(4, favorites: true), [0, 3]);
+    });
+
+    test('policy is explicit for every filter and LIVE has none', () {
+      expect(slots(40, favorites: true), [0, 3, 7, 11, 15]);
+      expect(slots(40), [1, 3, 6, 9, 12]);
+      expect(slots(20, f: 'En vivo'), isEmpty);
+      expect(slots(20, favorites: true, f: 'En vivo'), isEmpty);
+      expect(slots(20, f: 'Próximos'), [1, 3, 6, 9, 12]);
+    });
   });
 
-  testWidgets('a feed with fewer groups has no ad slot', (tester) async {
+  testWidgets('a two-group feed places one ad between complete groups', (
+    tester,
+  ) async {
     await _pump(tester);
-    expect(find.byType(AdSlot), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(AdSlot), findsOneWidget);
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
   });
 
   testWidgets('every match of the day is a row, once, without follows', (
     tester,
   ) async {
     await _pump(tester);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     for (final id in [
       'm_cr_live',
       'm_cr_next',
@@ -352,6 +526,141 @@ void main() {
     }
     expect(find.text('FAVORITOS'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('three matches from one competition render in one group card', (
+    tester,
+  ) async {
+    await _pump(tester, data: _snapshot(exactlyThreeOneCompetition: true));
+    expect(
+      find.byKey(const ValueKey('competition-group-competition-c_cr')),
+      findsOneWidget,
+    );
+    expect(find.byType(CompetitionMatchGroupCard), findsOneWidget);
+    expect(find.byType(FeedMatchRow), findsNWidgets(3));
+  });
+
+  testWidgets('group keeps the approved full-size match presentation', (
+    tester,
+  ) async {
+    await _pump(tester, data: _snapshot(exactlyThreeOneCompetition: true));
+    final row = _row('m_cr_live');
+    expect(tester.getSize(row).height, greaterThanOrEqualTo(120));
+    expect(
+      tester.getSize(find.byKey(const ValueKey('team-crest-m_cr_live-home'))),
+      const Size(42, 42),
+    );
+    expect(
+      tester.getSize(find.byKey(const ValueKey('competition-logo-c_cr'))),
+      const Size(36, 36),
+    );
+    expect(find.byType(CompetitionMatchGroupCard), findsOneWidget);
+  });
+
+  testWidgets('large match cards share the competition group surface', (
+    tester,
+  ) async {
+    await _pump(tester, data: _snapshot(exactlyThreeOneCompetition: true));
+    final card = tester.widget<Card>(
+      find.byKey(const ValueKey('match-card-m_cr_live')),
+    );
+    final shape = card.shape! as RoundedRectangleBorder;
+
+    expect(card.margin, EdgeInsets.zero);
+    expect(card.color, Colors.transparent);
+    expect(card.elevation, 0);
+    expect(shape.borderRadius, BorderRadius.zero);
+    expect(shape.side, BorderSide.none);
+    expect(tester.getSize(_row('m_cr_live')).height, greaterThanOrEqualTo(120));
+    expect(
+      tester.getSize(find.byKey(const ValueKey('team-crest-m_cr_live-home'))),
+      const Size(42, 42),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Costa Rica aliases reuse verified canonical logos and crests', (
+    tester,
+  ) async {
+    await _pump(tester, data: _costaRicaMediaSnapshot());
+    List<String?> urlsWithin(Key key) => [
+      for (final image in tester.widgetList<Image>(
+        find.descendant(of: find.byKey(key), matching: find.byType(Image)),
+      ))
+        _networkUrl(image),
+      for (final image in tester.widgetList<SportsImage>(
+        find.descendant(
+          of: find.byKey(key),
+          matching: find.byType(SportsImage),
+        ),
+      ))
+        image.url,
+    ];
+
+    expect(
+      urlsWithin(const ValueKey('competition-logo-fb_comp_cr_canonical')),
+      contains(_competitionLogo),
+    );
+    expect(
+      urlsWithin(const ValueKey('team-crest-m_cr_media-home')),
+      contains(_interCrest),
+    );
+    expect(
+      urlsWithin(const ValueKey('team-crest-m_cr_media-away')),
+      contains(_perezCrest),
+    );
+  });
+
+  testWidgets('missing or unverified media still fails closed to initials', (
+    tester,
+  ) async {
+    await _pump(tester, data: _costaRicaMediaSnapshot(verifiedMedia: false));
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('competition-logo-fb_comp_cr_canonical')),
+        matching: find.text('PD'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('team-crest-m_cr_media-home')),
+        matching: find.text('IS'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('team-crest-m_cr_media-away')),
+        matching: find.text('MP'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('two competitions render as two group cards', (tester) async {
+    await _pump(tester);
+    expect(find.byType(CompetitionMatchGroupCard), findsNWidgets(2));
+    expect(
+      find.byKey(const ValueKey('competition-group-competition-c_cr')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('competition-group-competition-c_es')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('subgroups appear only with explicit provider evidence', (
+    tester,
+  ) async {
+    await _pump(tester);
+    expect(find.text('Grupo A'), findsNothing);
+    expect(find.text('Grupo B'), findsNothing);
+
+    await _pump(tester, data: _snapshot(subgroupData: true));
+    expect(find.text('Grupo A'), findsOneWidget);
+    expect(find.text('Grupo B'), findsOneWidget);
   });
 
   testWidgets('the row star follows / unfollows the match without moving it '
@@ -373,7 +682,11 @@ void main() {
     expect(opened, isEmpty, reason: 'the star never opens the match');
     expect(db.toggles, ['match:m_es_long']);
     expect(find.text('FAVORITOS'), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6), reason: 'reorders only');
+    expect(
+      find.byType(FeedMatchRow),
+      findsNWidgets(6),
+      reason: 'reorders only',
+    );
     expect(_row('m_es_long'), findsOneWidget, reason: 'never duplicated');
     // Still under its own competition.
     expect(
@@ -384,7 +697,7 @@ void main() {
     await tester.tap(star);
     await tester.pumpAndSettle();
     expect(find.text('FAVORITOS'), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     await tester.tap(find.text(_longHome).first);
     await tester.pumpAndSettle();
     expect(opened, ['m_es_long']);
@@ -394,7 +707,7 @@ void main() {
     final handle = tester.ensureSemantics();
     await _pump(tester);
     final row = tester.getSemantics(
-      find.byKey(const ValueKey('match-card-action-m_es_1')),
+      find.bySemanticsLabel(RegExp(r'^Real Betis contra Getafe,')),
     );
     expect(row.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
     expect(row.label, isNot(contains('Seguir')));
@@ -409,32 +722,50 @@ void main() {
     handle.dispose();
   });
 
-  testWidgets('follows reorder without removing or duplicating', (
+  testWidgets(
+    'followed teams appear once in Favoritos; also remain in their league',
+    (tester) async {
+      await _pump(tester, follows: {'team:t_bet'});
+      expect(find.text('FAVORITOS'), findsOneWidget);
+      // Three followed fixtures are highlighted and remain in LaLiga.
+      expect(find.byType(FeedMatchRow), findsNWidgets(9));
+      for (final id in ['m_es_1', 'm_es_partial', 'm_es_awaiting']) {
+        expect(_rowInGroup(id, 'favorite', 'c_es'), findsOneWidget);
+        expect(_rowInGroup(id, 'competition', 'c_es'), findsOneWidget);
+      }
+      // Followed rows sit above the first competition header.
+      final followedY = tester
+          .getTopLeft(_rowInGroup('m_es_1', 'favorite', 'c_es'))
+          .dy;
+      expect(
+        followedY,
+        lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
+      );
+      // The unfollowed match of LaLiga stays under its competition.
+      expect(_row('m_es_long'), findsOneWidget);
+      // LaLiga keeps every fixture, including its followed-team fixtures.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('competition-count-c_es')))
+            .data,
+        '4',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('one Favoritos group spans leagues without hiding day matches', (
     tester,
   ) async {
-    await _pump(tester, follows: {'team:t_bet'});
+    await _pump(tester, follows: {'team:t_sap', 'team:t_bet'});
     expect(find.text('FAVORITOS'), findsOneWidget);
-    // Same total, followed matches appear once.
-    expect(find.byType(MatchCard), findsNWidgets(6));
-    expect(_row('m_es_1'), findsOneWidget);
-    expect(_row('m_es_partial'), findsOneWidget);
-    expect(_row('m_es_awaiting'), findsOneWidget);
-    // Followed rows sit above the first competition header.
-    final followedY = tester.getTopLeft(_row('m_es_1')).dy;
-    expect(
-      followedY,
-      lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
-    );
-    // The unfollowed match of LaLiga stays under its competition.
-    expect(_row('m_es_long'), findsOneWidget);
-    // LaLiga keeps only its unfollowed match under the header.
-    expect(
-      tester
-          .widget<Text>(find.byKey(const ValueKey('competition-count-c_es')))
-          .data,
-      '1',
-    );
-    expect(tester.takeException(), isNull);
+    expect(_rowInGroup('m_cr_live', 'favorite', 'c_cr'), findsOneWidget);
+    expect(_rowInGroup('m_es_1', 'favorite', 'c_es'), findsOneWidget);
+    expect(_rowInGroup('m_cr_live', 'competition', 'c_cr'), findsOneWidget);
+    expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsOneWidget);
+    expect(_rowInGroup('m_cr_next', 'competition', 'c_cr'), findsOneWidget);
+    expect(_rowInGroup('m_es_long', 'competition', 'c_es'), findsOneWidget);
+    expect(find.byType(FeedMatchRow), findsNWidgets(10));
   });
 
   testWidgets('collapse keeps header and count, expand restores rows', (
@@ -477,7 +808,7 @@ void main() {
     await _pump(tester);
     final live = _row('m_cr_live');
     expect(
-      find.descendant(of: live, matching: find.text("63′ · EN VIVO")),
+      find.descendant(of: live, matching: find.text("63′ · En vivo")),
       findsOneWidget,
     );
     expect(
@@ -504,20 +835,20 @@ void main() {
       expect(partial.showKickoff, isFalse);
 
       await _pump(tester, data: data);
-      // Played evidence past kickoff: score + "MARCADOR PARCIAL", no kickoff.
+      // Played evidence past kickoff: score + "Marcador parcial", no kickoff.
       final p = _row('m_es_partial');
       expect(
         find.descendant(of: p, matching: find.text('2 - 1')),
         findsOneWidget,
       );
       expect(
-        find.descendant(of: p, matching: find.text('MARCADOR PARCIAL')),
+        find.descendant(of: p, matching: find.text('Marcador parcial')),
         findsOneWidget,
       );
       // No evidence: dash + "POR CONFIRMAR", no kickoff time, no "Programado".
       final a = _row('m_es_awaiting');
       expect(
-        find.descendant(of: a, matching: find.text('POR CONFIRMAR')),
+        find.descendant(of: a, matching: find.text('Por confirmar')),
         findsOneWidget,
       );
       expect(find.descendant(of: a, matching: find.text('—')), findsOneWidget);
@@ -539,7 +870,7 @@ void main() {
       '"Favoritos": it stays in its competition, once', (tester) async {
     await _pump(tester, follows: {'match:m_es_1', 'competition:c_es'});
     expect(find.text('FAVORITOS'), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(_row('m_es_1'), findsOneWidget);
     expect(
       tester.getTopLeft(_row('m_es_1')).dy,
@@ -615,11 +946,13 @@ void main() {
       tester,
     ) async {
       await _pump(tester, size: Size(width, 3000), follows: {'team:t_long1'});
-      expect(find.byType(MatchCard), findsNWidgets(6));
+      expect(find.byType(FeedMatchRow), findsNWidgets(7));
       expect(tester.takeException(), isNull);
-      for (final row in tester.widgetList<MatchCard>(find.byType(MatchCard))) {
-        final size = tester.getSize(_row(row.match.id));
-        expect(size.height, greaterThanOrEqualTo(48));
+      for (final row in tester.widgetList<FeedMatchRow>(
+        find.byType(FeedMatchRow),
+      )) {
+        final size = tester.getSize(find.byWidget(row));
+        expect(size.height, greaterThanOrEqualTo(120));
         expect(size.width, lessThanOrEqualTo(width));
       }
     });
@@ -630,10 +963,12 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await _pump(tester, size: const Size(320, 4000), follows: {'team:t_long1'});
     expect(tester.takeException(), isNull);
-    for (final row in tester.widgetList<MatchCard>(find.byType(MatchCard))) {
+    for (final row in tester.widgetList<FeedMatchRow>(
+      find.byType(FeedMatchRow),
+    )) {
       expect(
-        tester.getSize(_row(row.match.id)).height,
-        greaterThanOrEqualTo(48),
+        tester.getSize(find.byWidget(row)).height,
+        greaterThanOrEqualTo(120),
       );
     }
     expect(find.text('Saprissa'), findsOneWidget);
@@ -645,6 +980,34 @@ void main() {
     await tester.tap(_row('m_es_1'));
     await tester.pumpAndSettle();
     expect(opened, ['m_es_1']);
+  });
+
+  testWidgets(
+    'favorite row opens its canonical match and league row retain the canonical match',
+    (tester) async {
+      final opened = await _pump(tester, follows: {'team:t_bet'});
+      expect(_rowInGroup('m_es_1', 'favorite', 'c_es'), findsOneWidget);
+      expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsOneWidget);
+
+      await tester.tap(_rowInGroup('m_es_1', 'favorite', 'c_es'));
+      await tester.pumpAndSettle();
+      expect(opened, ['m_es_1']);
+
+      final router = GoRouter.of(tester.element(find.text('detalle')));
+      router.pop();
+      await tester.pumpAndSettle();
+      expect(_row('m_es_1'), findsNWidgets(2));
+      expect(_rowInGroup('m_es_1', 'competition', 'c_es'), findsOneWidget);
+    },
+  );
+
+  testWidgets('two followed opponents make one favorite row per match', (
+    tester,
+  ) async {
+    await _pump(tester, follows: {'team:t_sap', 'team:t_lda'});
+    expect(_rowInGroup('m_cr_live', 'favorite', 'c_cr'), findsOneWidget);
+    expect(_rowInGroup('m_cr_live', 'competition', 'c_cr'), findsOneWidget);
+    expect(find.byType(FeedMatchRow), findsNWidgets(7));
   });
 
   testWidgets('toggle exposes expanded state and rows have full labels', (
@@ -680,7 +1043,10 @@ void main() {
       ),
     );
     final live = tester.getSemantics(
-      find.byKey(const ValueKey('match-card-action-m_cr_live')),
+      find.descendant(
+        of: _rowInGroup('m_cr_live', 'favorite', 'c_cr'),
+        matching: find.bySemanticsLabel(RegExp('Saprissa contra Alajuelense')),
+      ),
     );
     expect(live.label, contains('Saprissa contra Alajuelense'));
     expect(live.label, contains('1 - 0'));
@@ -739,7 +1105,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(list).dx, restX);
     // Back on today: the same matches, once.
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(tester.takeException(), isNull);
   });
 
@@ -752,7 +1118,11 @@ void main() {
     await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
     await tester.pumpAndSettle();
     expect(selected('En vivo'), isTrue);
-    expect(find.byType(MatchCard), findsNWidgets(2), reason: 'two live today');
+    expect(
+      find.byType(FeedMatchRow),
+      findsNWidgets(2),
+      reason: 'two live today',
+    );
 
     final swipe = find.byKey(const ValueKey('matches-date-swipe'));
     await tester.fling(swipe, const Offset(-300, 0), 1200); // tomorrow
@@ -764,10 +1134,12 @@ void main() {
     await tester.fling(swipe, const Offset(300, 0), 1200);
     await tester.pumpAndSettle();
     expect(selected('Todos'), isTrue);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
 
     // Other filters are the user's choice on any day.
     // (The chip sits beyond the right edge of the chip row at 390 px.)
+    await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Finalizados'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ChoiceChip, 'Finalizados'));
@@ -843,7 +1215,7 @@ void main() {
           .selected,
       isTrue,
     );
-    expect(find.text('Sin partidos'), findsOneWidget);
+    expect(find.text('No hay partidos para este día.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -863,7 +1235,7 @@ void main() {
         lessThan(tester.getTopLeft(find.text(second)).dy),
       );
       // Reordered only: every match of the day, exactly once.
-      expect(find.byType(MatchCard), findsNWidgets(6));
+      expect(find.byType(FeedMatchRow), findsNWidgets(6));
       for (final id in [
         'm_cr_live',
         'm_cr_next',
@@ -877,18 +1249,23 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('country $country: FAVORITOS stays on top and its matches '
-        'are not repeated', (tester) async {
+    testWidgets('country $country: FAVORITOS stays on top and each followed '
+        'match also remains once in its league', (tester) async {
       await _pump(tester, country: country, follows: {'team:t_bet'});
       final favourites = tester.getTopLeft(find.text('FAVORITOS')).dy;
-      expect(favourites, lessThan(tester.getTopLeft(find.text(first)).dy));
-      expect(favourites, lessThan(tester.getTopLeft(find.text(second)).dy));
-      expect(find.byType(MatchCard), findsNWidgets(6));
+      final firstId = first == 'LaLiga' ? 'c_es' : 'c_cr';
+      final secondId = second == 'LaLiga' ? 'c_es' : 'c_cr';
+      final firstHeader = find.byKey(ValueKey('competition-open-$firstId'));
+      final secondHeader = find.byKey(ValueKey('competition-open-$secondId'));
+      expect(favourites, lessThan(tester.getTopLeft(firstHeader).dy));
+      expect(favourites, lessThan(tester.getTopLeft(secondHeader).dy));
+      expect(find.byType(FeedMatchRow), findsNWidgets(9));
       for (final id in ['m_es_1', 'm_es_awaiting', 'm_es_partial']) {
-        expect(_row(id), findsOneWidget);
+        expect(_rowInGroup(id, 'favorite', 'c_es'), findsOneWidget);
+        expect(_rowInGroup(id, 'competition', 'c_es'), findsOneWidget);
         expect(
-          tester.getTopLeft(_row(id)).dy,
-          lessThan(tester.getTopLeft(find.text(first)).dy),
+          tester.getTopLeft(_rowInGroup(id, 'favorite', 'c_es')).dy,
+          lessThan(tester.getTopLeft(firstHeader).dy),
         );
       }
       expect(tester.takeException(), isNull);
@@ -903,7 +1280,7 @@ void main() {
       tester.getTopLeft(find.text('LaLiga')).dy,
       lessThan(tester.getTopLeft(find.text('Liga Promerica')).dy),
     );
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
   });
 
   // --- One canonical fixture, exactly once -------------------------------
@@ -914,6 +1291,20 @@ void main() {
     const final21 = {'home': 2, 'away': 1};
     // Same canonical id twice.
     expect(ids([_fixture('a', 'h', 'x'), _fixture('a', 'h', 'x')]), ['a']);
+    for (final pair in [
+      [
+        _fixture('same', 'h', 'x'),
+        _fixture('same', 'h', 'x', status: 'VERIFIED', score: final21),
+      ],
+      [
+        _fixture('same', 'h', 'x', status: 'VERIFIED', score: final21),
+        _fixture('same', 'h', 'x'),
+      ],
+    ]) {
+      final survivor = dedupeFixtures(pair).single;
+      expect(survivor.isFinished, isTrue);
+      expect(survivor.score, '2 - 1');
+    }
     // Same competition, teams and kickoff: one fixture. The finished twin
     // replaces the scheduled copy in place; the others keep their order.
     expect(
@@ -1029,6 +1420,54 @@ void main() {
     );
   });
 
+  test('same-id final correction agrees with the latest snapshot row', () {
+    final oldFinal = FootballMatch(
+      _twinOf(
+        'm_es_1',
+        twinId: 'm_es_1',
+        status: 'VERIFIED',
+        score: {'home': 2, 'away': 1},
+      ),
+    );
+    final correctedFinal = FootballMatch(
+      _twinOf(
+        'm_es_1',
+        twinId: 'm_es_1',
+        status: 'VERIFIED',
+        score: {'home': 1, 'away': 1},
+      ),
+    );
+    final rows = [oldFinal, correctedFinal];
+    final snapshot = _withMatches(rows.map((match) => match.json).toList());
+
+    expect(snapshot.match('m_es_1')?.score, '1 - 1');
+    expect(dedupeFixtures(rows).single.score, '1 - 1');
+  });
+
+  testWidgets('corrected final score reaches favorite and league rows', (
+    tester,
+  ) async {
+    final oldFinal = _twinOf(
+      'm_es_1',
+      twinId: 'm_es_1',
+      status: 'VERIFIED',
+      score: {'home': 2, 'away': 1},
+    );
+    final correctedFinal = {
+      ...oldFinal,
+      'score': {'home': 1, 'away': 1},
+    };
+    final data = _withMatches([oldFinal, correctedFinal]);
+    await _pump(tester, data: data, follows: {'team:t_bet'});
+
+    for (final scope in ['favorite', 'competition']) {
+      final row = _rowInGroup('m_es_1', scope, 'c_es');
+      expect(row, findsOneWidget);
+      expect(tester.widget<FeedMatchRow>(row).match.score, '1 - 1');
+    }
+    expect(data.match('m_es_1')?.score, '1 - 1');
+  });
+
   testWidgets('a fixture stored as two match entities renders exactly once', (
     tester,
   ) async {
@@ -1048,7 +1487,7 @@ void main() {
       ),
     ]);
     await _pump(tester, data: data);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(_row('m_es_1'), findsNothing);
     expect(_row('m_es_1_twin'), findsOneWidget);
     expect(
@@ -1059,13 +1498,74 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('status filters use the same winning fixture as Todos', (
+    tester,
+  ) async {
+    final data = _withMatches([
+      _twinOf(
+        'm_es_1',
+        twinId: 'm_es_1_done',
+        status: 'VERIFIED',
+        score: {'home': 2, 'away': 1},
+      ),
+    ]);
+    await _pump(tester, data: data, size: const Size(900, 3000));
+    expect(_row('m_es_1'), findsNothing);
+    expect(_row('m_es_1_done'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Próximos'));
+    await tester.pumpAndSettle();
+    expect(_row('m_es_1'), findsNothing);
+    expect(_row('m_es_1_done'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Finalizados'))
+          .selected,
+      isTrue,
+    );
+    expect(
+      _row('m_es_1_done'),
+      findsOneWidget,
+      reason:
+          'rendered: ${tester.widgetList<FeedMatchRow>(find.byType(FeedMatchRow)).map((row) => row.match.id).toList()}',
+    );
+  });
+
+  testWidgets('an obsolete LIVE twin cannot survive the En vivo filter', (
+    tester,
+  ) async {
+    final data = _withMatches([
+      _twinOf(
+        'm_cr_live',
+        twinId: 'm_cr_final',
+        status: 'VERIFIED',
+        score: {'home': 2, 'away': 1},
+      ),
+    ]);
+    await _pump(tester, data: data, size: const Size(900, 3000));
+    expect(_row('m_cr_live'), findsNothing);
+    expect(_row('m_cr_final'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
+    await tester.pumpAndSettle();
+    expect(_row('m_cr_live'), findsNothing);
+    expect(_row('m_cr_final'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Finalizados'));
+    await tester.pumpAndSettle();
+    expect(_row('m_cr_final'), findsOneWidget);
+  });
+
   testWidgets('the same clubs in ANOTHER competition at the same time are two '
       'matches', (tester) async {
     final data = _withMatches([
       _twinOf('m_es_1', twinId: 'm_es_1_other', competitionId: 'c_cr'),
     ]);
     await _pump(tester, data: data);
-    expect(find.byType(MatchCard), findsNWidgets(7));
+    expect(find.byType(FeedMatchRow), findsNWidgets(7));
     expect(_row('m_es_1'), findsOneWidget);
     expect(_row('m_es_1_other'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -1082,38 +1582,236 @@ void main() {
       follows: {'competition:c_es', 'match:m_cr_next'},
     );
     expect(find.text('FAVORITOS'), findsNothing);
-    expect(find.byType(MatchCard), findsNWidgets(6));
+    expect(find.byType(FeedMatchRow), findsNWidgets(6));
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('FAVORITOS: favourite-team matches first, once, nothing hidden '
-      '(even with a duplicated entity)', (tester) async {
-    final data = _withMatches([_twinOf('m_es_1', twinId: 'm_es_1_twin')]);
-    await _pump(
-      tester,
-      data: data,
-      follows: {'team:t_bet', 'competition:c_cr'},
-    );
-    expect(find.text('FAVORITOS'), findsOneWidget);
-    expect(find.byType(MatchCard), findsNWidgets(6), reason: 'nothing hidden');
-    // The favourite team's fixture appears once (one of the two entities).
-    expect(
-      _row('m_es_1').evaluate().length + _row('m_es_1_twin').evaluate().length,
-      1,
-    );
-    final favouritesY = tester.getTopLeft(find.text('FAVORITOS')).dy;
-    final firstCompetitionY = tester.getTopLeft(find.text('Liga Promerica')).dy;
-    expect(favouritesY, lessThan(firstCompetitionY));
-    // Every favourite-team match sits in the group, above every competition.
-    for (final id in ['m_es_awaiting', 'm_es_partial']) {
-      expect(tester.getTopLeft(_row(id)).dy, lessThan(firstCompetitionY));
+  testWidgets(
+    'FAVORITOS: favourite-team matches once per group, nothing hidden '
+    '(even with a duplicated entity)',
+    (tester) async {
+      final data = _withMatches([_twinOf('m_es_1', twinId: 'm_es_1_twin')]);
+      await _pump(
+        tester,
+        data: data,
+        follows: {'team:t_bet', 'competition:c_cr'},
+      );
+      expect(find.text('FAVORITOS'), findsOneWidget);
+      expect(
+        find.byType(FeedMatchRow),
+        findsNWidgets(9),
+        reason: 'nothing hidden',
+      );
+      // The provider twins resolve to one fixture per section, never two
+      // inside Favoritos or inside LaLiga.
+      for (final scope in ['favorite', 'competition']) {
+        expect(
+          _rowInGroup('m_es_1', scope, 'c_es').evaluate().length +
+              _rowInGroup('m_es_1_twin', scope, 'c_es').evaluate().length,
+          1,
+        );
+      }
+      final favouritesY = tester.getTopLeft(find.text('FAVORITOS')).dy;
+      final firstCompetitionY = tester
+          .getTopLeft(find.text('Liga Promerica'))
+          .dy;
+      expect(favouritesY, lessThan(firstCompetitionY));
+      // Every favourite-team match sits in the group, above every competition.
+      for (final id in ['m_es_awaiting', 'm_es_partial']) {
+        expect(
+          tester.getTopLeft(_rowInGroup(id, 'favorite', 'c_es')).dy,
+          lessThan(firstCompetitionY),
+        );
+      }
+      // Matches of the followed LEAGUE without a favourite team stay below.
+      expect(
+        tester.getTopLeft(_row('m_cr_live')).dy,
+        greaterThan(firstCompetitionY),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  group('feed ad slots in the real feed', () {
+    /// [groups] competitions with two matches each today; with
+    /// [favourite], one of them involves the followed team t_fav.
+    Snapshot manyGroups(int groups, {bool favourite = false}) {
+      final today = costaRicaNow();
+      String at(int hour) => DateTime.utc(
+        today.year,
+        today.month,
+        today.day,
+        hour + 6,
+      ).toIso8601String();
+      final teams = <Map<String, dynamic>>[
+        {'id': 't_fav', 'name': 'Equipo Favorito', 'country': 'Costa Rica'},
+      ];
+      final matches = <Map<String, dynamic>>[];
+      for (var g = 0; g < groups; g++) {
+        for (var m = 0; m < 2; m++) {
+          final home = 't_${g}_${m}_h';
+          final away = 't_${g}_${m}_a';
+          teams
+            ..add({'id': home, 'name': 'Local $g$m'})
+            ..add({'id': away, 'name': 'Visita $g$m'});
+          matches.add({
+            'id': 'm_${g}_$m',
+            'competitionId': 'c_$g',
+            'homeTeamId': favourite && g == 0 && m == 0 ? 't_fav' : home,
+            'awayTeamId': away,
+            'startTime': at(10 + m),
+            'status': 'SCHEDULED',
+            'events': <dynamic>[],
+            'statistics': <dynamic>[],
+          });
+        }
+      }
+      return Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        'coverage': {'partial': false},
+        'freshness': {'stale': false},
+        'competitions': [
+          for (var g = 0; g < groups; g++)
+            {
+              'id': 'c_$g',
+              'name': 'Liga ${String.fromCharCode(65 + g % 26)}$g',
+              'country': 'Costa Rica',
+              'countryCode': 'CR',
+              'relevanceScore': 900 - g,
+            },
+        ],
+        'teams': teams,
+        'players': <dynamic>[],
+        'matches': matches,
+        'standings': <dynamic>[],
+      });
     }
-    // Matches of the followed LEAGUE without a favourite team stay below.
-    expect(
-      tester.getTopLeft(_row('m_cr_live')).dy,
-      greaterThan(firstCompetitionY),
-    );
-    expect(tester.takeException(), isNull);
+
+    /// Kinds of the feed's blocks top to bottom: H = competition header,
+    /// M = match row, A = ad slot.
+    String layout(WidgetTester tester) {
+      final items = <(double, String)>[
+        for (final e in find.byType(FeedMatchRow).evaluate())
+          (tester.getTopLeft(find.byWidget(e.widget)).dy, 'M'),
+        for (final e in find.byType(AdSlot).evaluate())
+          (tester.getTopLeft(find.byWidget(e.widget)).dy, 'A'),
+        for (final e
+            in find.byTooltip(RegExp('^Ocultar partidos de ')).evaluate())
+          (tester.getTopLeft(find.byWidget(e.widget)).dy, 'H'),
+      ]..sort((a, b) => a.$1.compareTo(b.$1));
+      return items.map((i) => i.$2).join();
+    }
+
+    testWidgets('without favourites: after groups 1, 3, 6, 9 and 12, between '
+        'complete groups only', (tester) async {
+      await _pump(
+        tester,
+        data: manyGroups(20),
+        size: const Size(390, 60000),
+        adsAllowed: true,
+      );
+      expect(find.byType(AdSlot), findsNWidgets(5));
+      expect(find.byKey(const ValueKey('competition-gap-c_0')), findsNothing);
+      final firstSectionFinder = find.byKey(
+        const ValueKey('feed-section-competition-c_0'),
+      );
+      final firstSection = tester.widget<CompetitionFeedSection>(
+        firstSectionFinder,
+      );
+      expect(firstSection.group, isA<CompetitionMatchGroupCard>());
+      expect(firstSection.ad, isA<AdSlot>());
+      final sectionColumn = tester.widget<Column>(
+        find.descendant(
+          of: firstSectionFinder,
+          matching: find.byKey(
+            const ValueKey('competition-feed-section-layout'),
+          ),
+        ),
+      );
+      expect(sectionColumn.children[0], same(firstSection.group));
+      expect(sectionColumn.children[1], same(firstSection.ad));
+      expect(sectionColumn.children[2], isA<SizedBox>());
+      expect((sectionColumn.children[2] as SizedBox).height, 12);
+      expect(
+        tester
+            .widget<Card>(
+              find.byKey(const ValueKey('competition-group-competition-c_0')),
+            )
+            .margin,
+        EdgeInsets.zero,
+      );
+      final text = layout(tester);
+      // Every ad is followed by a group header, never by a match row.
+      expect(RegExp('A(?!H)').hasMatch(text), isFalse, reason: text);
+      expect(text.contains('AA'), isFalse);
+      // One complete group (header + 2 rows) before the first ad.
+      expect(text.startsWith('HMMA'), isTrue, reason: text);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('with favourites: the first ad right after FAVORITOS', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        data: manyGroups(20, favourite: true),
+        follows: const {'team:t_fav'},
+        size: const Size(390, 60000),
+      );
+      expect(find.text('FAVORITOS'), findsOneWidget);
+      expect(find.byType(AdSlot), findsNWidgets(5));
+      final favourites = tester.getTopLeft(find.text('FAVORITOS')).dy;
+      final ads =
+          find
+              .byType(AdSlot)
+              .evaluate()
+              .map((e) => tester.getTopLeft(find.byWidget(e.widget)).dy)
+              .toList()
+            ..sort();
+      final headers =
+          find
+              .byWidgetPredicate(
+                (widget) =>
+                    widget.key?.toString().contains(
+                      'competition-group-competition-',
+                    ) ==
+                    true,
+              )
+              .evaluate()
+              .map((e) => tester.getTopLeft(find.byWidget(e.widget)).dy)
+              .toList()
+            ..sort();
+      // FAVORITOS, then the ad, then the first competition group.
+      expect(ads.first, greaterThan(favourites));
+      // In tests the unloaded ad placeholder can have zero height, so the
+      // following group may start at the same y-coordinate.
+      expect(ads.first, lessThanOrEqualTo(headers.first));
+      expect(RegExp('A(?!H)').hasMatch(layout(tester)), isFalse);
+    });
+
+    testWidgets('ads unavailable collapse to normal section spacing', (
+      tester,
+    ) async {
+      await _pump(tester, data: manyGroups(3), size: const Size(390, 9000));
+      expect(find.byType(AdSlot), findsOneWidget);
+      expect(find.byKey(const ValueKey('ad-matchesFeed')), findsNothing);
+      final section = tester.widget<CompetitionFeedSection>(
+        find.byKey(const ValueKey('feed-section-competition-c_0')),
+      );
+      final column = tester.widget<Column>(
+        find.descendant(
+          of: find.byKey(const ValueKey('feed-section-competition-c_0')),
+          matching: find.byKey(
+            const ValueKey('competition-feed-section-layout'),
+          ),
+        ),
+      );
+      expect(section.ad, isA<AdSlot>());
+      expect((column.children.last as SizedBox).height, 12);
+      expect(tester.getSize(find.byType(AdSlot).first).height, 0);
+    });
   });
 }
 

@@ -137,7 +137,7 @@ void main() {
     );
     expect(find.text('0'), findsNothing);
     expect(find.text('8'), findsOneWidget);
-    expect(find.text('–'), findsOneWidget);
+    expect(find.text('–'), findsNothing);
   });
 
   testWidgets('no player with a position: one plain list, no "Otros"', (

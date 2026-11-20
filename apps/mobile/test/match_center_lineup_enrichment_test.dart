@@ -74,7 +74,7 @@ void main() {
           databaseProvider.overrideWithValue(db),
           repositoryProvider.overrideWithValue(ApiRepository(Dio())),
           matchContextSnapshotProvider.overrideWith(
-            (ref, id) async => Snapshot(payload),
+            (ref, id) => Stream.value(Snapshot(payload)),
           ),
           matchDetailProvider.overrideWith((ref, id) {
             subscriptionCount++;
@@ -102,6 +102,23 @@ void main() {
       await tester.pump();
       await tester.pump();
 
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump(const Duration(seconds: 30));
+      expect(
+        subscriptionCount,
+        1,
+        reason: 'background must cancel detail polling',
+      );
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(
+        subscriptionCount,
+        2,
+        reason: 'resume rechecks pending detail once',
+      );
+      detailController.add(MatchDetail(_detail(pending: true)));
+      await tester.pump();
+
       // Two bounded retries (6s, 12s) then no more, per _lineupEnrichmentRetryDelays.
       await tester.pump(const Duration(seconds: 6));
       detailController.add(MatchDetail(_detail(pending: true)));
@@ -119,7 +136,7 @@ void main() {
       // The provider was genuinely re-subscribed twice (the 6s and 12s
       // retries), on top of the initial subscription -- proving the refresh
       // actually re-fetches instead of just scheduling timers that do nothing.
-      expect(subscriptionCount, 3);
+      expect(subscriptionCount, 4);
     },
   );
 }
