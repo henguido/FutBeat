@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { openDatabase } from '../storage/database.mjs';
 
-// Guest -> account (20261105110000). A Supabase session is simulated with
+// Guest -> account (20261108040000). A Supabase session is simulated with
 // request.jwt.claims (auth.uid() / auth.jwt() as Supabase defines them).
 // Linking an identity keeps the user id (nothing to test server-side);
 // signing in to an existing account merges through a one-time ticket.
@@ -119,7 +119,7 @@ test('grants: only signed-in sessions (authenticated) can issue or redeem', () =
 }));
 
 test('rollback removes the merge objects', () => withDb(async (db) => {
-  await db.exec(await readFile(new URL('../../supabase/manual/20261105110000_guest_account_merge_rollback.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../../supabase/manual/20261108040000_guest_account_merge_rollback.sql', import.meta.url), 'utf8'));
   assert.equal(await v(db, "select to_regprocedure('public.futbeat_issue_guest_merge_ticket()') v"), null);
   assert.equal(await v(db, "select to_regclass('futbeat_private.guest_merge_tickets') v"), null);
 }));

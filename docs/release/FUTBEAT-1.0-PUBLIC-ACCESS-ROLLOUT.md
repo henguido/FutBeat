@@ -9,10 +9,10 @@ Contrato app ↔ backend: `packages/contracts/public-api-access-v1.md`.
 
 | Paquete | Archivos | Efecto al aplicarlo | Rollback |
 |---|---|---|---|
-| A. Navegación pasiva + límites | `supabase/migrations/20261105100000_public_api_access.sql` | **Inmediato para todos los clientes**: abrir pantallas deja de crear demandas a GOAL (incluida la búsqueda de jugadores). Crea `futbeat_api_admit` (sin uso hasta el paquete C). | `supabase/manual/20261105100000_public_api_access_rollback.sql`, o solo `update futbeat_private.api_access_policy set navigation_demands=true` |
-| B. Invitado → cuenta | `supabase/migrations/20261105110000_guest_account_merge.sql` | RPC de tickets; nada cambia hasta que la app los use | `supabase/manual/20261105110000_guest_account_merge_rollback.sql` |
+| A. Navegación pasiva + límites | `supabase/migrations/20261108030000_public_api_access.sql` | **Inmediato para todos los clientes**: abrir pantallas deja de crear demandas a GOAL (incluida la búsqueda de jugadores). Crea `futbeat_api_admit` (sin uso hasta el paquete C). | `supabase/manual/20261108030000_public_api_access_rollback.sql`, o solo `update futbeat_private.api_access_policy set navigation_demands=true` |
+| B. Invitado → cuenta | `supabase/migrations/20261108040000_guest_account_merge.sql` | RPC de tickets; nada cambia hasta que la app los use | `supabase/manual/20261108040000_guest_account_merge_rollback.sql` |
 | C. Contrato de la API | `supabase/functions/futbeat-api/index.ts`, `_shared/api_access.ts` | **Ninguno** sin variables de entorno: idéntica a la actual | Quitar las variables (vuelve a `open`) o redeploy anterior |
-| (P4) Resúmenes | `20261105090000_match_summary_cache.sql` + ruta `/v1/match-summary` | Independiente | `supabase/manual/20261105090000_match_summary_cache_rollback.sql` |
+| (P4) Resúmenes | `20261108020000_match_summary_cache.sql` + ruta `/v1/match-summary` | Independiente | `supabase/manual/20261108020000_match_summary_cache_rollback.sql` |
 
 ## Requisitos previos en Supabase (panel, con autorización)
 

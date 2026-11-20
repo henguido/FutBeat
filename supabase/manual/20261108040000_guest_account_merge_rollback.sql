@@ -1,4 +1,4 @@
--- Rollback of 20261105110000_guest_account_merge.sql (manual, NOT a
+-- Rollback of 20261108040000_guest_account_merge.sql (manual, NOT a
 -- migration). Merged follows/preferences stay with the accounts that
 -- redeemed them (they are the user's data now); only the ticket machinery
 -- and its audit go. Ship an app that no longer calls these RPCs first.

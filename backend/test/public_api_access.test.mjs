@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../storage/database.mjs';
 
-// FutBeat 1.0 public access (20261105100000): browsing never creates
+// FutBeat 1.0 public access (20261108030000): browsing never creates
 // provider demand while the switch is off (the default), and every request
 // is admitted against identity, IP-hash and global windows. PGlite; no
 // provider is ever called.
@@ -148,7 +148,7 @@ test('rollback restores the original demand functions and drops admission', asyn
   const { readFile } = await import('node:fs/promises');
   const db = await openDatabase(undefined, { navigationDemands: null });
   try {
-    await db.exec(await readFile(new URL('../../supabase/manual/20261105100000_public_api_access_rollback.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../../supabase/manual/20261108030000_public_api_access_rollback.sql', import.meta.url), 'utf8'));
     assert.equal(await v(db, "select to_regprocedure('futbeat_private.futbeat_request_match_detail__ungated(text)') v"), null);
     assert.ok(!(await v(db, "select pg_get_functiondef('public.futbeat_request_match_detail(text)'::regprocedure) v")).includes('navigation_demands_enabled'));
     assert.ok(!(await v(db, "select pg_get_functiondef('futbeat_private.note_player_search_demand(text)'::regprocedure) v")).includes('navigation_demands_enabled'));

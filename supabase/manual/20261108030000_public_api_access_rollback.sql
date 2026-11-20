@@ -1,4 +1,4 @@
--- Rollback of 20261105100000_public_api_access.sql (manual, NOT a
+-- Rollback of 20261108030000_public_api_access.sql (manual, NOT a
 -- migration). Restores every demand entry point exactly as before (the
 -- originals were only renamed and moved) and drops the admission objects.
 -- Deploy a futbeat-api that does not call futbeat_api_admit FIRST.

@@ -2,7 +2,7 @@
 
 Para la variante Android de producción (Codex, desde `f255404d` / PR #248).
 Backend: rama `claude/futbeat-backend-local-d2nnav`, migraciones
-`20261105100000`, `20261105110000`, `futbeat-api` + `_shared/api_access.ts`.
+`20261108030000`, `20261108040000`, `futbeat-api` + `_shared/api_access.ts`.
 
 ## Principios
 

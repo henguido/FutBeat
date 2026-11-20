@@ -26,7 +26,7 @@
 --    says whether to serve it. Only a salted hash of the IP is stored.
 --
 -- No provider call, cron, quota policy, push or Preview change. Rollback:
--- supabase/manual/20261105100000_public_api_access_rollback.sql
+-- supabase/manual/20261108030000_public_api_access_rollback.sql
 
 create table if not exists futbeat_private.api_access_policy (
   singleton boolean primary key default true check(singleton),

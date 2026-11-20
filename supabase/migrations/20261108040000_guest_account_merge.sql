@@ -23,7 +23,7 @@
 -- only by a non-anonymous one, never into the same user.
 --
 -- No provider call, cron, quota, push dispatch or Preview change.
--- Rollback: supabase/manual/20261105110000_guest_account_merge_rollback.sql
+-- Rollback: supabase/manual/20261108040000_guest_account_merge_rollback.sql
 
 create table if not exists futbeat_private.guest_merge_tickets (
   ticket_hash text primary key check(ticket_hash ~ '^[0-9a-f]{64}$'),
