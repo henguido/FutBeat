@@ -155,3 +155,30 @@ test('rollback restores the original demand functions and drops admission', asyn
     assert.equal(await v(db, "select to_regclass('futbeat_private.api_access_policy') v"), null);
   } finally { await db.close(); }
 });
+
+// Opening a Match Center (detail, lineup photos, final result, table, H2H)
+// must not wake the provider worker: on main every one of these calls
+// futbeat_private.wake_provider_worker, i.e. an immediate GOAL acquisition.
+const wakes = (db) => v(db, "select coalesce(sum(wake_count+debounced_count),0)::int v from futbeat_private.worker_wakeups");
+async function openMatchCenter(db) {
+  for (const sql of [
+    "select public.futbeat_request_match_detail('fb_match_pa')",
+    "select public.futbeat_request_lineup_hydration(array['fb_player_pa'],array[]::text[])",
+    "select public.futbeat_request_terminal_result('fb_match_pa')",
+    "select public.futbeat_request_match_standings('fb_match_pa')",
+    "select public.futbeat_request_match_h2h('fb_match_pa')",
+  ]) await db.query(sql).catch(() => {});
+}
+
+test('passive: opening Match Center never wakes the provider worker', () => withDb(async (db) => {
+  const before = await wakes(db);
+  await openMatchCenter(db);
+  assert.equal(await wakes(db), before);
+}));
+
+test('control: with demands on, the same open does wake the worker', () => withDb(async (db) => {
+  await db.query('update futbeat_private.api_access_policy set navigation_demands=true');
+  const before = await wakes(db);
+  await openMatchCenter(db);
+  assert.ok(await wakes(db) > before, 'the probe detects a wake');
+}));
