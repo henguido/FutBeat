@@ -54,8 +54,8 @@ void main() {
           .whereType<PassivePreviewTransport>()
           .single;
       expect(transport.usesUserSession, isTrue);
-      expect(transport.sessionLimit, 30);
-      expect(transport.minuteLimit, 8);
+      expect(transport.sessionLimit, 120);
+      expect(transport.minuteLimit, 30);
       expect(transport.concurrentLimit, 2);
       expect(
         repository.dio.options.baseUrl,
