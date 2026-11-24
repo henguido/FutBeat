@@ -11,18 +11,122 @@ import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 class _RestoreGateway implements BillingGateway {
   _RestoreGateway(this.purchases);
   final List<OwnedPurchase> purchases;
+  bool isAvailable = true;
+  int ownedCalls = 0;
 
   @override
-  Future<bool> available() async => true;
+  Future<bool> available() async => isAvailable;
 
   @override
-  Future<List<OwnedPurchase>> owned() async => purchases;
+  Future<List<OwnedPurchase>> owned() async {
+    ownedCalls++;
+    return purchases;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 void main() {
+  test('startup recovers lost callback once; concurrent checks share restore and failures retry', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final submitted = <Object>[];
+    var unavailable = true;
+    server.listen((r) async {
+      if (r.method == 'POST') {
+        submitted.add(jsonDecode(await utf8.decoder.bind(r).join()));
+      }
+      r.response.statusCode = unavailable ? 503 : 200;
+      r.response.write('{"status":"inactive"}');
+      await r.response.close();
+    });
+    final gateway = _RestoreGateway([
+      OwnedPurchase(
+        productId: 'fixture',
+        purchased: true,
+        accountTag: billingAccountTag(entitlementAccountKey('a')),
+        token: 'recovered',
+        needsCompletion: true,
+      ),
+    ]);
+    final transport = PremiumQaTransport(
+      Uri.parse('http://127.0.0.1:${server.port}'),
+      () async => 'synthetic',
+    );
+    final source = PremiumQaEntitlementSource(
+      gateway,
+      (a) => a == 'a' ? transport : null,
+      {'fixture'},
+    );
+    final first = await Future.wait([source.check('a'), source.check('a')]);
+    expect(first.every((r) => !r.available), true);
+    expect(gateway.ownedCalls, 1);
+    unavailable = false;
+    expect((await source.check('a')).available, true);
+    expect(gateway.ownedCalls, 2);
+    expect(submitted, [
+      {
+        'tokens': ['recovered'],
+      },
+      {
+        'tokens': ['recovered'],
+      },
+    ]);
+    await source.check('a');
+    expect(gateway.ownedCalls, 2); // resume reads, no Publisher work per resume
+    expect((await source.check('b')).available, false);
+  });
+
+  test('Play unavailable at startup does not consume later recovery', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    var restores = 0;
+    server.listen((r) async {
+      if (r.method == 'POST') {
+        restores++;
+        await r.drain<void>();
+      }
+      r.response.write('{"status":"inactive"}');
+      await r.response.close();
+    });
+    final gateway = _RestoreGateway([
+      const OwnedPurchase(
+        productId: 'fixture', purchased: true, accountTag: 'store-tag',
+        token: 'recoverable',
+      ),
+    ])..isAvailable = false;
+    final transport = PremiumQaTransport(
+      Uri.parse('http://127.0.0.1:${server.port}'),
+      () async => 'synthetic',
+    );
+    final source = PremiumQaEntitlementSource(gateway, (_) => transport, {
+      'fixture',
+    });
+    await source.check('a');
+    expect(restores, 0);
+    gateway.isAvailable = true;
+    await source.check('a');
+    expect(restores, 1);
+    await source.check('a');
+    expect(restores, 1);
+  });
+  test('empty Play inventory reads the server instead of posting invalid empty restore', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final methods = <String>[];
+    server.listen((r) async {
+      methods.add(r.method);
+      r.response.write('{"status":"inactive"}');
+      await r.response.close();
+    });
+    final transport = PremiumQaTransport(
+      Uri.parse('http://127.0.0.1:${server.port}'), () async => 'synthetic',
+    );
+    final source = PremiumQaEntitlementSource(_RestoreGateway([]), (_) => transport, {'fixture'});
+    expect((await source.restore('a')).available, true);
+    expect(methods, ['GET']);
+  });
   test(
     'one Play product exposes both base plans with their localized prices',
     () {
@@ -74,7 +178,7 @@ void main() {
     },
   );
   test(
-    'restore verifies only distinct purchased tokens for the bound account',
+    'restore delegates ownership of distinct purchased tokens to the server',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
@@ -124,7 +228,7 @@ void main() {
       expect(restored.grant, isNull);
       expect(seen, [
         {
-          'tokens': ['owned'],
+          'tokens': ['owned', 'other'],
         },
       ]);
       expect((await source.check('b')).available, isFalse);

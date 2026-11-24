@@ -325,9 +325,8 @@ class TeamProfileView extends ConsumerWidget {
       'Noticias',
       'Transferencias',
     ];
-    final tabBar = profileTabBar(tabs);
 
-    Widget body(String tab) => switch (tab) {
+    Widget body(String tab, TabController controller) => switch (tab) {
       'Resumen' => ProfileTabList('resumen', [
         if (data.demo) const DemoNotice(),
         if (loading)
@@ -348,7 +347,7 @@ class TeamProfileView extends ConsumerWidget {
             onOpenTab: (tab) {
               final index = tabs.indexOf(tab);
               if (index >= 0) {
-                DefaultTabController.of(tabContext).animateTo(index);
+                controller.animateTo(index);
               }
             },
           ),
@@ -431,9 +430,10 @@ class TeamProfileView extends ConsumerWidget {
       ]),
     };
 
-    return DefaultTabController(
-      length: tabs.length,
-      child: Scaffold(
+    return ProfileTabs(
+      key: ValueKey('team-tabs-${team.id}'),
+      tabs: tabs,
+      builder: (context, controller) => Scaffold(
         appBar: AppBar(
           title: Text(
             team.displayName,
@@ -478,11 +478,19 @@ class TeamProfileView extends ConsumerWidget {
               handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
               sliver: SliverPersistentHeader(
                 pinned: true,
-                delegate: ProfileTabBarHeader(tabBar),
+                delegate: ProfileTabBarHeader(
+                  profileTabBar(tabs, controller: controller),
+                ),
               ),
             ),
           ],
-          body: TabBarView(children: [for (final tab in tabs) body(tab)]),
+          body: TabBarView(
+            controller: controller,
+            children: [
+              for (final tab in tabs)
+                KeyedSubtree(key: ValueKey(tab), child: body(tab, controller)),
+            ],
+          ),
         ),
       ),
     );

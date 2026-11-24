@@ -1,0 +1,2701 @@
+{
+  "recordedUtc": "2026-11-24T06:14:03.241896+00:00",
+  "head": "8a37e913abce5a0a1b1df291214e98f8ffaf91df",
+  "originMain": "6e10d3c83eed80c34db28ac14aa21af6bc1f81d1",
+  "candidate": "FutBeat-1.0.0-17-consolidated-final-acceptance-A32.apk",
+  "candidateSha256": "775CDD8853B5C9A8FB085D7F68C76A6192104D18C310257F97DBE84046FBBF93",
+  "candidateAppSourceDrift": [],
+  "toolchain": {
+    "flutter": {
+      "frameworkVersion": "3.47.4",
+      "channel": "stable",
+      "repositoryUrl": "https://github.com/flutter/flutter.git",
+      "frameworkRevision": "9584c6713b324636289d067944a46fd6b49df14b",
+      "frameworkCommitDate": "2026-09-10 15:25:10 -0700",
+      "engineRevision": "06a2e2a110089dff50fe635cffd2a61e1b24fbcd",
+      "engineCommitDate": "2026-09-03 16:07:13.000Z",
+      "engineContentHash": "0e228ec8c8d2abc9fcf1d053e8a40665bb859ec7",
+      "engineBuildDate": "2026-09-03 10:39:13.722",
+      "dartSdkVersion": "3.13.3",
+      "devToolsVersion": "2.60.0",
+      "flutterVersion": "3.47.4",
+      "flutterRoot": "C:\\dev\\flutter"
+    },
+    "java": "OpenJDK 25.0.2 build25.0.2+-15348964-b329.117",
+    "androidBuildTools": "36.0.0",
+    "gradleDistributionPropertiesSha256": "594A00250EF7A36609A01F3263BF5ED63963AFAF9CA9F82F2CD1DE0F6F056383",
+    "node": "v24.20.0"
+  },
+  "reproduction": "INPUTS_PINNED_LF_NORMALIZED_NO_RUNTIME_CHANGE; original accepted raw hashes retained; no extra APK built",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "sha256": "38F08F4181E7158D4C33E322129332354A4DABFFF9E7830F5286B97AA0750B87",
+      "lfSha256": "38F08F4181E7158D4C33E322129332354A4DABFFF9E7830F5286B97AA0750B87",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "8D9F1C0F72272B3BB37E8636843EF01D8059AE9C20AEC40CC35A1FD8C8033B28",
+      "previousNormalizedSha256": "1715D7498B0C7B50D28D2F8A96DD7C46BF50995BF588A9B33B95EEF965B5940C",
+      "consolidationOnlyReason": "Git checkout EOL policy expanded to all text (LF, bat override CRLF). No Android application/runtime source changed. Original acceptedRawSha256 preserved."
+    },
+    {
+      "path": "apps/mobile/android/.gitignore",
+      "sha256": "B027C9DE1011765C015E5819BF857C0D75BFCD0886FB01721C091159012E50F1",
+      "lfSha256": "B027C9DE1011765C015E5819BF857C0D75BFCD0886FB01721C091159012E50F1",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "C9AF75DBC2C8AA867476A09426C80B178C4AEED8B9393AE48503EEDFA3273D71"
+    },
+    {
+      "path": "apps/mobile/android/app/build.gradle.kts",
+      "sha256": "47E15937E87CE0B13A8ED9D0273AECE699BB46FAA9499B7B14C0FA8E2C40D0D9",
+      "lfSha256": "47E15937E87CE0B13A8ED9D0273AECE699BB46FAA9499B7B14C0FA8E2C40D0D9",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "8A8821B6D70319F140BD9A52368466FF15D4DBAC8EC66D1CD64E2C804DCAB786"
+    },
+    {
+      "path": "apps/mobile/android/app/proguard-rules.pro",
+      "sha256": "70DAEA43238F00954380F230FD372A9E99868B1AB54451FA637195D1859BABEA",
+      "lfSha256": "70DAEA43238F00954380F230FD372A9E99868B1AB54451FA637195D1859BABEA",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "52F6D127F8803268E8E934F64FA31E31FAB1D61D3EDC89CC5008437661AAC60B"
+    },
+    {
+      "path": "apps/mobile/android/app/src/debug/AndroidManifest.xml",
+      "sha256": "4E4A0E0726BAF45D2D878EA5D0E0666E08EA6E9DBDC33ECD2A74A3525CF5BA51",
+      "lfSha256": "4E4A0E0726BAF45D2D878EA5D0E0666E08EA6E9DBDC33ECD2A74A3525CF5BA51",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "833CECA807D101A152BFE898EF849446B863AF4CF505FFA156D7D4B04D82901E"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/AndroidManifest.xml",
+      "sha256": "18A72DD631E3FFD3005D46A83DBA976750B99E1454540FD914AE749081C9B149",
+      "lfSha256": "18A72DD631E3FFD3005D46A83DBA976750B99E1454540FD914AE749081C9B149",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "09EA5CB85E0EAC8C45162E47CD64EE6D00FDFDA86184086BAD3ABCBE71A01CDE"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/kotlin/com/futbeat/futbeat/MainActivity.kt",
+      "sha256": "3BD7A539193043EDCB4B44CF0166DC41718966FCE923E87F3458B4B2FCE9C920",
+      "lfSha256": "3BD7A539193043EDCB4B44CF0166DC41718966FCE923E87F3458B4B2FCE9C920",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable-v21/launch_background.xml",
+      "sha256": "7CA6D5CEC2169C5A98661A119DB23A6F3399C8FEF2256FF04F3A642831282478",
+      "lfSha256": "7CA6D5CEC2169C5A98661A119DB23A6F3399C8FEF2256FF04F3A642831282478",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "DCA312EC77DE83E43EF70A825C299B51451247286C29167D62F19165750B8793"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable/futbeat_icon.xml",
+      "sha256": "B2E891C2F9DAB5206FA007424CD1F11A1CD722B77B4B8DDABDA023B70389FC7F",
+      "lfSha256": "B2E891C2F9DAB5206FA007424CD1F11A1CD722B77B4B8DDABDA023B70389FC7F",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "6B135F1EBD6462B5C35C41827406649C86D1D0407109A11FDE4A9987978548D9"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable/futbeat_launcher_foreground.xml",
+      "sha256": "C35D56FE724D98B6B255A005397C30FB481AA61E4527EAF6E8BB94CD63483CF1",
+      "lfSha256": "C35D56FE724D98B6B255A005397C30FB481AA61E4527EAF6E8BB94CD63483CF1",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "5AEA353A734216E711DD912FAC582089F5C8DBB9E33C098D454ADD310E53E14F"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable/futbeat_launcher_monochrome.xml",
+      "sha256": "5AA03263F6745D58E3F90BE60F66AD44FC9B875E19780A613574094457A5E649",
+      "lfSha256": "5AA03263F6745D58E3F90BE60F66AD44FC9B875E19780A613574094457A5E649",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "7A719D051B819A8535377CF971F77C7430C616B1481F6F24F519918FD2C8FACC"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable/launch_background.xml",
+      "sha256": "94433756FE10005DDD6FC55CC5C0B1E9F3C10B66A08CEAC795ECE6713D34E28A",
+      "lfSha256": "94433756FE10005DDD6FC55CC5C0B1E9F3C10B66A08CEAC795ECE6713D34E28A",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "2DF60E2CFBEE873CE2858088CF003E6B93498F2F568476DA437610467EA1A9D7"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+      "sha256": "18EBA00039798D1C24C8AE6F09F38D52B3CB96BFA7E0277153353959100A7438",
+      "lfSha256": "18EBA00039798D1C24C8AE6F09F38D52B3CB96BFA7E0277153353959100A7438",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "744ADD0C1F6AB49D78B23487B311748D8C7E55CACC2F7725374894B39499D11D"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+      "sha256": "18EBA00039798D1C24C8AE6F09F38D52B3CB96BFA7E0277153353959100A7438",
+      "lfSha256": "18EBA00039798D1C24C8AE6F09F38D52B3CB96BFA7E0277153353959100A7438",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "744ADD0C1F6AB49D78B23487B311748D8C7E55CACC2F7725374894B39499D11D"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-anydpi/ic_launcher.xml",
+      "sha256": "F4C054AE29029CC5D02AED5C05BF2724761F6102802C955A6AD4C2C4D3A70E5C",
+      "lfSha256": "F4C054AE29029CC5D02AED5C05BF2724761F6102802C955A6AD4C2C4D3A70E5C",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "0E9655B54AF857D3EA64C0EE0D85E32800167246C1BCDF80A6E5FC3EBE77FA86"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-anydpi/ic_launcher_round.xml",
+      "sha256": "6CE9257A2C7895F733FA9881D8CA7552CE26809A252B1CC41DA12C1241664D9C",
+      "lfSha256": "6CE9257A2C7895F733FA9881D8CA7552CE26809A252B1CC41DA12C1241664D9C",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "73419ACA4A3DA0C8209EBA8AEF82FBFCE6B7A1B988B4AA1EA7FDB119DBFA2750"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+      "sha256": "EB698AF4B4AB9415559298A0737CB6A34D42D1C0400A3CF478D2291C08BF41B0",
+      "lfSha256": "EB698AF4B4AB9415559298A0737CB6A34D42D1C0400A3CF478D2291C08BF41B0",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+      "sha256": "8C3A922D70F76A425911C014343721892A70F98B5C25606349602F3B640A5DBB",
+      "lfSha256": "8C3A922D70F76A425911C014343721892A70F98B5C25606349602F3B640A5DBB",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+      "sha256": "31C2713E8F7BED5615F5253A8BBACA183E39CA4DAFE5DCE4249E91EE519CE3B4",
+      "lfSha256": "31C2713E8F7BED5615F5253A8BBACA183E39CA4DAFE5DCE4249E91EE519CE3B4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+      "sha256": "CE0E3A32A27665D9B395B329CF1DD6E7BE3CEED41164261B26E134EE607E5E4E",
+      "lfSha256": "CE0E3A32A27665D9B395B329CF1DD6E7BE3CEED41164261B26E134EE607E5E4E",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+      "sha256": "738E504B1F2A43F32244276183A405FD2407995272B9F1AB8D36030FDE411683",
+      "lfSha256": "738E504B1F2A43F32244276183A405FD2407995272B9F1AB8D36030FDE411683",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/values-night/styles.xml",
+      "sha256": "8C5BAD5152F217E837519F9C15211D19F39BD45F5F67FAF6DD81CB4B299E518F",
+      "lfSha256": "8C5BAD5152F217E837519F9C15211D19F39BD45F5F67FAF6DD81CB4B299E518F",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "EA763597DC1A84C8034251CAEE98D7753E0FBF57340FFC94677427DE4B537516"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/values/colors.xml",
+      "sha256": "2932B5B7CDB03EE36DCE579E355887649CC5ABDC0D883289EB0844FC7E2DB7BE",
+      "lfSha256": "2932B5B7CDB03EE36DCE579E355887649CC5ABDC0D883289EB0844FC7E2DB7BE",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "B25403CB80AD1EA7F72A88D36E3455764E7709D3BB9F3AB532597951834CD1DF"
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/values/styles.xml",
+      "sha256": "937D7C82F539C72EB94FD3A3773F29B3D3FEF1997213C92CB632298CEDF4BDA9",
+      "lfSha256": "937D7C82F539C72EB94FD3A3773F29B3D3FEF1997213C92CB632298CEDF4BDA9",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "CCA15A99B59380A548BF6A890F7CA5380EE509B1F9BBB2F5F9EC3589FA25C2F7"
+    },
+    {
+      "path": "apps/mobile/android/app/src/passivePreview/AndroidManifest.xml",
+      "sha256": "003FA4FC0946380EC5FCE7E1B0D72E7EC17B5FAB0CCF57178CB9351B49708BE1",
+      "lfSha256": "003FA4FC0946380EC5FCE7E1B0D72E7EC17B5FAB0CCF57178CB9351B49708BE1",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "79FB0ED8B1AE5754DD1FB8B41578D28CF629A82EFE2B1091343BAB4A4269ECA7"
+    },
+    {
+      "path": "apps/mobile/android/app/src/preview/AndroidManifest.xml",
+      "sha256": "77E6D763423E5B931063B419B2DD88AE95DDF798CFAA6DF8D543BAE19D683587",
+      "lfSha256": "77E6D763423E5B931063B419B2DD88AE95DDF798CFAA6DF8D543BAE19D683587",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "F50A43A6EE99DD35793AFDD29A1F136483FA3778F63DFF8EE201E417176E9B3A"
+    },
+    {
+      "path": "apps/mobile/android/app/src/profile/AndroidManifest.xml",
+      "sha256": "30B0832ED8B92DFBD6AE2ABFA939CCF26333D37600056B1572BD4A397A18A74B",
+      "lfSha256": "30B0832ED8B92DFBD6AE2ABFA939CCF26333D37600056B1572BD4A397A18A74B",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "B01A4541A8144C15BC617BAB7EB267C99FA1476368FBBDA5A12CDBF4E316A34C"
+    },
+    {
+      "path": "apps/mobile/android/build.gradle.kts",
+      "sha256": "6A26DBA2CB8DFBA1E74F540B0D17A89D96C1301D3C3BFDA14348BED257FDDCBA",
+      "lfSha256": "6A26DBA2CB8DFBA1E74F540B0D17A89D96C1301D3C3BFDA14348BED257FDDCBA",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "218F400E3FFF31C9C986A2535DFB974560E1B4D33CC27B7C1FEE96A2B7E44454"
+    },
+    {
+      "path": "apps/mobile/android/gradle.properties",
+      "sha256": "A39A2197D25B63893AEFE12A4A88A847845E8C6C34D93DC6D45AF9BAF94A208B",
+      "lfSha256": "A39A2197D25B63893AEFE12A4A88A847845E8C6C34D93DC6D45AF9BAF94A208B",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "3D3F5530D958B1C5C819AA1B366AF4EA350F42C0513BDAD156BFF068A4AB69FD"
+    },
+    {
+      "path": "apps/mobile/android/gradle/wrapper/gradle-wrapper.properties",
+      "sha256": "B690D26223576FE4E63889FAD9A00DF81945CB870B9476CC5A563152A1A88A74",
+      "lfSha256": "B690D26223576FE4E63889FAD9A00DF81945CB870B9476CC5A563152A1A88A74",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "594A00250EF7A36609A01F3263BF5ED63963AFAF9CA9F82F2CD1DE0F6F056383"
+    },
+    {
+      "path": "apps/mobile/android/settings.gradle.kts",
+      "sha256": "016759283E88ADE6EBA92910583FEEEF88B962839B957AA414296AFD2952D122",
+      "lfSha256": "016759283E88ADE6EBA92910583FEEEF88B962839B957AA414296AFD2952D122",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "092BA880C8D4A07591AAFC082F45DEEDC9AFCF60C113A4BB3D13CBE1A1FCE9DE"
+    },
+    {
+      "path": "apps/mobile/lib/core/account_deletion_receipts.dart",
+      "sha256": "4613705887766F4BD5374B5732C9675B244456940E2191B80F1BA40FF0B2E8EA",
+      "lfSha256": "4613705887766F4BD5374B5732C9675B244456940E2191B80F1BA40FF0B2E8EA",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/ads.dart",
+      "sha256": "F53B0CEF56C114F20E444AD15C7F7704FDFAE805FB3273362D1441184827A192",
+      "lfSha256": "F53B0CEF56C114F20E444AD15C7F7704FDFAE805FB3273362D1441184827A192",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/auth_errors.dart",
+      "sha256": "9A5B5CF9E3E962B0FE5F083C1D806566E2ED9755359431D09C889BEB58F892D9",
+      "lfSha256": "9A5B5CF9E3E962B0FE5F083C1D806566E2ED9755359431D09C889BEB58F892D9",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/billing.dart",
+      "sha256": "D7B2D0BB3D91582C69A654182CD06115D49E9333BE0AD4B0514BAE4BBFF82F1F",
+      "lfSha256": "D7B2D0BB3D91582C69A654182CD06115D49E9333BE0AD4B0514BAE4BBFF82F1F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/countries.dart",
+      "sha256": "3A3776775A1D45670CB15C17504DF6C4E118C05DEEE71E61F930A8CE89315B45",
+      "lfSha256": "3A3776775A1D45670CB15C17504DF6C4E118C05DEEE71E61F930A8CE89315B45",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/database.dart",
+      "sha256": "C51CCED80BD12C09FA27A8F8A3BCE0E6B34D945EAD15326C8C2A752F90265183",
+      "lfSha256": "C51CCED80BD12C09FA27A8F8A3BCE0E6B34D945EAD15326C8C2A752F90265183",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "4A5763BD9CE90B8BAE9BF6B651764EE291EB95FEA05EB05DD3C8C217D3399D9F"
+    },
+    {
+      "path": "apps/mobile/lib/core/database.g.dart",
+      "sha256": "15BEA94BB23EE5C3196C15A09511A855F0F081B12B1E0E2FD8875A895AACD56B",
+      "lfSha256": "15BEA94BB23EE5C3196C15A09511A855F0F081B12B1E0E2FD8875A895AACD56B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/entitlements.dart",
+      "sha256": "C998F53A04A506FDAF230E6AD5E8EF6749564AFEBA57E04BE7F489D510012AB1",
+      "lfSha256": "C998F53A04A506FDAF230E6AD5E8EF6749564AFEBA57E04BE7F489D510012AB1",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/entity_media.dart",
+      "sha256": "B19C8AAE921C8EBD8CB92D02C7D06CE12B885936977F61601D937C9630953B17",
+      "lfSha256": "B19C8AAE921C8EBD8CB92D02C7D06CE12B885936977F61601D937C9630953B17",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/interests.dart",
+      "sha256": "DB35FAEB7F88EEF4334EC81D832D3FB5AA86F02EFDDF87213A4249BBA02396AF",
+      "lfSha256": "DB35FAEB7F88EEF4334EC81D832D3FB5AA86F02EFDDF87213A4249BBA02396AF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/live_realtime.dart",
+      "sha256": "3DECA085D2DC67385D558386CC476D40DBDF70CE7CBFAEFA36924394ACCF889B",
+      "lfSha256": "3DECA085D2DC67385D558386CC476D40DBDF70CE7CBFAEFA36924394ACCF889B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/load_errors.dart",
+      "sha256": "790EFABD44D8D0F321A955EEDFCB7671D2B4A702078C1EAC99ACFF78D7E25F98",
+      "lfSha256": "790EFABD44D8D0F321A955EEDFCB7671D2B4A702078C1EAC99ACFF78D7E25F98",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "916AD9AD36152AA1ED12FD700A98E77F64C37640C28AF0341A9A58A1AA331AA4"
+    },
+    {
+      "path": "apps/mobile/lib/core/match_prefetch_plan.dart",
+      "sha256": "113D56D3650009CA5B20EBF6C8E085D672030342F1FE887B7DC6EAEDC1431814",
+      "lfSha256": "113D56D3650009CA5B20EBF6C8E085D672030342F1FE887B7DC6EAEDC1431814",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/models.dart",
+      "sha256": "CE44F080D6D2DC164D1D47720BDB8AB35DBF35B2947D9C63F5CA7AB3D0A6037D",
+      "lfSha256": "CE44F080D6D2DC164D1D47720BDB8AB35DBF35B2947D9C63F5CA7AB3D0A6037D",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "031440297FD14EEE488DA932BB2EABFA556FA520DEA373CE53C43F81C1E128CF"
+    },
+    {
+      "path": "apps/mobile/lib/core/news_links.dart",
+      "sha256": "F9EF7D65711C4D8C66D2751AD4D1DA0E042C4261CF8E1D71348EF2B24CFB89EF",
+      "lfSha256": "F9EF7D65711C4D8C66D2751AD4D1DA0E042C4261CF8E1D71348EF2B24CFB89EF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/notification_scopes.dart",
+      "sha256": "133CBEF8F0B131F31D84C1931DC7371CD2075D88E3980C595B9E82A376993930",
+      "lfSha256": "133CBEF8F0B131F31D84C1931DC7371CD2075D88E3980C595B9E82A376993930",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/notification_scopes_access.dart",
+      "sha256": "B79BE9C04744012144E62DD4C69E15680F1C3BDB6EC7DE6E2E27D902A9AAD4ED",
+      "lfSha256": "B79BE9C04744012144E62DD4C69E15680F1C3BDB6EC7DE6E2E27D902A9AAD4ED",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/passive_preview_transport.dart",
+      "sha256": "86B5B42AC22A07975A571B1D79D05610221650A79621AA6BE45DDA250CA9F10D",
+      "lfSha256": "86B5B42AC22A07975A571B1D79D05610221650A79621AA6BE45DDA250CA9F10D",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "FD10342711062E69837BE72CE4073C6033BB570EE7164D40685BD0068EE2A3D6"
+    },
+    {
+      "path": "apps/mobile/lib/core/password_reset_links.dart",
+      "sha256": "ED18A3AEC83A2669B4AFD49FDA61FE1DC603EA507967201BC6272F9F5B94D76A",
+      "lfSha256": "ED18A3AEC83A2669B4AFD49FDA61FE1DC603EA507967201BC6272F9F5B94D76A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/player_display_identity.dart",
+      "sha256": "4E3A5EA3A4A36F4617FA5771A1079296608C5C9E04FFAECBDFF4BEA6D6A1422B",
+      "lfSha256": "4E3A5EA3A4A36F4617FA5771A1079296608C5C9E04FFAECBDFF4BEA6D6A1422B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/premium_qa_transport.dart",
+      "sha256": "79EA4CEE77232D345300E1E2F8F8962A56DAECFCA17216BA148BE668A56F1F27",
+      "lfSha256": "79EA4CEE77232D345300E1E2F8F8962A56DAECFCA17216BA148BE668A56F1F27",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/profile_context.dart",
+      "sha256": "76175305EB4C2923E3E94C55706DA0679E13F63389CE235939B7A97422D0D424",
+      "lfSha256": "76175305EB4C2923E3E94C55706DA0679E13F63389CE235939B7A97422D0D424",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/providers.dart",
+      "sha256": "C73AE71CB1627F5DAC07D7A23A256E99890FEBFD8ACFECAC7603B3DEC0B578FA",
+      "lfSha256": "C73AE71CB1627F5DAC07D7A23A256E99890FEBFD8ACFECAC7603B3DEC0B578FA",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "5CE4108206170AC0C35C6146734C7B3EDA69D74DF375A0436D087D8FE97288AB"
+    },
+    {
+      "path": "apps/mobile/lib/core/push.dart",
+      "sha256": "320B4D73B9BB43ECCC35A8A6076A95A4070D0095CC8B4880AEFCDDB334B403EF",
+      "lfSha256": "320B4D73B9BB43ECCC35A8A6076A95A4070D0095CC8B4880AEFCDDB334B403EF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/push_messages.dart",
+      "sha256": "DDACAB68F9B2166F89E562469301138A588BA52D4C5696DA281C9E2D37A32EAF",
+      "lfSha256": "DDACAB68F9B2166F89E562469301138A588BA52D4C5696DA281C9E2D37A32EAF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/qa_development.dart",
+      "sha256": "F615B65D8A3925AE34FC8ED53101147CFED72E3D47835A875490030E05EE7944",
+      "lfSha256": "F615B65D8A3925AE34FC8ED53101147CFED72E3D47835A875490030E05EE7944",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/qa_diagnostics.dart",
+      "sha256": "5295AE8ACEEDE5C1E9A3A492B2F2D5A42BF57798E42AE8B104FC96754674B3D2",
+      "lfSha256": "5295AE8ACEEDE5C1E9A3A492B2F2D5A42BF57798E42AE8B104FC96754674B3D2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/relevance.dart",
+      "sha256": "FA8AA351AF007BA7FA51B044A99599F5DBDC10DD8503C58379C7AF1A57D3B76A",
+      "lfSha256": "FA8AA351AF007BA7FA51B044A99599F5DBDC10DD8503C58379C7AF1A57D3B76A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/sports_image_cache.dart",
+      "sha256": "5CBAF4753DB7DDBC33881BE121E15AC72F694A50AB17B9832B1C9B97F9093D49",
+      "lfSha256": "5CBAF4753DB7DDBC33881BE121E15AC72F694A50AB17B9832B1C9B97F9093D49",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/team_matches.dart",
+      "sha256": "F9033634E4023B46330A8C004354BF4DA5C5D7390C0E8F149759FA2924E40517",
+      "lfSha256": "F9033634E4023B46330A8C004354BF4DA5C5D7390C0E8F149759FA2924E40517",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/theme.dart",
+      "sha256": "15BE678DC03AA4FE1CEFE228C490A069AB7F45C0D7E59E9A21AFA5423BAE1A92",
+      "lfSha256": "15BE678DC03AA4FE1CEFE228C490A069AB7F45C0D7E59E9A21AFA5423BAE1A92",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/core/user_session_access.dart",
+      "sha256": "0BE8D7BD54C87CD1E9CEB79EFCF31DB024EEAA5955F6D7ED428E54058A693C46",
+      "lfSha256": "0BE8D7BD54C87CD1E9CEB79EFCF31DB024EEAA5955F6D7ED428E54058A693C46",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/auth/auth_sheet.dart",
+      "sha256": "21D189C0FD994FAC1D95468E05D63A786429B04DB5A1C61B3E6DC8A54DBD5DFE",
+      "lfSha256": "21D189C0FD994FAC1D95468E05D63A786429B04DB5A1C61B3E6DC8A54DBD5DFE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/competition_profile.dart",
+      "sha256": "816135F3E54BAFACD50753A8815B08B4DE51B9FFF78D40AC19ABE9894776756D",
+      "lfSha256": "816135F3E54BAFACD50753A8815B08B4DE51B9FFF78D40AC19ABE9894776756D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/entity_screen.dart",
+      "sha256": "54B0778CD2EA30E3C1CF0614EE94C5C31EA7F589662F98DE9038C0446AED1E90",
+      "lfSha256": "54B0778CD2EA30E3C1CF0614EE94C5C31EA7F589662F98DE9038C0446AED1E90",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "DCC44C2DE61F6824674F1AA4027C4BD70A08DE488B53995BBFD6C0E2BCC4925D"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/player_profile.dart",
+      "sha256": "27534793ECB6D958FD1148723FD4FF2B79E5CDE2FB47FF619AEC4E1777AEECFF",
+      "lfSha256": "27534793ECB6D958FD1148723FD4FF2B79E5CDE2FB47FF619AEC4E1777AEECFF",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "8E68C1C7E56926FB3D0E7F47F5220E3231C20C98C34B5DBED4A46D95DD4090A6"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/profile_context_bar.dart",
+      "sha256": "313BDD3A465BA2B96387BBD3006B988A9E551D5223D6EC72E96C4E1FCF33B03D",
+      "lfSha256": "313BDD3A465BA2B96387BBD3006B988A9E551D5223D6EC72E96C4E1FCF33B03D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/profile_widgets.dart",
+      "sha256": "95F2BFA138EC79B7FD2C7C82D8A79AB39FF8EF866573968250FF757ADA4260AF",
+      "lfSha256": "95F2BFA138EC79B7FD2C7C82D8A79AB39FF8EF866573968250FF757ADA4260AF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/standings.dart",
+      "sha256": "485A706E70B0B6ED7B2EF71E99D504CF41C5758A3D677F0327A2F3F8C630C29E",
+      "lfSha256": "485A706E70B0B6ED7B2EF71E99D504CF41C5758A3D677F0327A2F3F8C630C29E",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "555AE4024CA72E5F6AB27E4C267587EFC182D1EDDF53AEE76A0C336575BEA3B2"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/team_matches_tab.dart",
+      "sha256": "5D58CD3C98FA86C03B5688298AA4CEA612A7943CE2533F8D643CB25BB2459421",
+      "lfSha256": "5D58CD3C98FA86C03B5688298AA4CEA612A7943CE2533F8D643CB25BB2459421",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/team_profile.dart",
+      "sha256": "4CE82364CCDC6CEF081DE4CD9EE23C7F0332CD68FDF65D2EAEB2B73F8D027390",
+      "lfSha256": "4CE82364CCDC6CEF081DE4CD9EE23C7F0332CD68FDF65D2EAEB2B73F8D027390",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/team_summary.dart",
+      "sha256": "E2BE0523FAFD6536CCA42236E53940082DD5711ACD19EFA0123680C9E207EC15",
+      "lfSha256": "E2BE0523FAFD6536CCA42236E53940082DD5711ACD19EFA0123680C9E207EC15",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/explore/explore_screen.dart",
+      "sha256": "F78A6F9DB953BB6FE05AA3A6E5546CC95151A96E1FDE816CD986EEA5A03E920E",
+      "lfSha256": "F78A6F9DB953BB6FE05AA3A6E5546CC95151A96E1FDE816CD986EEA5A03E920E",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "70AE5AC3774452D002AB9FA5F7E93A0BC60D96ED909B540571BBDE9A7766286F"
+    },
+    {
+      "path": "apps/mobile/lib/features/favorites/favorites_screen.dart",
+      "sha256": "6450EABB5B6268381D80C2D3E0366CF34D1AB367ECF6F80D5FA773AF66540CC7",
+      "lfSha256": "6450EABB5B6268381D80C2D3E0366CF34D1AB367ECF6F80D5FA773AF66540CC7",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "584858672D905E4EAE2B011734BECDF17139279AC9BD9A51677034221CA0D7A3"
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/lineup_history.dart",
+      "sha256": "19D64115469A9780696FD3BCABB45953487F5CBF1BDD5529D8422654676F4C86",
+      "lfSha256": "19D64115469A9780696FD3BCABB45953487F5CBF1BDD5529D8422654676F4C86",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/lineup_history_section.dart",
+      "sha256": "D7FF5CB73EF6B072500627CCA180848F8DEEFBF2D8A487F9A04F780E5E6456DC",
+      "lfSha256": "D7FF5CB73EF6B072500627CCA180848F8DEEFBF2D8A487F9A04F780E5E6456DC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/live_field_card.dart",
+      "sha256": "09C63A3DF6E0C48F6D2D1F1651EE72559CD5FFBB85F77F41044B6315D9E3B4ED",
+      "lfSha256": "09C63A3DF6E0C48F6D2D1F1651EE72559CD5FFBB85F77F41044B6315D9E3B4ED",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_info_card.dart",
+      "sha256": "BC9462238A51AA39BAA254EAAC5F92690FAF0EA6B256A8AFC93602EDED12EA4A",
+      "lfSha256": "BC9462238A51AA39BAA254EAAC5F92690FAF0EA6B256A8AFC93602EDED12EA4A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_period_scores.dart",
+      "sha256": "29322AE3FF6D3BF256BE51851945A3E73612DDBCD4C9B5CF2CD78751789DE0DD",
+      "lfSha256": "29322AE3FF6D3BF256BE51851945A3E73612DDBCD4C9B5CF2CD78751789DE0DD",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_preview_sections.dart",
+      "sha256": "66D00C4D0A1136A23EF0A5E05ED5F9D3400D3ABD8F73C1878D4C3EDC62F01F5C",
+      "lfSha256": "66D00C4D0A1136A23EF0A5E05ED5F9D3400D3ABD8F73C1878D4C3EDC62F01F5C",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "8F156F1308659F00A607A80A8807BB92185D36B053734CFE005A8178F3814606"
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_screen.dart",
+      "sha256": "85A0E0F8742316DD156A50A3CEF656CC0FF9CDF48728FE5D4B31EBFFFF7D9519",
+      "lfSha256": "85A0E0F8742316DD156A50A3CEF656CC0FF9CDF48728FE5D4B31EBFFFF7D9519",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "BD98242CA356F8DD602C22F75967E9A207EE1723235E69495B2C80F321ECCF3F"
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/matches_screen.dart",
+      "sha256": "694E40884841A86417EEB8EA30E80308F0DBA154FEC8EA42ECC02B482EACD168",
+      "lfSha256": "694E40884841A86417EEB8EA30E80308F0DBA154FEC8EA42ECC02B482EACD168",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "A4006F4140A6016E2B4D14CBE930DBDDD8DA9DC6F3FFF2E742888D7A88B43518"
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/timeline_presentation.dart",
+      "sha256": "EE9AE44AE282167A78C6889266371EEB6744898CF1D554DBED0E6D390E9ECA11",
+      "lfSha256": "EE9AE44AE282167A78C6889266371EEB6744898CF1D554DBED0E6D390E9ECA11",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/news/news_feed_adapter.dart",
+      "sha256": "048351A98519435001BE4397205A06B46852538787A60B94DD27810DD1E56A35",
+      "lfSha256": "048351A98519435001BE4397205A06B46852538787A60B94DD27810DD1E56A35",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/news/news_screen.dart",
+      "sha256": "84BBDEB63E9B6D01F552197C39C34BD5D2C15EC6DFC4ACA2C761FD0B68FA07F7",
+      "lfSha256": "84BBDEB63E9B6D01F552197C39C34BD5D2C15EC6DFC4ACA2C761FD0B68FA07F7",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/onboarding/onboarding_screen.dart",
+      "sha256": "E0140D38FD25AF2FFF36AB6A0395B6F51A7C1E3FE4C29E2A8F154380315772D1",
+      "lfSha256": "E0140D38FD25AF2FFF36AB6A0395B6F51A7C1E3FE4C29E2A8F154380315772D1",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "D2841AC2BFFDF642BBFE6E8E0E31F87E6AA41AB58CCC83762C2B19DA442F1792"
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/about_screen.dart",
+      "sha256": "EDE8B3696FF33E3235D9603675C29C36F71E6A0FF20B1FAE4460BB2C1C36B144",
+      "lfSha256": "EDE8B3696FF33E3235D9603675C29C36F71E6A0FF20B1FAE4460BB2C1C36B144",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/account_security_screen.dart",
+      "sha256": "A8473453D21BCBAD14D63B6E83B64BFE3F2857CA45BC4F4DAB4E938AB3DB8163",
+      "lfSha256": "A8473453D21BCBAD14D63B6E83B64BFE3F2857CA45BC4F4DAB4E938AB3DB8163",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/ads_privacy_tile.dart",
+      "sha256": "AE663A0CD79D15B5F3230CBDC249574785DEDEAD296C58CA1B9C9D069A5F0105",
+      "lfSha256": "AE663A0CD79D15B5F3230CBDC249574785DEDEAD296C58CA1B9C9D069A5F0105",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/competition_order_preferences.dart",
+      "sha256": "98056496F45C84A94E63EEFB446CCD698BCA520D160A63D7D67710BA72F119DE",
+      "lfSha256": "98056496F45C84A94E63EEFB446CCD698BCA520D160A63D7D67710BA72F119DE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/notification_options.dart",
+      "sha256": "C593C75D7EDBC087321677E48102C9D0D02F05D8BDB25FF477B5FA5CE2F3D3AC",
+      "lfSha256": "C593C75D7EDBC087321677E48102C9D0D02F05D8BDB25FF477B5FA5CE2F3D3AC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/notification_scopes_screen.dart",
+      "sha256": "AC4EA418731EADB341650DFEA8A2D53628BF78F993D211B3283BC7F0BA6C7EAF",
+      "lfSha256": "AC4EA418731EADB341650DFEA8A2D53628BF78F993D211B3283BC7F0BA6C7EAF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/notifications_screen.dart",
+      "sha256": "95CD6F6C853CDA1207625D57512542A67443BDBE852D85000C24C0306561E60C",
+      "lfSha256": "95CD6F6C853CDA1207625D57512542A67443BDBE852D85000C24C0306561E60C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/notifications_screen_v2.dart",
+      "sha256": "790BAEEB17C8EF4AE235C00EC7934495B767A3BFEB2EAC93631C88F7CC5FB778",
+      "lfSha256": "790BAEEB17C8EF4AE235C00EC7934495B767A3BFEB2EAC93631C88F7CC5FB778",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/password_reset_sheet.dart",
+      "sha256": "13C677F52FBD6E26445E43C851E4D0184066948B238D29E0E1C1658C055B25A3",
+      "lfSha256": "13C677F52FBD6E26445E43C851E4D0184066948B238D29E0E1C1658C055B25A3",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/personalization_screen.dart",
+      "sha256": "A3EB3EA48B5C28FC6BB8E792C01CBB7496D87DF21A98160879A3DE68962C9E15",
+      "lfSha256": "A3EB3EA48B5C28FC6BB8E792C01CBB7496D87DF21A98160879A3DE68962C9E15",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/premium_card.dart",
+      "sha256": "788D5DE1351FB9CFF99DB241A706BA7912AF7FF141F201CA269A48F6995D398C",
+      "lfSha256": "788D5DE1351FB9CFF99DB241A706BA7912AF7FF141F201CA269A48F6995D398C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/premium_screen.dart",
+      "sha256": "3C8C0F13D4A2CB00F68519CAFE7C46CD8ADAF9DE7D3427D3594A779E4EE0D49B",
+      "lfSha256": "3C8C0F13D4A2CB00F68519CAFE7C46CD8ADAF9DE7D3427D3594A779E4EE0D49B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/privacy_ads_screen.dart",
+      "sha256": "B1CB52314D883D330ED0A83BF0E1EDD9213A7E34DBFF85C0D296411B417FFCC2",
+      "lfSha256": "B1CB52314D883D330ED0A83BF0E1EDD9213A7E34DBFF85C0D296411B417FFCC2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/profile_screen.dart",
+      "sha256": "A1A8095A74EB14D42CE330CB9B9706F4E5A224FBD743D560FCA39AD7DE358CAB",
+      "lfSha256": "A1A8095A74EB14D42CE330CB9B9706F4E5A224FBD743D560FCA39AD7DE358CAB",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/profile_section.dart",
+      "sha256": "BCC289D9FA5AB9637D3A3FAC0F77A700A30E1A9A7460616FBD57B5BEF87CD59D",
+      "lfSha256": "BCC289D9FA5AB9637D3A3FAC0F77A700A30E1A9A7460616FBD57B5BEF87CD59D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/support_legal_screen.dart",
+      "sha256": "3962B9D2CC1196B283CEE1774312DAFD0C2B73DA27CC114D7E81AB87C15318D0",
+      "lfSha256": "3962B9D2CC1196B283CEE1774312DAFD0C2B73DA27CC114D7E81AB87C15318D0",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/main.dart",
+      "sha256": "7798DDB91DFA5EEAD43C9B15EA3B4E4E5D7773504D4385878F34C0B55538DE07",
+      "lfSha256": "7798DDB91DFA5EEAD43C9B15EA3B4E4E5D7773504D4385878F34C0B55538DE07",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/shared/content_skeleton.dart",
+      "sha256": "BCFAAD72507A345367F27F83AEEE74B933070900EA506B9477A9DD0A57506ABE",
+      "lfSha256": "BCFAAD72507A345367F27F83AEEE74B933070900EA506B9477A9DD0A57506ABE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/shared/live_freshness_notice.dart",
+      "sha256": "C551E44962FCAAF09F23C7F04BE47BACB8D7AF4D5F0A4283E313650E2C799F23",
+      "lfSha256": "C551E44962FCAAF09F23C7F04BE47BACB8D7AF4D5F0A4283E313650E2C799F23",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/lib/shared/widgets.dart",
+      "sha256": "A44CB5048529AA5B4A450B375920E706C2ED75778FA3D0A8122A8FACE109A636",
+      "lfSha256": "A44CB5048529AA5B4A450B375920E706C2ED75778FA3D0A8122A8FACE109A636",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "857C3EE1263DBAA20E749EB806FF7AF81346F1282EC4D55F15CA3C013F96BBF6"
+    },
+    {
+      "path": "apps/mobile/pubspec.lock",
+      "sha256": "AE8D22FC9FA7DA528BD0180F44CCCC401D874313D46F02A61B8517353450A697",
+      "lfSha256": "AE8D22FC9FA7DA528BD0180F44CCCC401D874313D46F02A61B8517353450A697",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/pubspec.yaml",
+      "sha256": "B1AFCDC20126A7CF872F8E089C06C641FAED1F65FE16861107F57DEFFC5D7849",
+      "lfSha256": "B1AFCDC20126A7CF872F8E089C06C641FAED1F65FE16861107F57DEFFC5D7849",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/account_deletion_receipt_test.dart",
+      "sha256": "18C9A7AA39CDF778C21FFE312DCC5F889E51D0EEA1BC51F3528685A90A3B4E63",
+      "lfSha256": "18C9A7AA39CDF778C21FFE312DCC5F889E51D0EEA1BC51F3528685A90A3B4E63",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/account_diagnostic_privacy_test.dart",
+      "sha256": "F77DAAFB9FD51C3D8BDC2C72C18FAB19220F1592C26F33E0307C04BEF5B6B355",
+      "lfSha256": "F77DAAFB9FD51C3D8BDC2C72C18FAB19220F1592C26F33E0307C04BEF5B6B355",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/account_lifecycle_test.dart",
+      "sha256": "9DEE62F7D806A80D4DE3657D9A72B7478156BF253298B449D4DF8676B34CF4EE",
+      "lfSha256": "9DEE62F7D806A80D4DE3657D9A72B7478156BF253298B449D4DF8676B34CF4EE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/account_link_test.dart",
+      "sha256": "4FA6CC1C7FB561DD83170369D0C8ECE3EC7925DD41002D26E732EE7FBA0F64CB",
+      "lfSha256": "4FA6CC1C7FB561DD83170369D0C8ECE3EC7925DD41002D26E732EE7FBA0F64CB",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/ads_test.dart",
+      "sha256": "EE4AECE212D78DB2BD3E5951AF76A69ABCB1158BC06D58E3ED260642DAE7B283",
+      "lfSha256": "EE4AECE212D78DB2BD3E5951AF76A69ABCB1158BC06D58E3ED260642DAE7B283",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/api_repository_test.dart",
+      "sha256": "1E20E1B2FCCCD6E7524FB0FF2BF86F714E996E22442864E08573077A24EC798A",
+      "lfSha256": "1E20E1B2FCCCD6E7524FB0FF2BF86F714E996E22442864E08573077A24EC798A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/auth_flows_test.dart",
+      "sha256": "6DC378E3A53C0DCD56F93076416D21092DB4C1C8F16463816B57ABCB95C08E33",
+      "lfSha256": "6DC378E3A53C0DCD56F93076416D21092DB4C1C8F16463816B57ABCB95C08E33",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/auth_sheet_test.dart",
+      "sha256": "7030FE22CEBB2084A7F22727BD8596C0B17B10C49BFBBE1902833D22CC6CB364",
+      "lfSha256": "7030FE22CEBB2084A7F22727BD8596C0B17B10C49BFBBE1902833D22CC6CB364",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/billing_android_plan_change_test.dart",
+      "sha256": "F2CA99D1A2E19C3297E743235D698431938B93C2A0A4A73E9157766C0DDDA4D1",
+      "lfSha256": "F2CA99D1A2E19C3297E743235D698431938B93C2A0A4A73E9157766C0DDDA4D1",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/billing_g1_contract_test.dart",
+      "sha256": "DDBCA97A348B6B9CF1FD5611E3FC68D745CC5A4FA42FE13B6CAF40CFF4CA4E82",
+      "lfSha256": "DDBCA97A348B6B9CF1FD5611E3FC68D745CC5A4FA42FE13B6CAF40CFF4CA4E82",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/billing_test.dart",
+      "sha256": "CDC6433AE5161030F83806654796E369DA1F85E931F856439857815C5D9F75A6",
+      "lfSha256": "CDC6433AE5161030F83806654796E369DA1F85E931F856439857815C5D9F75A6",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/calendar_cache_explore_test.dart",
+      "sha256": "57B7C7A79C5584915245F22DD31F6EBC438462CF08612E7681EBA6B2AF7A9942",
+      "lfSha256": "57B7C7A79C5584915245F22DD31F6EBC438462CF08612E7681EBA6B2AF7A9942",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/calendar_live_observation_test.dart",
+      "sha256": "0BCE1B9C67201AC8B74BBED8DC21B84949F04D3E26C3B875DF372E7CF6F2BFE6",
+      "lfSha256": "0BCE1B9C67201AC8B74BBED8DC21B84949F04D3E26C3B875DF372E7CF6F2BFE6",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/calendar_prefetch_test.dart",
+      "sha256": "BC5D16AD58AA12977E34757ED6DDCDC8CFDB450C7C6B5BADB51FA684F8829F9A",
+      "lfSha256": "BC5D16AD58AA12977E34757ED6DDCDC8CFDB450C7C6B5BADB51FA684F8829F9A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/calendar_terminal_state_test.dart",
+      "sha256": "A99D6D1D7471E02B177DBF4DBBFDE5734ECE1C8517FD1862E91F4D8FAF70AB08",
+      "lfSha256": "A99D6D1D7471E02B177DBF4DBBFDE5734ECE1C8517FD1862E91F4D8FAF70AB08",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/catalog_flight_test.dart",
+      "sha256": "5B78BBB0D32D29B650A2437CE8D8E70CB6178D422E8B7775DD98739B66043161",
+      "lfSha256": "5B78BBB0D32D29B650A2437CE8D8E70CB6178D422E8B7775DD98739B66043161",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/competition_offline_restart_test.dart",
+      "sha256": "CA4DF7B371F6CF89127C237E0BE6DFCF5E6BA690A7B60B92B21237410EACE374",
+      "lfSha256": "CA4DF7B371F6CF89127C237E0BE6DFCF5E6BA690A7B60B92B21237410EACE374",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "CB8D08296601FF2ECD7076805E36763B5F20A46447673957DDCF0F1A0F519982"
+    },
+    {
+      "path": "apps/mobile/test/competition_profile_test.dart",
+      "sha256": "8F1F13C80F18021C5F9674DC2F10C7EA8433CFD719C1093952082BEAC7CEEEA2",
+      "lfSha256": "8F1F13C80F18021C5F9674DC2F10C7EA8433CFD719C1093952082BEAC7CEEEA2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/content_skeleton_test.dart",
+      "sha256": "DC97F3C564BF96CC2A31292303E27A8B920A3049603FAB7D303146FE78610A41",
+      "lfSha256": "DC97F3C564BF96CC2A31292303E27A8B920A3049603FAB7D303146FE78610A41",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/d1v2_match_calendar_sync_test.dart",
+      "sha256": "5A263F4BBEB1F2C0AE84F4D540E67AD4D491F75969168FFF6AF21399A3756E0B",
+      "lfSha256": "5A263F4BBEB1F2C0AE84F4D540E67AD4D491F75969168FFF6AF21399A3756E0B",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/database_test.dart",
+      "sha256": "1236A4793A150C9A6D9C975C81C8BFF0C50C7A754987BBAA844AFF4D5753F0DC",
+      "lfSha256": "1236A4793A150C9A6D9C975C81C8BFF0C50C7A754987BBAA844AFF4D5753F0DC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/demo_network_isolation_test.dart",
+      "sha256": "3A3B3AFB1DAC305B73A12C83A9F45E8921065BC5DB226B72E07790CBB7BBC878",
+      "lfSha256": "3A3B3AFB1DAC305B73A12C83A9F45E8921065BC5DB226B72E07790CBB7BBC878",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/domain_test.dart",
+      "sha256": "E8AD89892C53EB6E345B81BCB0349B335860030F216196647DA9C31E065BAA84",
+      "lfSha256": "E8AD89892C53EB6E345B81BCB0349B335860030F216196647DA9C31E065BAA84",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/entitlements_test.dart",
+      "sha256": "07935A10895F72D67E1E988593B8E61BC5FC2F8139D5371F005534AFE533A1BE",
+      "lfSha256": "07935A10895F72D67E1E988593B8E61BC5FC2F8139D5371F005534AFE533A1BE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/entity_avatar_canonical_cache_test.dart",
+      "sha256": "24BB0F75125DFE0C31963F319CB988AE371D8968697DA1171E5245A4ABD60BAD",
+      "lfSha256": "24BB0F75125DFE0C31963F319CB988AE371D8968697DA1171E5245A4ABD60BAD",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/entity_avatar_decode_size_test.dart",
+      "sha256": "DF5B8115EB15AA3A640769385171F5E47A62B900886F40F0214514039DB455E8",
+      "lfSha256": "DF5B8115EB15AA3A640769385171F5E47A62B900886F40F0214514039DB455E8",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/entity_revalidate_test.dart",
+      "sha256": "8E72F68FE044788BE3EF6880DA9093A2435E1112FF645BEA8B477925EA1F76BA",
+      "lfSha256": "8E72F68FE044788BE3EF6880DA9093A2435E1112FF645BEA8B477925EA1F76BA",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/event_reconciliation_test.dart",
+      "sha256": "C0E98ABF807C3F69A100F812C298B92CD259EF903588813686212EB5312EC6C0",
+      "lfSha256": "C0E98ABF807C3F69A100F812C298B92CD259EF903588813686212EB5312EC6C0",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/event_ui_test.dart",
+      "sha256": "8D633890DD1FA3CF40213811985BD6A01065CB52D7A7B36EB5595FE1F3415EDD",
+      "lfSha256": "8D633890DD1FA3CF40213811985BD6A01065CB52D7A7B36EB5595FE1F3415EDD",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/explore_first_paint_test.dart",
+      "sha256": "A56B354EA7028A7A00248860948DD41BB7F8A4972924DE012ABA5C20FEC2C63C",
+      "lfSha256": "A56B354EA7028A7A00248860948DD41BB7F8A4972924DE012ABA5C20FEC2C63C",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "7EA5DEB790AAE38881E59EF8C7B925BE8E935BCAB7AFF9D952964B9B541453BA"
+    },
+    {
+      "path": "apps/mobile/test/explore_v2_test.dart",
+      "sha256": "A5132CC47A9BC914FE68A3F79C62E08DABBC5DAD02750AAC0514D1DF298DE606",
+      "lfSha256": "A5132CC47A9BC914FE68A3F79C62E08DABBC5DAD02750AAC0514D1DF298DE606",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/favorites_hub_v2_test.dart",
+      "sha256": "95BE72472342BFD5CC320375429A41DACEB3B3DB737F01A02F10B960C8D089CC",
+      "lfSha256": "95BE72472342BFD5CC320375429A41DACEB3B3DB737F01A02F10B960C8D089CC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/favorites_offline_restart_test.dart",
+      "sha256": "F441BA9F0EA36D7359C7CCFF511B75D6BC759A634413033430F04B0744879705",
+      "lfSha256": "F441BA9F0EA36D7359C7CCFF511B75D6BC759A634413033430F04B0744879705",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "6315CE99584E82CA2569C62793A329F63973CFA49D5C901726DF2BA7CA213FCC"
+    },
+    {
+      "path": "apps/mobile/test/favorites_summary_test.dart",
+      "sha256": "9F9ACFC43A583F373C11A9ED5DDE98BE120AD7744420787F65C6A1C0E78747C9",
+      "lfSha256": "9F9ACFC43A583F373C11A9ED5DDE98BE120AD7744420787F65C6A1C0E78747C9",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/feed_v2_test.dart",
+      "sha256": "1DC4A221BC80981C6AA9A8639110651DB921ABF6E8E3286C533B507BDA02F31C",
+      "lfSha256": "1DC4A221BC80981C6AA9A8639110651DB921ABF6E8E3286C533B507BDA02F31C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/firebase_initialization_test.dart",
+      "sha256": "49384D762A2240E5CC48737D2AE2A95475499105ECC5D83982A85B583120C09A",
+      "lfSha256": "49384D762A2240E5CC48737D2AE2A95475499105ECC5D83982A85B583120C09A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/flow_test.dart",
+      "sha256": "558FEB476BA282E3BC4092037146738970EB751D8B25517139AD26E36EA033FC",
+      "lfSha256": "558FEB476BA282E3BC4092037146738970EB751D8B25517139AD26E36EA033FC",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "ECD96ADF3180B7E60FD2BF6BB9711AB77DAA05858F05E92E68E45B77C483FBA3"
+    },
+    {
+      "path": "apps/mobile/test/follow_alias_resolution_test.dart",
+      "sha256": "B1F563E3243F033F729E90AC8943415A6638BFD44C3FC9510CB23FC43F8D4B63",
+      "lfSha256": "B1F563E3243F033F729E90AC8943415A6638BFD44C3FC9510CB23FC43F8D4B63",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/competition.png",
+      "sha256": "9566BD437D059A7BA10EB9412A3E7351FF4ED79107CEB126BF1D79A2FEF23763",
+      "lfSha256": "9566BD437D059A7BA10EB9412A3E7351FF4ED79107CEB126BF1D79A2FEF23763",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/explore.png",
+      "sha256": "76B4FC9A854BC872B3B95E9CA7B8D063FD420EC97D42A02D960F35696443B3C4",
+      "lfSha256": "76B4FC9A854BC872B3B95E9CA7B8D063FD420EC97D42A02D960F35696443B3C4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/favorites_hub_competitions.png",
+      "sha256": "A6CD9C1C36A8CEB0D0C9E5042E9374C49C672DBC89DBC1053E42FEF19303B969",
+      "lfSha256": "A6CD9C1C36A8CEB0D0C9E5042E9374C49C672DBC89DBC1053E42FEF19303B969",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/favorites_hub_empty.png",
+      "sha256": "F085A44B13EF79411D878DFD041687048EACFD6115B7329A32F0357D45377E1F",
+      "lfSha256": "F085A44B13EF79411D878DFD041687048EACFD6115B7329A32F0357D45377E1F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/favorites_hub_mixed.png",
+      "sha256": "035159F56735E18D133C7235A595385F9AF8A015F3E07DC094CBCD51C055F646",
+      "lfSha256": "035159F56735E18D133C7235A595385F9AF8A015F3E07DC094CBCD51C055F646",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/favorites_hub_players.png",
+      "sha256": "EC8334D13D810DF0402658499B87BD119EBD80BDF8259BB9E7C3A5A9434DA920",
+      "lfSha256": "EC8334D13D810DF0402658499B87BD119EBD80BDF8259BB9E7C3A5A9434DA920",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/favorites_hub_teams.png",
+      "sha256": "035159F56735E18D133C7235A595385F9AF8A015F3E07DC094CBCD51C055F646",
+      "lfSha256": "035159F56735E18D133C7235A595385F9AF8A015F3E07DC094CBCD51C055F646",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_match_center_away.png",
+      "sha256": "BC1C04FE8480F234D0B251DAEF5C4204F59B1C347224BBB6AEE0C68A6F0B19BF",
+      "lfSha256": "BC1C04FE8480F234D0B251DAEF5C4204F59B1C347224BBB6AEE0C68A6F0B19BF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_match_center_home.png",
+      "sha256": "E5E93F41D069F4D4F63AD559A95D073593AC855DF47CBB3AC1A45C4E213A4CAE",
+      "lfSha256": "E5E93F41D069F4D4F63AD559A95D073593AC855DF47CBB3AC1A45C4E213A4CAE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_match_center_top.png",
+      "sha256": "53B1DC0212E3B4628A1A41C807FDB0F351BC55D57F59EF9715CB1899741D39FC",
+      "lfSha256": "53B1DC0212E3B4628A1A41C807FDB0F351BC55D57F59EF9715CB1899741D39FC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_polish_away_viewport.png",
+      "sha256": "F04C1AF65310397183262EDFE302F9BEA292389CD7C4447BAF0F432838FAC976",
+      "lfSha256": "F04C1AF65310397183262EDFE302F9BEA292389CD7C4447BAF0F432838FAC976",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_polish_home_viewport.png",
+      "sha256": "E6C138A3F7ED0DD1BF0DEBE520EB0F6599DB02FBB4E081A310DF61F49CEF02AA",
+      "lfSha256": "E6C138A3F7ED0DD1BF0DEBE520EB0F6599DB02FBB4E081A310DF61F49CEF02AA",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_polish_synthetic.png",
+      "sha256": "4B6D7C3087CF6A04E29EBC589C628F695ED499F8EA300E47DF7BC6DF014AB58E",
+      "lfSha256": "4B6D7C3087CF6A04E29EBC589C628F695ED499F8EA300E47DF7BC6DF014AB58E",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/competition.png",
+      "sha256": "72A070215ADAA4550C2C13506C5F7EDA7619FD2AC8CC7B3781919341021C95B7",
+      "lfSha256": "72A070215ADAA4550C2C13506C5F7EDA7619FD2AC8CC7B3781919341021C95B7",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/explore.png",
+      "sha256": "75CC70B79C663206AB123A668FD5F5B0E0C5B755C1DD9897CC6387352B9EAA8C",
+      "lfSha256": "75CC70B79C663206AB123A668FD5F5B0E0C5B755C1DD9897CC6387352B9EAA8C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/favorites_hub_competitions.png",
+      "sha256": "63EAA84357A9C5EB1CEAF81A108E9A30AA736298B6DE68183A227EBBB975D133",
+      "lfSha256": "63EAA84357A9C5EB1CEAF81A108E9A30AA736298B6DE68183A227EBBB975D133",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/favorites_hub_empty.png",
+      "sha256": "93B955A9C8E09A6BA0FB09F142FC2F1C6EA075E2343B63D5248D586353EE7330",
+      "lfSha256": "93B955A9C8E09A6BA0FB09F142FC2F1C6EA075E2343B63D5248D586353EE7330",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/favorites_hub_mixed.png",
+      "sha256": "4700348E987F7205ADB915477876A72CC10AB386C84310D48B50AA2B14855EAD",
+      "lfSha256": "4700348E987F7205ADB915477876A72CC10AB386C84310D48B50AA2B14855EAD",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/favorites_hub_players.png",
+      "sha256": "6113417351CB95C86235D0DCC80BBB046BC1CFF662153CF268AD59BF242CAC6C",
+      "lfSha256": "6113417351CB95C86235D0DCC80BBB046BC1CFF662153CF268AD59BF242CAC6C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/favorites_hub_teams.png",
+      "sha256": "4700348E987F7205ADB915477876A72CC10AB386C84310D48B50AA2B14855EAD",
+      "lfSha256": "4700348E987F7205ADB915477876A72CC10AB386C84310D48B50AA2B14855EAD",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/lineups_match_center_away.png",
+      "sha256": "1CA1FF4932F5CD61423F971D82A77EDC07EDCC9417A6D362CAA86BC3B7CC9422",
+      "lfSha256": "1CA1FF4932F5CD61423F971D82A77EDC07EDCC9417A6D362CAA86BC3B7CC9422",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/lineups_match_center_home.png",
+      "sha256": "CB6C2CABBB3EDE53255A114931D758F497E86975979D8EF46783951342584D3B",
+      "lfSha256": "CB6C2CABBB3EDE53255A114931D758F497E86975979D8EF46783951342584D3B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/lineups_match_center_top.png",
+      "sha256": "E48315BF88D3883F5DBDB2F19A8B080938CCB0F81AA9B26DA69FA338F7BA4B02",
+      "lfSha256": "E48315BF88D3883F5DBDB2F19A8B080938CCB0F81AA9B26DA69FA338F7BA4B02",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/lineups_polish_away_viewport.png",
+      "sha256": "DA20095DAD357355FB4EDD2B95269E02EA51183BB27466DD9730645B62AFBF4C",
+      "lfSha256": "DA20095DAD357355FB4EDD2B95269E02EA51183BB27466DD9730645B62AFBF4C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/lineups_polish_home_viewport.png",
+      "sha256": "CAF60343241AC79699B454D841ECA61B130A5BA000653285E3F0FA3B7CF682A0",
+      "lfSha256": "CAF60343241AC79699B454D841ECA61B130A5BA000653285E3F0FA3B7CF682A0",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/lineups_polish_synthetic.png",
+      "sha256": "3E5366181399A1C27B54E866E471C0DEB9CDC0936CA9BFA9D343AD9CD2C9BAD2",
+      "lfSha256": "3E5366181399A1C27B54E866E471C0DEB9CDC0936CA9BFA9D343AD9CD2C9BAD2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/match.png",
+      "sha256": "1061761C841738E80179E6A07B602C9BEA3FDBEB632F6645FC5649F8E9702DE2",
+      "lfSha256": "1061761C841738E80179E6A07B602C9BEA3FDBEB632F6645FC5649F8E9702DE2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/matches.png",
+      "sha256": "B655A989D108B9A2759A3579D2B604DA5C3A3AC16CE7624650D1EAF32A3DE3EC",
+      "lfSha256": "B655A989D108B9A2759A3579D2B604DA5C3A3AC16CE7624650D1EAF32A3DE3EC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/player.png",
+      "sha256": "C9434653B0FB6008373B5507864717D50A745E68E6FFE23F85B9B158ED61D5F5",
+      "lfSha256": "C9434653B0FB6008373B5507864717D50A745E68E6FFE23F85B9B158ED61D5F5",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/standings_match_context.png",
+      "sha256": "67B9CA6820A7673D57C2779997A2BAF07A992E3958AC60A4F662A4CE7D44A126",
+      "lfSha256": "67B9CA6820A7673D57C2779997A2BAF07A992E3958AC60A4F662A4CE7D44A126",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/team.png",
+      "sha256": "4D82CA46CC4C4ECEE0B98A98BB83FAE7F3F678ADDAD9C5BBAD6592125A816E4B",
+      "lfSha256": "4D82CA46CC4C4ECEE0B98A98BB83FAE7F3F678ADDAD9C5BBAD6592125A816E4B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/timeline_v2_cards_substitution.png",
+      "sha256": "D7B46EC7C405E48808E11BFAF5DE3D08198B1E166FDD927425D2F815327AAB23",
+      "lfSha256": "D7B46EC7C405E48808E11BFAF5DE3D08198B1E166FDD927425D2F815327AAB23",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/timeline_v2_complete.png",
+      "sha256": "82C8BAA44BE7FE721F6A68886EFB799ABBAB4BDB571739A4A11EC0D23632121D",
+      "lfSha256": "82C8BAA44BE7FE721F6A68886EFB799ABBAB4BDB571739A4A11EC0D23632121D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/timeline_v2_empty.png",
+      "sha256": "B9326E440C4EA30B306FFE8C603DF5E1AAF1220B4BFA5D2F139B2FA8BDDD70FB",
+      "lfSha256": "B9326E440C4EA30B306FFE8C603DF5E1AAF1220B4BFA5D2F139B2FA8BDDD70FB",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/timeline_v2_goal_assist.png",
+      "sha256": "B11DDEC36AF2255004E0366C9AA15A1D869C19368A13EB3B369393E00A81158A",
+      "lfSha256": "B11DDEC36AF2255004E0366C9AA15A1D869C19368A13EB3B369393E00A81158A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/timeline_v2_live.png",
+      "sha256": "82C8BAA44BE7FE721F6A68886EFB799ABBAB4BDB571739A4A11EC0D23632121D",
+      "lfSha256": "82C8BAA44BE7FE721F6A68886EFB799ABBAB4BDB571739A4A11EC0D23632121D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/timeline_v2_own_goal.png",
+      "sha256": "71E20AFDEF1766FE556FD4608F93366069C7FE3F7BDA0272EE1C1E84A94519AE",
+      "lfSha256": "71E20AFDEF1766FE556FD4608F93366069C7FE3F7BDA0272EE1C1E84A94519AE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/match.png",
+      "sha256": "48A23EF326E4879F87930F7586CB7B7ED75C5895B22912B2241E01BFC9E83842",
+      "lfSha256": "48A23EF326E4879F87930F7586CB7B7ED75C5895B22912B2241E01BFC9E83842",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/matches.png",
+      "sha256": "C7C2D3904DD2125E0A70F7D7E0440920969A26265ACA7F67E1B37977AA6D32AA",
+      "lfSha256": "C7C2D3904DD2125E0A70F7D7E0440920969A26265ACA7F67E1B37977AA6D32AA",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/player.png",
+      "sha256": "5D0DFC39DFB3BDFB2FAD9953AF1E6CB58ABA4025201EB2D7503BFBF2EE28E27A",
+      "lfSha256": "5D0DFC39DFB3BDFB2FAD9953AF1E6CB58ABA4025201EB2D7503BFBF2EE28E27A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/standings_match_context.png",
+      "sha256": "F60B140E801121259BB6F4C1F967579AD68FA1D44E22A59B2D478DC1E558DBB1",
+      "lfSha256": "F60B140E801121259BB6F4C1F967579AD68FA1D44E22A59B2D478DC1E558DBB1",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/team.png",
+      "sha256": "EFA6D44C628A4EFE9FC93D3B239F8E3B6822657137EDD11DF0CCDBCE9BBFBBF4",
+      "lfSha256": "EFA6D44C628A4EFE9FC93D3B239F8E3B6822657137EDD11DF0CCDBCE9BBFBBF4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/timeline_v2_cards_substitution.png",
+      "sha256": "A0DE73F6C09B4492777ABF2EBA0EE98F8D0F20A738D65FA86B5C468D649FB7E7",
+      "lfSha256": "A0DE73F6C09B4492777ABF2EBA0EE98F8D0F20A738D65FA86B5C468D649FB7E7",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/timeline_v2_complete.png",
+      "sha256": "0551CEB0AAFDAD677BA8BF88D9FEC1918DF684680C4EAA7DAB25CCC8FAA5C6AE",
+      "lfSha256": "0551CEB0AAFDAD677BA8BF88D9FEC1918DF684680C4EAA7DAB25CCC8FAA5C6AE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/timeline_v2_empty.png",
+      "sha256": "82467969CE83B025E9950B24EC02C3C7253F20E5730EEB1746194F55865DA6D5",
+      "lfSha256": "82467969CE83B025E9950B24EC02C3C7253F20E5730EEB1746194F55865DA6D5",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/timeline_v2_goal_assist.png",
+      "sha256": "2BA0D10749500A90AB2ABEDBFAFD02732785818BA43433170BCB35F12754181D",
+      "lfSha256": "2BA0D10749500A90AB2ABEDBFAFD02732785818BA43433170BCB35F12754181D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/timeline_v2_live.png",
+      "sha256": "0551CEB0AAFDAD677BA8BF88D9FEC1918DF684680C4EAA7DAB25CCC8FAA5C6AE",
+      "lfSha256": "0551CEB0AAFDAD677BA8BF88D9FEC1918DF684680C4EAA7DAB25CCC8FAA5C6AE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/goldens/timeline_v2_own_goal.png",
+      "sha256": "6B60931E6B97BF1FD088DDFECEA625202421FE0E79B476BF5B9717E2477EC948",
+      "lfSha256": "6B60931E6B97BF1FD088DDFECEA625202421FE0E79B476BF5B9717E2477EC948",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/h2h_full_history_test.dart",
+      "sha256": "59ED00A43AB55DB8A86472CA883F26B4E06DEF3D5E2B294EF14BC155FFD96A83",
+      "lfSha256": "59ED00A43AB55DB8A86472CA883F26B4E06DEF3D5E2B294EF14BC155FFD96A83",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "480D31FD6F494E7F87544D885FDAFCA305FE48396DDBB319CE510D9C444B9C75"
+    },
+    {
+      "path": "apps/mobile/test/historical_match_center_test.dart",
+      "sha256": "BE8CB16D4025EDE1C75D1B04E2AE2FCBC17D08D5878A11FE34DF3465000CD611",
+      "lfSha256": "BE8CB16D4025EDE1C75D1B04E2AE2FCBC17D08D5878A11FE34DF3465000CD611",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "AAE3F4B8B07BF8C439C12703C508B1341A5827AA5B5F3CC8B187BE9F5F91FF0A"
+    },
+    {
+      "path": "apps/mobile/test/lineup_bench_overflow_test.dart",
+      "sha256": "50C37DBD9DBF20D7EBFB3ABCAEB630721AD0A82DFA50C7E892D537CB05228184",
+      "lfSha256": "50C37DBD9DBF20D7EBFB3ABCAEB630721AD0A82DFA50C7E892D537CB05228184",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/lineup_history_test.dart",
+      "sha256": "9B89B0B75FE9AB9998C81539AF45DCDF35D0BEA86D05718258CFE50FDE411746",
+      "lfSha256": "9B89B0B75FE9AB9998C81539AF45DCDF35D0BEA86D05718258CFE50FDE411746",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "772102F5D757A192A1A6A9E20166CDD97CFC83865591D4B5BA23AE428B51D786"
+    },
+    {
+      "path": "apps/mobile/test/lineups_match_center_visual_test.dart",
+      "sha256": "5987EA05437C99E4F8267B6F7471F058E870E52A8E0D96750ECC777767AC258B",
+      "lfSha256": "5987EA05437C99E4F8267B6F7471F058E870E52A8E0D96750ECC777767AC258B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/lineups_visual_test.dart",
+      "sha256": "88ED450436EFAE86D3CBACEA740B0563307D75642731BBBE3A56529C82A82511",
+      "lfSha256": "88ED450436EFAE86D3CBACEA740B0563307D75642731BBBE3A56529C82A82511",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/live_bootstrap_test.dart",
+      "sha256": "338B059651366A3DD8598D5CEEC071D4137936A2B8ADA983EE0470B17570400B",
+      "lfSha256": "338B059651366A3DD8598D5CEEC071D4137936A2B8ADA983EE0470B17570400B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/live_events_test.dart",
+      "sha256": "8716A79AC222DBF9E200DCF9E8BEFFEBEA645BD4CC6B96CF5DD803144E5CC61A",
+      "lfSha256": "8716A79AC222DBF9E200DCF9E8BEFFEBEA645BD4CC6B96CF5DD803144E5CC61A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/live_field_card_test.dart",
+      "sha256": "B3DFB82F24ADE701251B03599EFBABFF033AB1D8AE95057E8E683CFB918FCD56",
+      "lfSha256": "B3DFB82F24ADE701251B03599EFBABFF033AB1D8AE95057E8E683CFB918FCD56",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/live_realtime_test.dart",
+      "sha256": "7AA04A1C45742CEC643B7564D53056ECBC454D2BA41EEAA6AE2157BE4B5FCE37",
+      "lfSha256": "7AA04A1C45742CEC643B7564D53056ECBC454D2BA41EEAA6AE2157BE4B5FCE37",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/load_errors_test.dart",
+      "sha256": "E75B1D6FB95A6DABEAD602AFCB83698A390831E84CCF8814DC3405F8D2410C43",
+      "lfSha256": "E75B1D6FB95A6DABEAD602AFCB83698A390831E84CCF8814DC3405F8D2410C43",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "26D2DA6451FB24DD898D2FF045AC80027831DD7EEA32C36B9C52B28A6BB13930"
+    },
+    {
+      "path": "apps/mobile/test/match_center_completeness_test.dart",
+      "sha256": "FDC1C4E99B4E1A1EE8CDFE57C5A82D9394AC002FB00A61C3A2DAAC21FD1B8C6B",
+      "lfSha256": "FDC1C4E99B4E1A1EE8CDFE57C5A82D9394AC002FB00A61C3A2DAAC21FD1B8C6B",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "5CBEA412463C91AC7CC1426BFD7753A11B0512F8CB4CDF473AC7837CEE91B6C6"
+    },
+    {
+      "path": "apps/mobile/test/match_center_corrected_timeline_score_test.dart",
+      "sha256": "78E080910280BB0F62B82F367C5E5D26B8A8F332602DBCFB74C73D35731EE565",
+      "lfSha256": "78E080910280BB0F62B82F367C5E5D26B8A8F332602DBCFB74C73D35731EE565",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_first_paint_test.dart",
+      "sha256": "1B4123B13EC7CE622BBB03F8F8974BE3DFAD3DEA8FE4466AC078C669868A4903",
+      "lfSha256": "1B4123B13EC7CE622BBB03F8F8974BE3DFAD3DEA8FE4466AC078C669868A4903",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_hero_test.dart",
+      "sha256": "C848B0FE327D12592381198228A2F1FB7CB56CCF0885C3395C7E61DFD4BA6BA4",
+      "lfSha256": "C848B0FE327D12592381198228A2F1FB7CB56CCF0885C3395C7E61DFD4BA6BA4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_info_card_test.dart",
+      "sha256": "FEC4DB9C2968D299A30C5185FE00C3691BE127F8762D89525ED2C17F747BA6A7",
+      "lfSha256": "FEC4DB9C2968D299A30C5185FE00C3691BE127F8762D89525ED2C17F747BA6A7",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_lineup_clock_test.dart",
+      "sha256": "039245D43E6205492238004B39F911AD0AC1C0C1B334625887706EA5B790A575",
+      "lfSha256": "039245D43E6205492238004B39F911AD0AC1C0C1B334625887706EA5B790A575",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_lineup_enrichment_test.dart",
+      "sha256": "DD876B6495598F6F4F21CC59FF0CB687E685A336F15F144299984478C8EE3037",
+      "lfSha256": "DD876B6495598F6F4F21CC59FF0CB687E685A336F15F144299984478C8EE3037",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_phase1_test.dart",
+      "sha256": "DAF012B1C7CB189CC85E2D77A37E90390A87D70A6ABBAC8A96A689EEC62D0C52",
+      "lfSha256": "DAF012B1C7CB189CC85E2D77A37E90390A87D70A6ABBAC8A96A689EEC62D0C52",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "56396EB7B27FAB4943C42492C80BC1BFFEF14A7B571CCA1FD33599E28546CA63"
+    },
+    {
+      "path": "apps/mobile/test/match_center_phase2_test.dart",
+      "sha256": "AB83EE7034F56F39184AE7E8D9C947EB39182A25DD8382D8C064E8E98FE6C461",
+      "lfSha256": "AB83EE7034F56F39184AE7E8D9C947EB39182A25DD8382D8C064E8E98FE6C461",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "9AE348891320A2B38C655A8C734B605A64BEC7D54A49B45772D14119897F9CDC"
+    },
+    {
+      "path": "apps/mobile/test/match_center_player_navigation_test.dart",
+      "sha256": "A86B1A044A23A31A57855074978C674D2830BF023012571AB6E8755B06E9F67D",
+      "lfSha256": "A86B1A044A23A31A57855074978C674D2830BF023012571AB6E8755B06E9F67D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_player_sheet_test.dart",
+      "sha256": "91AF016D617667563461D4692102B502DD94FF05F12C1D77405B52D8430475B8",
+      "lfSha256": "91AF016D617667563461D4692102B502DD94FF05F12C1D77405B52D8430475B8",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_redesign_test.dart",
+      "sha256": "D5B8F6E129EF367DBBA29B3A09A58F44022380973C4B24B49B706A9EE99D3EB6",
+      "lfSha256": "D5B8F6E129EF367DBBA29B3A09A58F44022380973C4B24B49B706A9EE99D3EB6",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "4D1447380FAFD9ABBDE46178A933115FAB8C09B15C846D3FFEAF90213F5BCCC8"
+    },
+    {
+      "path": "apps/mobile/test/match_center_scorers_test.dart",
+      "sha256": "719DEFF66DC378316CF909484D2C493739AE20111FF5789AEAC9B7C41D18CD11",
+      "lfSha256": "719DEFF66DC378316CF909484D2C493739AE20111FF5789AEAC9B7C41D18CD11",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_team_statistics_test.dart",
+      "sha256": "A3FCE44FF06230D55EDC62E9A46470AC1534D42D9853D63BD5E9967D9242EE6B",
+      "lfSha256": "A3FCE44FF06230D55EDC62E9A46470AC1534D42D9853D63BD5E9967D9242EE6B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_team_top_rated_test.dart",
+      "sha256": "DABFEE0B9350CF1C2C6EFF976AF8D7CA52428CBB9D4A00AA6D19D7E034C97588",
+      "lfSha256": "DABFEE0B9350CF1C2C6EFF976AF8D7CA52428CBB9D4A00AA6D19D7E034C97588",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_top_rated_test.dart",
+      "sha256": "285334585F3AD2D27EFD25143EDF5026FB2FF31B341FE53B05A893C3B073ECF4",
+      "lfSha256": "285334585F3AD2D27EFD25143EDF5026FB2FF31B341FE53B05A893C3B073ECF4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_center_ui_v4_test.dart",
+      "sha256": "189370BF92E6AB1BF93A79107F325A4A38002AF3D41A263BB4C1B1D4C5F05BA1",
+      "lfSha256": "189370BF92E6AB1BF93A79107F325A4A38002AF3D41A263BB4C1B1D4C5F05BA1",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "28E44FDE32E60C46FC9E56567DC675999DC6ADAC739D053CE4DE473287D06B9C"
+    },
+    {
+      "path": "apps/mobile/test/match_context_first_frame_test.dart",
+      "sha256": "A2C8B3CC2AD9DEF1F543F26284D1936D21D733CDC85FE9E0F4EC0B9FD5C57AA0",
+      "lfSha256": "A2C8B3CC2AD9DEF1F543F26284D1936D21D733CDC85FE9E0F4EC0B9FD5C57AA0",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/match_context_offline_retry_test.dart",
+      "sha256": "4DDC6A815C1F82F1D736DAD6A96FC682411A3D6D210AD663527B63F548DCB946",
+      "lfSha256": "4DDC6A815C1F82F1D736DAD6A96FC682411A3D6D210AD663527B63F548DCB946",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_detail_e2e_test.dart",
+      "sha256": "081983AB5CF2BC7C12948890FF56427C9F3EF1C5005AFD42D7AF8F7EA00BBA40",
+      "lfSha256": "081983AB5CF2BC7C12948890FF56427C9F3EF1C5005AFD42D7AF8F7EA00BBA40",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "585001CF4AC08DD52B186AAF9EE6D19779A968DE9B9ADE3AC38208E905916C4C"
+    },
+    {
+      "path": "apps/mobile/test/match_h2h_v2_test.dart",
+      "sha256": "A56FB9FBA070ABA33DD42FC133429A46DBF5B5100B012C93D806AEB60EA6FBCC",
+      "lfSha256": "A56FB9FBA070ABA33DD42FC133429A46DBF5B5100B012C93D806AEB60EA6FBCC",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "752BD49DCE2093AB986D335D19D94F5F51300DE159E3286FABBC21907C69099B"
+    },
+    {
+      "path": "apps/mobile/test/match_period_scores_test.dart",
+      "sha256": "1CCD1A92C4A61E5FECADAA1AA5AD0B2B92A4A2032932C30AEED8188B52F88DD4",
+      "lfSha256": "1CCD1A92C4A61E5FECADAA1AA5AD0B2B92A4A2032932C30AEED8188B52F88DD4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_prefetch_local_only_test.dart",
+      "sha256": "FBB7083BA93DA906E15C3309ABD0E5DF9679A8ED402102D4B3E1DEEA39DBFE8F",
+      "lfSha256": "FBB7083BA93DA906E15C3309ABD0E5DF9679A8ED402102D4B3E1DEEA39DBFE8F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_prefetch_plan_test.dart",
+      "sha256": "44D5653967106DFC5ABAD773CE39C07DC4EE7A7059DFBB0A0BFAE2266854D3ED",
+      "lfSha256": "44D5653967106DFC5ABAD773CE39C07DC4EE7A7059DFBB0A0BFAE2266854D3ED",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_status_copy_test.dart",
+      "sha256": "BEE3AC5E76DFF9852FC845D65228225F3CA52FAD3BB471B0E7C394C3F0BF2B0C",
+      "lfSha256": "BEE3AC5E76DFF9852FC845D65228225F3CA52FAD3BB471B0E7C394C3F0BF2B0C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/match_timeline_v2_test.dart",
+      "sha256": "61CD15193D28BE2C94123EA2441E13F6DD3E7BE6504BD297C0A3831486AFD6CF",
+      "lfSha256": "61CD15193D28BE2C94123EA2441E13F6DD3E7BE6504BD297C0A3831486AFD6CF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/matches_feed_test.dart",
+      "sha256": "CA9A221E9C3875EAA5595F091CE753D93F358774E95831F7167503DBDCACD63A",
+      "lfSha256": "CA9A221E9C3875EAA5595F091CE753D93F358774E95831F7167503DBDCACD63A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/matches_states_v2_test.dart",
+      "sha256": "F805E0951FEDC2A1F4800E584E3FE202CA0DF6485DF5D788CB995E1B99C21D26",
+      "lfSha256": "F805E0951FEDC2A1F4800E584E3FE202CA0DF6485DF5D788CB995E1B99C21D26",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile229_live_transition_test.dart",
+      "sha256": "B5FB8CE671EE0D5FDE745A063B82D517024B70DEB17B2AFB717461C7410C3656",
+      "lfSha256": "B5FB8CE671EE0D5FDE745A063B82D517024B70DEB17B2AFB717461C7410C3656",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile239_resilience_test.dart",
+      "sha256": "1D5EAA38D157771F31832269C773822D40F743126A85B6A94441D4DBB85CA236",
+      "lfSha256": "1D5EAA38D157771F31832269C773822D40F743126A85B6A94441D4DBB85CA236",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile239_standings_test.dart",
+      "sha256": "A0948AB31BC12A3A05BC1F214AFA1648861A2269DA8BAB5C00F1745550249A96",
+      "lfSha256": "A0948AB31BC12A3A05BC1F214AFA1648861A2269DA8BAB5C00F1745550249A96",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "E0ACD1F0DE9703FAA6E3B38D9EEC5BCF9B8524F321AD574F684CDA8408AC34CA"
+    },
+    {
+      "path": "apps/mobile/test/mobile243_stored_contract_test.dart",
+      "sha256": "69DB2582121C8D138A39495F406106F55EFE5C56BEB35AF86A87155FB7B18551",
+      "lfSha256": "69DB2582121C8D138A39495F406106F55EFE5C56BEB35AF86A87155FB7B18551",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile244_feed_benchmark_test.dart",
+      "sha256": "6B0BA3E22C8766FD2034BAAC28D51526DEC958353D32593C26D01A9FB7EC0916",
+      "lfSha256": "6B0BA3E22C8766FD2034BAAC28D51526DEC958353D32593C26D01A9FB7EC0916",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile244_feed_prefetch_race_test.dart",
+      "sha256": "19DBE40BE5CB5277977E72C6E57887B1928A406F18A45E6EE308823DDA70FFFC",
+      "lfSha256": "19DBE40BE5CB5277977E72C6E57887B1928A406F18A45E6EE308823DDA70FFFC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile244_feed_stability_test.dart",
+      "sha256": "2D9672B75E763990568F1E24390D0EE452267C878A91DC031ACA6840A72C424B",
+      "lfSha256": "2D9672B75E763990568F1E24390D0EE452267C878A91DC031ACA6840A72C424B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile244_live_clock_test.dart",
+      "sha256": "FC5BB41288448C918FFA4FF5B84074C9CDFBE2CDF15034E6BE6F0108098CA246",
+      "lfSha256": "FC5BB41288448C918FFA4FF5B84074C9CDFBE2CDF15034E6BE6F0108098CA246",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile244_match_timeline_test.dart",
+      "sha256": "119F7BC922595761C2F993C0C455BAC09F670A178915B17599B43479EB739769",
+      "lfSha256": "119F7BC922595761C2F993C0C455BAC09F670A178915B17599B43479EB739769",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile244_media_discard_test.dart",
+      "sha256": "A54D2D96D912EC619C338C2E0985527F97896B636657FBA2BA9F8639516E1DDC",
+      "lfSha256": "A54D2D96D912EC619C338C2E0985527F97896B636657FBA2BA9F8639516E1DDC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile244_notification_dedup_test.dart",
+      "sha256": "37E7C20CA47A18676895A6F9A2E800F63069D4A6B34A9DD10A9BE9DC3CD236BF",
+      "lfSha256": "37E7C20CA47A18676895A6F9A2E800F63069D4A6B34A9DD10A9BE9DC3CD236BF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile244_personalization_resilience_test.dart",
+      "sha256": "2D7D27883E0337CE82091E6B0B1F8990820D29865044E107E1D330A29EB93E8A",
+      "lfSha256": "2D7D27883E0337CE82091E6B0B1F8990820D29865044E107E1D330A29EB93E8A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile244_standings_integrity_test.dart",
+      "sha256": "7C3B08CA9D3F0FC4F89AA2213B647C5BC4874DF10ABD04353B278C96902539D1",
+      "lfSha256": "7C3B08CA9D3F0FC4F89AA2213B647C5BC4874DF10ABD04353B278C96902539D1",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_cache_detail_identity_test.dart",
+      "sha256": "933C2C0011712CC851DC7B9E840118F02D615C83B1952DCB56A9F3AEF46735D5",
+      "lfSha256": "933C2C0011712CC851DC7B9E840118F02D615C83B1952DCB56A9F3AEF46735D5",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_cache_media_freshness_test.dart",
+      "sha256": "29A3456D51BF2C98A4184BCA10F575F4FA277CF4CA88A30C9D952D16BBE3D85A",
+      "lfSha256": "29A3456D51BF2C98A4184BCA10F575F4FA277CF4CA88A30C9D952D16BBE3D85A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_feed_same_date_test.dart",
+      "sha256": "E02FF0F9251D9007449C939E243DF7B6657655712403C7B482DBBD22E4D7685F",
+      "lfSha256": "E02FF0F9251D9007449C939E243DF7B6657655712403C7B482DBBD22E4D7685F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_live_partial_batch_test.dart",
+      "sha256": "6516691EF7FF350EE547DAFB8348E9E401757FC774999BD851731FA795D116F2",
+      "lfSha256": "6516691EF7FF350EE547DAFB8348E9E401757FC774999BD851731FA795D116F2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_match_alias_context_test.dart",
+      "sha256": "DA5B2413DB52DD27D206469633F36F906C5544D03EB003566EB783038124DE2D",
+      "lfSha256": "DA5B2413DB52DD27D206469633F36F906C5544D03EB003566EB783038124DE2D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_match_header_integrity_test.dart",
+      "sha256": "417051ADF5072B5587FFFD4618D5776F73C552AA1D93FAB0FFA8B86BB0CF3E8F",
+      "lfSha256": "417051ADF5072B5587FFFD4618D5776F73C552AA1D93FAB0FFA8B86BB0CF3E8F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_match_scorer_numeric_test.dart",
+      "sha256": "210941FB9F9EA33954769D4BB009E92FE409FA0CAC6170CAD522EE8D56D375CF",
+      "lfSha256": "210941FB9F9EA33954769D4BB009E92FE409FA0CAC6170CAD522EE8D56D375CF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_notification_contract_test.dart",
+      "sha256": "440597148C39041142E44C9B5438A755E7E1457069D98220DB73A6DE2814FC9B",
+      "lfSha256": "440597148C39041142E44C9B5438A755E7E1457069D98220DB73A6DE2814FC9B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_profile_sync_race_test.dart",
+      "sha256": "1658EF5CC2FAE981F198F21C1659D0FB7E15C5099B54257A67E260FC8925CC6A",
+      "lfSha256": "1658EF5CC2FAE981F198F21C1659D0FB7E15C5099B54257A67E260FC8925CC6A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_standings_phase_contract_test.dart",
+      "sha256": "C63B53E681D9E39DF71156A093132FE03ADA27492E586F50769778E805BFC7EB",
+      "lfSha256": "C63B53E681D9E39DF71156A093132FE03ADA27492E586F50769778E805BFC7EB",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_standings_regular_phase_test.dart",
+      "sha256": "B2EB5C080206F5B3DDAD4ACF68863E3D5AF8B4299CF83CDEF704454F86563640",
+      "lfSha256": "B2EB5C080206F5B3DDAD4ACF68863E3D5AF8B4299CF83CDEF704454F86563640",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_stored_contract_test.dart",
+      "sha256": "BAD1554BCC0C41A07EE49F98AB4DA3463AC8F0CBAA01A7E45D8F7116B3EA3A07",
+      "lfSha256": "BAD1554BCC0C41A07EE49F98AB4DA3463AC8F0CBAA01A7E45D8F7116B3EA3A07",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile245_stored_stop_test.dart",
+      "sha256": "53F96EC739D1DAECED1C75E86F29266BF04FD5551E841F5670E53C85108AE15B",
+      "lfSha256": "53F96EC739D1DAECED1C75E86F29266BF04FD5551E841F5670E53C85108AE15B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile246_calendar_terminal_error_test.dart",
+      "sha256": "A6A6A200120D1612D6CA0D2FAE27B84C0116AD52431D17B9C7A07A38E5F4F354",
+      "lfSha256": "A6A6A200120D1612D6CA0D2FAE27B84C0116AD52431D17B9C7A07A38E5F4F354",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile246_stored_reopen_test.dart",
+      "sha256": "4FD9F1633D5BFB1722B79FDFB1B1A0419EB32FAFA92701B423371891DA9D000F",
+      "lfSha256": "4FD9F1633D5BFB1722B79FDFB1B1A0419EB32FAFA92701B423371891DA9D000F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile251_onboarding_restart_test.dart",
+      "sha256": "C00DF25690B8027C6F9D99CFC529607B24B0E6B96485410F6E4F7001843636DB",
+      "lfSha256": "C00DF25690B8027C6F9D99CFC529607B24B0E6B96485410F6E4F7001843636DB",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile258_competition_order_race_test.dart",
+      "sha256": "A933EE3F57F62C5788DDE99A3D4B86E52D0D772B9F838ED7B2C9FE623068D8C0",
+      "lfSha256": "A933EE3F57F62C5788DDE99A3D4B86E52D0D772B9F838ED7B2C9FE623068D8C0",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile258_favorites_live_scope_test.dart",
+      "sha256": "8173845A405EFA480B6AEC16962F80FA8F42BD1761134AF7BDA1A7E1B3BF058A",
+      "lfSha256": "8173845A405EFA480B6AEC16962F80FA8F42BD1761134AF7BDA1A7E1B3BF058A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile258_interest_disposal_test.dart",
+      "sha256": "29E9E69B7819D82292B293F03995A6ECE3DB0479C78F6BD5D0562000515DF01E",
+      "lfSha256": "29E9E69B7819D82292B293F03995A6ECE3DB0479C78F6BD5D0562000515DF01E",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile258_live_dispose_test.dart",
+      "sha256": "11AC07E8C273F2806A02420822CDF639B9166D20AAA200406B304EF6B2851957",
+      "lfSha256": "11AC07E8C273F2806A02420822CDF639B9166D20AAA200406B304EF6B2851957",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile258_live_watch_survivor_test.dart",
+      "sha256": "04A940C90486558B5FCFDC069E34D5091FA69DFC40C29CCAA7B06615D5BFC3F8",
+      "lfSha256": "04A940C90486558B5FCFDC069E34D5091FA69DFC40C29CCAA7B06615D5BFC3F8",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile258_match_full_table_test.dart",
+      "sha256": "1516C38CD616BA27B3C4EDC0317140F4B57F1288B23991BFCE99844B2D7DD174",
+      "lfSha256": "1516C38CD616BA27B3C4EDC0317140F4B57F1288B23991BFCE99844B2D7DD174",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile258_match_retarget_test.dart",
+      "sha256": "37CE1FEB4593E75C6C18EA9B64C6073F3DD2900FEBD0E5255B9F833C447FDF48",
+      "lfSha256": "37CE1FEB4593E75C6C18EA9B64C6073F3DD2900FEBD0E5255B9F833C447FDF48",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile259_canonical_lineup_events_test.dart",
+      "sha256": "23D1F61D73D72698AFFA4C217601485A12E793048C193B4A3D205E281C77436E",
+      "lfSha256": "23D1F61D73D72698AFFA4C217601485A12E793048C193B4A3D205E281C77436E",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile259_detail_observation_order_test.dart",
+      "sha256": "FF2A9755CB98145ACA65C6F80478ECF85EF523D51083411695BE61FA0CB85AA3",
+      "lfSha256": "FF2A9755CB98145ACA65C6F80478ECF85EF523D51083411695BE61FA0CB85AA3",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile259_live_stale_delete_test.dart",
+      "sha256": "776C761C7D88989A8DF734F4659D126A0E48E89C7E135C94E155438077D67E50",
+      "lfSha256": "776C761C7D88989A8DF734F4659D126A0E48E89C7E135C94E155438077D67E50",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile259_personalization_disposal_test.dart",
+      "sha256": "AA85121C10808A7715A8AE6DF682D1D9DDF2A6FE2BC2113AC01027F22589BA1D",
+      "lfSha256": "AA85121C10808A7715A8AE6DF682D1D9DDF2A6FE2BC2113AC01027F22589BA1D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile259_second_yellow_test.dart",
+      "sha256": "967F66A3795BAF5D9CE6072280FAB6A50AD7982633AA4B670201AEA40E00AABC",
+      "lfSha256": "967F66A3795BAF5D9CE6072280FAB6A50AD7982633AA4B670201AEA40E00AABC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile259_team_retarget_test.dart",
+      "sha256": "585456C08B1225CD9116FEE22A8DA98242F88BAC1CEF47A7AFDA99E7CA20BE35",
+      "lfSha256": "585456C08B1225CD9116FEE22A8DA98242F88BAC1CEF47A7AFDA99E7CA20BE35",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_account_name_loading_test.dart",
+      "sha256": "4A5FDD9EE654CCC1365CBA2BF1D8A34790A4877B35A3FBE92D9FC48A4A7DA68D",
+      "lfSha256": "4A5FDD9EE654CCC1365CBA2BF1D8A34790A4877B35A3FBE92D9FC48A4A7DA68D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_cache_repair_race_review_test.dart",
+      "sha256": "DC4300AA4D5698CBB6C192E8059B6429F06D5C68212C9578844AC63EC43D98A2",
+      "lfSha256": "DC4300AA4D5698CBB6C192E8059B6429F06D5C68212C9578844AC63EC43D98A2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_canonical_minutes_test.dart",
+      "sha256": "FB44C338EA269AA6683B62C86F868B48F3DE99F95C4D0398E77C0CEEF54B482C",
+      "lfSha256": "FB44C338EA269AA6683B62C86F868B48F3DE99F95C4D0398E77C0CEEF54B482C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_context_identity_test.dart",
+      "sha256": "C5D51A60DEA077B5B77BD139C7CD75003824351AEFD28E392E6CB316F6E3EE6A",
+      "lfSha256": "C5D51A60DEA077B5B77BD139C7CD75003824351AEFD28E392E6CB316F6E3EE6A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_context_redirect_review_test.dart",
+      "sha256": "62633D0B37CD911B71597B57174D69D088F21A04EFEE28B53B50AB6CC3997B8A",
+      "lfSha256": "62633D0B37CD911B71597B57174D69D088F21A04EFEE28B53B50AB6CC3997B8A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_corrupt_image_recovery_test.dart",
+      "sha256": "28AD184214F8EA70F330C4E4922717A99867471C5AC00A9BC7C3F9A9F712D8F0",
+      "lfSha256": "28AD184214F8EA70F330C4E4922717A99867471C5AC00A9BC7C3F9A9F712D8F0",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_country_ack_order_test.dart",
+      "sha256": "D5B3BD9F969A2E70FE0BF558F0AD49C68C812467F07EBAD4B95025B4FEDC8481",
+      "lfSha256": "D5B3BD9F969A2E70FE0BF558F0AD49C68C812467F07EBAD4B95025B4FEDC8481",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_delete_account_generation_test.dart",
+      "sha256": "B0CB190999E605DC67018ACD2C96C614EE82ADE1D870C194753332694298E7BD",
+      "lfSha256": "B0CB190999E605DC67018ACD2C96C614EE82ADE1D870C194753332694298E7BD",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_detected_country_dirty_disposal_test.dart",
+      "sha256": "383B5DF9D8106C32E771E1B878F43E92C77344FB33505674590B464153AF52A8",
+      "lfSha256": "383B5DF9D8106C32E771E1B878F43E92C77344FB33505674590B464153AF52A8",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_feed_canonical_favorites_test.dart",
+      "sha256": "B3C7A29671ADA3353A4810C43855468688915A9719A4F01F662832BCCEF13DE3",
+      "lfSha256": "B3C7A29671ADA3353A4810C43855468688915A9719A4F01F662832BCCEF13DE3",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_feed_competition_redirect_test.dart",
+      "sha256": "B1D4EA4194938D607645A1851A21CB49F99476C955D3A70DFB1C405713459BA7",
+      "lfSha256": "B1D4EA4194938D607645A1851A21CB49F99476C955D3A70DFB1C405713459BA7",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_feed_warm_batches_test.dart",
+      "sha256": "38DA5A1155FD5F2099127D16B0F50A71C83D36E516E359AA7386D44562DB5B8D",
+      "lfSha256": "38DA5A1155FD5F2099127D16B0F50A71C83D36E516E359AA7386D44562DB5B8D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_live_delete_replay_test.dart",
+      "sha256": "1A49840754932ED237653C6A08B4B73D716EFD121AF02D10B5F8263979FB0271",
+      "lfSha256": "1A49840754932ED237653C6A08B4B73D716EFD121AF02D10B5F8263979FB0271",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_live_foreign_event_shadow_test.dart",
+      "sha256": "A8886B1D05CCD85422943E58CB4C3AC611052F0A9F607CDB158131B84FB487CF",
+      "lfSha256": "A8886B1D05CCD85422943E58CB4C3AC611052F0A9F607CDB158131B84FB487CF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_live_observation_order_test.dart",
+      "sha256": "0A22CAF2395097E6D6D8423D883E76E9F48090032E24DDE97954EE314E03927D",
+      "lfSha256": "0A22CAF2395097E6D6D8423D883E76E9F48090032E24DDE97954EE314E03927D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_live_paged_clock_test.dart",
+      "sha256": "5DA48D02B31DE5F2143EA3484D3946900FA255FC763726766DED69F34E007ED5",
+      "lfSha256": "5DA48D02B31DE5F2143EA3484D3946900FA255FC763726766DED69F34E007ED5",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_notifications_lifecycle_test.dart",
+      "sha256": "9E32C9F64C3572C252A0FDC7C33D244F3AFD5A8E4A7C75EABF2D2D65C2B7F47D",
+      "lfSha256": "9E32C9F64C3572C252A0FDC7C33D244F3AFD5A8E4A7C75EABF2D2D65C2B7F47D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_onboarding_country_failure_test.dart",
+      "sha256": "DDA45870ABCEE71121BFB85682E306E74F0810D3F2A24E6C06F6FAC8F7D2161E",
+      "lfSha256": "DDA45870ABCEE71121BFB85682E306E74F0810D3F2A24E6C06F6FAC8F7D2161E",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_onboarding_progress_order_test.dart",
+      "sha256": "8CB25DC5BC594D6DF494C04E23C205D2E7080ADE8FAC0DC8D9E0E5102D42E070",
+      "lfSha256": "8CB25DC5BC594D6DF494C04E23C205D2E7080ADE8FAC0DC8D9E0E5102D42E070",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_own_goal_representation_test.dart",
+      "sha256": "AE725E5B2DBB5CDF3E83A47E1077FA3372320FE58DFAE8B5AE6B8DBABC064EE5",
+      "lfSha256": "AE725E5B2DBB5CDF3E83A47E1077FA3372320FE58DFAE8B5AE6B8DBABC064EE5",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_penalty_summary_test.dart",
+      "sha256": "C70762DDEA70CA74124E974E54BA06612DAFDADD6959197F8AD0680F8AD04C94",
+      "lfSha256": "C70762DDEA70CA74124E974E54BA06612DAFDADD6959197F8AD0680F8AD04C94",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_preference_sparse_write_test.dart",
+      "sha256": "2B836D0670A7DDE43BB303DD8020A07BE28180B248DAA059788AD3B23C2EE5EE",
+      "lfSha256": "2B836D0670A7DDE43BB303DD8020A07BE28180B248DAA059788AD3B23C2EE5EE",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_profile_canonical_activity_test.dart",
+      "sha256": "EE6A38C3BBE455DAAFF6F50D7AB65CE3E6A37DA77E0EB5559CC278755463E6EA",
+      "lfSha256": "EE6A38C3BBE455DAAFF6F50D7AB65CE3E6A37DA77E0EB5559CC278755463E6EA",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_profile_storage_order_test.dart",
+      "sha256": "824A562052FEBD8D5A1983E09F2B4EB7EDE4FCA6C05275309106FA9497CC3217",
+      "lfSha256": "824A562052FEBD8D5A1983E09F2B4EB7EDE4FCA6C05275309106FA9497CC3217",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_push_intent_generation_test.dart",
+      "sha256": "E7FA30C8B6BD9FE10F78F970D631CE4674D937E8F12107636675BA1DBBBFE2B2",
+      "lfSha256": "E7FA30C8B6BD9FE10F78F970D631CE4674D937E8F12107636675BA1DBBBFE2B2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_team_primary_competition_test.dart",
+      "sha256": "3DF1421E80187E2A3014BBA1A9F5844195298900E109B7E96E1D65490FE890F6",
+      "lfSha256": "3DF1421E80187E2A3014BBA1A9F5844195298900E109B7E96E1D65490FE890F6",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile260_team_table_redirect_test.dart",
+      "sha256": "DBD9931E4BC02401DC119933A88856E1037197B13B140D02FB16DBFCA698AA78",
+      "lfSha256": "DBD9931E4BC02401DC119933A88856E1037197B13B140D02FB16DBFCA698AA78",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_account_delete02_reopen_test.dart",
+      "sha256": "F0A272614566F01485B4E516D1D3C1464F0A0EFA5734A61BCE37B64DB5E7CDC4",
+      "lfSha256": "F0A272614566F01485B4E516D1D3C1464F0A0EFA5734A61BCE37B64DB5E7CDC4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_account_name_intent_ui_test.dart",
+      "sha256": "89E615C43078196537B2B80D99E0C80D4EF9C91C923060FDAF7F161444361768",
+      "lfSha256": "89E615C43078196537B2B80D99E0C80D4EF9C91C923060FDAF7F161444361768",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_calendar_retry_navigation_test.dart",
+      "sha256": "FCE14DEE6A64F5AC1B6ACB3EDED9CB0228005800F058CEE09144BEDC964AC350",
+      "lfSha256": "FCE14DEE6A64F5AC1B6ACB3EDED9CB0228005800F058CEE09144BEDC964AC350",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_dirty_flag_read_failure_test.dart",
+      "sha256": "B221E5FE967C8A0657A919DE2B0F215932D82406DA26E481BDB914DBFF3D046F",
+      "lfSha256": "B221E5FE967C8A0657A919DE2B0F215932D82406DA26E481BDB914DBFF3D046F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_entity_context_identity_test.dart",
+      "sha256": "8D588C48019D5A5E3B41B8ED1898E3ABE10CEB3B81C5903D6310B5C8CF07DEB9",
+      "lfSha256": "8D588C48019D5A5E3B41B8ED1898E3ABE10CEB3B81C5903D6310B5C8CF07DEB9",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_feed_sqlite_follow_changes_test.dart",
+      "sha256": "5ECE1106436F8E996168E052DC6CEBD68B4074AD92E18332D95D6462CAA2969B",
+      "lfSha256": "5ECE1106436F8E996168E052DC6CEBD68B4074AD92E18332D95D6462CAA2969B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_feed_warm_resume_test.dart",
+      "sha256": "E86034A5D987872A11927C5196F7AC8A4DFB8CC95E442ECB39AA936C06A51698",
+      "lfSha256": "E86034A5D987872A11927C5196F7AC8A4DFB8CC95E442ECB39AA936C06A51698",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_follow_intent02_test.dart",
+      "sha256": "0BEFC226977C0F67368816F41CE6EAE5F9400CAD3F29571C62182E56D6E9E4FD",
+      "lfSha256": "0BEFC226977C0F67368816F41CE6EAE5F9400CAD3F29571C62182E56D6E9E4FD",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_hour_preferences02_widget_test.dart",
+      "sha256": "EA46A217E3DC48DE4CEE45C1B64EDA22BF463BE3769BC59365062BE540A405C2",
+      "lfSha256": "EA46A217E3DC48DE4CEE45C1B64EDA22BF463BE3769BC59365062BE540A405C2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_incoming_player_activity_test.dart",
+      "sha256": "E568AEBD4762FC45E3A2EE1303E92AF3EAE2BA50535971D2A9CB907CE2074FD2",
+      "lfSha256": "E568AEBD4762FC45E3A2EE1303E92AF3EAE2BA50535971D2A9CB907CE2074FD2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_live_observation_replay_test.dart",
+      "sha256": "D4F68773170890A8EFAD4834A2F3718E95319622766FFF9BEE16F01C972DB577",
+      "lfSha256": "D4F68773170890A8EFAD4834A2F3718E95319622766FFF9BEE16F01C972DB577",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_live_terminal02_replay_test.dart",
+      "sha256": "CEE6E7BF2BD14F03AB8211F08A040E1BC7F583CCC63A97DCA3E50908266DDA89",
+      "lfSha256": "CEE6E7BF2BD14F03AB8211F08A040E1BC7F583CCC63A97DCA3E50908266DDA89",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_logout_account_interleaving_test.dart",
+      "sha256": "289F8A19D21503EB13CF1874A74EC07B3FE4A9F1576D6568105B280B0FC1E353",
+      "lfSha256": "289F8A19D21503EB13CF1874A74EC07B3FE4A9F1576D6568105B280B0FC1E353",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_logout_completion_microtask_review_test.dart",
+      "sha256": "6B0CEB0CE8C2631E1DFEBB7F570BB3B67E90B7591AFBA5D16D268CA287B24FAC",
+      "lfSha256": "6B0CEB0CE8C2631E1DFEBB7F570BB3B67E90B7591AFBA5D16D268CA287B24FAC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_logout_pushed_read_failure_test.dart",
+      "sha256": "518B9CA33DA9739E746D73399EB21D89A830AE463BB70837E30D81D2DCFA4724",
+      "lfSha256": "518B9CA33DA9739E746D73399EB21D89A830AE463BB70837E30D81D2DCFA4724",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_logout_remote_upgrade_review_test.dart",
+      "sha256": "06583D64CDAE869E56B83AF68617C8570DA515062F7A91C30BBD02793D954E2A",
+      "lfSha256": "06583D64CDAE869E56B83AF68617C8570DA515062F7A91C30BBD02793D954E2A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_logout_storage_failure_review_test.dart",
+      "sha256": "C60650D8A41F92FD3708323E3F54BE2A1BCA0674433FEC7A94CCB92CBAD8EB34",
+      "lfSha256": "C60650D8A41F92FD3708323E3F54BE2A1BCA0674433FEC7A94CCB92CBAD8EB34",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_match_restart02_test.dart",
+      "sha256": "603ACB9C6E3FC9B1FFA26F679B57F5A87696AC6F59F7E1AF0C3253BCC3BE8611",
+      "lfSha256": "603ACB9C6E3FC9B1FFA26F679B57F5A87696AC6F59F7E1AF0C3253BCC3BE8611",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_match_terminal_restart02_test.dart",
+      "sha256": "DF5B57A85DD682C802BB96CCF3E6446221E42CAA562B7E5CECA1E2395CFF1938",
+      "lfSha256": "DF5B57A85DD682C802BB96CCF3E6446221E42CAA562B7E5CECA1E2395CFF1938",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_notification_account_intent_ui_review_test.dart",
+      "sha256": "A1B9F59FDD712495E77B8AE7994EF8F1DE772FCF16E3E6CD9E119B89E5E0D178",
+      "lfSha256": "A1B9F59FDD712495E77B8AE7994EF8F1DE772FCF16E3E6CD9E119B89E5E0D178",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_onboarding_account02_test.dart",
+      "sha256": "485641E940E912B820427B45CE0143F38972DF34E41DCA2D9FC00DAE0F309257",
+      "lfSha256": "485641E940E912B820427B45CE0143F38972DF34E41DCA2D9FC00DAE0F309257",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_player_activity_extra_time_test.dart",
+      "sha256": "E8BF1372F415C79118A0F4B0216A4C77A742FBD97AAC14FBC6663446A31B3E6B",
+      "lfSha256": "E8BF1372F415C79118A0F4B0216A4C77A742FBD97AAC14FBC6663446A31B3E6B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_player_panel_context_isolation_test.dart",
+      "sha256": "E26769E990EBB22FB910E6924040EBC9B2FF512FAE4C2228A6AD17CF1C3E57F0",
+      "lfSha256": "E26769E990EBB22FB910E6924040EBC9B2FF512FAE4C2228A6AD17CF1C3E57F0",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_profile_account_ownership_test.dart",
+      "sha256": "ABFA3F39EBC800F78AB48EB3B3CB658A6FC042E6531E4EE194D274905535E37B",
+      "lfSha256": "ABFA3F39EBC800F78AB48EB3B3CB658A6FC042E6531E4EE194D274905535E37B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_profile_dirty_write_failure_test.dart",
+      "sha256": "376904AFC110FDCCD32EA75F5150CFF8D3501CAFA41CFDD1438342527BB0F242",
+      "lfSha256": "376904AFC110FDCCD32EA75F5150CFF8D3501CAFA41CFDD1438342527BB0F242",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_profile_field_intent_test.dart",
+      "sha256": "3905CE78A9AA4596719212C7EF77C48B0CD1CAD8A3BFC4D4E6CE65B663F3619F",
+      "lfSha256": "3905CE78A9AA4596719212C7EF77C48B0CD1CAD8A3BFC4D4E6CE65B663F3619F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_profile_marker_follow_review_test.dart",
+      "sha256": "CA957CB123EBEA34682672AB19C19D8B07B0B614637C832DB55A06A5ADF935D8",
+      "lfSha256": "CA957CB123EBEA34682672AB19C19D8B07B0B614637C832DB55A06A5ADF935D8",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_profile_match_revision_test.dart",
+      "sha256": "F85844CFB327606A3709798F24EAF0EB6A2BE500876B72E4E31DED18E79DDE11",
+      "lfSha256": "F85844CFB327606A3709798F24EAF0EB6A2BE500876B72E4E31DED18E79DDE11",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_profile_owner_restart_review_test.dart",
+      "sha256": "EFCCBB398BFA762A82CA740740C2F52BDE45C2D181ACBA4B17211930D18EC65A",
+      "lfSha256": "EFCCBB398BFA762A82CA740740C2F52BDE45C2D181ACBA4B17211930D18EC65A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_profile_read_failure_test.dart",
+      "sha256": "F6FE0A4721BD806DD075BF42394F42A953210AF636D272A69B096F828A0C6A67",
+      "lfSha256": "F6FE0A4721BD806DD075BF42394F42A953210AF636D272A69B096F828A0C6A67",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_profile_stale_owner_review_test.dart",
+      "sha256": "DD73D582C473DC53B1C2D5332E1A96F637E0891631B73CD1FC2A27507FFC5CB3",
+      "lfSha256": "DD73D582C473DC53B1C2D5332E1A96F637E0891631B73CD1FC2A27507FFC5CB3",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_public_expiry_refresh_race_test.dart",
+      "sha256": "00AA3A6EF296B1B566D41DF0466472AC80F7C56E43D3CBD9831990BBB7213195",
+      "lfSha256": "00AA3A6EF296B1B566D41DF0466472AC80F7C56E43D3CBD9831990BBB7213195",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_release_journey_test.dart",
+      "sha256": "EBB55909D4133BFB3534DF15DD486957D24081B772F1687B2B6FEEB559CDEDB1",
+      "lfSha256": "EBB55909D4133BFB3534DF15DD486957D24081B772F1687B2B6FEEB559CDEDB1",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_restore_storage_retry_test.dart",
+      "sha256": "44CC80D65131B1E443CF9AC7614D254A9DD907C1F461543FBDF29964E9648AA1",
+      "lfSha256": "44CC80D65131B1E443CF9AC7614D254A9DD907C1F461543FBDF29964E9648AA1",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_reverse_roster_redirect_test.dart",
+      "sha256": "0D24B12D943BD7CCC0F691BB8360FD94FA089E8C481C48ABFE7970A73BDB2470",
+      "lfSha256": "0D24B12D943BD7CCC0F691BB8360FD94FA089E8C481C48ABFE7970A73BDB2470",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_snapshot_eviction_order_test.dart",
+      "sha256": "E570A58B2CD7EFCDEA5AB9300E35C1D2A279E0EFFDF166BB65DF65A335459997",
+      "lfSha256": "E570A58B2CD7EFCDEA5AB9300E35C1D2A279E0EFFDF166BB65DF65A335459997",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_snapshot_eviction_race_test.dart",
+      "sha256": "ABABB10493390A1C369D3934D559DE60C135F02903D132E563AD2BAC71DAC294",
+      "lfSha256": "ABABB10493390A1C369D3934D559DE60C135F02903D132E563AD2BAC71DAC294",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile261_terminal_cache_boundary02_test.dart",
+      "sha256": "3D26380148EC4D5334AFB526DF68FAF88EDFF796F8F5D17CE651530F4489832E",
+      "lfSha256": "3D26380148EC4D5334AFB526DF68FAF88EDFF796F8F5D17CE651530F4489832E",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile268_profile_country_failure_test.dart",
+      "sha256": "A3986E1ECADF8D0721236053DFB20E872FA702B7704B87712E5E253B8C335BC6",
+      "lfSha256": "A3986E1ECADF8D0721236053DFB20E872FA702B7704B87712E5E253B8C335BC6",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile274_offline_preview_test.dart",
+      "sha256": "1C9FC5EE7D68C15092F86B0DDDE83F4895F7FDB76D337DDC7C53A94981ACF746",
+      "lfSha256": "1C9FC5EE7D68C15092F86B0DDDE83F4895F7FDB76D337DDC7C53A94981ACF746",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile278_passive_preview_loopback_test.dart",
+      "sha256": "8B2F786F1C473557E2B4A07331D0F0A2048CD10F684D2B2640E57005480FE4D4",
+      "lfSha256": "8B2F786F1C473557E2B4A07331D0F0A2048CD10F684D2B2640E57005480FE4D4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile278_passive_preview_policy_test.dart",
+      "sha256": "4F2939358F25536F2A406C70A68FA9AAAF71228D9541B11EE47FE08D17D7F365",
+      "lfSha256": "4F2939358F25536F2A406C70A68FA9AAAF71228D9541B11EE47FE08D17D7F365",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/mobile_history_performance_test.dart",
+      "sha256": "49E47D53171368E91DD03C9C71FD48DAC4D9930A8E9EE36186A2DBC104563C8E",
+      "lfSha256": "49E47D53171368E91DD03C9C71FD48DAC4D9930A8E9EE36186A2DBC104563C8E",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "E504F4994617D295EDC0FCF37070FB5A58B94B2894A934996A48535F28F57B21"
+    },
+    {
+      "path": "apps/mobile/test/n1_push_payload_test.dart",
+      "sha256": "0D4D8A78197E26018B0D291192FEE29F62009BFA4B3645C96B666F59D5E39476",
+      "lfSha256": "0D4D8A78197E26018B0D291192FEE29F62009BFA4B3645C96B666F59D5E39476",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/national_team_names_test.dart",
+      "sha256": "7FCCBEC58A4F560710A4FBE97E3F1069AEE1E37867C5DDAB584AC7AD091176C7",
+      "lfSha256": "7FCCBEC58A4F560710A4FBE97E3F1069AEE1E37867C5DDAB584AC7AD091176C7",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/news113_screen_test.dart",
+      "sha256": "32BF5460E23D8BAD509BAFFE252C778B0C092D2EB003B32299BF5C8A209AEA24",
+      "lfSha256": "32BF5460E23D8BAD509BAFFE252C778B0C092D2EB003B32299BF5C8A209AEA24",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/news116_international_test.dart",
+      "sha256": "69EBA52548971F9A4A9E5224FFC23B04BF29EFE35392BFAD65E8850FD8D0A796",
+      "lfSha256": "69EBA52548971F9A4A9E5224FFC23B04BF29EFE35392BFAD65E8850FD8D0A796",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/news_feed_v2_adapter_test.dart",
+      "sha256": "F49FBB2D351C2337A55B74FD9113CD9020E80AF0F18E6E6CE3A870D5D717FD88",
+      "lfSha256": "F49FBB2D351C2337A55B74FD9113CD9020E80AF0F18E6E6CE3A870D5D717FD88",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/news_link_test.dart",
+      "sha256": "02ACE31456E147F1BA8213345E6702FA7BFFAC34F57BACA953DAA9072CDE9D97",
+      "lfSha256": "02ACE31456E147F1BA8213345E6702FA7BFFAC34F57BACA953DAA9072CDE9D97",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/news_screen_test.dart",
+      "sha256": "C2B22F9A18C42F09915C53A6D2AC8A4792A80DCC1D12DC4DE7DDF4787CCD02A1",
+      "lfSha256": "C2B22F9A18C42F09915C53A6D2AC8A4792A80DCC1D12DC4DE7DDF4787CCD02A1",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/news_transfers_v1_test.dart",
+      "sha256": "36C330B88F7D889646B9510EE371687728E5C0EB1812547D9A8A07AF3DAC2075",
+      "lfSha256": "36C330B88F7D889646B9510EE371687728E5C0EB1812547D9A8A07AF3DAC2075",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/night230_live_delete_race_test.dart",
+      "sha256": "2D7FFD866AA673ECA745B3E81E90EAECE77EA457BBB43250F210B3B9731F0B9A",
+      "lfSha256": "2D7FFD866AA673ECA745B3E81E90EAECE77EA457BBB43250F210B3B9731F0B9A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/night230_passive_real_cache_e2e_test.dart",
+      "sha256": "91468FF0E927E74FAAFDBD916FE1E4EADBEECD1B297BE685A67433AE9782AAAC",
+      "lfSha256": "91468FF0E927E74FAAFDBD916FE1E4EADBEECD1B297BE685A67433AE9782AAAC",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/night230_pitch_density_test.dart",
+      "sha256": "FFBBC7ADB13BC3F1EC1067F579DFED31F9E3FF4963888D4BA34EBEEA83FE795D",
+      "lfSha256": "FFBBC7ADB13BC3F1EC1067F579DFED31F9E3FF4963888D4BA34EBEEA83FE795D",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "02480B0497DA76983831C03C7611918A08CB04305BF32960CB9C43FC144651F0"
+    },
+    {
+      "path": "apps/mobile/test/night230_standings_phase_guard_test.dart",
+      "sha256": "164D93E268D33E38B646B6FCEE06A813508C7779F267B607E3E603A21F71DFB3",
+      "lfSha256": "164D93E268D33E38B646B6FCEE06A813508C7779F267B607E3E603A21F71DFB3",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/night230_timeline_presentation_test.dart",
+      "sha256": "C019DE55A8677C2F2479189E31A6FAD57B7473F3B84E70A1E1A4D314087F6E91",
+      "lfSha256": "C019DE55A8677C2F2479189E31A6FAD57B7473F3B84E70A1E1A4D314087F6E91",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/night230_timeline_score_contract_test.dart",
+      "sha256": "9B888B020F207FE56F854D7EA8174216B9F681DC3A2F089703CDDAE4F93D7161",
+      "lfSha256": "9B888B020F207FE56F854D7EA8174216B9F681DC3A2F089703CDDAE4F93D7161",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/notification_scopes_test.dart",
+      "sha256": "F0DF2E472B30719E6F5048A7111CCEDE9926C5C75CEF513B6DE0807B016372B2",
+      "lfSha256": "F0DF2E472B30719E6F5048A7111CCEDE9926C5C75CEF513B6DE0807B016372B2",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/notifications_app_test.dart",
+      "sha256": "1E6F0497D34DB38E9C45856BDF028BC4C8804F66558E1157468C5FC8161AB978",
+      "lfSha256": "1E6F0497D34DB38E9C45856BDF028BC4C8804F66558E1157468C5FC8161AB978",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/on_demand_contract_test.dart",
+      "sha256": "123890106D5C1328098206A59C18029E40297302F3CE9E8F8EE54659F1EFC2E9",
+      "lfSha256": "123890106D5C1328098206A59C18029E40297302F3CE9E8F8EE54659F1EFC2E9",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/onboarding_country_relevance_test.dart",
+      "sha256": "49FBE7DDB7696CDB37FA0E869635D5419BD3C33CCBF62449F08E7EC8A87F1B64",
+      "lfSha256": "49FBE7DDB7696CDB37FA0E869635D5419BD3C33CCBF62449F08E7EC8A87F1B64",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/onboarding_test.dart",
+      "sha256": "6A06F4F190B8B9451AE42D94871C77721A4ECC6F61AFF1A17C29C4D6DB11533C",
+      "lfSha256": "6A06F4F190B8B9451AE42D94871C77721A4ECC6F61AFF1A17C29C4D6DB11533C",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "BEBE36262E47F371D1CF4618BB4660B61589734B43607AE1A325AE314F41E82D"
+    },
+    {
+      "path": "apps/mobile/test/passive_api_277_contract_test.dart",
+      "sha256": "E0E52B19F4DAB778AE913DAFC2DA84E30E97EFE363767D3CE233DA7DF2CC3F3B",
+      "lfSha256": "E0E52B19F4DAB778AE913DAFC2DA84E30E97EFE363767D3CE233DA7DF2CC3F3B",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/passive_preview_transport_test.dart",
+      "sha256": "D315FDA19B9607FADF269DF5708D41CFCB14446B1B636FAC719C141ECCC04D83",
+      "lfSha256": "D315FDA19B9607FADF269DF5708D41CFCB14446B1B636FAC719C141ECCC04D83",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/password_reset_cold_start_test.dart",
+      "sha256": "F2CA9FD244CFDB9B1FAB457D62DA7AE62A4106ECCAECF0C31D06C8E086DC28AD",
+      "lfSha256": "F2CA9FD244CFDB9B1FAB457D62DA7AE62A4106ECCAECF0C31D06C8E086DC28AD",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/personalization_153_test.dart",
+      "sha256": "67FBE62B8D7B8403D3AC2A8392FC9BE849A3E0BBB3901B31A747B415FBFC91F4",
+      "lfSha256": "67FBE62B8D7B8403D3AC2A8392FC9BE849A3E0BBB3901B31A747B415FBFC91F4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/platform_goldens_test.dart",
+      "sha256": "2AFFB75F90A46129EBE575618B815D93CA3DF09ED2197717A93E09AFF9E80BC1",
+      "lfSha256": "2AFFB75F90A46129EBE575618B815D93CA3DF09ED2197717A93E09AFF9E80BC1",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/player_club_national_matches_test.dart",
+      "sha256": "D317B7646E8B67B829F39F768B7A0CEC9B4764375F06503AE7C8AE77D031A98D",
+      "lfSha256": "D317B7646E8B67B829F39F768B7A0CEC9B4764375F06503AE7C8AE77D031A98D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/player_display_identity_test.dart",
+      "sha256": "D93A28D848890C64CBCCABD3F2225A51909F1903951DF25EE969FBC2F62C8B3A",
+      "lfSha256": "D93A28D848890C64CBCCABD3F2225A51909F1903951DF25EE969FBC2F62C8B3A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/player_display_reactive_test.dart",
+      "sha256": "42A2A00EF8CDDF0E0CC632C7A8C6CDAA2E1DB1CF5A11CFF31C9481E0F0D5FE74",
+      "lfSha256": "42A2A00EF8CDDF0E0CC632C7A8C6CDAA2E1DB1CF5A11CFF31C9481E0F0D5FE74",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/player_media_squad_test.dart",
+      "sha256": "50F9963886E2A6517F6186F773AEEB01A11ED731752B6F1D9F5789041479FCB9",
+      "lfSha256": "50F9963886E2A6517F6186F773AEEB01A11ED731752B6F1D9F5789041479FCB9",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/player_profile_test.dart",
+      "sha256": "DD7962FFFB6D0699332330D6E3C4AFB15F01072D485DA5C1AB3DFA96695917CB",
+      "lfSha256": "DD7962FFFB6D0699332330D6E3C4AFB15F01072D485DA5C1AB3DFA96695917CB",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/player_suggestions_test.dart",
+      "sha256": "3565357440C85056A88D49C9BB11B8C02FD1BB77421C2B0C3749E4E82EF3EC13",
+      "lfSha256": "3565357440C85056A88D49C9BB11B8C02FD1BB77421C2B0C3749E4E82EF3EC13",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "FEAE8CD0983E8FCD9BECFA3BB8BE2E745BB513283D81ABA9F5EC7A46F6D8F4E9"
+    },
+    {
+      "path": "apps/mobile/test/players_squads_v2_test.dart",
+      "sha256": "B578BD766CB62F02182B74893BB0107A2E3CAF04797E9963CC61B5B667939D85",
+      "lfSha256": "B578BD766CB62F02182B74893BB0107A2E3CAF04797E9963CC61B5B667939D85",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/postmatch_videos_v1_test.dart",
+      "sha256": "7E0F672F78B9AF359C747489F1DF5D4957817FC59A78EEBF38E3DA12F684A9F1",
+      "lfSha256": "7E0F672F78B9AF359C747489F1DF5D4957817FC59A78EEBF38E3DA12F684A9F1",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/premium_qa_transport_test.dart",
+      "sha256": "8E970BF4056B70F305CADE6A3BE242478773758807EF97BC4C88626A8B6E6A97",
+      "lfSha256": "8E970BF4056B70F305CADE6A3BE242478773758807EF97BC4C88626A8B6E6A97",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/profile_context_test.dart",
+      "sha256": "37DC4E7176642B3BB67A71FFB6509441A7C192CEFD752210B2F0533DAF58CB4F",
+      "lfSha256": "37DC4E7176642B3BB67A71FFB6509441A7C192CEFD752210B2F0533DAF58CB4F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/profile_settings_test.dart",
+      "sha256": "D8D653EE7B793425B0CA23BB50E021EEC7673A14419C27CFF5D6889BD511C3C7",
+      "lfSha256": "D8D653EE7B793425B0CA23BB50E021EEC7673A14419C27CFF5D6889BD511C3C7",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/profile_v2_test.dart",
+      "sha256": "370772180A48562C6B214D9244CFC9839D432E14BEAB54EB31E3B90C2E9A0125",
+      "lfSha256": "370772180A48562C6B214D9244CFC9839D432E14BEAB54EB31E3B90C2E9A0125",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/public_access_auth_test.dart",
+      "sha256": "28441C4A2F5C556AC74A26C5E513C461EC6C5AC94D88AED779D8BF8A7CD45513",
+      "lfSha256": "28441C4A2F5C556AC74A26C5E513C461EC6C5AC94D88AED779D8BF8A7CD45513",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/public_access_transport_test.dart",
+      "sha256": "9803389A30765C257435455C39232F8BB8A3133C039A1AC2EE99A67247379F46",
+      "lfSha256": "9803389A30765C257435455C39232F8BB8A3133C039A1AC2EE99A67247379F46",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "CD2C1F0BD816F8DBD0C957532D2EFF561B8F4DD9B442A9F8FA0CDD2FF3D132B2"
+    },
+    {
+      "path": "apps/mobile/test/public_access_wiring_test.dart",
+      "sha256": "A498F1C0C2C87BFF43F1CD8DDF2E15510BC89969DA2CE201B708F101263CC50C",
+      "lfSha256": "A498F1C0C2C87BFF43F1CD8DDF2E15510BC89969DA2CE201B708F101263CC50C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/public_offline_cache_test.dart",
+      "sha256": "750BE2D0836C02CD8538D7AD8E63662C9FE29DAB1D57DE5D6E24FDF0E1CDA9E9",
+      "lfSha256": "750BE2D0836C02CD8538D7AD8E63662C9FE29DAB1D57DE5D6E24FDF0E1CDA9E9",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/qa225_real_timeline_test.dart",
+      "sha256": "1ADA102247D63BA095F8DAA5598D320E7524DFEE61F42087DF9AF8D7F0E8BD70",
+      "lfSha256": "1ADA102247D63BA095F8DAA5598D320E7524DFEE61F42087DF9AF8D7F0E8BD70",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/qa_auth_isolation_test.dart",
+      "sha256": "DF982ED78489054172F8444319F60471EB36DBDF12FC653D63FB67D61E2413DB",
+      "lfSha256": "DF982ED78489054172F8444319F60471EB36DBDF12FC653D63FB67D61E2413DB",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/qa_build_policy_test.dart",
+      "sha256": "642F4F41911FFD66C6AE8391277189F48CE7814CDD0EA600F82E12AA62DB0A9E",
+      "lfSha256": "642F4F41911FFD66C6AE8391277189F48CE7814CDD0EA600F82E12AA62DB0A9E",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/qa_development_test.dart",
+      "sha256": "F16C0E7528E36571313E75D99CD0F12952694B9D567236E2A95AEAD4770816AA",
+      "lfSha256": "F16C0E7528E36571313E75D99CD0F12952694B9D567236E2A95AEAD4770816AA",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/qa_diagnostics_test.dart",
+      "sha256": "470F58D522921E0941F87F7938704615420763561304B28C5065841DD6EAEC63",
+      "lfSha256": "470F58D522921E0941F87F7938704615420763561304B28C5065841DD6EAEC63",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/qa_stored_read_loopback_test.dart",
+      "sha256": "59FAB4B3A289294D2D455E50F509A95025A99461E9092E42A842BBDC2463400A",
+      "lfSha256": "59FAB4B3A289294D2D455E50F509A95025A99461E9092E42A842BBDC2463400A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/r3_match_center_regressions_test.dart",
+      "sha256": "817C488B57F85C06B2A61967BEF710171C8542B6745ABBEC13E855DE325AA259",
+      "lfSha256": "817C488B57F85C06B2A61967BEF710171C8542B6745ABBEC13E855DE325AA259",
+      "trackedAtRecord": false,
+      "acceptedRawSha256": "F532242F31583E583D5009A4C59A9D87384AFF6FC567241D880A87EA3AB866C5"
+    },
+    {
+      "path": "apps/mobile/test/r4_canonical_match_tabs_test.dart",
+      "sha256": "6B55A055EF37E84E0EE8D65AD3A857DD16821040FCC400747D7A8D5C16E3F9DE",
+      "lfSha256": "6B55A055EF37E84E0EE8D65AD3A857DD16821040FCC400747D7A8D5C16E3F9DE",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/r4_coverage_contract_test.dart",
+      "sha256": "D6EBEDA647108B58538A96D7A8C57A42EB19AE3E6038C03F15FFD459C0E8F54B",
+      "lfSha256": "D6EBEDA647108B58538A96D7A8C57A42EB19AE3E6038C03F15FFD459C0E8F54B",
+      "trackedAtRecord": false,
+      "acceptedRawSha256": "DD8D3E67C0B0E80523D65AAB55F9AA0CA50535EB0FE0A2D151772C0BF53CD624"
+    },
+    {
+      "path": "apps/mobile/test/r4_notification_scope_lifecycle_test.dart",
+      "sha256": "3461F63AFFC59D7A4CFB82C65664AF1238E67BA8DC53FF88C17F91563E3DF7B5",
+      "lfSha256": "3461F63AFFC59D7A4CFB82C65664AF1238E67BA8DC53FF88C17F91563E3DF7B5",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/r4_player_search_identity_test.dart",
+      "sha256": "E022D3F628502347817204552F4BFBB2A3E6AA67EA6E7E52866B2EF00C829123",
+      "lfSha256": "E022D3F628502347817204552F4BFBB2A3E6AA67EA6E7E52866B2EF00C829123",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/r4_profile_navigation_test.dart",
+      "sha256": "8D323A6E3B18495EA5C774BD3BB1FB625B1A612471722733482EB11521B93FFA",
+      "lfSha256": "8D323A6E3B18495EA5C774BD3BB1FB625B1A612471722733482EB11521B93FFA",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/r4_team_matches_pending_test.dart",
+      "sha256": "B2F2F1B6F70781E6A8D227B0F011C21459B163F72CE379A54803662973C675E8",
+      "lfSha256": "B2F2F1B6F70781E6A8D227B0F011C21459B163F72CE379A54803662973C675E8",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "apps/mobile/test/relevance_test.dart",
+      "sha256": "F722A58D4E3F57F565095B550C073A238E08ADB503084385AB13CB7CB0484AED",
+      "lfSha256": "F722A58D4E3F57F565095B550C073A238E08ADB503084385AB13CB7CB0484AED",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/score_correction_test.dart",
+      "sha256": "BDA5457D47100AC19C913C2876C5C71870C579CE79D6E0F00FD61D26336D17D5",
+      "lfSha256": "BDA5457D47100AC19C913C2876C5C71870C579CE79D6E0F00FD61D26336D17D5",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/search_autocomplete_test.dart",
+      "sha256": "F1ACA64776D1734AE5D13ED6F6DC38893A6D7D72366284E0E6902010EDB7F490",
+      "lfSha256": "F1ACA64776D1734AE5D13ED6F6DC38893A6D7D72366284E0E6902010EDB7F490",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/sports_image_cache_test.dart",
+      "sha256": "EC34934627DC0B3CDADE13D5DA54A8AFEC9DDF58AE5EE13680B175FE9DB90824",
+      "lfSha256": "EC34934627DC0B3CDADE13D5DA54A8AFEC9DDF58AE5EE13680B175FE9DB90824",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/squad_v2_test.dart",
+      "sha256": "B1BFCC498477500ADD3CAFF62CDDC6E6FD2FC6F6E7DBB42AE1094D4A59E3914C",
+      "lfSha256": "B1BFCC498477500ADD3CAFF62CDDC6E6FD2FC6F6E7DBB42AE1094D4A59E3914C",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/standings_current_phase_test.dart",
+      "sha256": "8E5E784658C2F49EFC03E76263D4531E3095B84B10415E60467539834BAF8943",
+      "lfSha256": "8E5E784658C2F49EFC03E76263D4531E3095B84B10415E60467539834BAF8943",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/standings_overall_table_test.dart",
+      "sha256": "223348A22C171B5D7F3AF60B5215739FA2EF9EBA689FB3B67E77782F4846F53D",
+      "lfSha256": "223348A22C171B5D7F3AF60B5215739FA2EF9EBA689FB3B67E77782F4846F53D",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/standings_subgroups_test.dart",
+      "sha256": "03EE80B9959983699F95B270CAEBBC1183E88C571BCC25981FD4FCAE9BBB0482",
+      "lfSha256": "03EE80B9959983699F95B270CAEBBC1183E88C571BCC25981FD4FCAE9BBB0482",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/standings_ux_v2_test.dart",
+      "sha256": "B38BE463AD88D7F7D8A380C1A22BA1ED584B292897F5CEB023B60E3CE05B74B4",
+      "lfSha256": "B38BE463AD88D7F7D8A380C1A22BA1ED584B292897F5CEB023B60E3CE05B74B4",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/standings_v2_test.dart",
+      "sha256": "59CFCB1632216F2E0E65680B18C97A175B37F88968830C45C10437AC13AFE17E",
+      "lfSha256": "59CFCB1632216F2E0E65680B18C97A175B37F88968830C45C10437AC13AFE17E",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/startup_preference_cache_test.dart",
+      "sha256": "192A59A9DCCA6909ADE01CC50BE15E32773BF07B5A435005DBF129437AE01C83",
+      "lfSha256": "192A59A9DCCA6909ADE01CC50BE15E32773BF07B5A435005DBF129437AE01C83",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/support/install_secure_storage.dart",
+      "sha256": "B45C309832155198D82FDA90F844E62DC78E1A11B35DD4F549724BBC6DCFBDCF",
+      "lfSha256": "B45C309832155198D82FDA90F844E62DC78E1A11B35DD4F549724BBC6DCFBDCF",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/support/platform_goldens.dart",
+      "sha256": "9C42686C3666D6A11D34AB21858D000630211684DE10FACDA54C3919421C4A17",
+      "lfSha256": "9C42686C3666D6A11D34AB21858D000630211684DE10FACDA54C3919421C4A17",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/support/stored_fixture_server.dart",
+      "sha256": "9CB149CC78809080327F6BBCB1FC46EBDC787529B79A3A699EEAC6EDAB77722A",
+      "lfSha256": "9CB149CC78809080327F6BBCB1FC46EBDC787529B79A3A699EEAC6EDAB77722A",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/support/visual_test_fonts.dart",
+      "sha256": "773AF238E64F011D20A76044EAC1177953602D0613CF77B7C9111F36C344FE99",
+      "lfSha256": "773AF238E64F011D20A76044EAC1177953602D0613CF77B7C9111F36C344FE99",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/team_media_test.dart",
+      "sha256": "0CF6D8D0C0AE7317438AB5F19A6F53D9FDCB2E96010516B306E288143B06C281",
+      "lfSha256": "0CF6D8D0C0AE7317438AB5F19A6F53D9FDCB2E96010516B306E288143B06C281",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/team_profile_completeness_test.dart",
+      "sha256": "12343E3996967DF334DB5902A569BAF1CBCC74712A8CA303B1F1949F1657A0AD",
+      "lfSha256": "12343E3996967DF334DB5902A569BAF1CBCC74712A8CA303B1F1949F1657A0AD",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/team_profile_first_paint_test.dart",
+      "sha256": "EF251BA65F9C7F54E6809E3D35FADE80EF981A6D9EF5433EE64CF65C61687DF5",
+      "lfSha256": "EF251BA65F9C7F54E6809E3D35FADE80EF981A6D9EF5433EE64CF65C61687DF5",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "ABC675CCB8217A994ACFE181A04CDC5B80C2A7B74F14E6EBD456A09A565FD008"
+    },
+    {
+      "path": "apps/mobile/test/team_profile_test.dart",
+      "sha256": "828BED548AC04AC8E325EF668A9B43DDC572A79347EFABC71EC11AA3759D8B28",
+      "lfSha256": "828BED548AC04AC8E325EF668A9B43DDC572A79347EFABC71EC11AA3759D8B28",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "F59FB800577160EF0DF220F0D7AF9B9B9F2D6196F3F7C2895E59CFF00465F336"
+    },
+    {
+      "path": "apps/mobile/test/team_summary_test.dart",
+      "sha256": "AFD41FF354528988C2C0F0389B6DE455E20CF952E1DE3D15234EC185F66E21A6",
+      "lfSha256": "AFD41FF354528988C2C0F0389B6DE455E20CF952E1DE3D15234EC185F66E21A6",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/terminal_realtime_regression_test.dart",
+      "sha256": "CA901FD1341ADAD32A3C4983EE20BCFBD8DAEDC67B0AAE216C689EF02F2C718F",
+      "lfSha256": "CA901FD1341ADAD32A3C4983EE20BCFBD8DAEDC67B0AAE216C689EF02F2C718F",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/timeline_regression_test.dart",
+      "sha256": "57AEAEF89E738811FDFA09A3F4928E97E0D2099C524F0A91D9E99537287966AA",
+      "lfSha256": "57AEAEF89E738811FDFA09A3F4928E97E0D2099C524F0A91D9E99537287966AA",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "apps/mobile/test/visual_test.dart",
+      "sha256": "A2855D06A5CF90D53430A9FCB51B022CE804CFD9CF11DFD5C9CE059FDE469EE8",
+      "lfSha256": "A2855D06A5CF90D53430A9FCB51B022CE804CFD9CF11DFD5C9CE059FDE469EE8",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "backend/notifications/dispatch.mjs",
+      "sha256": "FAFDD26532ADE1C0BDB1226D3332EC7481F17ED5370862BC64CEF23B1C11BF48",
+      "lfSha256": "FAFDD26532ADE1C0BDB1226D3332EC7481F17ED5370862BC64CEF23B1C11BF48",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "backend/notifications/transports.mjs",
+      "sha256": "EAB8A07E4E195DCD00B0BDDD01A55E553B500079759EE241A5ECB1666F870B79",
+      "lfSha256": "EAB8A07E4E195DCD00B0BDDD01A55E553B500079759EE241A5ECB1666F870B79",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "backend/test/fcm_n1_v9_contract.test.mjs",
+      "sha256": "BF2165C456DB5A14EF584C640A72F702762BD018881B7CEA0E64AC6684E56474",
+      "lfSha256": "BF2165C456DB5A14EF584C640A72F702762BD018881B7CEA0E64AC6684E56474",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "backend/test/fixtures/fcm_n1_v9_payloads.json",
+      "sha256": "451AF48673F0877EF1245E6FC3AF7757BFCCD383EBBEA55438E3A7C1D5B706B9",
+      "lfSha256": "451AF48673F0877EF1245E6FC3AF7757BFCCD383EBBEA55438E3A7C1D5B706B9",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "7A5A7537EE72A8215E5756B8B90EAE7EB6A0B23A1D0F0FE49018D95C026D2401",
+      "lfSha256": "7A5A7537EE72A8215E5756B8B90EAE7EB6A0B23A1D0F0FE49018D95C026D2401",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "package.json",
+      "sha256": "1353718C54A6E463A4D8C1941BE25E7FD2AB607C506B99A86B0C67126FD34E51",
+      "lfSha256": "1353718C54A6E463A4D8C1941BE25E7FD2AB607C506B99A86B0C67126FD34E51",
+      "trackedAtRecord": true
+    },
+    {
+      "path": "scripts/release/Build-Acceptance17.ps1",
+      "sha256": "ABFAE6F37ADCB117D030964DBFA858016BA6BF0091193EEBE8584A9A42B3B158",
+      "lfSha256": "ABFAE6F37ADCB117D030964DBFA858016BA6BF0091193EEBE8584A9A42B3B158",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "scripts/release/acceptance17.public.json",
+      "sha256": "7C65E9F150E7511C263B49CA792FEEC19645CD112EC85BCDEBD596242880C9A6",
+      "lfSha256": "7C65E9F150E7511C263B49CA792FEEC19645CD112EC85BCDEBD596242880C9A6",
+      "trackedAtRecord": false,
+      "acceptedRawSha256": "8BDDB41F0D8F79A9E2A6A9DC251413FBBD2C14DD815E807EB91720CFFE85BCE3"
+    },
+    {
+      "path": "scripts/release/verify-acceptance-inputs.mjs",
+      "sha256": "F21D6DB51887A3F450EE54F9BB9DD76BF45C4EDEE2BBA2EEE2C3661A92DF946A",
+      "lfSha256": "F21D6DB51887A3F450EE54F9BB9DD76BF45C4EDEE2BBA2EEE2C3661A92DF946A",
+      "trackedAtRecord": false
+    },
+    {
+      "path": "supabase/functions/futbeat-push-dispatch/index.ts",
+      "sha256": "C3A2CFE97D14BBBB74B16715E69B828F1DA93031D5863CA5D45D527480DC5D4A",
+      "lfSha256": "C3A2CFE97D14BBBB74B16715E69B828F1DA93031D5863CA5D45D527480DC5D4A",
+      "trackedAtRecord": true,
+      "acceptedRawSha256": "0CD6B44B43D02C0CE895013C70DC76BB2F9FC23C0A6FD711CB57EDB02EC87DF7"
+    }
+  ],
+  "derivedInputs": [
+    {
+      "path": "apps/mobile/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java",
+      "sha256": "88F1D69D822C2884F8B64CF24D452CF0BB6D35D664BCFE7884E7AA46E1E8295E",
+      "lfSha256": "88F1D69D822C2884F8B64CF24D452CF0BB6D35D664BCFE7884E7AA46E1E8295E",
+      "trackedAtRecord": false
+    }
+  ]
+}

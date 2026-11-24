@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../storage/database.mjs';
@@ -6,6 +7,7 @@ import { openDatabase } from '../storage/database.mjs';
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   try { await fn(db); } finally { await db.close(); }
 }
 const search = (db, q) => db.query('select public.futbeat_search_catalog($1,null,50) v', [q]).then((r) => r.rows[0].v);
@@ -63,7 +65,7 @@ test('unknown remaining: no single demand lane can take the whole blind budget',
   const search = await decide(db, 'player-search', 'user');
   assert.equal(search.safetyCap, 150); // 25% of unknownDailyCap (600)
   assert.equal((await decide(db, 'player-profile', 'user')).safetyCap, 150);
-  assert.equal((await decide(db, 'match-detail', 'live')).safetyCap, 900, 'LIVE keeps its own cap');
+  assert.equal((await decide(db, 'match-detail', 'live')).safetyCap, 550, 'LIVE keeps the confirmed BE11 cap');
   await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status)
     select 'goal_api','player-search','test','FAILED' from generate_series(1,150)`);
   assert.equal((await decide(db, 'player-search', 'user')).reason, 'kind_daily_cap');

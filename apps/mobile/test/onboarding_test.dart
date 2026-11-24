@@ -92,6 +92,8 @@ Future<void> pumpOnboarding(
   bool offline = false,
   Object? catalogError,
   bool atWelcome = false,
+  bool forbidRecommendations = false,
+  VoidCallback? onRecommendationsRead,
   OnboardingProgressStore? progress,
   PushService? pushService,
 }) async {
@@ -116,9 +118,13 @@ Future<void> pumpOnboarding(
               ? database.watchPreference()
               : Stream.value(preference),
         ),
-        playerSuggestionsProvider.overrideWith(
-          (ref, teams) async => const <Entity>[],
-        ),
+        playerSuggestionsProvider.overrideWith((ref, teams) async {
+          onRecommendationsRead?.call();
+          if (forbidRecommendations) {
+            throw StateError('Unavailable provider was watched');
+          }
+          return const <Entity>[];
+        }),
         exploreSnapshotProvider.overrideWith(
           (ref) => offline || catalogError != null
               ? Stream<Snapshot>.error(
@@ -168,6 +174,27 @@ class MemoryProgress implements OnboardingProgressStore {
 }
 
 void main() {
+  testWidgets(
+    'R4 player onboarding never watches unavailable recommendations',
+    (tester) async {
+      var recommendationsRead = 0;
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      await pumpOnboarding(
+        tester,
+        database: db,
+        atWelcome: true,
+        progress: MemoryProgress(OnboardingStep.players),
+        forbidRecommendations: true,
+        onRecommendationsRead: () => recommendationsRead++,
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(recommendationsRead, 0);
+      expect(find.text('Jugador Local'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   Future<void> pumpGate(
     WidgetTester tester, {
     required AppDatabase database,

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/interests.dart';
@@ -247,7 +248,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
     );
   }
 
-  Widget? _seededCompetitionView(VoidCallback retry) {
+  Widget? _seededCompetitionView(VoidCallback? retry) {
     if (widget.type != 'competition') return null;
     final repository = ref.read(repositoryProvider);
     if (repository is! ApiRepository) return null;
@@ -266,6 +267,45 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
               .toList()
             ..sort((a, b) => a.startTime.compareTo(b.startTime)),
       teams: competitionTeams(data, id),
+      retry: retry,
+    );
+  }
+
+  Widget? _seededPlayerView({VoidCallback? retry}) {
+    if (widget.type != 'player') return null;
+    final repository = ref.read(repositoryProvider);
+    var seed = repository is ApiRepository
+        ? repository.entitySeed('player', widget.id)
+        : null;
+    final carried = widget.playerMatchContext;
+    final known = carried?.player;
+    if (seed == null && known?.id == widget.id) {
+      seed = Snapshot({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt':
+            (carried?.observedAt ??
+                    DateTime.fromMillisecondsSinceEpoch(0, isUtc: true))
+                .toIso8601String(),
+        'freshness': {'stale': true},
+        'players': [known!.json],
+        'teams': [?carried?.team?.json],
+        'competitions': <dynamic>[],
+        'matches': <dynamic>[],
+        'standings': <dynamic>[],
+      });
+    }
+    if (seed == null) return null;
+    final data = presentSnapshotForSession(ref, seed);
+    final player = data.player(data.resolveEntityId(widget.id));
+    if (player == null) return null;
+    return PlayerProfileView(
+      data: data,
+      player: player,
+      team: data.team(player.json['teamId']?.toString() ?? ''),
+      matches: playerProfileMatches(data, player),
+      matchContext: carried,
+      loading: retry == null,
       retry: retry,
     );
   }
@@ -291,6 +331,8 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
       // nothing is known about the entity yet.
       loading: () =>
           _seededTeamView() ??
+          _seededPlayerView() ??
+          _seededCompetitionView(null) ??
           Scaffold(
             appBar: AppBar(title: const Text('FutBeat')),
             body: const ContentSkeleton(layout: SkeletonLayout.profile),
@@ -299,9 +341,11 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
         void retry() =>
             ref.invalidate(entitySnapshotProvider((type: type, id: id)));
         final failure = classifyLoadError(error);
-        if (failure != LoadFailure.other) {
+        if (failure != LoadFailure.other || error is DioException) {
           final cached =
-              _seededTeamView(retry: retry) ?? _seededCompetitionView(retry);
+              _seededTeamView(retry: retry) ??
+              _seededPlayerView(retry: retry) ??
+              _seededCompetitionView(retry);
           if (cached != null) return cached;
         }
         return Scaffold(
@@ -311,7 +355,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 EmptyState(
-                  'No pudimos cargar este perfil',
+                  'Perfil temporalmente no disponible',
                   loadErrorMessage(error),
                   icon: failure == LoadFailure.offline
                       ? Icons.cloud_off

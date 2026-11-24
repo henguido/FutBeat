@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../storage/database.mjs';
@@ -27,6 +28,7 @@ const reserve = (db) =>
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   try { await fn(db); } finally { await db.close(); }
 }
 

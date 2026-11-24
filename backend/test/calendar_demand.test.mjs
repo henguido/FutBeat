@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -5,6 +6,7 @@ import { openDatabase } from '../storage/database.mjs';
 
 test('calendar demand deduplicates users and maps a Costa Rica day to UTC dates', async () => {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   try {
     const day = (await db.query(
       "select ((now() at time zone 'America/Costa_Rica')::date+20)::text value",
@@ -38,6 +40,7 @@ test('calendar demand deduplicates users and maps a Costa Rica day to UTC dates'
 
 test('valid stored coverage prevents provider work and fulfilled demand disappears', async () => {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   try {
     const day = (await db.query(
       "select ((now() at time zone 'America/Costa_Rica')::date+30)::text value",

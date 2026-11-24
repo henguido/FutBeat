@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/auth_errors.dart';
+import '../../core/billing.dart';
 import '../../core/push.dart';
 import '../auth/auth_sheet.dart';
 import 'password_reset_sheet.dart';
@@ -143,8 +144,20 @@ class _AccountSecurityScreenState extends ConsumerState<AccountSecurityScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Eliminar cuenta'),
-        content: const Text(
-          'Se eliminarán tu perfil, favoritos sincronizados, preferencias y avisos asociados. Esta acción no se puede deshacer.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Se eliminarán tu perfil, favoritos sincronizados, preferencias y avisos asociados. Esta acción no se puede deshacer.',
+            ),
+            if (ref.read(billingGatewayProvider) != null) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Eliminar tu cuenta FutBeat no cancela tu suscripción. Puedes cancelarla en Google Play → Pagos y suscripciones → Suscripciones.',
+              ),
+            ],
+          ],
         ),
         actions: [
           TextButton(

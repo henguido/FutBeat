@@ -27,3 +27,16 @@ verify_jwt = false
 # Internal collector only; no schedule or enabled news sources in this package.
 [functions.futbeat-news-collect]
 verify_jwt = false
+
+# G3 handler authenticates user, cron and RTDN routes separately; intake is runtime OFF.
+[functions.futbeat-billing]
+verify_jwt = false
+
+[functions.futbeat-global-ingest]
+verify_jwt = false
+
+[functions.futbeat-goal-live-sync]
+verify_jwt = false
+
+[functions.futbeat-passive-api]
+verify_jwt = false

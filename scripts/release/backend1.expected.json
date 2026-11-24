@@ -1,0 +1,65 @@
+{
+  "postgresMajor": 17,
+  "migration": "supabase/migrations/20261124140313_consolidated_backend_1_0.sql",
+  "functions": {
+    "futbeat_private.match_detail_planner_due(text,text)": "d80d4b57733dd627eadba231176fb48d",
+    "futbeat_private.live_demand_tier(text)": "33d45aca258ede0ed74cefb1d19c9905",
+    "futbeat_private.store_canonical_event(jsonb,text,boolean,timestamp with time zone,jsonb)": "3db6fc9c89a1f4941cf46b9b0750f97a",
+    "futbeat_private.note_lineup_alerts(text,jsonb,timestamp with time zone)": "5769ad0723420c019181d1c26cdabf65",
+    "futbeat_private.enqueue_goal_annulled(text)": "82333543e8308c5d05729c5309b62089",
+    "public.futbeat_claim_notifications_v2(text,integer)": "c336d54580e86af58d71f06b8096df90",
+    "futbeat_private.push_deliverable(uuid,uuid,text,text)": "0dea9ec1139df9b4257e361b18715abc",
+    "futbeat_private.wake_push_dispatch()": "95b29025875f9c09772128fc47e2fbeb",
+    "futbeat_private.reserve_goal_results_date(text)": "f00589fc97db1ec5fa2fd7f0300e1bc8",
+    "public.futbeat_request_match_detail(text)": "92bee7280fa0c1cb084abb42a02cb008",
+    "futbeat_private.request_match_detail(text)": "9585fe60d4fd1728d08309dc4319ce6c",
+    "futbeat_private.reserve_match_detail_call(text)": "2d447a78efab451154f999b0f0e13c26",
+    "futbeat_private.plan_central_coverage(boolean)": "ae01d19ab7273c15d67d9b7680b0859f",
+    "futbeat_private.resolve_global_entity_before_player_lock(text,text,text,text,text,text)": "a99226a3d26c57c82969a21e8e075721",
+    "futbeat_private.futbeat_store_goal_standings(text,text,timestamp with time zone,text,jsonb)": "10a30936fb1efca9f4958934f0d05fd6",
+    "futbeat_private.upsert_goal_player(jsonb,text,timestamp with time zone)": "20b691f8ff9872201b4235119dad3dfa",
+    "futbeat_private.provider_remaining(text)": "0fa9b77299d9a7894908c00919f865df"
+  },
+  "calendarRtrimMd5": "201d1f20cdb9eed211ae4ac8a4d15d45",
+  "requiredPrerequisites": [
+    "futbeat_private.navigation_demands_enabled()",
+    "futbeat_private.futbeat_request_match_detail__ungated(text)",
+    "futbeat_private.is_timezone_name(text)",
+    "futbeat_private.match_detail_bucket_at(text,timestamp with time zone,timestamp with time zone,interval,interval,interval,interval,interval,interval)"
+  ],
+  "requiredRelations": [
+    "futbeat_private.api_access_policy",
+    "futbeat_private.guest_merge_tickets",
+    "futbeat_private.guest_account_merges",
+    "futbeat_private.timezone_names",
+    "futbeat_private.detail_planner_schedule"
+  ],
+  "extensionLimitations": [
+    "Native PG17 exercises core SQL; Supabase Auth is an inert local fixture. Vault/pg_net/pg_cron unavailable; their scheduling/authentication/network behavior is NOT certified. No outbound scheduler runs."
+  ],
+  "functionPrefixes": {
+    "public.futbeat_try_worker_lease": "a2a638ac",
+    "public.futbeat_release_worker_lease": "d45a6ae1",
+    "public.futbeat_read_passive_api_policy": "eb8b743b",
+    "public.futbeat_read_qa_stored_calendar": "0bfa03a7",
+    "public.futbeat_read_qa_stored_explore": "99d611dc",
+    "public.futbeat_read_qa_stored_national_teams": "a5081800",
+    "public.futbeat_read_qa_stored_search": "56b4d75d"
+  },
+  "finalOverrides": [
+    "supabase/migrations/20261124150000_reopen1_stale_missing_from_provider.sql"
+  ],
+  "signaturePrefixes": {
+    "futbeat_private.reconcile_goal_results_local(date)": "83cbc022",
+    "futbeat_private.futbeat_request_calendar_date(date,text)": "ff23ba2e",
+    "futbeat_private.seed_calendar_snapshot_queue(integer)": "4afc270b",
+    "public.futbeat_read_calendar_range(date,date,text)": "e7499f21",
+    "futbeat_private.futbeat_read_calendar_range_before_field_merge(date,date,text)": "02c626d6",
+    "futbeat_private.match_detail_bucket(text,timestamp with time zone)": "619038cd",
+    "futbeat_private.is_timezone_name(text)": "f7753db1",
+    "futbeat_private.match_detail_bucket_at(text,timestamp with time zone,timestamp with time zone,interval,interval,interval,interval,interval,interval)": "3472754c",
+    "futbeat_private.refresh_interest_aggregates()": "81e555e0",
+    "futbeat_private.plan_match_detail_coverage(integer)": "909f384b",
+    "futbeat_private.plan_match_detail_coverage(integer,boolean)": "cbb521db"
+  }
+}

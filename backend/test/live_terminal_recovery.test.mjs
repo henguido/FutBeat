@@ -11,11 +11,11 @@ import { worker } from './helpers/worker_harness.mjs';
 // a simulated GOAL API. No real network, no fixed teams/matches.
 
 let seq = 0;
-async function seedLive(db, n, { minutes = -30 } = {}) {
+async function seedLive(db, n, { minutes = -30, matchId } = {}) {
   const out = [];
   for (let i = 0; i < n; i++) {
     const k = ++seq;
-    const ids = { comp: `fb_comp_tc${k}`, home: `fb_team_tc${k}h`, away: `fb_team_tc${k}a`, match: `fb_match_tc${k}`, ext: `tc-${k}` };
+    const ids = { comp: `fb_comp_tc${k}`, home: `fb_team_tc${k}h`, away: `fb_team_tc${k}a`, match: matchId ?? `fb_match_tc${k}`, ext: `tc-${k}` };
     const start = new Date(Date.now() + minutes * 60000).toISOString();
     for (const [id, kind, payload] of [
       [ids.comp, 'competition', { id: ids.comp, name: `Comp ${k}` }],
@@ -232,6 +232,35 @@ test('C. LIVE disappears then reappears in the next complete poll -> recovery CA
   assert.equal(model.status, 'LIVE');
 }));
 
+test('Latvia–Armenia replay: 90′ and 0–0 stays nonterminal until GOAL returns FINISHED', () => withDb(async (db) => {
+  const [match] = await seedLive(db, 1, {
+    minutes: -112,
+    matchId: 'fb_match_2e973e3d22934415877893b868d89851',
+  });
+  const live = fixtureOf(match, 'LIVE', 90, ['0', '0']);
+  await worker(db, goalSim({ pages: [[live]] })).run('live');
+  const before = await db.query('select status,revision from public.live_match_updates where match_id=$1', [match.match]);
+  assert.equal(before.rows[0].status, 'LIVE');
+  await nextPoll(db);
+  await worker(db, goalSim({ pages: [[]] })).run('live');
+  assert.equal((await recoveryRow(db, match.ext)).state, 'PENDING');
+  assert.equal((await shown(db, match)).status, 'LIVE');
+
+  await makeDue(db, match.ext);
+  const recovery = worker(db, goalSim({ details: {
+    [match.ext]: fixtureOf(match, 'FINISHED', 90, ['0', '0']),
+  } }));
+  await recovery.run('detail-only');
+  assert.equal((await recoveryRow(db, match.ext)).state, 'RESOLVED');
+  const recovered = await shown(db, match);
+  assert.equal(recovered.status, 'FINISHED_PENDING_VERIFICATION');
+  assert.deepEqual(recovered.score, { home: 0, away: 0 });
+  const after = await db.query('select status,revision from public.live_match_updates where match_id=$1', [match.match]);
+  assert.equal(after.rows[0].status, 'FINISHED_PENDING_VERIFICATION');
+  assert.ok(after.rows[0].revision > before.rows[0].revision);
+  assert.equal((await recoveryLedgerRows(db)).filter((row) => row.metadata.bucket === 'recovery').length, 1);
+}));
+
 test('D. recovery fetch returns SUSPENDED: not terminal, row stays PENDING, attempts incremented, backed off', () => withDb(async (db) => {
   const [m] = await seedLive(db, 1);
   let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60)]] }));
@@ -334,35 +363,44 @@ test('G. truncated/partial poll never treats absence as evidence; a resumed (off
   assert.equal(await recoveryRow(db, a.ext), null, 'A absent from a resumed (offset>0, non-restarted) poll is not evidence');
 }));
 
-test('H. idempotency: two absences make one row without resetting attempts; EXHAUSTED after max attempts stops reservation', () => withDb(async (db) => {
+test('H. repeated absence stays idempotent and respects the bounded absent-detail budget', () => withDb(async (db) => {
   const [m] = await seedLive(db, 1);
-  let w = worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60)]] }));
-  await w.run('live');
-  await nextPoll(db);
-  w = worker(db, goalSim({ pages: [[]] }));
-  await w.run('live');
-  await nextPoll(db);
-  w = worker(db, goalSim({ pages: [[]] }));
-  await w.run('live');
-  let rows = await db.query('select * from futbeat_private.live_terminal_recovery where external_match_id=$1', [m.ext]).then((r) => r.rows);
-  assert.equal(rows.length, 1, 'idempotent: one row for the same absence noted twice');
-  assert.equal(rows[0].attempts, 0, 'noting the absence again is not an attempt');
-
-  // Drive it to EXHAUSTED: repeatedly make it due and answer with SUSPENDED
-  // (never terminal) until the attempt cap (6) is spent.
+  await worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 60)]] })).run('live');
+  for (let i = 0; i < 2; i++) {
+    await nextPoll(db);
+    await worker(db, goalSim({ pages: [[]] })).run('live');
+  }
+  const rows = (await db.query('select * from futbeat_private.live_terminal_recovery where external_match_id=$1', [m.ext])).rows;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].attempts, 0, 'noting an absence is not an acquisition');
+  const cap = Number((await db.query("select futbeat_private.quota_setting('goal_api','terminalRecoveryAbsentDetailAttempts',2) cap")).rows[0].cap);
+  assert.ok(cap > 0 && cap <= 2, 'the deployed policy bounds absent-detail retries');
   for (let i = 0; i < 6; i++) {
     await makeDue(db, m.ext);
-    w = worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, 'SUSPENDED', 60) } }));
-    await w.run('detail-only');
+    await worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, 'SUSPENDED', 60) } })).run('detail-only');
+  }
+  const row = await recoveryRow(db, m.ext);
+  assert.equal(row.state, 'PENDING', 'the shared results acquisition must still be able to finish this match');
+  assert.equal(row.attempts, cap, 'never force six calls past the deployed absent-detail cap');
+  const reserved = (await db.query("select public.futbeat_reserve_terminal_recovery_call('test') v")).rows[0].v;
+  assert.equal(reserved.allowed, false);
+  assert.equal(reserved.reason, 'no_recovery_due');
+}));
+
+test('H2. overdue recovery exhausts its six attempts without resetting or inferring a final', () => withDb(async (db) => {
+  const [m] = await seedLive(db, 1, { minutes: -190 });
+  await worker(db, goalSim({ pages: [[fixtureOf(m, 'LIVE', 190)]] })).run('live');
+  assert.equal((await recoveryRow(db, m.ext)).reason, 'overdue_live');
+  for (let i = 0; i < 6; i++) {
+    await makeDue(db, m.ext);
+    await worker(db, goalSim({ details: { [m.ext]: fixtureOf(m, 'SUSPENDED', 190) } })).run('detail-only');
   }
   const row = await recoveryRow(db, m.ext);
   assert.equal(row.state, 'EXHAUSTED');
   assert.equal(row.attempts, 6);
-
+  assert.notEqual((await shown(db, m)).status, 'FINISHED');
   await makeDue(db, m.ext);
-  const reserved = (await db.query("select public.futbeat_reserve_terminal_recovery_call('test') v")).rows[0].v;
-  assert.equal(reserved.allowed, false);
-  assert.equal(reserved.reason, 'no_recovery_due');
+  assert.equal((await db.query("select public.futbeat_reserve_terminal_recovery_call('test') v")).rows[0].v.allowed, false);
 }));
 
 test('overdue_live: a match still LIVE in the feed with kickoff far in the past gets an overdue row; reappearing does not cancel it', () => withDb(async (db) => {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -31,20 +32,86 @@ class PushMessage {
   final Map<String, dynamic> data;
   final String? deliveryId;
 
+  /// Optional server metadata, never a client-side recipient decision.
+  /// FCM carries structured values as JSON strings. Older payloads remain valid.
+  Set<String>? get scopes {
+    final value = _structured('scopes');
+    if (value is! List ||
+        value.any(
+          (entry) => !const {'player', 'team', 'match'}.contains(entry),
+        )) {
+      return null;
+    }
+    return Set<String>.unmodifiable(value.cast<String>());
+  }
+
+  Map<String, String>? get scopeKinds {
+    final value = _structured('scopeKinds');
+    if (value is! Map) return null;
+    final result = <String, String>{};
+    for (final entry in value.entries) {
+      if (!const {'player', 'team', 'match'}.contains(entry.key) ||
+          _identifier(entry.value) == null) {
+        return null;
+      }
+      result[entry.key as String] = _identifier(entry.value)!;
+    }
+    return Map.unmodifiable(result);
+  }
+
+  /// Unknown is distinct from false; message wording is never evidence.
+  bool? get penalty => switch (data['penalty']) {
+    true || 'true' => true,
+    false || 'false' => false,
+    _ => null,
+  };
+
+  String? get playerRole {
+    final value = data['playerRole'];
+    return const {'primary', 'assist', 'starter', 'bench'}.contains(value)
+        ? value as String
+        : null;
+  }
+
+  /// A player ID alone (including in a legacy team alert) is not personal scope.
+  String? get personalPlayerId =>
+      scopes?.contains('player') == true ? _identifier(data['playerId']) : null;
+
+  Object? _structured(String key) {
+    final value = data[key];
+    if (value is! String) return value;
+    if (value.length > 4096) return null;
+    try {
+      return jsonDecode(value);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static String? _identifier(Object? raw) {
+    if (raw is! String) return null;
+    final value = raw.trim();
+    return value.isEmpty ||
+            value == '.' ||
+            value == '..' ||
+            value.length > 200 ||
+            RegExp(r'[\x00-\x1f\x7f]').hasMatch(value)
+        ? null
+        : value;
+  }
+
   /// Server outbox identity wins over a transport retry's new FCM message ID.
   /// Never infer identity from text, player names or the match alone: a goal
   /// correction and a new goal must remain separate notifications.
   String? get deduplicationId {
-    for (final raw in [data['notificationId'], deliveryId]) {
-      if (raw is! String) continue;
-      final value = raw.trim();
-      if (value.isNotEmpty &&
-          value.length <= 200 &&
-          !RegExp(r'[\x00-\x1f\x7f]').hasMatch(value)) {
-        return value;
-      }
+    final notification = _identifier(data['notificationId']);
+    if (notification != null) return notification;
+    final event = _identifier(data['eventId']);
+    // A cancellation of a goal must not disappear behind the original goal.
+    if (event != null) {
+      return 'event:$event:${_identifier(data['type']) ?? 'unknown'}';
     }
-    return null;
+    return _identifier(deliveryId);
   }
 
   /// Screen this push opens, or null when it has no target.

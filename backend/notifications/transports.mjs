@@ -21,14 +21,39 @@ export function collapseKeyOf(row) {
  return String(key).slice(0, 64);
 }
 
-// Data values must be strings for FCM.
+// N1 contract v1 §4 (FCM-N1): why THIS device got the alert. Validated against closed lists; anything else is
+// dropped (never forwarded). Values are the recipient's own scopes (computed per user by N1), no other user data.
+const SCOPE_NAMES = new Set(['player','team','match']);
+const SCOPE_KIND = /^[a-z][a-z_]{0,31}$/;          // notification catalog keys (kickoff, goal_for, penalty_goal, starter, ...)
+const PLAYER_ROLES = new Set(['primary','assist','starter','bench']);
+function scopesOf(m) {
+ if (!Array.isArray(m.scopes)) return null;
+ const list = [...new Set(m.scopes)].filter((s) => SCOPE_NAMES.has(s));
+ return list.length ? list : null;
+}
+function scopeKindsOf(m, scopes) {
+ const k = m.scopeKinds;
+ if (!scopes || !k || typeof k !== 'object' || Array.isArray(k)) return null;
+ const out = {};
+ for (const s of scopes) if (typeof k[s] === 'string' && SCOPE_KIND.test(k[s])) out[s] = k[s];
+ return Object.keys(out).length ? out : null;
+}
+
+// Data values must be strings for FCM. Structures are compact JSON strings (FCM data is string->string).
 function dataOf(row) {
  const m = row.message ?? {};
  const data = { notificationId: String(row.id) };
  for (const name of ['type','eventId','matchId','playerId','annulsEventId','articleId','transferId','url'])
   if (m[name] !== undefined && m[name] !== null) data[name] = String(m[name]);
+ const scopes = scopesOf(m);
+ if (scopes) data.scopes = JSON.stringify(scopes);                      // e.g. ["player","match"]
+ const kinds = scopeKindsOf(m, scopes);
+ if (kinds) data.scopeKinds = JSON.stringify(kinds);                    // e.g. {"player":"goal","match":"goal"}
+ if (m.penalty === true || m.penalty === 'true') data.penalty = 'true';   // only penalty goals; absent otherwise
+ if (typeof m.playerRole === 'string' && PLAYER_ROLES.has(m.playerRole) && data.playerId) data.playerRole = m.playerRole;
  return data;
 }
+export { dataOf as fcmDataOf };
 
 // Dead-token classification: the device must be disabled (receipt handled by
 // futbeat_finish_notification).

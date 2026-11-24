@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import { runChunksWithTimeoutRetry } from '../../supabase/functions/_shared/chunked_rpc.ts';
 import assert from 'node:assert/strict';
@@ -20,6 +21,7 @@ const at = (hours) => new Date(Date.now() + hours * 3600e3).toISOString();
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   // The coverage window uses current_date. Production sessions run in UTC
   // and the expectations below are UTC dates; without this the suite failed
   // for six hours a day on a host whose local zone is behind UTC.

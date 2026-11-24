@@ -85,6 +85,10 @@ function harness(db, options = {}) {
       assert.equal(init.headers.Authorization, `Bearer ${goalKey}`);
       return options.provider ? options.provider(url, init) : Response.json({ success: true, data: [], pagination: { total: 0 } });
     }
+    if (url.href.startsWith('https://api.goal-api.com/v1/fixtures/date/') && options.fallback) {
+      assert.equal(init.headers.Authorization, `Bearer ${goalKey}`);
+      return options.fallback(url, init);
+    }
     unexpected.push(url.href);
     throw new Error(`Unexpected mocked request: ${url.href}`);
   };
@@ -218,7 +222,6 @@ test('a fixture missing apiId/id is silently skipped upstream, not a finalizatio
 }));
 
 for (const [failAt, expectedStage] of [
-  ['futbeat_link_goal_live_matches', 'link'],
   ['futbeat_record_live_batch', 'record'],
   ['futbeat_finalize_goal_results_date', 'finalize'],
   ['futbeat_complete_results_date_attempt', 'complete_attempt'],
@@ -345,6 +348,7 @@ test('pagination: the provider repeats page 1 on page 2 (offset ignored) -> the 
   let call = 0;
   const page = () => [resultFixture(external), ...Array.from({ length: 499 }, (_, i) => resultFixture(`world-${i}`))];
   const h = harness(db, {
+    fallback: () => Response.json({ success: true, data: [], pagination: { hasMore: false } }),
     provider: () => {
       call++;
       return Response.json({ success: true, data: page(), pagination: { hasMore: true } });
@@ -354,12 +358,13 @@ test('pagination: the provider repeats page 1 on page 2 (offset ignored) -> the 
   assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
   assert.equal(value.results.truncatedBy, 'pagination_stalled');
   assert.equal(value.results.results, 500);
-  assert.equal(call, 2, 'one probe of the next page, then stop (no retry loop)');
-  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 2, away: 1 } }, 'the final reached the canonical match');
+  assert.equal(call, 2, 'one probe of the next results page, then stop');
+  assert.equal(h.providers().length, 3, 'one bounded fixtures fallback');
+  assert.deepEqual(await storedMatch(db, match), { status: 'VERIFIED', score: { home: 2, away: 1 } }, 'the final reached the canonical match');
   const completion = h.rpcCalls('futbeat_complete_provider_call').at(-1).body;
   assert.equal(completion.p_status, 'SUCCEEDED');
   assert.equal(completion.p_metadata.truncatedBy, 'pagination_stalled');
-  assert.equal(completion.p_metadata.providerRequests, 2);
+  assert.equal(completion.p_metadata.providerRequests, 3);
   assert.equal((await attempt(db, dateStr)).last_result_count, 500);
 }));
 
@@ -377,7 +382,7 @@ test('pagination: an inflated total followed by an empty page -> keeps what was 
   const { value } = await h.invoke();
   assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
   assert.equal(value.results.truncatedBy, 'pagination_stalled');
-  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
+  assert.equal((await storedMatch(db, match)).status, 'VERIFIED');
 }));
 
 test('pagination: hasMore:true followed by an empty page -> keeps what was read (no failure)', () => withDb(async (db) => {
@@ -393,7 +398,7 @@ test('pagination: hasMore:true followed by an empty page -> keeps what was read 
   const { value } = await h.invoke();
   assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
   assert.equal(value.results.truncatedBy, 'pagination_stalled');
-  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
+  assert.equal((await storedMatch(db, match)).status, 'VERIFIED');
 }));
 
 test('pagination: nothing read at all (first page empty but "more" claimed) is still a real failure -> tagged "provider_fetch"', () => withDb(async (db) => {
@@ -412,6 +417,7 @@ test('pagination: page 2 partly repeats page 1 -> its new rows are kept, nothing
   const { match, external, dateStr } = await seedResultsDueMatch(db);
   let call = 0;
   const h = harness(db, {
+    fallback: () => Response.json({ success: true, data: [], pagination: { hasMore: false } }),
     provider: () => {
       call++;
       if (call === 1) {
@@ -429,7 +435,8 @@ test('pagination: page 2 partly repeats page 1 -> its new rows are kept, nothing
   assert.equal(value.results.truncatedBy, undefined, 'the provider end was reached');
   assert.equal(value.results.results, 600);
   assert.equal(call, 2);
-  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 2, away: 1 } });
+  assert.equal(h.providers().length, 3, 'one bounded fixtures fallback after the two results pages');
+  assert.deepEqual(await storedMatch(db, match), { status: 'VERIFIED', score: { home: 2, away: 1 } });
   assert.equal((await attempt(db, dateStr)).last_result_count, 600);
 }));
 
@@ -445,7 +452,7 @@ test('a finished answer with a reset running total is recorded with its full-tim
   });
   const { value } = await h.invoke();
   assert.equal(value.results.status, 'ok', JSON.stringify({ value, logs: h.logs }));
-  assert.deepEqual(await storedMatch(db, match), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 6, away: 3 } });
+  assert.deepEqual(await storedMatch(db, match), { status: 'VERIFIED', score: { home: 6, away: 3 } });
   const recorded = h.rpcCalls('futbeat_record_live_batch')[0].body.p_observations[0];
   assert.deepEqual(recorded.score, { home: 6, away: 3 }, 'the observation itself carries the real result');
 }));
@@ -495,7 +502,7 @@ test('pagination: 5 full pages reach the page limit -> the 2500 results read are
   assert.equal(value.results.truncatedBy, 'page_limit');
   assert.equal(value.results.results, 2500);
   assert.equal(call, 5, 'never more than five provider requests');
-  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
+  assert.equal((await storedMatch(db, match)).status, 'VERIFIED');
 }));
 
 // A full results day is recorded in chunks: each record RPC is its own
@@ -524,7 +531,7 @@ test('a results day is recorded in chunks of at most 25 observations, every fixt
   assert.equal(new Set(h.rpcCalls('futbeat_record_live_batch').map((c) => c.body.p_received_at)).size, 1, 'one receivedAt for the whole answer');
   const meta = h.rpcCalls('futbeat_complete_provider_call')[0].body.p_metadata;
   assert.deepEqual([meta.recordChunks, meta.insertedObservations, meta.duplicates], [3, 60, 0]);
-  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
+  assert.equal((await storedMatch(db, match)).status, 'VERIFIED');
 }));
 
 test('a record chunk that fails keeps what earlier chunks stored; the retry only pays for the rest', () => withDb(async (db) => {
@@ -550,5 +557,16 @@ test('a record chunk that fails keeps what earlier chunks stored; the retry only
   assert.equal(second.value.results.status, 'ok', JSON.stringify(second.value));
   const done = retry.rpcCalls('futbeat_complete_provider_call')[0].body.p_metadata;
   assert.deepEqual([done.insertedObservations, done.duplicates], [35, 25]);
-  assert.equal((await storedMatch(db, match)).status, 'FINISHED_PENDING_VERIFICATION');
+  assert.equal((await storedMatch(db, match)).status, 'VERIFIED');
+}));
+
+test('deployed worker tolerates linking failure while preserving official terminal results', () => withDb(async db => {
+  const { match, external } = await seedResultsDueMatch(db);
+  const h = harness(db, { failAt: 'futbeat_link_goal_live_matches',
+    provider: () => Response.json({ success: true, data: [resultFixture(external)], pagination: { total: 1 } }) });
+  const { value } = await h.invoke();
+  assert.equal(value.results.status, 'ok');
+  assert.equal((await storedMatch(db, match)).status, 'VERIFIED');
+  assert.ok(h.logs.some(row => row[0] === 'live link unavailable'));
+  assert.equal(h.rpcCalls('futbeat_complete_provider_call').at(-1).body.p_status, 'SUCCEEDED');
 }));

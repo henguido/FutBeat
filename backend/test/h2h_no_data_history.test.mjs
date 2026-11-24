@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -16,6 +17,7 @@ import * as calendarCache from '../../supabase/functions/_shared/calendar_cache.
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   try { await fn(db); } finally { await db.close(); }
 }
 

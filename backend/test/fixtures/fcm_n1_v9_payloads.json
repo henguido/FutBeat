@@ -1,0 +1,32 @@
+[
+  {
+    "name": "legacy match payload",
+    "row": {"id":"fixture-legacy","message":{"type":"KICKOFF","eventId":"fixture-event-1","matchId":"fb_match_fixture"}},
+    "data": {"notificationId":"fixture-legacy","type":"KICKOFF","eventId":"fixture-event-1","matchId":"fb_match_fixture"},
+    "parsed": {"route":"/match/fb_match_fixture","personalPlayerId":null,"scopes":null,"scopeKinds":null,"penalty":null,"playerRole":null}
+  },
+  {
+    "name": "personal penalty and multiple follows",
+    "row": {"id":"fixture-personal","message":{"type":"GOAL","eventId":"fixture-event-2","matchId":"fb_match_fixture","playerId":"fb_player_fixture","scopes":["player","team","match"],"scopeKinds":{"player":"penalty_goal","team":"goal_for","match":"goal"},"penalty":true,"playerRole":"primary"}},
+    "data": {"notificationId":"fixture-personal","type":"GOAL","eventId":"fixture-event-2","matchId":"fb_match_fixture","playerId":"fb_player_fixture","scopes":"[\"player\",\"team\",\"match\"]","scopeKinds":"{\"player\":\"penalty_goal\",\"team\":\"goal_for\",\"match\":\"goal\"}","penalty":"true","playerRole":"primary"},
+    "parsed": {"route":"/match/fb_match_fixture","personalPlayerId":"fb_player_fixture","scopes":["player","team","match"],"scopeKinds":{"player":"penalty_goal","team":"goal_for","match":"goal"},"penalty":true,"playerRole":"primary"}
+  },
+  {
+    "name": "team goal is not personal even with a player",
+    "row": {"id":"fixture-team","message":{"type":"GOAL","matchId":"fb_match_fixture","playerId":"fb_player_fixture","scopes":["team"],"scopeKinds":{"team":"goal_against"},"penalty":false}},
+    "data": {"notificationId":"fixture-team","type":"GOAL","matchId":"fb_match_fixture","playerId":"fb_player_fixture","scopes":"[\"team\"]","scopeKinds":"{\"team\":\"goal_against\"}"},
+    "parsed": {"route":"/match/fb_match_fixture","personalPlayerId":null,"scopes":["team"],"scopeKinds":{"team":"goal_against"},"penalty":null,"playerRole":null}
+  },
+  {
+    "name": "confirmed starter",
+    "row": {"id":"fixture-starter","message":{"type":"LINEUP","matchId":"fb_match_fixture","playerId":"fb_player_fixture","scopes":["player"],"scopeKinds":{"player":"starter"},"playerRole":"starter"}},
+    "data": {"notificationId":"fixture-starter","type":"LINEUP","matchId":"fb_match_fixture","playerId":"fb_player_fixture","scopes":"[\"player\"]","scopeKinds":"{\"player\":\"starter\"}","playerRole":"starter"},
+    "parsed": {"route":"/match/fb_match_fixture","personalPlayerId":"fb_player_fixture","scopes":["player"],"scopeKinds":{"player":"starter"},"penalty":null,"playerRole":"starter"}
+  },
+  {
+    "name": "invalid scope and orphan role are dropped by dispatcher",
+    "row": {"id":"fixture-invalid","message":{"type":"KICKOFF","matchId":"fb_match_fixture","scopes":["admin","match","match"],"scopeKinds":{"match":"kickoff","admin":"private"},"playerRole":"bench","penalty":false}},
+    "data": {"notificationId":"fixture-invalid","type":"KICKOFF","matchId":"fb_match_fixture","scopes":"[\"match\"]","scopeKinds":"{\"match\":\"kickoff\"}"},
+    "parsed": {"route":"/match/fb_match_fixture","personalPlayerId":null,"scopes":["match"],"scopeKinds":{"match":"kickoff"},"penalty":null,"playerRole":null}
+  }
+]

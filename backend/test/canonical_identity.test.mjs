@@ -160,7 +160,9 @@ test('canonical identity redirect migrates references and normalizes snapshots',
   const resolved=(await db.query(
    "select futbeat_private.futbeat_resolve_global_entity('goal_api','team','identity-team-new','Legacy Club','Costa Rica','') value"
   )).rows[0].value;
-  assert.equal(resolved,team);
+  assert.notEqual(resolved,team, 'id-guard: a new ID of the same provider cannot attach by name/country');
+  assert.equal((await db.query("select canonical_id from futbeat_private.provider_entities where provider='goal_api' and kind='team' and external_id='identity-team-new'")).rows[0].canonical_id,resolved);
+  assert.equal((await db.query("select futbeat_private.futbeat_resolve_entity_id('team',$1) id",[oldTeam])).rows[0].id,team);
  } finally {
   await db.close();
  }

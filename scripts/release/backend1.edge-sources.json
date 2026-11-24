@@ -1,0 +1,446 @@
+{
+  "functions": {
+    "futbeat-api": {
+      "commit": "968ce45fad",
+      "version": 50,
+      "verifyJwt": false,
+      "evidence": "download 5/5 byte-equal"
+    },
+    "futbeat-delete-account": {
+      "commit": "10e43a1f8e",
+      "version": 10,
+      "verifyJwt": true,
+      "evidence": "download 1/1 byte-equal"
+    },
+    "futbeat-goal-live-sync": {
+      "commit": "d6b81989ac",
+      "version": 52,
+      "verifyJwt": false,
+      "evidence": "download 5/5 byte-equal"
+    },
+    "futbeat-passive-api": {
+      "commit": "5abe06b988",
+      "version": 7,
+      "verifyJwt": false,
+      "evidence": "download 4/4 byte-equal; deployed npm server version unknown"
+    },
+    "futbeat-global-ingest": {
+      "commit": "d29576b597",
+      "version": 50,
+      "verifyJwt": false,
+      "evidence": "index byte-equal; other8 files confirmed from clean deploy tree and ezbr, not read-back certified"
+    }
+  },
+  "inputs": [
+    {
+      "source": "968ce45fad:supabase/functions/_shared/api_access.ts",
+      "pinnedSha256": "521f8133fddfd0f20f073a189c30cd6e0e56856272dded8a73fa319b5c30e8c8",
+      "rawSha256": "521f8133fddfd0f20f073a189c30cd6e0e56856272dded8a73fa319b5c30e8c8",
+      "lfSha256": "521f8133fddfd0f20f073a189c30cd6e0e56856272dded8a73fa319b5c30e8c8",
+      "pinMatches": "RAW",
+      "bytes": 7223,
+      "localPath": "supabase/functions/_shared/api_access.ts"
+    },
+    {
+      "source": "968ce45fad:supabase/functions/_shared/calendar_cache.ts",
+      "pinnedSha256": "2aa8e02237f325bc07f9417d4b3cac21f513aff245eea69baf7d3ed45729efd9",
+      "rawSha256": "2aa8e02237f325bc07f9417d4b3cac21f513aff245eea69baf7d3ed45729efd9",
+      "lfSha256": "2aa8e02237f325bc07f9417d4b3cac21f513aff245eea69baf7d3ed45729efd9",
+      "pinMatches": "RAW",
+      "bytes": 324,
+      "localPath": "supabase/functions/_shared/calendar_cache.ts"
+    },
+    {
+      "source": "968ce45fad:supabase/functions/_shared/live_events.ts",
+      "pinnedSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "rawSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "lfSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "pinMatches": "RAW",
+      "bytes": 14758,
+      "localPath": "supabase/functions/_shared/live_events.ts"
+    },
+    {
+      "source": "968ce45fad:supabase/functions/_shared/match_detail.ts",
+      "pinnedSha256": "f308b897eef6921f821df3d45b5652f29feae5ee59ee438883a4735c744213d5",
+      "rawSha256": "f308b897eef6921f821df3d45b5652f29feae5ee59ee438883a4735c744213d5",
+      "lfSha256": "f308b897eef6921f821df3d45b5652f29feae5ee59ee438883a4735c744213d5",
+      "pinMatches": "RAW",
+      "bytes": 15910,
+      "localPath": "supabase/functions/_shared/deployed/match_detail.api-v50.ts"
+    },
+    {
+      "source": "968ce45fad:supabase/functions/futbeat-api/index.ts",
+      "pinnedSha256": "66bb988c6b947a8d887feab1f52aca9d149923ad1c9db35e407c1623976dd586",
+      "rawSha256": "66bb988c6b947a8d887feab1f52aca9d149923ad1c9db35e407c1623976dd586",
+      "lfSha256": "66bb988c6b947a8d887feab1f52aca9d149923ad1c9db35e407c1623976dd586",
+      "pinMatches": "RAW",
+      "bytes": 31373,
+      "localPath": "supabase/functions/futbeat-api/index.ts"
+    },
+    {
+      "source": "10e43a1f8e:supabase/functions/futbeat-delete-account/index.ts",
+      "pinnedSha256": "0ed09d3363edba2e738adae3c29a2a4ecc6c28738837a312406353c76a4cf18a",
+      "rawSha256": "0ed09d3363edba2e738adae3c29a2a4ecc6c28738837a312406353c76a4cf18a",
+      "lfSha256": "0ed09d3363edba2e738adae3c29a2a4ecc6c28738837a312406353c76a4cf18a",
+      "pinMatches": "RAW",
+      "bytes": 7424,
+      "localPath": "supabase/functions/futbeat-delete-account/index.ts"
+    },
+    {
+      "source": "d29576b597:backend/providers/core/snapshot.mjs",
+      "pinnedSha256": "cdbe29e04e653bd8ac038d32c8737e86f538c161c34dc350063c78033cfc6833",
+      "rawSha256": "cdbe29e04e653bd8ac038d32c8737e86f538c161c34dc350063c78033cfc6833",
+      "lfSha256": "cdbe29e04e653bd8ac038d32c8737e86f538c161c34dc350063c78033cfc6833",
+      "pinMatches": "RAW",
+      "bytes": 2574,
+      "localPath": "backend/providers/core/snapshot.mjs"
+    },
+    {
+      "source": "d29576b597:backend/providers/espn.mjs",
+      "pinnedSha256": "3b4ec097423cb5e19dab8ab34e1c53a37328ecb7a8db0067432570d56b3df63a",
+      "rawSha256": "3b4ec097423cb5e19dab8ab34e1c53a37328ecb7a8db0067432570d56b3df63a",
+      "lfSha256": "3b4ec097423cb5e19dab8ab34e1c53a37328ecb7a8db0067432570d56b3df63a",
+      "pinMatches": "RAW",
+      "bytes": 7627,
+      "localPath": "backend/providers/espn.mjs"
+    },
+    {
+      "source": "d29576b597:backend/providers/goal_api.mjs",
+      "pinnedSha256": "7c9b2df67ffd58eb9b08aeba37b8eb9286fe65ffc3055c8613a19c5a201aa427",
+      "rawSha256": "7c9b2df67ffd58eb9b08aeba37b8eb9286fe65ffc3055c8613a19c5a201aa427",
+      "lfSha256": "7c9b2df67ffd58eb9b08aeba37b8eb9286fe65ffc3055c8613a19c5a201aa427",
+      "pinMatches": "RAW",
+      "bytes": 8169,
+      "localPath": "backend/providers/goal_api.mjs"
+    },
+    {
+      "source": "d29576b597:backend/providers/goal_api_players.mjs",
+      "pinnedSha256": "3a3303883968a109dbe88da250de8187e48c47b2e7e55d069f7781ced33aea84",
+      "rawSha256": "3a3303883968a109dbe88da250de8187e48c47b2e7e55d069f7781ced33aea84",
+      "lfSha256": "3a3303883968a109dbe88da250de8187e48c47b2e7e55d069f7781ced33aea84",
+      "pinMatches": "RAW",
+      "bytes": 8818,
+      "localPath": "backend/providers/goal_api_players.mjs"
+    },
+    {
+      "source": "d29576b597:backend/providers/sofascore.mjs",
+      "pinnedSha256": "b997cb09ca09bb47fb56b45e970e4c2d3d20c29e74379facad94cba8da74bbba",
+      "rawSha256": "b997cb09ca09bb47fb56b45e970e4c2d3d20c29e74379facad94cba8da74bbba",
+      "lfSha256": "b997cb09ca09bb47fb56b45e970e4c2d3d20c29e74379facad94cba8da74bbba",
+      "pinMatches": "RAW",
+      "bytes": 5969,
+      "localPath": "backend/providers/sofascore.mjs"
+    },
+    {
+      "source": "d29576b597:supabase/functions/_shared/chunked_rpc.ts",
+      "pinnedSha256": "dd33b096020d00602e8381d45a28af5088e16f63c339c56b91f91f1bac384135",
+      "rawSha256": "dd33b096020d00602e8381d45a28af5088e16f63c339c56b91f91f1bac384135",
+      "lfSha256": "dd33b096020d00602e8381d45a28af5088e16f63c339c56b91f91f1bac384135",
+      "pinMatches": "RAW",
+      "bytes": 2933,
+      "localPath": "supabase/functions/_shared/chunked_rpc.ts"
+    },
+    {
+      "source": "d29576b597:supabase/functions/_shared/goal_standings.ts",
+      "pinnedSha256": "c26242bc13fa998690479e878e12418c61fab26d9a8436d1b203868778737cd0",
+      "rawSha256": "c26242bc13fa998690479e878e12418c61fab26d9a8436d1b203868778737cd0",
+      "lfSha256": "c26242bc13fa998690479e878e12418c61fab26d9a8436d1b203868778737cd0",
+      "pinMatches": "RAW",
+      "bytes": 8890,
+      "localPath": "supabase/functions/_shared/goal_standings.ts"
+    },
+    {
+      "source": "d29576b597:supabase/functions/_shared/live_events.ts",
+      "pinnedSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "rawSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "lfSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "pinMatches": "RAW",
+      "bytes": 14758,
+      "localPath": "supabase/functions/_shared/live_events.ts"
+    },
+    {
+      "source": "d29576b597:supabase/functions/futbeat-global-ingest/index.ts",
+      "pinnedSha256": "ba02a1bdbd655da91c3dedebfd80fe12a9d73f0afb2e625daa81d0ef1a63e326",
+      "rawSha256": "ba02a1bdbd655da91c3dedebfd80fe12a9d73f0afb2e625daa81d0ef1a63e326",
+      "lfSha256": "ba02a1bdbd655da91c3dedebfd80fe12a9d73f0afb2e625daa81d0ef1a63e326",
+      "pinMatches": "RAW",
+      "bytes": 63559,
+      "localPath": "supabase/functions/futbeat-global-ingest/index.ts"
+    },
+    {
+      "source": "d6b81989ac:supabase/functions/_shared/goal_players.ts",
+      "pinnedSha256": "3f8d98a52e60ca85269663f7c9691ba84bc1788ba4dd521979118311f14fd4c6",
+      "rawSha256": "3f8d98a52e60ca85269663f7c9691ba84bc1788ba4dd521979118311f14fd4c6",
+      "lfSha256": "3f8d98a52e60ca85269663f7c9691ba84bc1788ba4dd521979118311f14fd4c6",
+      "pinMatches": "RAW",
+      "bytes": 8306,
+      "localPath": "supabase/functions/_shared/goal_players.ts"
+    },
+    {
+      "source": "d6b81989ac:supabase/functions/_shared/goal_standings.ts",
+      "pinnedSha256": "c26242bc13fa998690479e878e12418c61fab26d9a8436d1b203868778737cd0",
+      "rawSha256": "c26242bc13fa998690479e878e12418c61fab26d9a8436d1b203868778737cd0",
+      "lfSha256": "c26242bc13fa998690479e878e12418c61fab26d9a8436d1b203868778737cd0",
+      "pinMatches": "RAW",
+      "bytes": 8890,
+      "localPath": "supabase/functions/_shared/goal_standings.ts"
+    },
+    {
+      "source": "d6b81989ac:supabase/functions/_shared/live_events.ts",
+      "pinnedSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "rawSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "lfSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "pinMatches": "RAW",
+      "bytes": 14758,
+      "localPath": "supabase/functions/_shared/live_events.ts"
+    },
+    {
+      "source": "d6b81989ac:supabase/functions/_shared/results_pagination.ts",
+      "pinnedSha256": "ed99310f8eb4eb2302edcc73e9e2ba634c6d65685ddc66f260e8e3d08941136f",
+      "rawSha256": "ed99310f8eb4eb2302edcc73e9e2ba634c6d65685ddc66f260e8e3d08941136f",
+      "lfSha256": "ed99310f8eb4eb2302edcc73e9e2ba634c6d65685ddc66f260e8e3d08941136f",
+      "pinMatches": "RAW",
+      "bytes": 1279,
+      "localPath": "supabase/functions/_shared/results_pagination.ts"
+    },
+    {
+      "source": "d6b81989ac:supabase/functions/futbeat-goal-live-sync/index.ts",
+      "pinnedSha256": "0cd51ca9c31581af2bce53d9afb27746f147ceaf2088b8480e1746da1ecb91de",
+      "rawSha256": "0cd51ca9c31581af2bce53d9afb27746f147ceaf2088b8480e1746da1ecb91de",
+      "lfSha256": "0cd51ca9c31581af2bce53d9afb27746f147ceaf2088b8480e1746da1ecb91de",
+      "pinMatches": "RAW",
+      "bytes": 77774,
+      "localPath": "supabase/functions/futbeat-goal-live-sync/index.ts"
+    },
+    {
+      "source": "5abe06b988:supabase/functions/_shared/live_events.ts",
+      "pinnedSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "rawSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "lfSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
+      "pinMatches": "RAW",
+      "bytes": 14758,
+      "localPath": "supabase/functions/_shared/live_events.ts"
+    },
+    {
+      "source": "5abe06b988:supabase/functions/_shared/match_detail.ts",
+      "pinnedSha256": "ed17f8a9eca85fd6ecce7cffb8e0d44063eac354cfda885a6449fe7489d8610a",
+      "rawSha256": "ed17f8a9eca85fd6ecce7cffb8e0d44063eac354cfda885a6449fe7489d8610a",
+      "lfSha256": "ed17f8a9eca85fd6ecce7cffb8e0d44063eac354cfda885a6449fe7489d8610a",
+      "pinMatches": "RAW",
+      "bytes": 18492,
+      "localPath": "supabase/functions/_shared/deployed/match_detail.passive-v7.ts"
+    },
+    {
+      "source": "5abe06b988:supabase/functions/futbeat-passive-api/handler.ts",
+      "pinnedSha256": "2762ead161cbd43a6cf38ad8127033c85b68b333a69cfca3e78ef8660219e507",
+      "rawSha256": "2762ead161cbd43a6cf38ad8127033c85b68b333a69cfca3e78ef8660219e507",
+      "lfSha256": "2762ead161cbd43a6cf38ad8127033c85b68b333a69cfca3e78ef8660219e507",
+      "pinMatches": "RAW",
+      "bytes": 20086,
+      "localPath": "supabase/functions/futbeat-passive-api/handler.ts"
+    },
+    {
+      "source": "5abe06b988:supabase/functions/futbeat-passive-api/index.ts",
+      "pinnedSha256": "0be8cb507b69ca35b95b09aed389747ae67b81461dbbabe1b1b1d6fb3e9e6f7b",
+      "rawSha256": "0be8cb507b69ca35b95b09aed389747ae67b81461dbbabe1b1b1d6fb3e9e6f7b",
+      "lfSha256": "0be8cb507b69ca35b95b09aed389747ae67b81461dbbabe1b1b1d6fb3e9e6f7b",
+      "pinMatches": "RAW",
+      "bytes": 617,
+      "localPath": "supabase/functions/futbeat-passive-api/index.ts"
+    },
+    {
+      "source": "recovery-03/m2-17/deploy/apply_m2_sql.sql",
+      "pinnedSha256": "32c595bc7e991322adb0034b67b1287d38dcbda02aefec75391fff873c105fbd",
+      "rawSha256": "32c595bc7e991322adb0034b67b1287d38dcbda02aefec75391fff873c105fbd",
+      "lfSha256": "32c595bc7e991322adb0034b67b1287d38dcbda02aefec75391fff873c105fbd",
+      "pinMatches": "RAW",
+      "bytes": 3174
+    },
+    {
+      "source": "recovery-03/m2-17/deploy/rollback_m2_sql.sql",
+      "pinnedSha256": "e63d74b6f1fec254373ade08ba1a6e4ca4b0188baf03faf42cda548a7b599b9f",
+      "rawSha256": "e63d74b6f1fec254373ade08ba1a6e4ca4b0188baf03faf42cda548a7b599b9f",
+      "lfSha256": "e63d74b6f1fec254373ade08ba1a6e4ca4b0188baf03faf42cda548a7b599b9f",
+      "pinMatches": "RAW",
+      "bytes": 438
+    },
+    {
+      "source": "s275-passive/supabase/manual/20261031_qa_stored_reads_candidate.sql",
+      "pinnedSha256": "e8d174cbe774e9d6073f277fcfba7d258ebd0750e5243191a7e5c1a433982314",
+      "rawSha256": "e8d174cbe774e9d6073f277fcfba7d258ebd0750e5243191a7e5c1a433982314",
+      "lfSha256": "30fc5a63a7ec93442e69b83e81d7d6ea9fba06970347fd1ba336e9a87a0ce297",
+      "pinMatches": "RAW",
+      "bytes": 8885
+    },
+    {
+      "source": "s275-passive/supabase/manual/20261031_qa_stored_reads_candidate_rollback.sql",
+      "pinnedSha256": "6cdeb2ddf0cdf7cb4d3ccea5f93fbb1c78804830c0a5472ffc92dc72a133dfff",
+      "rawSha256": "6cdeb2ddf0cdf7cb4d3ccea5f93fbb1c78804830c0a5472ffc92dc72a133dfff",
+      "lfSha256": "9b7750a10ba7b95a3b3c59eb5f5152188e42e78aedce8e393f7e4c43080f531b",
+      "pinMatches": "RAW",
+      "bytes": 395
+    },
+    {
+      "source": "s275-passive/supabase/manual/20261104_passive_api_policy_candidate.sql",
+      "pinnedSha256": "fcb1ba9dd445416e610ca3e81a9e0f920d614c5591031f724dc4154bbe03b22d",
+      "rawSha256": "fcb1ba9dd445416e610ca3e81a9e0f920d614c5591031f724dc4154bbe03b22d",
+      "lfSha256": "fcb1ba9dd445416e610ca3e81a9e0f920d614c5591031f724dc4154bbe03b22d",
+      "pinMatches": "RAW",
+      "bytes": 2336
+    },
+    {
+      "source": "s275-passive/supabase/manual/20261104_passive_api_policy_candidate_rollback.sql",
+      "pinnedSha256": "71e5b9b3914fd406b65c6b26129b3bd3ad5006922331724466e98421ea186eab",
+      "rawSha256": "71e5b9b3914fd406b65c6b26129b3bd3ad5006922331724466e98421ea186eab",
+      "lfSha256": "71e5b9b3914fd406b65c6b26129b3bd3ad5006922331724466e98421ea186eab",
+      "pinMatches": "RAW",
+      "bytes": 291
+    },
+    {
+      "source": "2962db5e:supabase/migrations/20261109080000_prod_function_baseline.sql",
+      "pinnedSha256": "323e6901838dc7caf6dd01bd887a61f8d36f576400105b4376a5619893d2a5f2",
+      "rawSha256": "323e6901838dc7caf6dd01bd887a61f8d36f576400105b4376a5619893d2a5f2",
+      "lfSha256": "323e6901838dc7caf6dd01bd887a61f8d36f576400105b4376a5619893d2a5f2",
+      "pinMatches": "RAW",
+      "bytes": 52259
+    },
+    {
+      "source": "2962db5e:supabase/manual/20261109080000_prod_function_baseline_rollback.sql",
+      "pinnedSha256": "d497904381caca9bea7bef1157ec1c87e425fdea7c264a7ec83da662b7d7ce15",
+      "rawSha256": "d497904381caca9bea7bef1157ec1c87e425fdea7c264a7ec83da662b7d7ce15",
+      "lfSha256": "d497904381caca9bea7bef1157ec1c87e425fdea7c264a7ec83da662b7d7ce15",
+      "pinMatches": "RAW",
+      "bytes": 26234
+    }
+  ],
+  "localAdaptations": [
+    {
+      "path": "supabase/functions/futbeat-api/index.ts",
+      "kind": "IMPORT_PATH_ONLY",
+      "from": "'../_shared/match_detail.ts'",
+      "to": "'../_shared/deployed/match_detail.api-v50.ts'",
+      "byteEqualToDownloadedEntry": false,
+      "reason": "Production bundles use two different shared revisions; retain both without replacing the newer main normalizer"
+    },
+    {
+      "path": "supabase/functions/futbeat-passive-api/handler.ts",
+      "kind": "IMPORT_PATH_ONLY",
+      "from": "'../_shared/match_detail.ts'",
+      "to": "'../_shared/deployed/match_detail.passive-v7.ts'",
+      "byteEqualToDownloadedEntry": false,
+      "reason": "Production bundles use two different shared revisions; retain both without replacing the newer main normalizer"
+    },
+    {
+      "path": "supabase/functions/futbeat-passive-api/index.ts",
+      "kind": "PIN_DEPENDENCY",
+      "from": "npm:@supabase/server",
+      "to": "npm:@supabase/server@1.8.0",
+      "byteEqualToDownloadedEntry": false,
+      "reason": "Matches the verified API SDK and withSupabase contract; production resolved npm version cannot be certified"
+    },
+    {
+      "path": "supabase/functions/_shared/deployed/match_detail.api-v50.ts",
+      "kind": "IMPORT_PATH_ONLY",
+      "from": "'./live_events.ts'",
+      "to": "'../live_events.ts'",
+      "byteEqualToDownloadedEntry": false,
+      "reason": "Snapshot lives one folder below the shared module; resolves the same confirmed live_events source"
+    },
+    {
+      "path": "supabase/functions/_shared/deployed/match_detail.passive-v7.ts",
+      "kind": "IMPORT_PATH_ONLY",
+      "from": "'./live_events.ts'",
+      "to": "'../live_events.ts'",
+      "byteEqualToDownloadedEntry": false,
+      "reason": "Snapshot lives one folder below the shared module; resolves the same confirmed live_events source"
+    }
+  ],
+  "deferredMainCommits": [
+    "a3ff4663",
+    "b4dc41bd",
+    "e39ac591",
+    "d3411bd4"
+  ],
+  "writtenFiles": [
+    {
+      "path": "supabase/functions/_shared/api_access.ts",
+      "sha256": "521F8133FDDFD0F20F073A189C30CD6E0E56856272DDED8A73FA319B5C30E8C8"
+    },
+    {
+      "path": "supabase/functions/_shared/calendar_cache.ts",
+      "sha256": "2AA8E02237F325BC07F9417D4B3CAC21F513AFF245EEA69BAF7D3ED45729EFD9"
+    },
+    {
+      "path": "supabase/functions/_shared/live_events.ts",
+      "sha256": "8F328AB7CEE871CD1286CFB4E7698056D000478C485A68AB41CE4F4728CF55AA"
+    },
+    {
+      "path": "supabase/functions/_shared/deployed/match_detail.api-v50.ts",
+      "sha256": "95BCC299406EA95BDB9AFA4769CACD50629ACAAD286275D461F17115DDAF3719"
+    },
+    {
+      "path": "supabase/functions/futbeat-api/index.ts",
+      "sha256": "2871C816228CAF36D0F04A8068AD254F4C3CC3135649B080E16E3F7D7AAAC94F"
+    },
+    {
+      "path": "supabase/functions/futbeat-delete-account/index.ts",
+      "sha256": "0ED09D3363EDBA2E738ADAE3C29A2A4ECC6C28738837A312406353C76A4CF18A"
+    },
+    {
+      "path": "backend/providers/core/snapshot.mjs",
+      "sha256": "CDBE29E04E653BD8AC038D32C8737E86F538C161C34DC350063C78033CFC6833"
+    },
+    {
+      "path": "backend/providers/espn.mjs",
+      "sha256": "3B4EC097423CB5E19DAB8AB34E1C53A37328ECB7A8DB0067432570D56B3DF63A"
+    },
+    {
+      "path": "backend/providers/goal_api.mjs",
+      "sha256": "7C9B2DF67FFD58EB9B08AEBA37B8EB9286FE65FFC3055C8613A19C5A201AA427"
+    },
+    {
+      "path": "backend/providers/goal_api_players.mjs",
+      "sha256": "3A3303883968A109DBE88DA250DE8187E48C47B2E7E55D069F7781CED33AEA84"
+    },
+    {
+      "path": "backend/providers/sofascore.mjs",
+      "sha256": "B997CB09CA09BB47FB56B45E970E4C2D3D20C29E74379FACAD94CBA8DA74BBBA"
+    },
+    {
+      "path": "supabase/functions/_shared/chunked_rpc.ts",
+      "sha256": "DD33B096020D00602E8381D45A28AF5088E16F63C339C56B91F91F1BAC384135"
+    },
+    {
+      "path": "supabase/functions/_shared/goal_standings.ts",
+      "sha256": "C26242BC13FA998690479E878E12418C61FAB26D9A8436D1B203868778737CD0"
+    },
+    {
+      "path": "supabase/functions/futbeat-global-ingest/index.ts",
+      "sha256": "BA02A1BDBD655DA91C3DEDEBFD80FE12A9D73F0AFB2E625DAA81D0EF1A63E326"
+    },
+    {
+      "path": "supabase/functions/_shared/goal_players.ts",
+      "sha256": "3F8D98A52E60CA85269663F7C9691BA84BC1788BA4DD521979118311F14FD4C6"
+    },
+    {
+      "path": "supabase/functions/_shared/results_pagination.ts",
+      "sha256": "ED99310F8EB4EB2302EDCC73E9E2BA634C6D65685DDC66F260E8E3D08941136F"
+    },
+    {
+      "path": "supabase/functions/futbeat-goal-live-sync/index.ts",
+      "sha256": "0CD51CA9C31581AF2BCE53D9AFB27746F147CEAF2088B8480E1746DA1ECB91DE"
+    },
+    {
+      "path": "supabase/functions/_shared/deployed/match_detail.passive-v7.ts",
+      "sha256": "C1858DD3C3490EBB2CCC57F837CD806ADA3015725143C63BD0B3D0ED07B9598C"
+    },
+    {
+      "path": "supabase/functions/futbeat-passive-api/handler.ts",
+      "sha256": "3FAF30E00B29C3A6D443BE483ED6B679684FB8A4169026784267A2DBFD2ACD34"
+    },
+    {
+      "path": "supabase/functions/futbeat-passive-api/index.ts",
+      "sha256": "E7D2571FE05D1730538C6463FDB43932DCBEBE98A7BAF2E597D735F60A0C1983"
+    }
+  ]
+}

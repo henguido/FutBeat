@@ -175,6 +175,54 @@ Future<void> _openTab(WidgetTester tester, String label) async {
 }
 
 void main() {
+  testWidgets('R4 homonymous clubs keep distinct canonical matches and media', (
+    tester,
+  ) async {
+    final payload = _payload(players: []);
+    final teams = (payload['teams'] as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    payload['teams'] = teams;
+    teams.first.addAll({
+      'name': 'Arsenal',
+      'country': 'England',
+      'media': {
+        'url': 'https://media.example.test/england.png',
+        'verificationStatus': 'VERIFIED',
+      },
+    });
+    teams.add({
+      'id': 'fb_team_other_arsenal',
+      'name': 'Arsenal',
+      'country': 'Argentina',
+      'media': {
+        'url': 'https://media.example.test/argentina.png',
+        'verificationStatus': 'VERIFIED',
+      },
+    });
+    final matches = (payload['matches'] as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    payload['matches'] = matches;
+    matches.add({
+      ...Map<String, dynamic>.from(matches.first as Map),
+      'id': 'fb_match_other_arsenal',
+      'homeTeamId': 'fb_team_other_arsenal',
+    });
+    await _pumpTeam(tester, payload);
+    final view = tester.widget<TeamProfileView>(find.byType(TeamProfileView));
+    expect(view.team.id, 'fb_team');
+    expect(view.team.imageUrl, 'https://media.example.test/england.png');
+    expect(
+      view.matches.map((m) => m.id),
+      isNot(contains('fb_match_other_arsenal')),
+    );
+    expect(
+      view.data.team('fb_team_other_arsenal')!.imageUrl,
+      'https://media.example.test/argentina.png',
+    );
+  });
+
   test('positions group in football order, sorted by shirt number', () {
     final groups = squadGroups(_squad.map(Entity.new));
     expect(groups.map((group) => group.$1).toList(), [

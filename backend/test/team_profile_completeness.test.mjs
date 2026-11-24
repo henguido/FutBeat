@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../storage/database.mjs';
@@ -8,6 +9,7 @@ import { normalizeGoalApiSquad } from '../providers/goal_api_players.mjs';
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   try {
     await fn(db);
     assert.equal((await db.query('select count(*)::int n from futbeat_private.provider_call_ledger')).rows[0].n, 0);

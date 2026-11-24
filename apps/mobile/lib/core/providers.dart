@@ -22,6 +22,7 @@ import 'team_matches.dart';
 import '../features/news/news_feed_adapter.dart';
 
 const _persistedTerminalStatuses = {
+  'FINISHED',
   'FINISHED_PENDING_VERIFICATION',
   'VERIFIED',
   'POSTPONED',
@@ -86,6 +87,23 @@ String? _overlayStoredTerminals(
   }
 }
 
+Json _retainProviderObservation(Json current, Json known) {
+  if (!FootballMatch(current).isLive) return current;
+  final previousAt = FootballMatch(known).providerObservedAt;
+  final incomingAt = FootballMatch(current).providerObservedAt;
+  if (previousAt == null ||
+      (incomingAt != null && !incomingAt.isBefore(previousAt))) {
+    return current;
+  }
+  return {
+    ...current,
+    'provenance': {
+      if (current['provenance'] is Map) ...current['provenance'] as Map,
+      'providerObservedAt': previousAt.toIso8601String(),
+    },
+  };
+}
+
 Json? _overlaySportingRows(Json raw, Map<String, LiveMatchUpdate> updates) {
   if (raw['demo'] == true || raw['matches'] is! List) return null;
   var changed = false;
@@ -121,15 +139,25 @@ String _preserveStoredTerminals(String? previous, String incoming) {
     if (next['demo'] == true || next['matches'] is! List) return incoming;
     final previousMatches = {
       for (final row in raw['matches'] as List? ?? const [])
-        if (row is Map && updates.containsKey(row['id'])) row['id']: row,
+        if (row is Map && row['id'] is String)
+          row['id']: Map<String, dynamic>.from(row),
     };
     next['matches'] = [
       for (final row in next['matches'] as List)
         if (row is Map && previousMatches.containsKey(row['id']))
           () {
-            final current = Map<String, dynamic>.from(row);
-            final before = updates[row['id']]!;
             final known = previousMatches[row['id']]!;
+            final current = _retainProviderObservation(
+              Map<String, dynamic>.from(row),
+              known,
+            );
+            final before = updates[row['id']];
+            if (known['status'] == 'VERIFIED' &&
+                (!_persistedTerminalStatuses.contains(current['status']) ||
+                    current['status'] == 'FINISHED_PENDING_VERIFICATION')) {
+              return known;
+            }
+            if (before == null) return current;
             final candidate = _storedSportingObservation(current);
             if (known[localLiveObservationKey] == true &&
                 _persistedTerminalStatuses.contains(current['status']) &&
@@ -576,7 +604,10 @@ class ApiRepository implements FootballRepository {
     final previous = _snapshotCache[key];
     if (previous == null ||
         !previous.matches.any(
-          (m) => _retainedSportingObservation(m.json) != null,
+          (m) =>
+              m.status == 'VERIFIED' ||
+              m.providerObservedAt != null ||
+              _retainedSportingObservation(m.json) != null,
         )) {
       return incoming;
     }
@@ -1122,6 +1153,12 @@ class ApiRepository implements FootballRepository {
           receiveTimeout: calendarPolicy.receiveTimeout,
         );
         raw = _canonicalNetworkSnapshot(raw);
+        // A direct refresh after restart still needs the persisted match
+        // evidence before it can accept the HTTP response.
+        if (database != null &&
+            !_snapshotCache.containsKey('calendar:$value')) {
+          await _readStored(value);
+        }
         raw = _carryMemoryTerminals('calendar:$value', raw);
         final fresh = _canonical(raw);
         // A "pending" answer (server still materializing) is never cached.
@@ -1367,10 +1404,16 @@ class ApiRepository implements FootballRepository {
   /// once while `/v1/entity` loads. Memory only: never a request. Null when
   /// nothing read so far mentions the team.
   Snapshot? entitySeed(String type, String id) {
-    if (type != 'team' && type != 'competition') return null;
+    if (type != 'team' && type != 'competition' && type != 'player') {
+      return null;
+    }
     final snapshots = _snapshotCache.values.toList().reversed.toList();
     for (final snapshot in snapshots) {
       final resolved = snapshot.resolveEntityId(id);
+      if (type == 'player') {
+        if (snapshot.player(resolved) != null) return snapshot.asStale();
+        continue;
+      }
       if (type == 'competition') {
         if (snapshot.competition(resolved) != null) return snapshot.asStale();
         continue;
@@ -1656,16 +1699,24 @@ class ApiRepository implements FootballRepository {
   /// Recent form and head-to-head share the endpoint's short freshness window.
   Future<MatchPreview> loadMatchPreview(String id) =>
       _previewInFlight.putIfAbsent(id, () async {
+        Json? retained;
         try {
           final key = 'match-preview:$id';
           try {
             final stored = await database?.readPublicSnapshot('public:$key');
             if (stored != null) {
               final age = DateTime.now().toUtc().difference(stored.savedAt);
-              if (!age.isNegative && age < const Duration(seconds: 30)) {
+              if (!age.isNegative && age <= publicSnapshotRetention) {
                 final raw = jsonDecode(stored.payload) as Json;
                 if (raw['matchId'] == id && !_containsPrivateCacheField(raw)) {
-                  return MatchPreview(raw);
+                  final cached = MatchPreview(raw);
+                  if (const {
+                    'AVAILABLE',
+                    'CONFIRMED_EMPTY',
+                  }.contains(cached.h2hAvailability)) {
+                    retained = raw;
+                    if (age < const Duration(seconds: 30)) return cached;
+                  }
                 }
               }
             }
@@ -1709,6 +1760,21 @@ class ApiRepository implements FootballRepository {
             _persistPublicJson(key, raw);
           }
           return preview;
+        } on DioException catch (error) {
+          // Public, identity-checked history remains usable during a transient
+          // outage. Never refresh its savedAt or mask an auth/identity error.
+          if (retained != null && _retryable(error)) {
+            return MatchPreview({
+              ...retained,
+              'h2h': {
+                ...Map<String, dynamic>.from(
+                  retained['h2h'] as Map? ?? const {},
+                ),
+                'availability': 'STALE',
+              },
+            });
+          }
+          rethrow;
         } finally {
           _previewInFlight.remove(id);
         }
@@ -1943,27 +2009,6 @@ class ApiRepository implements FootballRepository {
     return _waitForFlight(flight, cancelToken);
   }
 
-  /// Real squad players to suggest without a query: followed [teamIds]
-  /// first, then [country]'s clubs, then globally relevant clubs (server
-  /// side, stored squads only). Optional content: one attempt, not persisted.
-  Future<Snapshot> loadPlayerSuggestions(
-    Iterable<String> teamIds,
-    String? country, {
-    CancelToken? cancelToken,
-  }) {
-    final teams = (teamIds.toSet().toList()..sort()).take(20).toList();
-    final code = exploreCountry(country);
-    return _loadCatalog(
-      'player-suggestions:${code ?? ''}:${teams.join(',')}',
-      '/v1/player-suggestions',
-      queryParameters: {
-        if (teams.isNotEmpty) 'teams': teams.join(','),
-        'country': ?code,
-      },
-      cancelToken: cancelToken,
-    );
-  }
-
   /// Noticias: stored articles and roster changes (followed [subjects]
   /// first, then [country]). One attempt; never persisted.
   Future<Snapshot> loadNewsFeed(
@@ -2013,6 +2058,124 @@ class ApiRepository implements FootballRepository {
           'country': normalizedCountry,
       },
       cancelToken: cancelToken,
+    );
+  }
+
+  /// A followed entity is visible from verified public metadata immediately,
+  /// even before the new favorites key has a successful HTTP answer.
+  Snapshot? knownFavoriteMetadata(
+    Iterable<String> keys, [
+    Iterable<Snapshot> disk = const [],
+  ]) {
+    final sources = [...disk, ..._snapshotCache.values]
+      ..sort((a, b) => a.updatedAt.compareTo(b.updatedAt));
+    if (sources.isEmpty) return null;
+    final teams = <String, Json>{},
+        players = <String, Json>{},
+        competitions = <String, Json>{};
+    final redirects = <String, String>{};
+    DateTime? observedAt;
+    for (final snapshot in sources) {
+      for (final key in keys) {
+        final split = key.indexOf(':');
+        if (split < 1) continue;
+        final type = key.substring(0, split), id = key.substring(split + 1);
+        final entity = switch (type) {
+          'team' => snapshot.team(id),
+          'player' => snapshot.player(id),
+          'competition' => snapshot.competition(id),
+          _ => null,
+        };
+        if (entity == null) continue;
+        observedAt = snapshot.updatedAt;
+        if (entity.id != id) redirects[id] = entity.id;
+        switch (type) {
+          case 'team':
+            teams[entity.id] = entity.json;
+          case 'player':
+            players[entity.id] = entity.json;
+          case 'competition':
+            competitions[entity.id] = entity.json;
+        }
+      }
+    }
+    if (teams.isEmpty && players.isEmpty && competitions.isEmpty) return null;
+    return Snapshot({
+      'schemaVersion': 1,
+      'demo': false,
+      'updatedAt': observedAt!.toIso8601String(),
+      'freshness': {'stale': true},
+      'coverage': {'seed': true},
+      'entityRedirects': redirects,
+      'teams': teams.values.toList(),
+      'players': players.values.toList(),
+      'competitions': competitions.values.toList(),
+      'matches': <dynamic>[],
+      'standings': <dynamic>[],
+    }, blockedAliasIds: media?.revokedDisplayAliases ?? const {});
+  }
+
+  Future<Snapshot?> readKnownFavoriteMetadata(Iterable<String> keys) async {
+    final disk = <Snapshot>[];
+    for (final row
+        in await database?.readKnownEntityCatalogs() ?? <CatalogSnapshot>[]) {
+      try {
+        if (DateTime.now().toUtc().difference(row.savedAt.toUtc()) >
+            publicSnapshotRetention) {
+          continue;
+        }
+        final raw = jsonDecode(row.payload) as Json;
+        if (row.cacheKey.startsWith('public:match-detail:')) {
+          // Reuse the existing verified canonical media resolver. Stored
+          // lineup photos must survive a cold start even if a profile omits
+          // its media. No provider row id or name can establish identity.
+          final id = row.cacheKey.substring('public:match-detail:'.length);
+          final detail = MatchDetail({
+            ...raw,
+            'offlineStale': true,
+          }, blockedAliasIds: media?.revokedDisplayAliases ?? const {});
+          if (detail.available && detail.matchId == id) {
+            media?.absorbMatchDetail(detail);
+          }
+          continue;
+        }
+        if (raw['schemaVersion'] == 1 && raw['demo'] == false) {
+          disk.add(Snapshot(raw));
+        }
+      } catch (_) {
+        /* Ignore corrupt public metadata, never personal data. */
+      }
+    }
+    return knownFavoriteMetadata(keys, disk);
+  }
+
+  /// Persist only selected public entity metadata, never the search query or
+  /// account state. Uses the existing bounded public SQLite partition.
+  Future<void> persistKnownFavoriteMetadata(Iterable<String> keys) async {
+    final known = await readKnownFavoriteMetadata(keys);
+    if (known == null) return;
+    await database?.savePublicSnapshot(
+      'public:favorite-metadata',
+      jsonEncode({
+        'schemaVersion': 1,
+        'demo': false,
+        'updatedAt': known.updatedAt.toIso8601String(),
+        'freshness': {'stale': true},
+        'entityRedirects': {
+          for (final key in keys)
+            if (key.contains(':') &&
+                known.resolveEntityId(key.substring(key.indexOf(':') + 1)) !=
+                    key.substring(key.indexOf(':') + 1))
+              key.substring(key.indexOf(':') + 1): known.resolveEntityId(
+                key.substring(key.indexOf(':') + 1),
+              ),
+        },
+        'teams': known.teams.map((e) => e.json).toList(),
+        'players': known.players.map((e) => e.json).toList(),
+        'competitions': known.competitions.map((e) => e.json).toList(),
+        'matches': <dynamic>[],
+        'standings': <dynamic>[],
+      }),
     );
   }
 
@@ -2284,6 +2447,16 @@ final sportsAppActiveProvider = Provider<ValueNotifier<bool>>((ref) {
   return active;
 });
 
+/// User sessions use the existing shared calendar HTTP stream, not Realtime.
+/// Injectable so that the same transport boundary can be exercised in widgets.
+final matchCalendarSyncEnabledProvider = Provider<bool>(
+  (ref) =>
+      userSessionAccessEnabled &&
+      !qaLocalCacheOnly &&
+      !passivePreview &&
+      !ref.watch(demoModeProvider),
+);
+
 final calendarSnapshotProvider = StreamProvider.autoDispose
     .family<Snapshot, DateTime>((ref, date) {
       // Watched synchronously so the view can peek the memory cache in the
@@ -2458,31 +2631,10 @@ final exploreSnapshotProvider = StreamProvider.autoDispose<Snapshot>((ref) {
   }();
 }, retry: (_, _) => null);
 
-/// Player suggestions for Explorar / onboarding without a query, keyed by
-/// the comma-joined followed team ids. Never invented and never blocking:
-/// any failure (or a non-API repository) answers no players.
+/// Compatibility for existing callers/fixtures until recommendations have a
+/// real server contract. Never read preferences, create a repository or issue HTTP.
 final playerSuggestionsProvider = FutureProvider.autoDispose
-    .family<List<Entity>, String>((ref, teamsKey) async {
-      if (passivePreview) return const <Entity>[];
-      final repository = ref.watch(repositoryProvider);
-      if (repository is! ApiRepository) return const <Entity>[];
-      final token = CancelToken();
-      ref.onDispose(() => token.cancel('Player suggestions closed'));
-      final country = await ref
-          .watch(preferenceProvider.selectAsync((p) => p.effectiveCountry))
-          .timeout(const Duration(seconds: 2))
-          .then<String?>((value) => value, onError: (Object _) => null);
-      try {
-        final snapshot = await repository.loadPlayerSuggestions(
-          teamsKey.split(',').where((id) => id.isNotEmpty),
-          country,
-          cancelToken: token,
-        );
-        return snapshot.players;
-      } catch (_) {
-        return const <Entity>[];
-      }
-    });
+    .family<List<Entity>, String>((ref, teamsKey) async => const <Entity>[]);
 
 /// Follow kinds the news feed understands (`type:id`).
 const newsSubjectKinds = ['team:', 'player:', 'competition:'];
@@ -2556,6 +2708,14 @@ final favoritesAccountChangesProvider = StreamProvider.autoDispose<String?>((
   return ref.watch(pushServiceProvider).accountChanges;
 });
 
+final localFavoritesMetadataProvider = FutureProvider.autoDispose
+    .family<Snapshot?, String>((ref, encodedKeys) {
+      final repository = ref.watch(repositoryProvider);
+      return repository is ApiRepository
+          ? repository.readKnownFavoriteMetadata(encodedKeys.split(','))
+          : null;
+    });
+
 final favoritesSnapshotProvider = FutureProvider.family<Snapshot, String>((
   ref,
   encodedKeys,
@@ -2625,6 +2785,16 @@ final detailPollIntervalProvider = Provider<Duration>(
 
 /// Bounded, growing detail refreshes while the server reports pending
 /// sections (5 s, 10 s, 20 s, 40 s by default), then stop.
+final detailPlannerOwnedProvider = Provider<bool>(
+  (ref) => const bool.fromEnvironment('FUTBEAT_D1_STORED_DETAIL'),
+);
+
+// Until D1 is authorized remotely, diagnostics must not use the API's
+// request-aware detail route. Reuse its existing persisted read (request=0).
+final diagnosticStoredDetailProvider = Provider<bool>(
+  (ref) => kDebugMode && const bool.fromEnvironment('FUTBEAT_INTEGRAL_QA'),
+);
+
 final detailPollScheduleProvider = Provider<List<Duration>>((ref) {
   final base = ref.watch(detailPollIntervalProvider);
   // 2, 4, 8, 15, 40 s by default: the last read lands ~69 s after the open,
@@ -3085,7 +3255,15 @@ final matchDetailProvider = StreamProvider.autoDispose
       try {
         final loaded =
             await (repository is ApiRepository
-                    ? repository.loadMatchDetail(id, cancelToken: requestToken)
+                    ? (ref.read(diagnosticStoredDetailProvider)
+                          ? repository.readMatchDetail(
+                              id,
+                              cancelToken: requestToken,
+                            )
+                          : repository.loadMatchDetail(
+                              id,
+                              cancelToken: requestToken,
+                            ))
                     : repository.loadMatchDetail(id))
                 .timeout(
                   readTimeout,
@@ -3134,6 +3312,9 @@ final matchDetailProvider = StreamProvider.autoDispose
         return;
       }
 
+      // D1: the open already registered interest. Acquisition belongs to the
+      // shared planner; reopen/resume or a normal update can re-read later.
+      if (ref.read(detailPlannerOwnedProvider)) return;
       for (final delay in ref.read(detailPollScheduleProvider)) {
         if (!current.pending) break;
         waiting = Completer<void>();

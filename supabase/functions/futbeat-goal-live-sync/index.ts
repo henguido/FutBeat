@@ -175,28 +175,102 @@ async function normalizeLiveFixture(
 // independent fixtures (one row per provider id), share one receivedAt, and
 // what a failed run already stored is kept: the retry only pays for the rest.
 const RECORD_CHUNK_SIZE = 25;
+// BE-253: /results/date ignores limit and offset. The probe of 2026-11-04 got
+// the same 500 ids in the same order at offset 0 and 500, with no pagination,
+// while 1,149 matches were played that day. /fixtures/date pages for real and
+// carries status and score, so a date that reaches the cap reads its finals
+// there, page by page, above a quota margin.
+const RESULTS_PROVIDER_CAP = 500;
+const RESULTS_FALLBACK_PAGES = 20;
+const RESULTS_FALLBACK_MIN_REMAINING = 300;
+const RESULTS_FALLBACK_STATUSES = new Set([
+  "FINISHED_PENDING_VERIFICATION",
+  "POSTPONED",
+  "CANCELLED",
+  "ABANDONED",
+]);
+// BE-245: 11-02 three live polls lost their batch to 57014 in record while the
+// global run held the database. A chunk is idempotent by payload hash, so a live
+// poll repeats it inside the budget and still tries the chunks after it. The
+// cron gives a poll 55 s.
+const LIVE_RECORD_PAUSES_MS = [2000, 5000];
+const LIVE_RECORD_BUDGET_MS = 40000;
+
+async function recordChunk(
+  receivedAt: string,
+  chunk: unknown[],
+  deadline: number | null,
+  progress: { retries?: number },
+) {
+  for (let attempt = 0;; attempt += 1) {
+    try {
+      return await rpc("futbeat_record_live_batch", {
+        p_provider: "goal_api",
+        p_received_at: receivedAt,
+        p_observations: chunk,
+      }, 30000);
+    } catch (error) {
+      const pause = LIVE_RECORD_PAUSES_MS[attempt];
+      const timedOut = error instanceof Error && error.message.includes("57014");
+      if (
+        deadline == null || pause == null || !timedOut ||
+        Date.now() + pause >= deadline
+      ) throw error;
+      progress.retries = (progress.retries ?? 0) + 1;
+      await new Promise((resolve) => setTimeout(resolve, pause));
+    }
+  }
+}
+
 async function recordObservationsInChunks(
   receivedAt: string,
   observations: unknown[],
-  progress: { chunks: number; recorded: number } = { chunks: 0, recorded: 0 },
+  progress: { chunks: number; recorded: number; retries?: number } = {
+    chunks: 0,
+    recorded: 0,
+  },
+  deadline: number | null = null,
 ) {
   let insertedObservations = 0;
   let duplicates = 0;
   let start = 0;
+  let firstFailure: unknown = null;
   do {
     const chunk = observations.slice(start, start + RECORD_CHUNK_SIZE);
-    const result = await rpc("futbeat_record_live_batch", {
-      p_provider: "goal_api",
-      p_received_at: receivedAt,
-      p_observations: chunk,
-    }, 30000);
-    insertedObservations += Number(result?.insertedObservations ?? 0) || 0;
-    duplicates += Number(result?.duplicates ?? 0) || 0;
-    progress.chunks += 1;
-    progress.recorded += chunk.length;
     start += RECORD_CHUNK_SIZE;
+    try {
+      const result = await recordChunk(receivedAt, chunk, deadline, progress);
+      insertedObservations += Number(result?.insertedObservations ?? 0) || 0;
+      duplicates += Number(result?.duplicates ?? 0) || 0;
+      progress.chunks += 1;
+      progress.recorded += chunk.length;
+    } catch (error) {
+      if (deadline == null) throw error;
+      firstFailure ??= error;
+    }
   } while (start < observations.length);
+  // The poll still ends FAILED: absence must not be read from a partial batch.
+  if (firstFailure != null) throw firstFailure;
   return { insertedObservations, duplicates, chunks: progress.chunks };
+}
+
+// BE-237: the batch is already paid for. Observations of unlinked fixtures
+// link on a later poll; losing all of them froze every live match.
+async function linkFixtures(fixtures: Record<string, unknown>[]) {
+  try {
+    const linkResult: Record<string, unknown> | null = await rpc(
+      "futbeat_link_goal_live_matches",
+      { p_fixtures: fixtures },
+      30000,
+    );
+    return { linkResult, linkFailure: null };
+  } catch (error) {
+    const linkFailure = error instanceof Error
+      ? error.message.slice(0, 200)
+      : "unknown";
+    console.warn("live link unavailable", linkFailure);
+    return { linkResult: null, linkFailure };
+  }
 }
 
 async function readGoalKey() {
@@ -504,9 +578,7 @@ async function syncLive() {
       }
     }
 
-    const linkResult = await rpc("futbeat_link_goal_live_matches", {
-      p_fixtures: fixtures,
-    }, 30000);
+    const { linkResult, linkFailure } = await linkFixtures(fixtures);
 
     const observations = await Promise.all(
       fixtures.map((fixture) =>
@@ -517,9 +589,12 @@ async function syncLive() {
     // silently maps to SCHEDULED (never inferred as live or final).
     const unmappedStatuses = unmappedGoalStatuses(fixtures);
 
+    const recordProgress = { chunks: 0, recorded: 0, retries: 0 };
     const persistence = await recordObservationsInChunks(
       new Date().toISOString(),
       observations,
+      recordProgress,
+      Date.now() + LIVE_RECORD_BUDGET_MS,
     );
 
     // #120: absence from the feed is evidence only once a whole sweep (offset
@@ -551,6 +626,8 @@ async function syncLive() {
       p_metadata: {
         mode: "live",
         ...(unmappedStatuses.length ? { unmappedStatuses } : {}),
+        ...(linkFailure ? { linkFailure } : {}),
+        ...(recordProgress.retries ? { recordRetries: recordProgress.retries } : {}),
         fromStart,
         reachedEnd,
         recovery,
@@ -679,6 +756,12 @@ async function syncOneResultsDate() {
         added += 1;
       }
       const pagination = response.payload.pagination;
+      // BE-254: 500 rows and no envelope is the provider cap; asking offset
+      // 500 only repeats them and costs a call.
+      if (pagination == null && data.length >= RESULTS_PROVIDER_CAP) {
+        truncatedBy = "results_cap";
+        break;
+      }
       const row = pagination && typeof pagination === "object" &&
           !Array.isArray(pagination)
         ? pagination as Record<string, unknown>
@@ -715,10 +798,54 @@ async function syncOneResultsDate() {
       }
     }
 
+    let fallbackPages = 0;
+    let fallbackAdded = 0;
+    if (fixtures.length >= RESULTS_PROVIDER_CAP && truncatedBy !== "page_limit") {
+      stage = "fixtures_fallback";
+      let fallbackOffset = 0;
+      // Overlap with the 500 is expected; a repeat of the fallback's own pages
+      // is not.
+      const fallbackSeen = new Set<string>();
+      for (let page = 0; page < RESULTS_FALLBACK_PAGES; page += 1) {
+        if (remaining != null && remaining <= RESULTS_FALLBACK_MIN_REMAINING) {
+          truncatedBy = "fallback_quota";
+          break;
+        }
+        providerRequests += 1;
+        fallbackPages += 1;
+        const response = await fetchGoal(
+          goalKey,
+          `/fixtures/date/${providerDate}?limit=100&offset=${fallbackOffset}`,
+        );
+        remaining = response.remaining ?? remaining;
+        const data = response.payload.data;
+        if (!Array.isArray(data)) break;
+        let fresh = 0;
+        for (const item of data) {
+          if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+          const fixture = item as Record<string, unknown>;
+          const external = clean(fixture.apiId ?? fixture.id);
+          if (!external || fallbackSeen.has(external)) continue;
+          fallbackSeen.add(external);
+          fresh += 1;
+          if (seen.has(external)) continue;
+          seen.add(external);
+          if (!RESULTS_FALLBACK_STATUSES.has(goalLiveStatus(fixture))) continue;
+          fixtures.push(fixture);
+          fallbackAdded += 1;
+        }
+        const row = response.payload.pagination;
+        const more = row && typeof row === "object" && !Array.isArray(row) &&
+          (row as Record<string, unknown>).hasMore === true;
+        // A page with nothing new means the offset was not honoured either.
+        if (!more || fresh === 0 || data.length === 0) break;
+        fallbackOffset += data.length;
+        if (page + 1 === RESULTS_FALLBACK_PAGES) truncatedBy = "fallback_page_limit";
+      }
+    }
+
     stage = "link";
-    const linkResult = await rpc("futbeat_link_goal_live_matches", {
-      p_fixtures: fixtures,
-    }, 30000);
+    const { linkResult, linkFailure } = await linkFixtures(fixtures);
     stage = "normalize";
     const observations = await Promise.all(
       fixtures.map((fixture) =>
@@ -740,10 +867,15 @@ async function syncOneResultsDate() {
       p_received_at: receivedAt,
     }, 30000);
     stage = "complete_attempt";
-    const unmatchedCount = Number(linkResult?.unmappedCount ?? 0);
+    // Without a link nothing proves the date complete: PARTIAL keeps it retried.
+    const unmatchedCount = linkFailure
+      ? fixtures.length
+      : Number(linkResult?.unmappedCount ?? 0);
     await rpc("futbeat_complete_results_date_attempt", {
       p_provider_date: providerDate,
-      p_outcome: finalized?.resultsComplete === true ? "SUCCEEDED" : "PARTIAL",
+      p_outcome: finalized?.resultsComplete === true && !linkFailure
+        ? "SUCCEEDED"
+        : "PARTIAL",
       p_result_count: observations.length,
       p_unmatched_count: Number.isFinite(unmatchedCount) ? unmatchedCount : 0,
     });
@@ -769,7 +901,9 @@ async function syncOneResultsDate() {
         recordChunks: persistence.chunks,
         resultsComplete: finalized?.resultsComplete ?? false,
         unresolved: finalized?.unresolved ?? null,
+        ...(linkFailure ? { linkFailure } : {}),
         ...(truncatedBy ? { truncatedBy } : {}),
+        ...(fallbackPages ? { fallbackPages, fallbackAdded } : {}),
         transport: "supabase-cron",
         provider: "GOAL API",
       },
@@ -1913,6 +2047,98 @@ async function syncOnePostMatchVideo() {
   }
 }
 
+// --- Worker lane lease (M2, migration 20261011040000_worker_lane_lease) ---
+// pg_net gives up after 30 s but an invocation keeps running (Edge wall clock
+// up to 150 s on Free), so a slow run overlapped the next one of the same
+// lane. With the lease, an invocation that cannot take its lane answers
+// "busy" at once and does no work.
+// * Off unless the Edge secret FUTBEAT_WORKER_LEASE=on: deploying this code
+//   changes nothing; switching it off needs no redeploy.
+// * One token per acquisition; release only with that token (a late release
+//   never frees another invocation's lease); the lease expires by itself
+//   (FUTBEAT_WORKER_LEASE_TTL_SECONDS, default 170 > the 150 s wall clock).
+// * Lease function missing or not allowed (404/401/403: not deployed, schema
+//   cache not reloaded): the previous behaviour (work without a lease).
+// * Infrastructure failure (5xx, timeout, network): critical lanes (live,
+//   results) keep the previous behaviour; the others skip this run (the next
+//   cron tick retries) instead of adding load to a struggling database.
+const WORKER_LEASE_ENABLED =
+  clean(Deno.env.get("FUTBEAT_WORKER_LEASE")).toLowerCase() === "on";
+const WORKER_LEASE_TTL_SECONDS = Math.min(
+  900,
+  Math.max(30, Number(clean(Deno.env.get("FUTBEAT_WORKER_LEASE_TTL_SECONDS"))) || 170),
+);
+const WORKER_LEASE_CRITICAL_LANES = new Set(["goal:live", "goal:results"]);
+
+function workerLane(trigger: string) {
+  switch (trigger) {
+    case "squad-only": return "goal:squad";
+    case "team-fixtures-only": return "goal:team-fixtures";
+    case "results-only": return "goal:results";
+    case "calendar": return "goal:calendar";
+    case "detail-only":
+    case "demand": return "goal:detail";
+    default: return "goal:live";
+  }
+}
+
+type LeaseCall = { kind: "ok"; value: unknown } | { kind: "unsupported"; status: number } |
+  { kind: "infra"; status: number | null };
+
+async function workerLeaseCall(name: string, body: unknown): Promise<LeaseCall> {
+  try {
+    const response = await fetch(`${supabaseUrl}/rest/v1/rpc/${name}`, {
+      method: "POST",
+      headers: restHeaders,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    });
+    const text = await response.text();
+    if (response.ok) return { kind: "ok", value: text ? JSON.parse(text) : null };
+    if ([401, 403, 404].includes(response.status)) {
+      return { kind: "unsupported", status: response.status };
+    }
+    return { kind: "infra", status: response.status };
+  } catch {
+    return { kind: "infra", status: null };
+  }
+}
+
+async function withWorkerLane(
+  lane: string,
+  work: () => Promise<Response>,
+): Promise<Response> {
+  if (!WORKER_LEASE_ENABLED) return await work();
+  const taken = await workerLeaseCall("futbeat_try_worker_lease", {
+    p_lane: lane,
+    p_ttl_seconds: WORKER_LEASE_TTL_SECONDS,
+    p_holder: "futbeat-goal-live-sync",
+  });
+  if (taken.kind === "unsupported") {
+    console.warn("worker lease unsupported", lane, taken.status);
+    return await work();
+  }
+  if (taken.kind === "infra") {
+    console.warn("worker lease unavailable", lane, taken.status ?? "network");
+    if (WORKER_LEASE_CRITICAL_LANES.has(lane)) return await work();
+    return Response.json({ status: "lease_unavailable", lane }, { status: 503 });
+  }
+  const token = typeof taken.value === "string" ? taken.value : null;
+  if (!token) return Response.json({ status: "busy", lane });
+  try {
+    return await work();
+  } finally {
+    const released = await workerLeaseCall("futbeat_release_worker_lease", {
+      p_lane: lane,
+      p_token: token,
+    });
+    if (released.kind !== "ok" || released.value !== true) {
+      // Expired and taken over, or not reachable: it expires by itself.
+      console.warn("worker lease not released", lane);
+    }
+  }
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return new Response(null, { status: 405 });
 
@@ -1925,157 +2151,161 @@ Deno.serve(async (request) => {
 
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const trigger = clean(body.trigger).toLowerCase();
-    if (trigger === "squad-only") {
-      // This mode accepts no team, provider URL, quota or planner overrides.
-      if (Object.keys(body).some((key) => key !== "trigger")) {
-        return Response.json({ error: "squad-only accepts only trigger" }, {
-          status: 400,
-        });
+    // One invocation per lane at a time (see withWorkerLane).
+    const run = async (): Promise<Response> => {
+      if (trigger === "squad-only") {
+        // This mode accepts no team, provider URL, quota or planner overrides.
+        if (Object.keys(body).some((key) => key !== "trigger")) {
+          return Response.json({ error: "squad-only accepts only trigger" }, {
+            status: 400,
+          });
+        }
+        return Response.json(await syncSquadOnly());
       }
-      return Response.json(await syncSquadOnly());
-    }
-    if (trigger === "team-fixtures-only") {
-      // Manual/controlled runs only (#150): no team, provider URL, window or
-      // quota override is accepted; the central planner decides.
-      if (Object.keys(body).some((key) => key !== "trigger")) {
-        return Response.json({ error: "team-fixtures-only accepts only trigger" }, {
-          status: 400,
-        });
+      if (trigger === "team-fixtures-only") {
+        // Manual/controlled runs only (#150): no team, provider URL, window or
+        // quota override is accepted; the central planner decides.
+        if (Object.keys(body).some((key) => key !== "trigger")) {
+          return Response.json({ error: "team-fixtures-only accepts only trigger" }, {
+            status: 400,
+          });
+        }
+        return Response.json(await syncTeamFixturesOnly());
       }
-      return Response.json(await syncTeamFixturesOnly());
-    }
-    if (trigger === "results-only") {
-      try {
-        const results = await syncOneResultsDate();
-        return Response.json({ status: "ok", results });
-      } catch (error) {
-        const stage = error && typeof error === "object" && "stage" in error
-          ? clean((error as { stage?: unknown }).stage)
-          : "unknown";
-        // Safe by construction: `stage` is one of this function's own fixed
-        // labels and `detail` is a truncated Error.message, never the GOAL
-        // key, a raw provider payload, or a raw RPC response body.
-        const detail = error instanceof Error
-          ? error.message.slice(0, 200)
-          : "unknown";
-        console.error("GOAL results-only sync failed", stage, detail);
+      if (trigger === "results-only") {
+        try {
+          const results = await syncOneResultsDate();
+          return Response.json({ status: "ok", results });
+        } catch (error) {
+          const stage = error && typeof error === "object" && "stage" in error
+            ? clean((error as { stage?: unknown }).stage)
+            : "unknown";
+          // Safe by construction: `stage` is one of this function's own fixed
+          // labels and `detail` is a truncated Error.message, never the GOAL
+          // key, a raw provider payload, or a raw RPC response body.
+          const detail = error instanceof Error
+            ? error.message.slice(0, 200)
+            : "unknown";
+          console.error("GOAL results-only sync failed", stage, detail);
+          return Response.json({
+            status: "ok",
+            results: { status: "failed", stage: stage || "unknown", detail },
+          });
+        }
+      }
+      if (trigger === "calendar") {
+        // DB-only calendar snapshot builds (woken by a large cold date).
+        if (Object.keys(body).some((key) => key !== "trigger")) {
+          return Response.json({ error: "calendar accepts only trigger" }, {
+            status: 400,
+          });
+        }
+        try {
+          return Response.json({ status: "ok", calendar: await syncCalendarWarm() });
+        } catch (error) {
+          console.error(
+            "calendar lane failed",
+            error instanceof Error ? error.message.slice(0, 200) : "unknown",
+          );
+          return Response.json({ status: "ok", calendar: { status: "failed" } });
+        }
+      }
+      if (trigger === "detail-only" || trigger === "demand") {
+        if (Object.keys(body).some((key) => key !== "trigger")) {
+          return Response.json({ error: `${trigger} accepts only trigger` }, {
+            status: 400,
+          });
+        }
         return Response.json({
           status: "ok",
-          results: { status: "failed", stage: stage || "unknown", detail },
+          ...(await syncDemand({ allowRecovery: trigger === "detail-only" })),
         });
       }
-    }
-    if (trigger === "calendar") {
-      // DB-only calendar snapshot builds (woken by a large cold date).
-      if (Object.keys(body).some((key) => key !== "trigger")) {
-        return Response.json({ error: "calendar accepts only trigger" }, {
-          status: 400,
-        });
-      }
+
+      let live: unknown;
+      let detail: unknown;
+      let squad: unknown;
+      let teamFixtures: unknown;
+      let news: unknown;
+      let video: unknown;
+
       try {
-        return Response.json({ status: "ok", calendar: await syncCalendarWarm() });
+        live = await syncLive();
       } catch (error) {
         console.error(
-          "calendar lane failed",
+          "GOAL live sync failed",
+          error instanceof Error ? error.message : "unknown",
+        );
+        live = { status: "failed" };
+      }
+
+      try {
+        detail = await syncOneMatchDetail();
+      } catch (error) {
+        console.error(
+          "GOAL match detail sync failed",
+          error instanceof Error ? error.message : "unknown",
+        );
+        detail = { status: "failed" };
+      }
+
+      try {
+        squad = await syncOneSquad();
+      } catch (error) {
+        console.error(
+          "GOAL squad sync failed",
+          error instanceof Error ? error.message : "unknown",
+        );
+        squad = { status: "failed" };
+      }
+
+      // Safety net for team-match coverage (#150/#99): at most ONE demanded
+      // team per normal run, after LIVE/detail/squad. No demand -> no
+      // reservation; a quota denial -> no provider call; other lanes go on.
+      try {
+        const attempt: TeamFixturesAttempt = {
+          candidate: null,
+          reservations: 0,
+          providerCalls: 0,
+          stoppedBy: null,
+        };
+        const result = await syncOneTeamFixtures(attempt);
+        teamFixtures = {
+          status: result.status,
+          reason: "reason" in result ? result.reason : null,
+          providerCalls: attempt.providerCalls,
+        };
+      } catch (error) {
+        console.error(
+          "GOAL team fixtures sync failed",
           error instanceof Error ? error.message.slice(0, 200) : "unknown",
         );
-        return Response.json({ status: "ok", calendar: { status: "failed" } });
+        teamFixtures = { status: "failed" };
       }
-    }
-    if (trigger === "detail-only" || trigger === "demand") {
-      if (Object.keys(body).some((key) => key !== "trigger")) {
-        return Response.json({ error: `${trigger} accepts only trigger` }, {
-          status: 400,
-        });
+
+      try {
+        news = await syncOneNews();
+      } catch (error) {
+        console.error(
+          "NewsData sync failed",
+          error instanceof Error ? error.message : "unknown",
+        );
+        news = { status: "failed" };
       }
-      return Response.json({
-        status: "ok",
-        ...(await syncDemand({ allowRecovery: trigger === "detail-only" })),
-      });
-    }
 
-    let live: unknown;
-    let detail: unknown;
-    let squad: unknown;
-    let teamFixtures: unknown;
-    let news: unknown;
-    let video: unknown;
+      try {
+        video = await syncOnePostMatchVideo();
+      } catch (error) {
+        console.error(
+          "YouTube post-match video sync failed",
+          error instanceof Error ? error.message : "unknown",
+        );
+        video = { status: "failed" };
+      }
 
-    try {
-      live = await syncLive();
-    } catch (error) {
-      console.error(
-        "GOAL live sync failed",
-        error instanceof Error ? error.message : "unknown",
-      );
-      live = { status: "failed" };
-    }
-
-    try {
-      detail = await syncOneMatchDetail();
-    } catch (error) {
-      console.error(
-        "GOAL match detail sync failed",
-        error instanceof Error ? error.message : "unknown",
-      );
-      detail = { status: "failed" };
-    }
-
-    try {
-      squad = await syncOneSquad();
-    } catch (error) {
-      console.error(
-        "GOAL squad sync failed",
-        error instanceof Error ? error.message : "unknown",
-      );
-      squad = { status: "failed" };
-    }
-
-    // Safety net for team-match coverage (#150/#99): at most ONE demanded
-    // team per normal run, after LIVE/detail/squad. No demand -> no
-    // reservation; a quota denial -> no provider call; other lanes go on.
-    try {
-      const attempt: TeamFixturesAttempt = {
-        candidate: null,
-        reservations: 0,
-        providerCalls: 0,
-        stoppedBy: null,
-      };
-      const result = await syncOneTeamFixtures(attempt);
-      teamFixtures = {
-        status: result.status,
-        reason: "reason" in result ? result.reason : null,
-        providerCalls: attempt.providerCalls,
-      };
-    } catch (error) {
-      console.error(
-        "GOAL team fixtures sync failed",
-        error instanceof Error ? error.message.slice(0, 200) : "unknown",
-      );
-      teamFixtures = { status: "failed" };
-    }
-
-    try {
-      news = await syncOneNews();
-    } catch (error) {
-      console.error(
-        "NewsData sync failed",
-        error instanceof Error ? error.message : "unknown",
-      );
-      news = { status: "failed" };
-    }
-
-    try {
-      video = await syncOnePostMatchVideo();
-    } catch (error) {
-      console.error(
-        "YouTube post-match video sync failed",
-        error instanceof Error ? error.message : "unknown",
-      );
-      video = { status: "failed" };
-    }
-
-    return Response.json({ status: "ok", live, detail, squad, teamFixtures, news, video });
+      return Response.json({ status: "ok", live, detail, squad, teamFixtures, news, video });
+    };
+    return await withWorkerLane(workerLane(trigger), run);
   } catch (error) {
     console.error(
       "supabase GOAL live sync rejected",

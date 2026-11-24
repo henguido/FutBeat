@@ -382,7 +382,7 @@ void main() {
     expect(find.text('Stored League'), findsOneWidget);
     expect(
       find.text(
-        'No pudimos actualizar. Conservamos los resultados disponibles.',
+        'Resultados guardados · Actualización pendiente',
       ),
       findsOneWidget,
     );

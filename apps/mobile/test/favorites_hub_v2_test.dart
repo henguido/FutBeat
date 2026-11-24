@@ -151,6 +151,158 @@ Future<void> _tab(WidgetTester tester, String label) async {
 }
 
 void main() {
+  testWidgets(
+    'pull refresh updates a retained favorite catalog and keeps the saved selection',
+    (tester) async {
+      final harness = await _pump(
+        tester,
+        follows: const {'player:player_a'},
+        snapshotLoader: (_, request) async {
+          final raw = _payload();
+          (raw['players'] as List).single['name'] = request == 1
+              ? 'Nombre anterior'
+              : 'Nombre confirmado';
+          return Snapshot(raw);
+        },
+      );
+      await _tab(tester, 'Jugadores');
+      expect(find.text('Nombre anterior'), findsOneWidget);
+      await tester.drag(
+        find.byKey(const PageStorageKey('following-player')),
+        const Offset(0, 500),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Nombre confirmado'), findsOneWidget);
+      expect(harness.requests, hasLength(2));
+      expect(await tester.runAsync(() => harness.db.watchFollows().first), {
+        'player:player_a',
+      });
+    },
+  );
+
+  testWidgets(
+    'pull refresh 503 preserves the favorite and recovers on the next gesture',
+    (tester) async {
+      final harness = await _pump(
+        tester,
+        follows: const {'player:player_a'},
+        snapshotLoader: (_, request) async {
+          if (request == 2) throw StateError('HTTP 503 fixture');
+          return Snapshot(_payload());
+        },
+      );
+      await _tab(tester, 'Jugadores');
+      for (var i = 0; i < 2; i++) {
+        await tester.drag(
+          find.byKey(const PageStorageKey('following-player')),
+          const Offset(0, 500),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Delantero Seguido'), findsOneWidget);
+      }
+      expect(harness.requests, hasLength(3));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'saved player missing from a successful catalog remains visible and retryable',
+    (tester) async {
+      final harness = await _pump(
+        tester,
+        follows: const {'player:player_missing'},
+        snapshotLoader: (_, request) async {
+          final raw = _payload();
+          raw['players'] = request == 1
+              ? []
+              : [
+                  {
+                    'id': 'player_missing',
+                    'name': 'Jugador recuperado',
+                    'clubName': 'Club confirmado',
+                  },
+                ];
+          return Snapshot(raw);
+        },
+      );
+      await _tab(tester, 'Jugadores');
+      expect(find.text('Aún no sigues jugadores.'), findsNothing);
+      expect(find.text('Jugador guardado'), findsOneWidget);
+      expect(find.textContaining('1 jugadores'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('following-retry-player')));
+      await tester.pumpAndSettle();
+      expect(find.text('Jugador recuperado'), findsOneWidget);
+      expect(find.text('Club confirmado'), findsOneWidget);
+      expect(harness.requests, hasLength(2));
+      expect(await tester.runAsync(() => harness.db.watchFollows().first), {
+        'player:player_missing',
+      });
+    },
+  );
+
+  testWidgets(
+    'missing redirected favorite opens the canonical profile without rewriting follows',
+    (tester) async {
+      final harness = await _pump(
+        tester,
+        follows: const {'player:player_old'},
+        snapshotLoader: (_, _) async {
+          final raw = _payload();
+          raw['players'] = [];
+          raw['entityRedirects'] = {'player_old': 'player_new'};
+          return Snapshot(raw);
+        },
+      );
+      await _tab(tester, 'Jugadores');
+      await tester.tap(
+        find.byKey(const ValueKey('following-missing-player-player_new')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('player:player_new'), findsOneWidget);
+      expect(await tester.runAsync(() => harness.db.watchFollows().first), {
+        'player:player_old',
+      });
+    },
+  );
+
+  testWidgets(
+    'canonical followed team keeps its next match when fixture references an alias',
+    (tester) async {
+      await _pump(
+        tester,
+        follows: const {'team:team_a'},
+        snapshotLoader: (_, _) async {
+          final raw = _payload();
+          raw['entityRedirects'] = {'team_alias': 'team_a'};
+          (raw['matches'] as List).single['homeTeamId'] = 'team_alias';
+          return Snapshot(raw);
+        },
+      );
+      expect(find.text('Próximo · vs Rival FC'), findsOneWidget);
+    },
+  );
+
+  test('unknown metadata preserves each saved canonical follow and separates homonyms', () {
+    final raw = _payload();
+    raw['players'] = [
+      {'id': 'p_one', 'name': 'Nombre igual'},
+      {'id': 'p_two', 'name': 'Nombre igual'},
+    ];
+    raw['entityRedirects'] = {'old': 'new'};
+    final hub = FollowingHubData.from(Snapshot(raw), {
+      'team:team_missing',
+      'player:old',
+      'player:new',
+      'player:p_one',
+      'player:p_two',
+      'competition:competition_missing',
+    });
+    expect(hub.missingIds['team'], ['team_missing']);
+    expect(hub.missingIds['player'], ['new']);
+    expect(hub.missingIds['competition'], ['competition_missing']);
+    expect(hub.players.map((e) => e.id), ['p_one', 'p_two']);
+  });
+
   testWidgets('same favorites recover when Google changes the account scope', (
     tester,
   ) async {

@@ -506,6 +506,18 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       filter = matchFilterForDate(filter, next, today);
     });
     if (next == previous) return;
+    final frameWatch = Stopwatch()..start();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && DateUtils.isSameDay(date, next)) {
+        ref
+            .read(qaDiagnosticsProvider)
+            ?.record(
+              '/local/calendar',
+              'dateFrame',
+              elapsed: frameWatch.elapsed,
+            );
+      }
+    });
     if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
       _dayTransition.value = 1;
     } else {

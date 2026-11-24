@@ -117,9 +117,10 @@ class CompetitionProfileView extends StatelessWidget {
       ]),
     };
 
-    return DefaultTabController(
-      length: tabs.length,
-      child: Scaffold(
+    return ProfileTabs(
+      key: ValueKey('competition-tabs-${competition.id}'),
+      tabs: tabs,
+      builder: (context, controller) => Scaffold(
         appBar: AppBar(
           title: Text(
             competition.displayName,
@@ -148,11 +149,19 @@ class CompetitionProfileView extends StatelessWidget {
               handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
               sliver: SliverPersistentHeader(
                 pinned: true,
-                delegate: ProfileTabBarHeader(profileTabBar(tabs)),
+                delegate: ProfileTabBarHeader(
+                  profileTabBar(tabs, controller: controller),
+                ),
               ),
             ),
           ],
-          body: TabBarView(children: [for (final tab in tabs) body(tab)]),
+          body: TabBarView(
+            controller: controller,
+            children: [
+              for (final tab in tabs)
+                KeyedSubtree(key: ValueKey(tab), child: body(tab)),
+            ],
+          ),
         ),
       ),
     );

@@ -152,13 +152,26 @@ class _FollowButtonState extends ConsumerState<FollowButton> {
                 if (state.hasError) {
                   ref.invalidate(followsProvider);
                 } else {
+                  final database = ref.read(databaseProvider);
+                  final repository = ref.exists(repositoryProvider)
+                      ? ref.read(repositoryProvider)
+                      : null;
                   await toggleFollow(
-                    ref.read(databaseProvider),
+                    database,
                     ref.read(entityMediaProvider).redirects,
                     widget.type,
                     widget.id,
                     onIntent: ref.read(pushServiceProvider).recordFollowIntent,
                   );
+                  if (repository is ApiRepository) {
+                    try {
+                      await repository.persistKnownFavoriteMetadata(
+                        await database.watchFollows().first,
+                      );
+                    } catch (_) {
+                      /* Follow itself already persisted; metadata is best-effort. */
+                    }
+                  }
                 }
               } catch (_) {
                 if (context.mounted) {
@@ -224,7 +237,7 @@ class DataView extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               const EmptyState(
-                'No pudimos cargar los datos',
+                'Información no disponible por ahora',
                 'Revisa tu conexión e intenta nuevamente.',
                 icon: Icons.cloud_off,
               ),
@@ -263,6 +276,17 @@ class CalendarDataView extends ConsumerStatefulWidget {
 class _CalendarDataViewState extends ConsumerState<CalendarDataView> {
   LiveRealtimeClient? _liveClient;
   late final String _scope = 'calendar:${identityHashCode(this)}';
+  Stopwatch? _datePaintWatch;
+  bool _dateDataRecorded = false;
+
+  @override
+  void didUpdateWidget(CalendarDataView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!DateUtils.isSameDay(widget.date, oldWidget.date)) {
+      _datePaintWatch = Stopwatch()..start();
+      _dateDataRecorded = false;
+    }
+  }
 
   @override
   void dispose() {
@@ -287,6 +311,21 @@ class _CalendarDataViewState extends ConsumerState<CalendarDataView> {
                     const <String, LiveMatchUpdate>{},
               );
     final cached = state.value ?? memory;
+    if (cached != null && _datePaintWatch != null && !_dateDataRecorded) {
+      _dateDataRecorded = true;
+      final selected = widget.date, watch = _datePaintWatch!;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && DateUtils.isSameDay(widget.date, selected)) {
+          ref
+              .read(qaDiagnosticsProvider)
+              ?.record(
+                '/local/calendar',
+                'availableDataFrame',
+                elapsed: watch.elapsed,
+              );
+        }
+      });
+    }
     final data =
         cached ??
         Snapshot({

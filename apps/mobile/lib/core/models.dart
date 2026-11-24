@@ -511,6 +511,7 @@ class LiveMatchUpdate {
     }
 
     const terminalStatuses = {
+      'FINISHED',
       'FINISHED_PENDING_VERIFICATION',
       'VERIFIED',
       'POSTPONED',
@@ -654,6 +655,20 @@ class LiveMatchUpdate {
     }
     return result;
   }
+}
+
+/// Only an explicit value in a match lineup row is a match rating. Profile
+/// season stats are deliberately not consulted.
+double? matchLineupRating(Json player) {
+  final raw = player['rating'];
+  final value = raw is num
+      ? raw.toDouble()
+      : raw is String
+      ? double.tryParse(raw.trim())
+      : null;
+  return value != null && value.isFinite && value > 0 && value <= 10
+      ? value
+      : null;
 }
 
 class MatchDetail {
@@ -827,16 +842,16 @@ class MatchDetail {
   /// Rated lineup players (rating is num > 0), deduplicated by canonical id
   /// (falling back to name+side), rating desc, then name asc, then side.
   List<({Json player, String side})> _ratedPlayers() {
-    final entries =
-        <({Json player, String side})>[
-          for (final player in homeStarters) (player: player, side: 'home'),
-          for (final player in homeSubstitutes) (player: player, side: 'home'),
-          for (final player in awayStarters) (player: player, side: 'away'),
-          for (final player in awaySubstitutes) (player: player, side: 'away'),
-        ].where((entry) {
-          final rating = entry.player['rating'];
-          return rating is num && rating > 0;
-        }).toList();
+    final entries = <({Json player, String side})>[
+      for (final entry in <({Json player, String side})>[
+        for (final player in homeStarters) (player: player, side: 'home'),
+        for (final player in homeSubstitutes) (player: player, side: 'home'),
+        for (final player in awayStarters) (player: player, side: 'away'),
+        for (final player in awaySubstitutes) (player: player, side: 'away'),
+      ])
+        if (matchLineupRating(entry.player) case final rating?)
+          (player: {...entry.player, 'rating': rating}, side: entry.side),
+    ];
 
     final seen = <String>{};
     final deduped = <({Json player, String side})>[];
@@ -963,6 +978,21 @@ class MatchPeriodScores {
   }
 }
 
+/// Exact canonical IDs only. Choose one complete profile row, never combine
+/// names, clubs or season data from different people (or conflicting rows).
+List<Entity> uniquePlayerEntities(Iterable<Entity> rows) {
+  final byId = <String, Entity>{};
+  for (final row in rows) {
+    final known = byId[row.id];
+    if (known == null ||
+        canonicalPlayerCompleteness(row.json) >
+            canonicalPlayerCompleteness(known.json)) {
+      byId[row.id] = row;
+    }
+  }
+  return byId.values.toList(growable: false);
+}
+
 class FootballMatch {
   FootballMatch(this.json);
   final Json json;
@@ -977,19 +1007,36 @@ class FootballMatch {
 
   String get homeId => json['homeTeamId'] as String;
   String get awayId => json['awayTeamId'] as String;
-  DateTime get startTime =>
-      costaRicaTime(DateTime.parse(json['startTime'] as String));
+  String? _startTimeSource;
+  DateTime? _parsedStartTime;
+  DateTime get startTime {
+    final source = json['startTime'] as String;
+    if (_parsedStartTime == null || source != _startTimeSource) {
+      _parsedStartTime = costaRicaTime(DateTime.parse(source));
+      _startTimeSource = source;
+    }
+    return _parsedStartTime!;
+  }
+
   String get status => json['status'] as String;
   bool get isLive =>
       ['LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'].contains(status);
-  bool get isFinished =>
-      ['FINISHED_PENDING_VERIFICATION', 'VERIFIED'].contains(status);
+  bool get isFinished => [
+    'FINISHED',
+    'FINISHED_PENDING_VERIFICATION',
+    'VERIFIED',
+  ].contains(status);
   bool get isAwaitingUpdate =>
-      ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status) &&
+      [
+        'DISCOVERED',
+        'SCHEDULED',
+        'PRE_MATCH',
+        'NOT_STARTED',
+      ].contains(status) &&
       costaRicaNow().isAfter(startTime.add(const Duration(minutes: 15)));
 
   bool get isScheduled =>
-      ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH'].contains(status);
+      ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH', 'NOT_STARTED'].contains(status);
   bool get isUpcoming => isScheduled && !isAwaitingUpdate;
   bool get hasPlayedEvidence =>
       json['hasPlayedEvidence'] == true ||
@@ -1003,21 +1050,30 @@ class FootballMatch {
   DateTime? get liveChangedAt =>
       DateTime.tryParse(json['liveChangedAt'] as String? ?? '');
 
+  DateTime? get providerObservedAt {
+    final provenance = json['provenance'];
+    final value = provenance is Map ? provenance['providerObservedAt'] : null;
+    return value is String ? DateTime.tryParse(value) : null;
+  }
+
   bool get liveDataStale {
     return liveDataStaleAt(DateTime.now());
   }
 
   bool liveDataStaleAt(DateTime now) {
     if (!isLive) return false;
-    final at = DateTime.tryParse(
-      (json['liveObservationDeviceAt'] ??
-              json['liveObservedAt'] ??
-              json['liveChangedAt'] ??
-              json['provenance']?['providerObservedAt'] ??
-              '')
-          .toString(),
+    final localObservation = DateTime.tryParse(
+      json['liveObservationDeviceAt']?.toString() ?? '',
     );
-    if (at == null) return true;
+    final providerObservation = providerObservedAt;
+    final at =
+        localObservation != null &&
+            (providerObservation == null ||
+                localObservation.isAfter(providerObservation))
+        ? localObservation
+        : providerObservation ??
+              DateTime.tryParse(json['liveObservedAt']?.toString() ?? '');
+    if (at == null) return false;
     final age = now.toUtc().difference(at.toUtc());
     return age < const Duration(minutes: -1) ||
         age > LiveMatchUpdate.staleAfter;
@@ -1034,12 +1090,17 @@ class FootballMatch {
       'HALFTIME' => 'Descanso',
       'EXTRA_TIME' => 'Prórroga',
       'PENALTIES' => 'Penales',
-      'VERIFIED' || 'FINISHED_PENDING_VERIFICATION' => 'Finalizado',
+      'FINISHED' ||
+      'VERIFIED' ||
+      'FINISHED_PENDING_VERIFICATION' => 'Finalizado',
       'POSTPONED' => 'Aplazado',
       'SUSPENDED' => 'Suspendido',
       'ABANDONED' => 'Abandonado',
       'CANCELLED' => 'Cancelado',
-      'DISCOVERED' || 'SCHEDULED' || 'PRE_MATCH' => 'Programado',
+      'DISCOVERED' ||
+      'SCHEDULED' ||
+      'PRE_MATCH' ||
+      'NOT_STARTED' => 'Programado',
       _ => 'Estado no disponible',
     };
   }
@@ -1287,6 +1348,10 @@ class Snapshot {
     }
 
     _teamsById = {for (final entity in teams) entity.id: entity};
+    final uniquePlayers = uniquePlayerEntities(players);
+    players
+      ..clear()
+      ..addAll(uniquePlayers);
     _playersById = {for (final entity in players) entity.id: entity};
     _competitionsById = {for (final entity in competitions) entity.id: entity};
     // A match whose team/competition is missing cannot be rendered. Drop only
@@ -1345,6 +1410,13 @@ class Snapshot {
         ...Map<String, dynamic>.from(fallback['snapshot'] as Map),
         'freshness': _sourceJson['freshness'],
       });
+    }
+    // A stable guard is already applied. Reusing this parsed view avoids
+    // rebuilding every entity and fixture during cached calendar navigation.
+    // Changed guards still rebuild from the untouched source above/below.
+    if (_blockedAliasIds.length == blockedAliasIds.length &&
+        _blockedAliasIds.containsAll(blockedAliasIds)) {
+      return this;
     }
     return _presentationEnabled
         ? Snapshot(_sourceJson, blockedAliasIds: blockedAliasIds)

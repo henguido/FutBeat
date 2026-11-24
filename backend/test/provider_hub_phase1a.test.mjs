@@ -158,7 +158,7 @@ test('GOAL regression: policy, LIVE floor 20, live-goal cap and decisions are un
   const policy = (await db.query("select class_floors,kind_daily_caps from futbeat_private.provider_quota_policy where provider='goal_api'")).rows[0];
   assert.equal(policy.class_floors.live, 20);
   assert.equal(policy.kind_daily_caps['live-goal'], 400);
-  assert.equal(policy.kind_daily_caps['match-detail'], 900);
+  assert.equal(policy.kind_daily_caps['match-detail'], 550, 'BE11 confirmed cap; secondaries never change it');
   const decide = async (kind, cls) => (await db.query('select futbeat_private.quota_decision($1,$2,$3) v', ['goal_api', kind, cls])).rows[0].v;
   const before = { live: await decide('live-goal', 'live'), detail: await decide('match-detail', 'user') };
   // Secondary activity (even a synthetic enabled API-Football) never touches GOAL.

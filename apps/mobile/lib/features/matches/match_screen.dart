@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import '../../shared/live_freshness_notice.dart';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -29,16 +31,35 @@ const _headerBottom = Color(0xFF0F181C);
 const _cardBorder = Color(0xFF2B373D);
 const awaySideColor = Color(0xFF4FC3F7);
 
-enum _MatchTabId { facts, live, lineup, standings, statistics, headToHead }
+enum _MatchTabId {
+  facts,
+  live,
+  events,
+  lineup,
+  standings,
+  statistics,
+  headToHead,
+}
 
-const _allMatchTabs = <_MatchTabId>[
+const _preMatchTabs = <_MatchTabId>[
   _MatchTabId.facts,
-  _MatchTabId.live,
   _MatchTabId.lineup,
   _MatchTabId.standings,
-  _MatchTabId.statistics,
   _MatchTabId.headToHead,
 ];
+
+const _preMatchStatuses = {
+  'DISCOVERED',
+  'SCHEDULED',
+  'PRE_MATCH',
+  'NOT_STARTED',
+};
+const _playingStatuses = {'LIVE', 'HALFTIME', 'EXTRA_TIME', 'PENALTIES'};
+const _finishedStatuses = {
+  'FINISHED',
+  'VERIFIED',
+  'FINISHED_PENDING_VERIFICATION',
+};
 
 /// Bounded refreshes while the server hydrates missing lineup photos.
 /// Same cadence as EntityScreen's profileEnrichmentRetryDelays.
@@ -100,6 +121,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   late final String _liveScope = 'match:${identityHashCode(this)}';
   final Set<String> _recordedTeamInterests = {};
   late TabController _tabs;
+  List<_MatchTabId> _visibleTabs = _preMatchTabs;
   Timer? _lineupEnrichmentRetry;
   int _lineupEnrichmentAttempts = 0;
   Timer? _standingsRetry;
@@ -119,9 +141,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Stable structure: Tabla always exists (its content reports the state),
-    // so tabs never appear/disappear while data arrives.
-    _tabs = TabController(length: 6, vsync: this);
+    _tabs = TabController(length: _visibleTabs.length, vsync: this);
     _startDetailRefreshIndicator();
     Future.microtask(() => recordTemporaryInterest(ref, 'match', widget.id));
   }
@@ -168,12 +188,27 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
   }
 
   void _selectTab(_MatchTabId id) {
-    final index = _allMatchTabs.indexOf(id);
+    final index = _visibleTabs.indexOf(id);
     if (index >= 0 && index != _tabs.index) _tabs.animateTo(index);
   }
 
+  void _syncTabs(List<_MatchTabId> next) {
+    if (listEquals(next, _visibleTabs)) return;
+    final selected = _visibleTabs[_tabs.index];
+    final nextIndex = next.indexOf(selected);
+    final previous = _tabs;
+    _visibleTabs = next;
+    _tabs = TabController(
+      length: next.length,
+      initialIndex: nextIndex < 0 ? 0 : nextIndex,
+      vsync: this,
+    );
+    previous.dispose();
+  }
+
   void _scheduleLineupEnrichmentRefresh() {
-    if (_storedReadsOnly ||
+    if (ref.read(detailPlannerOwnedProvider) ||
+        _storedReadsOnly ||
         !_sportsActive ||
         _lineupEnrichmentRetry != null ||
         _lineupEnrichmentAttempts >= _lineupEnrichmentRetryDelays.length) {
@@ -216,8 +251,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 
   void _watchStaleLive(Snapshot merged) {
     final match = merged.match(widget.id);
-    // Unknown timestamps get a UI warning, not new polling. Preserve the
-    // existing bounded recovery only for an actual dated LIVE overlay.
+    // Keep bounded detail recovery tied to a dated LIVE overlay.
     _liveStale = match?.liveChangedAt != null && match?.liveDataStale == true;
     if (!_liveStale) {
       _staleLiveRefresh?.cancel();
@@ -238,6 +272,56 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     });
   }
 
+  String _calendarHead(FootballMatch match) {
+    final score = match.json['score'];
+    return jsonEncode([
+      match.id,
+      match.json['startTime'],
+      match.status,
+      score is Map ? score['home'] : null,
+      score is Map ? score['away'] : null,
+      match.json['minute'],
+      match.json['latestEvent'],
+      match.json['events'],
+      match.json['liveRevision'],
+      match.json['liveChangedAt'],
+    ]);
+  }
+
+  void _watchHttpCalendar(FootballMatch match) {
+    if (!ref.watch(matchCalendarSyncEnabledProvider) ||
+        ref.read(repositoryProvider) is! ApiRepository ||
+        const ['VERIFIED', 'CANCELLED', 'ABANDONED'].contains(match.status)) {
+      return;
+    }
+    final id = widget.id;
+    // Share the existing cache, cadence, single-flight, backoff and foreground
+    // cancellation. No second poller and no Realtime/provider subscription.
+    ref.listen(calendarSnapshotProvider(DateUtils.dateOnly(match.startTime)), (
+      _,
+      next,
+    ) {
+      if (!mounted || !_sportsActive || widget.id != id) return;
+      final calendar = next.asData?.value;
+      if (calendar == null || calendar.stale || calendar.calendarPending) {
+        return;
+      }
+      final changed = calendar.match(id);
+      if (changed == null) return;
+      final head = _calendarHead(changed);
+      final context = ref.read(matchContextSnapshotProvider(id));
+      if (context.isLoading) return;
+      final current =
+          context.value?.match(id) ?? _lastMatchContext?.match(id) ?? match;
+      if (_calendarHead(current) == head) return;
+      // Deduplicate against the displayed context, not the last calendar seen:
+      // a previous context read can lag behind that same calendar answer.
+      // Re-read the existing authoritative context; never combine unrelated
+      // rows locally or let a late calendar override a VERIFIED correction.
+      ref.invalidate(matchContextSnapshotProvider(id));
+    });
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final active = state == AppLifecycleState.resumed;
@@ -252,10 +336,14 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       _staleLiveRefresh = null;
       return;
     }
-    // Recheck only the data that was still incomplete when this screen was
-    // suspended. The app-wide lifecycle owner handles the regular feed.
-    if (_lineupPending) ref.invalidate(matchDetailProvider(widget.id));
-    if (_standingsPending || _liveStale) {
+    // The shared feed resumes separately. Re-read this context once as well:
+    // its last calendar value may have arrived while this view was paused.
+    if (_lineupPending || ref.read(detailPlannerOwnedProvider)) {
+      ref.invalidate(matchDetailProvider(widget.id));
+    }
+    if (_standingsPending ||
+        _liveStale ||
+        ref.read(matchCalendarSyncEnabledProvider)) {
       ref.invalidate(matchContextSnapshotProvider(widget.id));
     }
   }
@@ -310,7 +398,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     ref.listen(matchDetailProvider(widget.id), (_, next) {
       if (!next.isLoading) {
         _lineupPending =
-            next.asData?.value.lineupEnrichmentPending == true && !_storedReadsOnly;
+            next.asData?.value.lineupEnrichmentPending == true &&
+            !_storedReadsOnly;
       }
       // Ignore the refresh-in-progress state (it still carries old data).
       if (!next.isLoading && _lineupPending) {
@@ -338,15 +427,21 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final refreshed = watchesContext
         ? ref.watch(matchContextSnapshotProvider(widget.id)).value
         : null;
-    if (refreshed?.match(widget.id) != null) _lastMatchContext = refreshed;
     final fallback = _lastMatchContext ?? widget.initialData;
-    // A partial refresh must not replace the last visible exact fixture.
-    final source =
-        refreshed != null &&
-            refreshed.match(widget.id) == null &&
-            fallback?.match(widget.id) != null
+    // A cache replay is not new sporting evidence. Keep the exact fixture
+    // already visible (including the calendar seed) until the network answers.
+    // Otherwise an old SCHEDULED context briefly hides a known LIVE score.
+    final replayOverVisible =
+        refreshed?.stale == true && fallback?.match(widget.id) != null;
+    // A partial refresh must not replace the last visible exact fixture either.
+    final source = replayOverVisible
+        ? fallback
+        : refreshed != null &&
+              refreshed.match(widget.id) == null &&
+              fallback?.match(widget.id) != null
         ? fallback!.asStale()
         : refreshed ?? fallback;
+    if (source?.match(widget.id) != null) _lastMatchContext = source;
     final initialData = source == null
         ? null
         : presentSnapshotForSession(ref, source);
@@ -414,6 +509,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       );
     }
 
+    _watchHttpCalendar(match);
+
     for (final teamId in [match.homeId, match.awayId]) {
       if (_recordedTeamInterests.add(teamId)) {
         Future.microtask(() => recordTemporaryInterest(ref, 'team', teamId));
@@ -434,10 +531,21 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final rawDetail =
         ref.watch(matchDetailProvider(widget.id)).value ??
         MatchDetail.waiting(widget.id);
-    final detail = rawDetail.withCurrentIncidents(match).withBlockedAliases(
-      ref.watch(playerDisplayBlockedAliasesProvider).asData?.value ??
-          ref.read(entityMediaProvider).revokedDisplayAliases,
-    );
+    final plannerWaiting =
+        ref.watch(detailPlannerOwnedProvider) &&
+        !rawDetail.offlineUnavailable &&
+        (rawDetail.pending ||
+            rawDetail.hydrationNeeded ||
+            !rawDetail.available);
+    final presentedDetail = plannerWaiting && _detailRefreshIndicatorExpired
+        ? rawDetail.withPending(false)
+        : rawDetail;
+    final detail = presentedDetail
+        .withCurrentIncidents(match)
+        .withBlockedAliases(
+          ref.watch(playerDisplayBlockedAliasesProvider).asData?.value ??
+              ref.read(entityMediaProvider).revokedDisplayAliases,
+        );
     final venue = detail.stadium ?? match.json['venue']?.toString() ?? '';
     final home = data.team(match.homeId)!;
     final away = data.team(match.awayId)!;
@@ -445,6 +553,19 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final hasStats = displayableStatistics(
       matchStatisticsForDisplay(match, detail),
     ).isNotEmpty;
+    final canonicalStatus = match.status.trim().toUpperCase();
+    final playing = _playingStatuses.contains(canonicalStatus);
+    final finished = _finishedStatuses.contains(canonicalStatus);
+    final statisticsVisible = (playing || finished) && hasStats;
+    _syncTabs([
+      _MatchTabId.facts,
+      if (playing) _MatchTabId.live,
+      if (finished) _MatchTabId.events,
+      _MatchTabId.lineup,
+      _MatchTabId.standings,
+      if (playing || finished) _MatchTabId.statistics,
+      _MatchTabId.headToHead,
+    ]);
     // Recent form + head-to-head: a separate read, never blocking the header
     // or the tabs, failing on its own, read once per open.
     final preview = ref.watch(matchPreviewProvider(widget.id));
@@ -474,7 +595,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         !match.showKickoff ||
         (match.isAwaitingUpdate && detail.pending) ||
         mergedMatchTimeline(match, detail).isNotEmpty;
-    final showPreview = match.isUpcoming && match.showKickoff;
+    final showPreview = _preMatchStatuses.contains(canonicalStatus);
     final factsTabLabel = showPreview ? 'Previa' : 'Hechos';
     final periodScores = MatchPeriodScores.fromMatch(match, detail);
     final previewSections = [
@@ -511,7 +632,8 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         !_storedReadsOnly &&
         _standingsAttempts < standingsRetryDelays.length;
     final refreshing =
-        (detail.pending && !_detailRefreshIndicatorExpired) ||
+        ((detail.pending || plannerWaiting) &&
+            !_detailRefreshIndicatorExpired) ||
         standingsRefreshing;
 
     final tabBar = TabBar(
@@ -538,32 +660,44 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ),
       dividerColor: Colors.transparent,
       tabs: [
-        Tab(
-          key: const ValueKey('match-tab-facts'),
-          text: factsTabLabel,
-          height: 44,
-        ),
-        const Tab(key: ValueKey('match-tab-live'), text: 'En vivo', height: 44),
-        const Tab(
-          key: ValueKey('match-tab-lineup'),
-          text: 'Alineación',
-          height: 44,
-        ),
-        const Tab(
-          key: ValueKey('match-tab-standings'),
-          text: 'Tabla',
-          height: 44,
-        ),
-        const Tab(
-          key: ValueKey('match-tab-statistics'),
-          text: 'Estadísticas',
-          height: 44,
-        ),
-        const Tab(
-          key: ValueKey('match-tab-headToHead'),
-          text: 'Cara a cara',
-          height: 44,
-        ),
+        for (final id in _visibleTabs)
+          switch (id) {
+            _MatchTabId.facts => Tab(
+              key: const ValueKey('match-tab-facts'),
+              text: factsTabLabel,
+              height: 44,
+            ),
+            _MatchTabId.live => const Tab(
+              key: ValueKey('match-tab-live'),
+              text: 'En vivo',
+              height: 44,
+            ),
+            _MatchTabId.events => const Tab(
+              key: ValueKey('match-tab-events'),
+              text: 'Eventos',
+              height: 44,
+            ),
+            _MatchTabId.lineup => const Tab(
+              key: ValueKey('match-tab-lineup'),
+              text: 'Alineación',
+              height: 44,
+            ),
+            _MatchTabId.standings => const Tab(
+              key: ValueKey('match-tab-standings'),
+              text: 'Tabla',
+              height: 44,
+            ),
+            _MatchTabId.statistics => const Tab(
+              key: ValueKey('match-tab-statistics'),
+              text: 'Estadísticas',
+              height: 44,
+            ),
+            _MatchTabId.headToHead => const Tab(
+              key: ValueKey('match-tab-headToHead'),
+              text: 'Cara a cara',
+              height: 44,
+            ),
+          },
       ],
     );
 
@@ -584,18 +718,18 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
         if (verifiedVideoLinks(detail).isNotEmpty) ...[
           const _SectionTitle('Videos de canales verificados'),
           PostMatchVideos(detail),
-        ] else if (!match.showKickoff && !match.isLive && !detail.pending) ...[
+        ] else if (finished && !detail.pending) ...[
           const _SectionTitle('Videos oficiales'),
           const _EmptySection(
             Icons.play_circle_outline_rounded,
             'Sin videos oficiales verificados',
           ),
         ],
-        if (periodScores != null) ...[
+        if ((playing || finished) && periodScores != null) ...[
           const _SectionTitle('Marcador por período'),
           MatchPeriodScoresCard(scores: periodScores),
         ],
-        if (!match.showKickoff && detail.topRated().isNotEmpty) ...[
+        if ((playing || finished) && detail.topRated().isNotEmpty) ...[
           _SectionTitle(_topRatedTitle(match, detail)),
           if (match.isLive)
             const Padding(
@@ -635,7 +769,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
             away: away,
           ),
         ],
-        if (hasStats) ...[
+        if (statisticsVisible) ...[
           const _SectionTitle('Estadísticas clave'),
           Statistics(
             match,
@@ -680,6 +814,11 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
             Icons.sports_soccer_rounded,
             'El partido aún no inicia',
           ),
+      ]),
+      _MatchTabId.events: _MatchTabList('events', [
+        if (data.demo) const DemoNotice(),
+        const _SectionTitle('Eventos del partido'),
+        MatchTimeline(data, match, detail),
       ]),
       _MatchTabId.lineup: _MatchTabList('alineacion', [
         if (data.demo) const DemoNotice(),
@@ -739,13 +878,23 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
             handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
             sliver: SliverPersistentHeader(
               pinned: true,
-              delegate: _TabBarHeader(tabBar, refreshing: refreshing),
+              delegate: _TabBarHeader(
+                tabBar,
+                refreshing: refreshing,
+                waitingForDetail: plannerWaiting,
+              ),
             ),
           ),
         ],
         body: TabBarView(
+          // Recreate the pager only when its logical pages change. Otherwise
+          // an old scroll extent can clamp a newly selected last tab.
+          key: ValueKey(_visibleTabs.map((id) => id.name).join(',')),
           controller: _tabs,
-          children: [for (final id in _allMatchTabs) tabViews[id]!],
+          children: [
+            for (final id in _visibleTabs)
+              KeyedSubtree(key: ValueKey(id), child: tabViews[id]!),
+          ],
         ),
       ),
     );
@@ -785,18 +934,24 @@ String? _liveFieldLatestEvent(
 }
 
 class _TabBarHeader extends SliverPersistentHeaderDelegate {
-  _TabBarHeader(this.tabBar, {this.refreshing = false});
+  _TabBarHeader(
+    this.tabBar, {
+    this.refreshing = false,
+    this.waitingForDetail = false,
+  });
 
   final TabBar tabBar;
 
   /// Discreet signal while missing data is being fetched.
   final bool refreshing;
+  final bool waitingForDetail;
 
   @override
-  double get minExtent => tabBar.preferredSize.height + 1;
+  double get minExtent =>
+      tabBar.preferredSize.height + (refreshing || waitingForDetail ? 18 : 1);
 
   @override
-  double get maxExtent => tabBar.preferredSize.height + 1;
+  double get maxExtent => minExtent;
 
   @override
   Widget build(
@@ -810,7 +965,26 @@ class _TabBarHeader extends SliverPersistentHeaderDelegate {
     ),
     child: Stack(
       children: [
-        Align(alignment: Alignment.centerLeft, child: tabBar),
+        Align(
+          alignment: refreshing || waitingForDetail
+              ? Alignment.topLeft
+              : Alignment.centerLeft,
+          child: tabBar,
+        ),
+        if (refreshing || waitingForDetail)
+          Positioned(
+            left: 16,
+            bottom: 3,
+            child: Text(
+              refreshing
+                  ? 'Actualizando'
+                  : 'Detalle en actualización · Según cobertura',
+              key: ValueKey(
+                refreshing ? 'match-updating-label' : 'match-awaiting-detail',
+              ),
+              style: const TextStyle(fontSize: 10, color: muted),
+            ),
+          ),
         if (refreshing)
           const Positioned(
             left: 0,
@@ -828,7 +1002,9 @@ class _TabBarHeader extends SliverPersistentHeaderDelegate {
 
   @override
   bool shouldRebuild(covariant _TabBarHeader oldDelegate) =>
-      oldDelegate.tabBar != tabBar || oldDelegate.refreshing != refreshing;
+      oldDelegate.tabBar != tabBar ||
+      oldDelegate.refreshing != refreshing ||
+      oldDelegate.waitingForDetail != waitingForDetail;
 }
 
 /// One scrollable tab body that cooperates with the collapsible header.
@@ -1334,9 +1510,7 @@ int? _heroGoalCount(Object? value) =>
   final raw = match.json['score'];
   if (raw is! Map) return null;
   final home = _heroGoalCount(raw['home']), away = _heroGoalCount(raw['away']);
-  return home != null && away != null
-      ? (home: home, away: away)
-      : null;
+  return home != null && away != null ? (home: home, away: away) : null;
 }
 
 class _HeroScoreContext extends StatelessWidget {
@@ -1785,7 +1959,7 @@ class MatchStandingsTab extends StatelessWidget {
             ),
           if (data.standingsStale || data.stale)
             const Text(
-              'Tabla guardada · Puede no estar actualizada',
+              'Tabla pendiente de actualización',
               key: ValueKey('standings-saved'),
               style: TextStyle(color: muted, fontSize: 12),
             ),
@@ -1825,14 +1999,14 @@ class MatchStandingsTab extends StatelessWidget {
         children: [
           const _EmptySection(
             Icons.table_rows_outlined,
-            'Tabla aún no disponible',
+            'Clasificación pendiente de actualización',
           ),
           if (onRetry != null)
             OutlinedButton.icon(
               key: const ValueKey('standings-retry'),
               onPressed: onRetry,
               icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Reintentar'),
+              label: const Text('Actualizar'),
             ),
         ],
       );
@@ -1842,23 +2016,21 @@ class MatchStandingsTab extends StatelessWidget {
         children: [
           _EmptySection(
             Icons.table_rows_outlined,
-            data.stale || data.standingsState == 'error'
-                ? 'No se pudo actualizar la tabla'
-                : 'Tabla aún no descargada',
+            'Clasificación pendiente de actualización',
           ),
           if (onRetry != null)
             OutlinedButton.icon(
               key: const ValueKey('standings-retry'),
               onPressed: onRetry,
               icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Reintentar'),
+              label: const Text('Actualizar'),
             ),
         ],
       );
     }
     return const _EmptySection(
       Icons.table_rows_outlined,
-      'Sin tabla disponible',
+      'Clasificación no disponible',
     );
   }
 }
@@ -1940,6 +2112,14 @@ class Statistics extends StatelessWidget {
   Widget build(BuildContext context) {
     final stats = matchStatisticsForDisplay(match, detail);
     if (stats.isEmpty) {
+      if (match.isScheduled &&
+          match.events.isEmpty &&
+          match.json['hasPlayedEvidence'] != true) {
+        return const _EmptySection(
+          Icons.bar_chart_rounded,
+          'Las estadísticas estarán disponibles durante el partido.',
+        );
+      }
       if (detail?.offlineUnavailable == true) {
         return const _EmptySection(
           Icons.wifi_off_rounded,
@@ -1982,6 +2162,11 @@ class Statistics extends StatelessWidget {
 /// one statistic FutBeat can actually show. An unknown-only response must
 /// not erase valid statistics already present in the canonical snapshot.
 List<Json> matchStatisticsForDisplay(FootballMatch match, MatchDetail? detail) {
+  if (match.isScheduled &&
+      match.events.isEmpty &&
+      match.json['hasPlayedEvidence'] != true) {
+    return const [];
+  }
   final detailed = detail?.statistics ?? const <Json>[];
   if (displayableStatistics(detailed).isNotEmpty) return detailed;
   return match.statistics;
@@ -2703,7 +2888,9 @@ String? _timelinePlayerId(Json event, Snapshot data, {bool assist = false}) {
     final next = data.entityRedirects[current];
     if (next == null || next.isEmpty || next == current) {
       if (current == id) return id;
-      final target = data.players.where((player) => player.id == current).firstOrNull;
+      final target = data.players
+          .where((player) => player.id == current)
+          .firstOrNull;
       return target != null && target.json['displaySourceAliasId'] == null
           ? current
           : id;
@@ -2925,17 +3112,32 @@ String _matchPlayerCanonicalId(Json player, Snapshot? data) {
   return _timelinePlayerId({'canonicalPlayerId': id}, data) ?? id;
 }
 
-Future<void> _openTimelinePlayer(BuildContext context, String canonicalId) async {
+Future<void> _openTimelinePlayer(
+  BuildContext context,
+  String canonicalId,
+) async {
   final scope = MatchPlayerScope.maybeOf(context);
   if (scope != null) {
     final matches = <({Json player, String side})>[
-      for (final player in [...scope.detail.homeStarters, ...scope.detail.homeSubstitutes])
-        if (_matchPlayerCanonicalId(player, scope.data) == canonicalId) (player: player, side: 'home'),
-      for (final player in [...scope.detail.awayStarters, ...scope.detail.awaySubstitutes])
-        if (_matchPlayerCanonicalId(player, scope.data) == canonicalId) (player: player, side: 'away'),
+      for (final player in [
+        ...scope.detail.homeStarters,
+        ...scope.detail.homeSubstitutes,
+      ])
+        if (_matchPlayerCanonicalId(player, scope.data) == canonicalId)
+          (player: player, side: 'home'),
+      for (final player in [
+        ...scope.detail.awayStarters,
+        ...scope.detail.awaySubstitutes,
+      ])
+        if (_matchPlayerCanonicalId(player, scope.data) == canonicalId)
+          (player: player, side: 'away'),
     ];
     if (matches.length == 1) {
-      await showMatchPlayerSheet(context, matches.single.player, matches.single.side);
+      await showMatchPlayerSheet(
+        context,
+        matches.single.player,
+        matches.single.side,
+      );
       return;
     }
   }
@@ -3447,20 +3649,16 @@ class Lineups extends StatelessWidget {
       if (detail.offlineUnavailable) {
         return const _EmptySection(
           Icons.wifi_off_rounded,
-          'No se pudo conectar. Alineaciones no disponibles.',
+          'Sin conexión. No hay alineaciones guardadas.',
         );
       }
-      // A stale SCHEDULED/PRE_MATCH row can remain globally pending long
-      // after kickoff when the provider never published an XI. Retrying may
-      // continue in the background, but the section must not look like an
-      // endless foreground load once the match itself is awaiting an update.
-      if (detail.lineupPending &&
-          (!detail.available || !match.isAwaitingUpdate)) {
-        return const _PendingSection('Cargando alineaciones…');
-      }
-      return const _EmptySection(
+      // A settled response without rows is missing coverage, not an active
+      // foreground download. The parent handles an actual in-flight read.
+      return _EmptySection(
         Icons.groups_outlined,
-        'Todavía no hay alineaciones disponibles.',
+        match.isScheduled
+            ? 'Alineaciones aún no publicadas'
+            : 'Alineaciones no disponibles para este partido',
       );
     }
 
@@ -3483,11 +3681,20 @@ class Lineups extends StatelessWidget {
       child: Column(
         children: [
           if (combinedPitch) ...[
-            const _LineupLabel('Titulares'),
+            _LineupLabel(
+              lineupPresentationState(detail.home) ==
+                          LineupPresentationState.provisional ||
+                      lineupPresentationState(detail.away) ==
+                          LineupPresentationState.provisional
+                  ? 'Alineación probable'
+                  : 'Titulares',
+            ),
             const SizedBox(height: 8),
             _CombinedFormationPitch(
               homeTeam: homeTeam,
               awayTeam: awayTeam,
+              homeStatus: lineupPresentationState(detail.home),
+              awayStatus: lineupPresentationState(detail.away),
               homeCoach: detail.homeCoach,
               awayCoach: detail.awayCoach,
               homeFormation: detail.homeFormation!,
@@ -3696,7 +3903,7 @@ enum LineupPresentationState { unknown, provisional, confirmed }
 LineupPresentationState lineupPresentationState(Json side) {
   final value = side['lineupStatus']?.toString().trim().toLowerCase();
   return switch (value) {
-    'provisional' => LineupPresentationState.provisional,
+    'provisional' || 'probable' => LineupPresentationState.provisional,
     'confirmed' => LineupPresentationState.confirmed,
     _ => LineupPresentationState.unknown,
   };
@@ -3717,8 +3924,8 @@ class _LineupStatusBadge extends StatelessWidget {
     ),
     child: Text(
       status == LineupPresentationState.confirmed
-          ? 'Confirmada'
-          : 'Provisional',
+          ? 'Alineación confirmada'
+          : 'Alineación probable',
       style: const TextStyle(
         color: Colors.white70,
         fontSize: 10,
@@ -3820,8 +4027,8 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
     final incidentSide =
         incident['side']?.toString() ?? incident['team']?.toString() ?? '';
     final type = incident['type']?.toString() ?? 'OTHER';
-    final ownGoal = type == 'OWN_GOAL' ||
-        (type == 'GOAL' && incident['ownGoal'] == true);
+    final ownGoal =
+        type == 'OWN_GOAL' || (type == 'GOAL' && incident['ownGoal'] == true);
     // The normalizer credits an own goal to the beneficiary. Its playerId
     // still identifies the scorer, who belongs to the opposite lineup.
     // With no side, the explicit provider playerId still identifies the
@@ -3856,6 +4063,8 @@ List<LineupPlayerEvent> lineupEventsForPlayer(
 class _CombinedFormationPitch extends StatelessWidget {
   const _CombinedFormationPitch({
     required this.homeTeam,
+    required this.homeStatus,
+    required this.awayStatus,
     required this.awayTeam,
     required this.homeCoach,
     required this.awayCoach,
@@ -3866,6 +4075,7 @@ class _CombinedFormationPitch extends StatelessWidget {
     required this.incidents,
   });
 
+  final LineupPresentationState homeStatus, awayStatus;
   final Entity homeTeam;
   final Entity awayTeam;
   final Json? homeCoach;
@@ -3887,6 +4097,7 @@ class _CombinedFormationPitch extends StatelessWidget {
             _PitchTeamIdentity(
               team: homeTeam,
               sideLabel: 'Local',
+              status: homeStatus,
               formation: homeFormation,
               accent: lime,
               coach: homeCoach,
@@ -3902,6 +4113,7 @@ class _CombinedFormationPitch extends StatelessWidget {
             _PitchTeamIdentity(
               team: awayTeam,
               sideLabel: 'Visitante',
+              status: awayStatus,
               formation: awayFormation,
               accent: awaySideColor,
               coach: awayCoach,
@@ -3931,6 +4143,9 @@ class _CombinedFormationPitch extends StatelessWidget {
         'away',
       );
       final rowHeight = homeHeight > awayHeight ? homeHeight : awayHeight;
+      final pitchRowCount = homeRows.length > awayRows.length
+          ? homeRows.length
+          : awayRows.length;
       return Semantics(
         container: true,
         label:
@@ -3943,6 +4158,7 @@ class _CombinedFormationPitch extends StatelessWidget {
               _PitchTeamIdentity(
                 team: homeTeam,
                 sideLabel: 'Local',
+                status: homeStatus,
                 formation: homeFormation,
                 accent: lime,
                 coach: homeCoach,
@@ -3951,6 +4167,7 @@ class _CombinedFormationPitch extends StatelessWidget {
               _FormationHalf(
                 key: const ValueKey('lineups-home-half'),
                 rowHeight: rowHeight,
+                pitchRowCount: pitchRowCount,
                 rows: homeRows.reversed.toList(),
                 side: 'home',
                 incidents: incidents,
@@ -3959,6 +4176,7 @@ class _CombinedFormationPitch extends StatelessWidget {
               _FormationHalf(
                 key: const ValueKey('lineups-away-half'),
                 rowHeight: rowHeight,
+                pitchRowCount: pitchRowCount,
                 rows: awayRows,
                 side: 'away',
                 incidents: incidents,
@@ -3967,6 +4185,7 @@ class _CombinedFormationPitch extends StatelessWidget {
               _PitchTeamIdentity(
                 team: awayTeam,
                 sideLabel: 'Visitante',
+                status: awayStatus,
                 formation: awayFormation,
                 accent: awaySideColor,
                 coach: awayCoach,
@@ -3988,6 +4207,7 @@ class _FormationHalf extends StatelessWidget {
     required this.incidents,
     required this.goalAtTop,
     required this.rowHeight,
+    required this.pitchRowCount,
   });
 
   final List<List<Json>> rows;
@@ -3995,12 +4215,14 @@ class _FormationHalf extends StatelessWidget {
   final List<Json> incidents;
   final bool goalAtTop;
   final double rowHeight;
+  final int pitchRowCount;
 
   @override
   Widget build(BuildContext context) {
     const edgeInset = 12.0;
-    final height =
-        lineupPitchHalfHeight + (rowHeight - lineupPitchRowHeight) * 5;
+    // Keep both halves symmetric without reserving an unused fifth line for
+    // formations such as 4-3-3. Dense formations retain their full row spacing.
+    final height = rowHeight * pitchRowCount + edgeInset * 2;
     final travel = height - rowHeight - edgeInset * 2;
     return SizedBox(
       height: height,
@@ -4038,7 +4260,7 @@ class _PitchPlayerRow extends StatelessWidget {
     required this.row,
     required this.side,
     required this.incidents,
-    this.height = lineupPitchRowHeight,
+    this.height = 100,
   });
 
   final double height;
@@ -4076,6 +4298,7 @@ class _PitchTeamIdentity extends StatelessWidget {
     required this.accent,
     this.coach,
     this.onPitch = false,
+    this.status = LineupPresentationState.unknown,
   });
 
   final Entity team;
@@ -4084,6 +4307,7 @@ class _PitchTeamIdentity extends StatelessWidget {
   final Color accent;
   final Json? coach;
   final bool onPitch;
+  final LineupPresentationState status;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -4128,18 +4352,34 @@ class _PitchTeamIdentity extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
+                if (status != LineupPresentationState.unknown)
+                  Text(
+                    status == LineupPresentationState.confirmed
+                        ? 'Alineación confirmada'
+                        : 'Alineación probable',
+                    key: ValueKey('lineup-status-$sideLabel'),
+                    style: const TextStyle(color: muted, fontSize: 10),
+                  ),
                 if (coach != null &&
                     (coach!['name']?.toString().trim().isNotEmpty ?? false))
-                  Text(
-                    'DT · ${coach!['name']}',
+                  Row(
                     key: ValueKey('lineup-$sideLabel-coach'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFB9BDC2),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    children: [
+                      _PlayerAvatar(coach!, size: 24),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          'DT · ${coach!['name']}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFFB9BDC2),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
               ],
             ),
@@ -4286,14 +4526,14 @@ class _PitchHalfPainter extends CustomPainter {
 }
 
 /// Shared geometry contract for renderer and widget tests.
-// Keep five pitch rows separated while reserving room for scaled names and
+// Start compact, then reserve measured room for scaled names and
 // event badges on 420 dpi phones such as the Galaxy A32.
-const double lineupPitchRowHeight = 100;
+const double lineupPitchRowHeight = 84;
 const double lineupPitchHalfHeight = lineupPitchRowHeight * 5 + 24;
 const double lineupPenaltyAreaDepth = 132;
 
 // Reserve the real scaled label and Wrap height. Two badges wrap in a five-
-// defender row on A32 with bundled Roboto at 1.3; fixed 100px cells overflowed.
+// defender row on A32 with bundled Roboto at 1.3; fixed cells overflowed.
 // Both halves share the maximum so the pitch stays symmetric. No intrinsic
 // layout or extra requests: each distinct label is measured once per layout.
 double _requiredPitchRowHeight(
@@ -4331,7 +4571,6 @@ double _requiredPitchRowHeight(
     final slot = (width - 16) / row.length;
     for (final player in row) {
       final events = lineupEventsForPlayer(player, incidents, side);
-      if (events.isEmpty) continue;
       var lineWidth = 0.0, lineHeight = 0.0, badgesHeight = 0.0;
       for (final event in events) {
         final size = event.minute == null
@@ -4494,10 +4733,7 @@ String? _positionLabel(dynamic raw) {
 int? _lineupShirtNumber(Json player) =>
     shirtNumberOf(player['shirtNumber'] ?? player['number']);
 
-num? _lineupRating(Json player) {
-  final rating = player['rating'];
-  return rating is num && rating > 0 ? rating : null;
-}
+num? _lineupRating(Json player) => matchLineupRating(player);
 
 String lineupPlayerSemanticLabel(
   Json player,
@@ -4552,20 +4788,17 @@ class _LineupPlayerList extends StatelessWidget {
       }
 
       if (useGrid) {
-        return GridView.builder(
+        // Natural row height keeps wrapped event badges and two-line names
+        // visible. Fixed cells clipped a substitute with several late goals.
+        final itemWidth = (constraints.maxWidth - 8) / 2;
+        return Wrap(
           key: ValueKey('lineup-$side-$role-grid'),
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: players.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-            // A two-line name, dorsal and match events overflowed the old
-            // 76-pixel cells by 5 pixels on the Galaxy A32.
-            mainAxisExtent: 84 + (textScale - 1).clamp(0, .3) * 120,
-          ),
-          itemBuilder: (_, index) => playerAt(index),
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (var index = 0; index < players.length; index++)
+              SizedBox(width: itemWidth, child: playerAt(index)),
+          ],
         );
       }
       return ListView.separated(
@@ -5064,8 +5297,12 @@ class PlayerProfileMatchContext {
     required this.summary,
     required this.statSections,
     required this.events,
+    this.player,
+    this.observedAt,
   });
 
+  final Entity? player;
+  final DateTime? observedAt;
   final Entity? team;
   final PlayerMatchSummary summary;
   final List<(String, List<(String, String)>)> statSections;
@@ -5077,18 +5314,20 @@ PlayerMatchSummary playerMatchSummary(
   List<LineupPlayerEvent> events, {
   int? minutes,
 }) {
-  final rating = player['rating'];
+  final rating = _lineupRating(player);
   int count(String type) => events.where((e) => e.type == type).length;
   return PlayerMatchSummary(
-    rating: rating is num && rating > 0 ? rating : null,
+    rating: rating,
     minutes: minutes,
     goals: count('GOAL') + count('PENALTY_GOAL'),
     ownGoals: count('OWN_GOAL'),
     assists: count('ASSIST'),
-    yellowCards: count('YELLOW_CARD') +
+    yellowCards:
+        count('YELLOW_CARD') +
         count('SECOND_YELLOW_CARD') +
         count('YELLOW_RED_CARD'),
-    redCards: count('RED_CARD') +
+    redCards:
+        count('RED_CARD') +
         count('SECOND_YELLOW_CARD') +
         count('YELLOW_RED_CARD'),
   );
@@ -5109,8 +5348,9 @@ int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
   final id = player['id']?.toString().trim() ?? '';
   final canonicalId = player['canonicalId']?.toString().trim() ?? '';
   if (id.isEmpty && canonicalId.isEmpty) return null;
-  bool listed(List<Json> players) =>
-      players.any((p) => _matchesLineupPlayerIdentity(player, p, 'id', 'canonicalId'));
+  bool listed(List<Json> players) => players.any(
+    (p) => _matchesLineupPlayerIdentity(player, p, 'id', 'canonicalId'),
+  );
   final starter = listed(
     side == 'home' ? detail.homeStarters : detail.awayStarters,
   );
@@ -5134,9 +5374,17 @@ int? playerMinutesPlayed(Json player, MatchDetail detail, String side) {
       if (_matchesLineupPlayerIdentity(player, incident, 'outPlayerId')) {
         subOut.add(minute);
       }
-    } else if (const {'RED_CARD', 'SECOND_YELLOW_CARD', 'YELLOW_RED_CARD'}
-            .contains(type) &&
-        _matchesLineupPlayerIdentity(player, incident, 'playerId', 'canonicalPlayerId')) {
+    } else if (const {
+          'RED_CARD',
+          'SECOND_YELLOW_CARD',
+          'YELLOW_RED_CARD',
+        }.contains(type) &&
+        _matchesLineupPlayerIdentity(
+          player,
+          incident,
+          'playerId',
+          'canonicalPlayerId',
+        )) {
       red.add(minute);
     }
   }
@@ -5174,6 +5422,7 @@ const playerMatchStatGroups = <(String, List<(String, String)>)>[
       ('touches', 'Toques'),
       ('touchesInOppositionBox', 'Toques en área rival'),
       ('dribbles', 'Regates'),
+      ('turnovers', 'Pérdidas de balón'),
     ],
   ),
   (
@@ -5183,6 +5432,9 @@ const playerMatchStatGroups = <(String, List<(String, String)>)>[
       ('chancesCreated', 'Ocasiones creadas'),
       ('crosses', 'Centros'),
       ('longBalls', 'Balones largos'),
+      ('finalThirdPasses', 'Pases en último tercio'),
+      ('accurateCrosses', 'Centros precisos'),
+      ('accurateLongPasses', 'Pases largos precisos'),
     ],
   ),
   (
@@ -5192,6 +5444,15 @@ const playerMatchStatGroups = <(String, List<(String, String)>)>[
       ('tackles', 'Entradas'),
       ('blocks', 'Bloqueos'),
       ('duels', 'Duelos'),
+    ],
+  ),
+  (
+    'Duelos',
+    [
+      ('groundDuelsWon', 'Duelos terrestres ganados'),
+      ('aerialDuelsWon', 'Duelos aéreos ganados'),
+      ('foulsWon', 'Faltas recibidas'),
+      ('foulsCommitted', 'Faltas cometidas'),
     ],
   ),
   ('Disciplina', [('fouls', 'Faltas'), ('offsides', 'Fueras de juego')]),
@@ -5210,7 +5471,10 @@ List<(String, List<(String, String)>)> playerMatchStatSections(Json player) {
     }
     if (value is String) {
       final text = value.trim();
-      return RegExp(r'\d').hasMatch(text) ? text : null;
+      return RegExp(r'^\d+(?:\.\d+)?(?:\s*/\s*\d+(?:\.\d+)?)?%?$')
+              .hasMatch(text)
+          ? text
+          : null;
     }
     return null;
   }
@@ -5281,6 +5545,10 @@ Future<void> showMatchPlayerSheet(
               context.push(
                 '/player/$canonicalId',
                 extra: PlayerProfileMatchContext(
+                  player:
+                      scope?.data?.player(canonicalId) ??
+                      Entity({...player, 'id': canonicalId}),
+                  observedAt: scope?.data?.updatedAt,
                   team: team,
                   summary: summary,
                   statSections: statSections,

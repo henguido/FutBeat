@@ -1,6 +1,9 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
+import { readUndeployedSource, importUndeployedModule } from './helpers/undeployed_sources.mjs';
+// Explicitly tests preserved, NOT deployed main follow-up behavior.
+const test = (name, ...args) => nodeTest('undeployed follow-up: ' + name, ...args);
 import assert from 'node:assert/strict';
-import { collectGoalApiBaseIdentities, normalizeGoalApiFixtures } from '../providers/goal_api.mjs';
+const { collectGoalApiBaseIdentities, normalizeGoalApiFixtures } = await importUndeployedModule('backend/providers/goal_api.mjs');
 
 function fixture(overrides = {}) {
   return {

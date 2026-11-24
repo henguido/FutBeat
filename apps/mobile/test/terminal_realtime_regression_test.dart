@@ -277,6 +277,7 @@ void main() {
 
   test('every terminal canonical status is absorbing', () {
     for (final status in [
+      'FINISHED',
       'FINISHED_PENDING_VERIFICATION',
       'VERIFIED',
       'POSTPONED',

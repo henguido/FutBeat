@@ -254,6 +254,25 @@ void main() {
     );
     expect(requests, isEmpty);
   });
+  test('a queued scope read cannot cross into a new account after flushing', () async {
+    hold = Completer<void>();
+    started = Completer<void>();
+    final write = service.setNotificationScope('player', 'goal', false);
+    final writeRejected = expectLater(write, throwsStateError);
+    await started!.future;
+    final read = service.readNotificationScopes();
+    final readRejected = expectLater(read, throwsStateError);
+    service.session = {
+      'access_token': 'synthetic-B',
+      'user': {'id': 'B'},
+    };
+    hold!.complete();
+    hold = null;
+    await writeRejected;
+    await readRejected;
+    expect(requests.length, 1);
+    expect(requests.single.headers['Authorization'], 'Bearer synthetic-A');
+  });
   test(
     'all N1 catalog choices are isolated RPC patches, including lineup roles',
     () async {

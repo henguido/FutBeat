@@ -250,52 +250,6 @@ function calendarDateGroups(
   return groups;
 }
 
-// Production 2026-10-08 (#158/#159, v38): the date 2026-09-19 (1,477
-// fixtures) hit 57014 under the API role's 8 s statement timeout at
-// read-current (8.6 s) and then at store (11.0 s); 2026-09-18 (430) stored
-// in 6.0 s. A date with more fixtures than this is ingested in bounded
-// sub-batches (resolve-base, read-current, normalize and store each), stored
-// with an empty coverage (adds/updates only, nothing deleted), and finalized
-// once with futbeat_finalize_calendar_date (deletes and coverage for the
-// whole date). A date at or below it keeps the single-store path.
-const CALENDAR_SUB_BATCH_MAX = 300;
-
-// Kickoff order; a cut only falls between 5-minute kickoff buckets (the
-// match reuse key, see goal_api.mjs), so two fixtures that may resolve to
-// the same match are always in the same sub-batch. Missing kickoffs first.
-function calendarSubBatches(
-  events: Array<Record<string, unknown>>,
-  max: number,
-) {
-  if (events.length <= max) return [events];
-  const bucketOf = (event: Record<string, unknown>) => {
-    const kickoff = Date.parse(String(event?.kickoffUtc ?? ""));
-    return Number.isFinite(kickoff) ? Math.floor(kickoff / 300000) : -Infinity;
-  };
-  const sorted = events
-    .map((event, index) => ({ event, index, bucket: bucketOf(event) }))
-    .sort((a, b) =>
-      a.bucket === b.bucket ? a.index - b.index : a.bucket < b.bucket ? -1 : 1
-    );
-  const batches: Array<Array<Record<string, unknown>>> = [];
-  let current: Array<Record<string, unknown>> = [];
-  for (let i = 0; i < sorted.length;) {
-    let j = i;
-    while (j < sorted.length && sorted[j].bucket === sorted[i].bucket) j += 1;
-    if (j - i > max) {
-      throw new Error("kickoff bucket exceeds calendar sub-batch maximum");
-    }
-    if (current.length > 0 && current.length + (j - i) > max) {
-      batches.push(current);
-      current = [];
-    }
-    for (let k = i; k < j; k += 1) current.push(sorted[k].event);
-    i = j;
-  }
-  if (current.length > 0) batches.push(current);
-  return batches;
-}
-
 function addResolvedRows(
   target: Map<string, string>,
   rows: unknown,
@@ -376,6 +330,77 @@ async function resolveIdentityItems(
   });
 }
 
+// Window entity writes in sub-batches (PRO 152). Production 2026-10-18..29:
+// 31 of 32 hot ingests failed at stage store (57014, 639-3,245 fixtures in one
+// futbeat_store_global_fixture_window statement, 8 s for the API role). The
+// entity UPDATEs and their row triggers now run first, at most 300 fixtures per
+// RPC (~70 ms locally, ~10x in production), each chunk with the teams and
+// competitions its matches reference; the window store then finds those rows
+// unchanged and only writes the imports snapshot. Update-only and idempotent:
+// a chunk that hits 57014 is rolled back and runs once more (no provider call).
+const GLOBAL_ENTITY_CHUNK_MAX = 300;
+
+function globalEntityChunk(
+  snapshot: Record<string, unknown>,
+  matches: Array<Record<string, unknown>>,
+) {
+  const listOf = (key: string) =>
+    Array.isArray(snapshot[key]) ? snapshot[key] as Array<Record<string, unknown>> : [];
+  const teamIds = new Set<string>();
+  const competitionIds = new Set<string>();
+  for (const match of matches) {
+    teamIds.add(String(match?.homeTeamId ?? ""));
+    teamIds.add(String(match?.awayTeamId ?? ""));
+    competitionIds.add(String(match?.competitionId ?? ""));
+  }
+  return {
+    schemaVersion: 1,
+    demo: false,
+    competitions: listOf("competitions").filter((item) => competitionIds.has(String(item?.id ?? ""))),
+    teams: listOf("teams").filter((item) => teamIds.has(String(item?.id ?? ""))),
+    matches,
+  };
+}
+
+async function storeGlobalEntities(snapshot: Record<string, unknown>) {
+  // One write per fixture id, the last item winning as in the imports snapshot
+  // (the same id in two chunks would be written and invalidated twice).
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const match of Array.isArray(snapshot.matches) ? snapshot.matches : []) {
+    byId.set(String((match as Record<string, unknown>)?.id ?? ""), match as Record<string, unknown>);
+  }
+  return await runChunksWithTimeoutRetry([...byId.values()], GLOBAL_ENTITY_CHUNK_MAX, async (chunk) =>
+    await rpc(
+      "futbeat_store_global_fixture_entities",
+      { p_snapshot: globalEntityChunk(snapshot, chunk) },
+      60000,
+    ), {
+    retryDelayMs: 1500,
+    onRetry: (index) => console.warn(`entity chunk ${index} hit 57014; retrying once`),
+  });
+}
+
+// Calendar dates use the same bounded writes (ARCH-155). A full date (~1,000
+// GOAL fixtures) ran every insert/upsert and its row triggers in one date store
+// (production: 57014 at 12.7 s). futbeat_store_calendar_entities runs the date
+// store's three upserts (inserts of unseen fixtures included) for <= 300
+// fixtures; the date store then only compares, removes stale GOAL rows of the
+// covered date and records coverage. Idempotent: a retried chunk is a no-op.
+async function storeCalendarEntities(provider: string, snapshot: Record<string, unknown>) {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const match of Array.isArray(snapshot.matches) ? snapshot.matches : []) {
+    byId.set(String((match as Record<string, unknown>)?.id ?? ""), match as Record<string, unknown>);
+  }
+  return await runChunksWithTimeoutRetry([...byId.values()], GLOBAL_ENTITY_CHUNK_MAX, async (chunk) =>
+    await rpc(
+      "futbeat_store_calendar_entities",
+      { p_provider: provider, p_snapshot: globalEntityChunk(snapshot, chunk) },
+      60000,
+    ), {
+    retryDelayMs: 1500,
+    onRetry: (index) => console.warn(`calendar entity chunk ${index} hit 57014; retrying once`),
+  });
+}
 
 // GOAL fixtures -> canonical snapshot: resolve base identities, discover the
 // matches still unknown, resolve them, then normalize. Shared by the calendar
@@ -1623,11 +1648,6 @@ Deno.serve(async (request) => {
   let currentDate: string | null = null;
   const storedDates: string[] = [];
   let closeDateStage = () => {};
-  // Large dates (see CALENDAR_SUB_BATCH_MAX): stage times per sub-batch, the
-  // sub-batch in progress and how many of the current date are stored.
-  const stageMsBySubBatch: Record<string, Array<Record<string, number>>> = {};
-  let currentSubBatch: number | null = null;
-  let storedSubBatches = 0;
 
   try {
     // GOAL: only the existing competitions/teams/matches of this batch
@@ -1683,154 +1703,65 @@ Deno.serve(async (request) => {
       // read above (a fixture only reuses a match of its own 5-minute bucket,
       // which never crosses a UTC date).
       const groups = calendarDateGroups(events, dates);
-      // One date per call when the batch holds a large date: the workflow
-      // sends up to three dates under a 90 s client timeout, and one large
-      // date in sub-batches already takes ~40-50 s. The first date is
-      // ingested; the others are returned as deferredDates (no store, no
-      // coverage), so the calendar plan picks them again on a later run.
-      const oneDatePerCall = [...groups.values()].some(
-        (list) => list.length > CALENDAR_SUB_BATCH_MAX,
-      );
-      const deferredDates: string[] = [];
       const competitionIds = new Set<string>();
       const teamIds = new Set<string>();
       const byDate: unknown[] = [];
       let accepted = 0;
       for (const [date, dateEvents] of groups) {
-        if (oneDatePerCall && storedDates.length > 0) {
-          deferredDates.push(date);
-          continue;
-        }
         currentDate = date;
         const dateMs: Record<string, number> = {};
         stageMsByDate[date] = dateMs;
         let dateStage = "";
         let dateStageStarted = performance.now();
-        let subMs: Record<string, number> | null = null;
         const setDateStage = (next: string) => {
           const now = performance.now();
           if (dateStage) {
-            const spent = now - dateStageStarted;
-            dateMs[dateStage] = Math.round((dateMs[dateStage] ?? 0) + spent);
-            if (subMs) {
-              subMs[dateStage] = Math.round((subMs[dateStage] ?? 0) + spent);
-            }
+            dateMs[dateStage] = Math.round(
+              (dateMs[dateStage] ?? 0) + now - dateStageStarted,
+            );
           }
           dateStage = next;
           dateStageStarted = now;
         };
         closeDateStage = () => setDateStage("");
-        const onStage = (next: string) => {
-          setStage(next);
-          setDateStage(next);
-        };
-        const dateCoverage = coverage.filter((item) => String(item.date) === date);
-        const subBatches = calendarSubBatches(dateEvents, CALENDAR_SUB_BATCH_MAX);
-        currentSubBatch = null;
-        storedSubBatches = 0;
 
-        if (subBatches.length <= 1) {
-          const normalized = await normalizeGoalBatch(
-            provider,
-            dateEvents,
-            async (resolved: Map<string, string>) =>
-              withCalendar(await readExisting(dateEvents, resolved)),
-            receivedAt,
-            onStage,
-          );
-          resolvedBase += normalized.resolvedBase;
-          resolvedMatches += normalized.resolvedMatches;
+        const normalized = await normalizeGoalBatch(
+          provider,
+          dateEvents,
+          async (resolved: Map<string, string>) =>
+            withCalendar(await readExisting(dateEvents, resolved)),
+          receivedAt,
+          (next) => {
+            setStage(next);
+            setDateStage(next);
+          },
+        );
+        resolvedBase += normalized.resolvedBase;
+        resolvedMatches += normalized.resolvedMatches;
 
-          onStage("store");
-          byDate.push(
-            await rpc(
-              "futbeat_store_calendar_range",
-              {
-                p_provider: provider,
-                p_received_at: receivedAt,
-                p_coverage: dateCoverage,
-                p_snapshot: normalized.snapshot,
-              },
-              60000,
-            ),
-          );
-          accepted += normalized.snapshot.matches.length;
-          for (const item of normalized.snapshot.competitions) competitionIds.add(item.id);
-          for (const item of normalized.snapshot.teams) teamIds.add(item.id);
-        } else {
-          // Sub-batches: each one adds/updates its own matches (empty
-          // coverage: nothing deleted, the date not marked covered). Only
-          // when every sub-batch is stored, one finalize applies the date's
-          // deletes and coverage against all IDs whose normalized kickoff is
-          // in that exact UTC date. Adjacent-date fixtures remain additive.
-          // A failure halfway leaves the date uncovered and deletes nothing.
-          const storedMatchIds = new Set<string>();
-          const finalizationMatchIds = new Set<string>();
-          const subRecords: Array<Record<string, number>> = [];
-          stageMsBySubBatch[date] = subRecords;
-          for (const [index, subEvents] of subBatches.entries()) {
-            currentSubBatch = index;
-            subMs = { fixtures: subEvents.length };
-            subRecords.push(subMs);
-            const normalized = await normalizeGoalBatch(
-              provider,
-              subEvents,
-              async (resolved: Map<string, string>) =>
-                withCalendar(await readExisting(subEvents, resolved)),
-              receivedAt,
-              onStage,
-            );
-            resolvedBase += normalized.resolvedBase;
-            resolvedMatches += normalized.resolvedMatches;
-
-            onStage("store");
-            await rpc(
-              "futbeat_store_calendar_range",
-              {
-                p_provider: provider,
-                p_received_at: receivedAt,
-                p_coverage: [],
-                p_snapshot: normalized.snapshot,
-              },
-              60000,
-            );
-            setDateStage("");
-            subMs = null;
-            storedSubBatches = index + 1;
-            for (const item of normalized.snapshot.matches) {
-              storedMatchIds.add(item.id);
-              const kickoff = Date.parse(String(item.startTime ?? ""));
-              if (
-                Number.isFinite(kickoff) &&
-                new Date(kickoff).toISOString().slice(0, 10) === date
-              ) {
-                finalizationMatchIds.add(item.id);
-              }
-            }
-            for (const item of normalized.snapshot.competitions) competitionIds.add(item.id);
-            for (const item of normalized.snapshot.teams) teamIds.add(item.id);
-          }
-          currentSubBatch = null;
-
-          onStage("finalize");
-          byDate.push(
-            await rpc(
-              "futbeat_finalize_calendar_date",
-              {
-                p_provider: provider,
-                p_received_at: receivedAt,
-                p_date: date,
-                p_count: Number(dateCoverage[0]?.count ?? 0),
-                p_match_ids: [...finalizationMatchIds].sort(),
-              },
-              60000,
-            ),
-          );
-          accepted += storedMatchIds.size;
-        }
+        setStage("store-entities");
+        setDateStage("store-entities");
+        await storeCalendarEntities(provider, normalized.snapshot);
+        setStage("store");
+        setDateStage("store");
+        byDate.push(
+          await rpc(
+            "futbeat_store_calendar_range",
+            {
+              p_provider: provider,
+              p_received_at: receivedAt,
+              p_coverage: coverage.filter((item) => String(item.date) === date),
+              p_snapshot: normalized.snapshot,
+            },
+            60000,
+          ),
+        );
         closeDateStage();
         closeDateStage = () => {};
         storedDates.push(date);
+        accepted += normalized.snapshot.matches.length;
+        for (const item of normalized.snapshot.competitions) competitionIds.add(item.id);
+        for (const item of normalized.snapshot.teams) teamIds.add(item.id);
       }
       currentDate = null;
 
@@ -1853,8 +1784,6 @@ Deno.serve(async (request) => {
           resolvedMatches,
           stageMs: (closeStage(), stageMs),
           stageMsByDate,
-          ...(Object.keys(stageMsBySubBatch).length > 0 ? { stageMsBySubBatch } : {}),
-          ...(deferredDates.length > 0 ? { deferredDates } : {}),
           transport: "github-actions-oidc",
           provider: input.source,
           mode,
@@ -1872,7 +1801,6 @@ Deno.serve(async (request) => {
         resolvedMatches,
         mode,
         result: { matches: accepted, coveredDates: storedDates.length, byDate },
-        ...(deferredDates.length > 0 ? { deferredDates } : {}),
       });
     }
 
@@ -1910,6 +1838,9 @@ Deno.serve(async (request) => {
         ? await normalizeEspnFixtures(events, resolve, receivedAt, withCalendar(baseExisting))
         : await normalizeSofaScoreFixtures(events, resolve, receivedAt, withCalendar(baseExisting));
     }
+
+    setStage("store-entities");
+    await storeGlobalEntities(snapshot);
 
     setStage("store");
     const result = await rpc(
@@ -1972,20 +1903,8 @@ Deno.serve(async (request) => {
       error instanceof Error ? error.message.slice(0, 500) : "unknown";
     closeDateStage();
     // Calendar: the failed date and the dates stored before it (complete).
-    // A large date also names the failed sub-batch and how many of its
-    // sub-batches were stored (adds/updates only; the date stays uncovered).
     const calendarProgress = mode === "calendar"
-      ? {
-        stageMsByDate,
-        failedDate: currentDate,
-        storedDates,
-        ...(Object.keys(stageMsBySubBatch).length > 0
-          ? { stageMsBySubBatch }
-          : {}),
-        ...(currentSubBatch !== null
-          ? { failedSubBatch: currentSubBatch, storedSubBatches }
-          : {}),
-      }
+      ? { stageMsByDate, failedDate: currentDate, storedDates }
       : {};
     await rpc("futbeat_complete_provider_call", {
       p_reservation_id: reservation.reservationId,

@@ -98,8 +98,26 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     // may include the new favorite incidentally (e.g. as an opponent) and
     // must not stand in for its data or keep its matches subscribed to LIVE.
     final cached = _lastSnapshot;
-    final snapshot =
+    final repository = ref.exists(repositoryProvider)
+        ? ref.read(repositoryProvider)
+        : null;
+    final local = follows.isEmpty || repository is! ApiRepository
+        ? null
+        : ref.watch(localFavoritesMetadataProvider(encodedKeys)).value ??
+              repository.knownFavoriteMetadata(follows);
+    final remote =
         current ?? (cached?.keys == encodedKeys ? cached?.snapshot : null);
+    final missingKnown =
+        local != null &&
+        remote != null &&
+        (local.teams.any((e) => remote.team(e.id) == null) ||
+            local.players.any((e) => remote.player(e.id) == null) ||
+            local.competitions.any((e) => remote.competition(e.id) == null));
+    final snapshot = remote == null
+        ? local
+        : missingKnown
+        ? Snapshot.combineFavoriteCatalogs([remote, local], incomplete: true)
+        : remote;
     final client = ref.read(liveRealtimeClientProvider);
     if (!identical(_liveClient, client)) {
       _liveClient?.clearScope(_liveScope);
@@ -128,6 +146,17 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         followState.hasError ||
         data?.stale == true ||
         (request?.hasError == true && data != null);
+
+    Future<void> refreshFavorites() async {
+      if (encodedKeys.isEmpty) return;
+      try {
+        final provider = favoritesSnapshotProvider(encodedKeys);
+        ref.invalidate(provider);
+        await ref.read(provider.future);
+      } catch (_) {
+        // The request state retains the visible metadata and recovery action.
+      }
+    }
 
     if (follows.isNotEmpty && data == null) {
       return Scaffold(
@@ -170,6 +199,10 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                 children: [
                   _FollowingList(
                     type: 'team',
+                    onRefresh: refreshFavorites,
+                    missingIds: hub.missingIds['team'] ?? const [],
+                    onRetry: () =>
+                        ref.invalidate(favoritesSnapshotProvider(encodedKeys)),
                     emptyText: 'Aún no sigues equipos.',
                     items: [
                       for (final team in hub.teams)
@@ -178,6 +211,10 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                   ),
                   _FollowingList(
                     type: 'player',
+                    onRefresh: refreshFavorites,
+                    missingIds: hub.missingIds['player'] ?? const [],
+                    onRetry: () =>
+                        ref.invalidate(favoritesSnapshotProvider(encodedKeys)),
                     emptyText: 'Aún no sigues jugadores.',
                     items: [
                       for (final player in hub.players)
@@ -186,6 +223,10 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                   ),
                   _FollowingList(
                     type: 'competition',
+                    onRefresh: refreshFavorites,
+                    missingIds: hub.missingIds['competition'] ?? const [],
+                    onRetry: () =>
+                        ref.invalidate(favoritesSnapshotProvider(encodedKeys)),
                     emptyText: 'Aún no sigues competiciones.',
                     items: [
                       for (final competition in hub.competitions)
@@ -208,13 +249,15 @@ class FollowingHubData {
     required this.teams,
     required this.players,
     required this.competitions,
+    this.missingIds = const {},
   });
 
   const FollowingHubData.empty()
     : data = null,
       teams = const [],
       players = const [],
-      competitions = const [];
+      competitions = const [],
+      missingIds = const {};
 
   factory FollowingHubData.from(Snapshot data, Set<String> follows) {
     bool followed(String type, Entity entity) {
@@ -241,15 +284,34 @@ class FollowingHubData {
       });
     }
 
+    final teams = sorted(
+      data.teams.where((entity) => followed('team', entity)),
+    );
+    final players = sorted(
+      data.players.where((entity) => followed('player', entity)),
+    );
+    final competitions = sorted(
+      data.competitions.where((entity) => followed('competition', entity)),
+    );
+    List<String> missing(String type, List<Entity> available) {
+      final known = available.map((e) => data.resolveEntityId(e.id)).toSet();
+      return {
+        for (final key in follows)
+          if (key.startsWith('$type:') && key.length > type.length + 1)
+            data.resolveEntityId(key.substring(type.length + 1)),
+      }.difference(known).toList()..sort();
+    }
+
     return FollowingHubData(
       data: data,
-      teams: sorted(data.teams.where((entity) => followed('team', entity))),
-      players: sorted(
-        data.players.where((entity) => followed('player', entity)),
-      ),
-      competitions: sorted(
-        data.competitions.where((entity) => followed('competition', entity)),
-      ),
+      teams: teams,
+      players: players,
+      competitions: competitions,
+      missingIds: {
+        'team': missing('team', teams),
+        'player': missing('player', players),
+        'competition': missing('competition', competitions),
+      },
     );
   }
 
@@ -257,6 +319,7 @@ class FollowingHubData {
   final List<Entity> teams;
   final List<Entity> players;
   final List<Entity> competitions;
+  final Map<String, List<String>> missingIds;
 }
 
 class _FollowingSummary extends StatelessWidget {
@@ -272,8 +335,8 @@ class _FollowingSummary extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            '${hub.teams.length} equipos · ${hub.players.length} jugadores · '
-            '${hub.competitions.length} competiciones',
+            '${hub.teams.length + (hub.missingIds['team']?.length ?? 0)} equipos · ${hub.players.length + (hub.missingIds['player']?.length ?? 0)} jugadores · '
+            '${hub.competitions.length + (hub.missingIds['competition']?.length ?? 0)} competiciones',
             key: const ValueKey('following-summary'),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
@@ -290,41 +353,88 @@ class _FollowingList extends StatelessWidget {
     required this.type,
     required this.emptyText,
     required this.items,
+    this.missingIds = const [],
+    this.onRetry,
+    required this.onRefresh,
   });
 
   final String type;
   final String emptyText;
   final List<_FollowingRowData> items;
+  final List<String> missingIds;
+  final VoidCallback? onRetry;
+  final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) {
-      return ListView(
-        key: PageStorageKey('following-$type-empty'),
-        padding: const EdgeInsets.all(20),
-        children: [
-          EmptyState(
-            emptyText,
-            'Explora FutBeat para encontrar nuevos favoritos.',
-            icon: Icons.star_border_rounded,
-          ),
-          FilledButton.icon(
-            key: ValueKey('following-explore-$type'),
-            onPressed: () => context.go('/explore'),
-            icon: const Icon(Icons.search_rounded),
-            label: const Text('Explorar'),
-          ),
-        ],
+    if (items.isEmpty && missingIds.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: onRefresh,
+        child: ListView(
+          key: PageStorageKey('following-$type-empty'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          children: [
+            EmptyState(
+              emptyText,
+              'Explora FutBeat para encontrar nuevos favoritos.',
+              icon: Icons.star_border_rounded,
+            ),
+            FilledButton.icon(
+              key: ValueKey('following-explore-$type'),
+              onPressed: () => context.go('/explore'),
+              icon: const Icon(Icons.search_rounded),
+              label: const Text('Explorar'),
+            ),
+          ],
+        ),
       );
     }
-    return ListView.builder(
-      key: PageStorageKey('following-$type'),
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-      itemCount: items.length,
-      itemBuilder: (context, index) => _FollowingRow(
-        key: ValueKey('following-$type-${items[index].entity.id}'),
-        type: type,
-        item: items[index],
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView.builder(
+        key: PageStorageKey('following-$type'),
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+        itemCount:
+            items.length + missingIds.length + (missingIds.isEmpty ? 0 : 1),
+        itemBuilder: (context, index) {
+          if (index >= items.length) {
+            if (index == items.length + missingIds.length) {
+              return TextButton.icon(
+                key: ValueKey('following-retry-$type'),
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Actualizar información'),
+              );
+            }
+            final id = missingIds[index - items.length];
+            final label = switch (type) {
+              'team' => 'Equipo guardado',
+              'player' => 'Jugador guardado',
+              _ => 'Competición guardada',
+            };
+            // This is an existing saved follow, not a fabricated entity/profile.
+            // Only explicit server redirects determine the destination ID.
+            return Card(
+              child: ListTile(
+                key: ValueKey('following-missing-$type-$id'),
+                leading: const Icon(Icons.star_outline_rounded, color: muted),
+                title: Text(label),
+                subtitle: const Text(
+                  'Tu seguimiento está guardado. Información aún no disponible.',
+                ),
+                onTap: () => context.push('/$type/$id'),
+                trailing: FollowButton(type, id, label: label),
+              ),
+            );
+          }
+          return _FollowingRow(
+            key: ValueKey('following-$type-${items[index].entity.id}'),
+            type: type,
+            item: items[index],
+          );
+        },
       ),
     );
   }
@@ -340,11 +450,13 @@ class _FollowingRowData {
         ? null
         : data.competition(competitionId);
     if (competition != null) parts.add(competition.displayName);
+    final canonicalTeam = data.resolveEntityId(team.id);
     final candidates =
         data.matches
             .where(
               (match) =>
-                  (match.homeId == team.id || match.awayId == team.id) &&
+                  (data.resolveEntityId(match.homeId) == canonicalTeam ||
+                      data.resolveEntityId(match.awayId) == canonicalTeam) &&
                   (match.isLive || match.isUpcoming),
             )
             .toList()
@@ -355,7 +467,9 @@ class _FollowingRowData {
     final next = candidates.firstOrNull;
     String? detail;
     if (next != null) {
-      final opponentId = next.homeId == team.id ? next.awayId : next.homeId;
+      final opponentId = data.resolveEntityId(next.homeId) == canonicalTeam
+          ? next.awayId
+          : next.homeId;
       final opponent = data.team(opponentId)?.displayName;
       if (opponent != null) {
         detail = next.isLive
@@ -369,7 +483,13 @@ class _FollowingRowData {
   factory _FollowingRowData.player(Entity player, Snapshot data) {
     final parts = <String>[];
     final teamId = player.json['teamId']?.toString();
-    final club = teamId == null ? null : data.team(teamId)?.displayName;
+    final club =
+        (teamId == null ? null : data.team(teamId)?.displayName) ??
+        [
+          player.json['teamName'],
+          player.json['clubName'],
+          player.json['currentTeamName'],
+        ].whereType<String>().where((s) => s.trim().isNotEmpty).firstOrNull;
     if (club != null) parts.add(club);
     final position = playerPositionLabel(
       player.json['position']?.toString() ?? '',

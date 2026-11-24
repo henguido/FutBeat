@@ -39,6 +39,8 @@ val offlinePreview = System.getenv("FUTBEAT_OFFLINE_PREVIEW") == "true"
 val passivePreview = System.getenv("FUTBEAT_PASSIVE_PREVIEW") == "true"
 val r05TestPackage = System.getenv("FUTBEAT_R05_TEST_PACKAGE") == "true"
 val commercialQaPackage = System.getenv("FUTBEAT_COMMERCIAL_QA") == "true"
+val integralQaPackage = System.getenv("FUTBEAT_INTEGRAL_QA") == "true"
+val billingQaPackage = System.getenv("FUTBEAT_BILLING_QA") == "true"
 val commercialUmpAppId = System.getenv("FUTBEAT_COMMERCIAL_UMP_APP_ID")?.trim().orEmpty()
 check(!(offlinePreview && passivePreview)) { "Preview modes are mutually exclusive." }
 
@@ -92,7 +94,7 @@ fun releaseRuntimeProblems(defines: Map<String, String> = dartDefines()): List<S
             problems += "$key must be a publishable or legacy anon key"
         }
     }
-    for (flag in listOf("FUTBEAT_USE_DEMO", "FUTBEAT_QA_LOCAL_CACHE_ONLY", "FUTBEAT_QA_DIAGNOSTICS", "FUTBEAT_PASSIVE_PREVIEW", "FUTBEAT_PASSIVE_PREVIEW_ENABLED", "FUTBEAT_OFFLINE_PREVIEW", "FUTBEAT_PREMIUM_PLAY_QA")) {
+    for (flag in listOf("FUTBEAT_USE_DEMO", "FUTBEAT_QA_LOCAL_CACHE_ONLY", "FUTBEAT_QA_DIAGNOSTICS", "FUTBEAT_PASSIVE_PREVIEW", "FUTBEAT_PASSIVE_PREVIEW_ENABLED", "FUTBEAT_OFFLINE_PREVIEW", "FUTBEAT_PREMIUM_PLAY_QA", "FUTBEAT_INTEGRAL_QA")) {
         if (defines[flag]?.trim()?.lowercase() == "true") {
             problems += "$flag is QA-only and must be false in a release"
         }
@@ -250,6 +252,10 @@ android {
 
     buildTypes {
         debug {
+            if (integralQaPackage || billingQaPackage) {
+                manifestPlaceholders["futbeatAppLabel"] = "FutBeat Diagnóstico"
+                manifestPlaceholders["admobAppId"] = commercialUmpAppId
+            }
             // Opt-in QA install alongside the Play-signed app. Never changes
             // the normal debug or release package when the flag is absent.
             if (commercialQaPackage) {
@@ -279,6 +285,20 @@ android {
                 manifestPlaceholders["futbeatAppLabel"] = "FutBeat QA"
                 manifestPlaceholders["futbeatAuthScheme"] = "com.futbeat.futbeat.qa"
                 manifestPlaceholders["futbeatAppLinkHost"] = "qa.invalid"
+                if (commercialUmpAppId.isNotEmpty()) {
+                    manifestPlaceholders["admobAppId"] = commercialUmpAppId
+                }
+            }
+        }
+        // The profile type is created by Flutter before this debug package
+        // is configured. Copy its final QA identity for an optimized local
+        // acceptance build; never change release or another install variant.
+        getByName("profile") {
+            if (System.getenv("FUTBEAT_QA_ISOLATED_PACKAGE") == "true") {
+                initWith(getByName("debug"))
+                isDebuggable = true
+                matchingFallbacks.clear()
+                matchingFallbacks.addAll(listOf("debug", "release"))
             }
         }
         release {
@@ -316,9 +336,33 @@ gradle.taskGraph.whenReady(
             val qaPackage = System.getenv("FUTBEAT_QA_ISOLATED_PACKAGE") == "true"
             val r05Test = defines["FUTBEAT_R05_TEST_PACKAGE"] == "true"
             val commercialQa = defines["FUTBEAT_COMMERCIAL_QA"] == "true"
+            val integralQa = defines["FUTBEAT_INTEGRAL_QA"] == "true"
+            val billingQa = defines["FUTBEAT_PREMIUM_PLAY_QA"] == "true"
+            val billingQaIsolated =
+                defines["FUTBEAT_SUPABASE_URL"] == "https://wctxcnqcblgewaznxrqh.supabase.co" &&
+                defines["BILLING_BASE"] == "https://wctxcnqcblgewaznxrqh.supabase.co/functions/v1/futbeat-billing" &&
+                defines["FUTBEAT_API_URL"] == "https://wctxcnqcblgewaznxrqh.supabase.co/functions/v1/futbeat-api"
             val commercialUmp = defines["FUTBEAT_COMMERCIAL_UMP"] == "true"
+            val acceptanceUmp = qaPackage && qaCallback &&
+                !releaseArtifactRequested && !billingQa && !commercialQa && !integralQa &&
+                !r05Test && !offlinePreview && !passivePreview &&
+                defines["FUTBEAT_ADMOB_TEST_ADS"] == "true" &&
+                defines["FUTBEAT_ADS_DISABLED"] == "false" &&
+                listOf("FUTBEAT_ADMOB_MATCHES_FEED_ID", "FUTBEAT_PREMIUM_MONTHLY_ID",
+                    "FUTBEAT_PREMIUM_YEARLY_ID").all { defines[it].isNullOrBlank() }
+            check(billingQa == billingQaPackage && (!billingQa || (
+                billingQaIsolated && !integralQa && !commercialQa && !qaPackage && !r05Test &&
+                !offlinePreview && !passivePreview && !releaseArtifactRequested &&
+                commercialUmp && defines["FUTBEAT_ADMOB_TEST_ADS"] == "true" &&
+                defines["FUTBEAT_ADS_DISABLED"] == "false" &&
+                listOf("FUTBEAT_ADMOB_MATCHES_FEED_ID", "FUTBEAT_PREMIUM_MONTHLY_ID",
+                    "FUTBEAT_PREMIUM_YEARLY_ID").all { defines[it].isNullOrBlank() } &&
+                listOf("FUTBEAT_PUSH_ENABLED", "FUTBEAT_NOTIFICATION_SCOPES_ENABLED",
+                    "FUTBEAT_OAUTH_GOOGLE_ENABLED", "FUTBEAT_OAUTH_FACEBOOK_ENABLED")
+                    .all { defines[it] == "false" }
+            ))) { "G1 requires official debug, matching QA Auth/API/Billing origins, and N1/push/OAuth disabled." }
             check(if (commercialUmp) {
-                commercialQa && admobAppIdPattern.matches(commercialUmpAppId) &&
+                (commercialQa || integralQa || acceptanceUmp || billingQaIsolated && billingQa) && admobAppIdPattern.matches(commercialUmpAppId) &&
                     !commercialUmpAppId.startsWith(googleTestAdPublisher)
             } else commercialUmpAppId.isEmpty()) {
                 "Commercial UMP requires the isolated QA package and an approved AdMob App ID."
@@ -380,6 +424,19 @@ gradle.taskGraph.whenReady(
                     throw GradleException("FutBeat Preview requires local cache and Ads/OAuth/Push/DEMO off.")
                 }
             }
+            check(integralQa == integralQaPackage && (!integralQa || (
+                !releaseArtifactRequested && !qaPackage && !commercialQa && !r05Test &&
+                !offlinePreview && !passivePreview && commercialUmp &&
+                defines["FUTBEAT_ADMOB_TEST_ADS"] == "true" &&
+                defines["FUTBEAT_ADS_DISABLED"] == "false" &&
+                listOf("FUTBEAT_PUSH_ENABLED", "FUTBEAT_NOTIFICATION_SCOPES_ENABLED",
+                    "FUTBEAT_PREMIUM_PLAY_QA", "FUTBEAT_OAUTH_GOOGLE_ENABLED",
+                    "FUTBEAT_OAUTH_FACEBOOK_ENABLED", "FUTBEAT_USE_DEMO")
+                    .all { defines[it] == "false" } &&
+                listOf("FUTBEAT_PREMIUM_MONTHLY_ID", "FUTBEAT_PREMIUM_YEARLY_ID",
+                    "FUTBEAT_ADMOB_MATCHES_FEED_ID", "BILLING_BASE")
+                    .all { defines[it].isNullOrBlank() }
+            ))) { "Integral diagnostic requires the official debug package, test ads, and pending services disabled." }
 
             if (releaseArtifactRequested) {
                 val runtimeProblems = releaseRuntimeProblems()

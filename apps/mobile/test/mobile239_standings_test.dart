@@ -30,10 +30,10 @@ void main() {
       );
       expect(
         find.text(switch (state) {
-          'unavailable' => 'Sin tabla disponible',
-          'error' => 'No se pudo actualizar la tabla',
+          'unavailable' => 'Clasificación no disponible',
+          'error' => 'Clasificación pendiente de actualización',
           'pending' => 'Cargando tabla…',
-          _ => 'Tabla aún no descargada',
+          _ => 'Clasificación pendiente de actualización',
         }),
         findsOneWidget,
       );

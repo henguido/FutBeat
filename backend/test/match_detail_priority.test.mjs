@@ -182,8 +182,12 @@ test('concurrency/idempotency: repeated enqueue calls never duplicate the row an
     )).rows[0].prosrc;
     // The planner holds the serialization lock; the enqueuer delegates to it.
     assert.match(source, /plan_match_detail_coverage/);
-    const planner = (await db.query(
+    const wrapper = (await db.query(
       "select prosrc from pg_proc where oid='futbeat_private.plan_match_detail_coverage(integer)'::regprocedure",
+    )).rows[0].prosrc;
+    assert.match(wrapper, /plan_match_detail_coverage\(p_limit,true\)/, 'O1 direct callers delegate to the full-window planner');
+    const planner = (await db.query(
+      "select prosrc from pg_proc where oid='futbeat_private.plan_match_detail_coverage(integer,boolean)'::regprocedure",
     )).rows[0].prosrc;
     assert.match(planner, /pg_advisory_xact_lock\(hashtext\('futbeat-match-detail-enqueue'\)\)/);
   } finally { await db.close(); }
@@ -304,12 +308,14 @@ test('central quota: LIVE detail keeps its hard reserve and the per-kind safety 
       values('goal_api','live','test','SUCCEEDED',20)`);
     assert.equal((await reserve(db)).reason, 'provider_remaining_reserve');
     assert.equal((await db.query('select count(*)::int n from futbeat_private.provider_call_ledger')).rows[0].n, 1);
+    const cap = Number((await db.query("select (kind_daily_caps->>'match-detail')::int cap from futbeat_private.provider_quota_policy where provider='goal_api'")).rows[0].cap);
+    assert.equal(cap,550);
     await db.exec(`update futbeat_private.provider_call_ledger set provider_remaining=21;
       insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status)
-      select 'goal_api','match-detail','test','FAILED' from generate_series(1,899)`);
+      select 'goal_api','match-detail','test','FAILED' from generate_series(1,${cap-1})`);
     assert.equal((await reserve(db)).allowed, true);
     assert.equal((await reserve(db)).reason, 'kind_daily_cap');
-    assert.equal((await db.query("select count(*)::int n from futbeat_private.provider_call_ledger where call_kind='match-detail'")).rows[0].n, 900);
+    assert.equal((await db.query("select count(*)::int n from futbeat_private.provider_call_ledger where call_kind='match-detail'")).rows[0].n, cap);
   } finally { await db.close(); }
 });
 

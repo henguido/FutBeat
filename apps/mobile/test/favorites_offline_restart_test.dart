@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/entity_media.dart';
 import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/providers.dart';
@@ -97,6 +98,54 @@ class _NoPush implements PushTokenSource {
 }
 
 void main() {
+  test('favorite restores verified canonical lineup photo from SQLite without HTTP', () async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final raw = _catalog();
+    (raw['players'] as List).single.remove('media');
+    await db.savePublicSnapshot(
+      'public:entity:player:fb_player_a',
+      jsonEncode(raw),
+    );
+    for (final id in ['fb_match_a', 'fb_match_wrong']) {
+      await db.savePublicSnapshot(
+        'public:match-detail:$id',
+        jsonEncode({
+          'matchId': id == 'fb_match_a' ? id : 'fb_match_foreign',
+          'available': true,
+          'home': {
+            'starters': [
+              {
+                'id': 'provider_7',
+                'canonicalId': id == 'fb_match_a'
+                    ? 'fb_player_a'
+                    : 'fb_player_foreign',
+                'name': 'Player',
+                'image': _photo,
+              },
+            ],
+            'substitutes': [],
+          },
+          'away': {'starters': [], 'substitutes': []},
+        }),
+      );
+    }
+    var requests = 0;
+    final dio = _client(seen: (_) => requests++);
+    final media = EntityMediaMemory();
+    final repo = ApiRepository(dio, db, const CalendarCachePolicy(), media);
+    try {
+      await repo.readKnownFavoriteMetadata(['player:fb_player_a']);
+      expect(media.imageFor('fb_player_a'), _photo);
+      expect(media.imageFor('provider_7'), isNull);
+      expect(media.imageFor('fb_player_foreign'), isNull);
+      expect(requests, 0);
+    } finally {
+      dio.close();
+      media.dispose();
+      await db.close();
+    }
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory root;
   setUp(() async {
@@ -105,6 +154,108 @@ void main() {
   tearDown(() async {
     await root.delete(recursive: true);
   });
+
+  test('search selections recover public metadata after SQLite restart without a favorites HTTP answer', () async {
+    final file = File('${root.path}/search-favorites.sqlite');
+    var db = AppDatabase(NativeDatabase(file));
+    final onlineDio = _client(payload: _catalog());
+    final online = ApiRepository(onlineDio, db);
+    await online.searchCatalog('alpha', 'CR');
+    await db.addFollows(_keys.toSet());
+    await online.persistKnownFavoriteMetadata(_keys);
+    await online.settleBackground();
+    await db.close();
+    onlineDio.close();
+    db = AppDatabase(NativeDatabase(file));
+    final offlineDio = _client();
+    try {
+      final repository = ApiRepository(offlineDio, db);
+      final recovered = await repository.readKnownFavoriteMetadata(_keys);
+      expect(recovered, isNotNull);
+      expect(recovered!.stale, isTrue);
+      final hub = FollowingHubData.from(recovered, _keys.toSet());
+      expect(hub.teams.map((e) => e.name), ['Alpha', 'Zulu']);
+      expect(hub.players.single.id, 'fb_player_a');
+      expect(hub.competitions.single.id, 'fb_competition_a');
+      expect(await db.watchFollows().first, _keys.toSet());
+      final anotherSelection = await repository.readKnownFavoriteMetadata([
+        'team:fb_team_a',
+      ]);
+      expect(anotherSelection!.teams.map((e) => e.id), ['fb_team_a']);
+      expect(anotherSelection.players, isEmpty);
+      expect(
+        await repository.readKnownFavoriteMetadata(['team:fb_team_unread']),
+        isNull,
+      );
+    } finally {
+      offlineDio.close();
+      await db.close();
+    }
+  });
+
+  testWidgets(
+    'selected search entities remain visible when favorites answer omits them',
+    (tester) async {
+      final db = AppDatabase(NativeDatabase.memory());
+      final seedDio = _client(payload: _catalog());
+      final seed = ApiRepository(seedDio, db);
+      await tester.runAsync(() async {
+        await seed.searchCatalog('alpha', 'CR');
+        await db.addFollows(_keys.toSet());
+        await seed.persistKnownFavoriteMetadata(_keys);
+      });
+      final dio = _client();
+      final repository = ApiRepository(dio, db);
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          repositoryProvider.overrideWithValue(repository),
+          followsProvider.overrideWith((ref) => Stream.value(_keys.toSet())),
+          favoritesSnapshotProvider.overrideWith(
+            (ref, keys) async => Snapshot({
+              ..._catalog(),
+              'teams': [],
+              'players': [],
+              'competitions': [],
+            }),
+          ),
+          liveMatchUpdatesProvider.overrideWith(
+            (ref) => Stream.value(const <String, LiveMatchUpdate>{}),
+          ),
+        ],
+      );
+      container.read(repositoryProvider);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox());
+        container.dispose();
+        seedDio.close();
+        dio.close();
+        await tester.runAsync(db.close);
+      });
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: FavoritesScreen()),
+        ),
+      );
+      await tester.runAsync(() async {
+        await container.read(
+          localFavoritesMetadataProvider((_keys.toList()..sort()).join(','))
+              .future,
+        );
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Alpha'), findsOneWidget);
+      expect(find.text('Zulu'), findsOneWidget);
+      await tester.tap(find.text('Jugadores'));
+      await tester.pumpAndSettle();
+      expect(find.text('Player'), findsOneWidget);
+      await tester.tap(find.text('Competiciones'));
+      await tester.pumpAndSettle();
+      expect(find.text('Competition'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   test('new SQLite and repository restore all favorites, order, aggregate and media offline', () async {
     final file = File('${root.path}/cache.sqlite');

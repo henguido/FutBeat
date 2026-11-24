@@ -276,8 +276,21 @@ void main() {
       expect(sends, 1);
     },
   );
+  test(
+    'ordinary search and profile journey is not capped by Preview budget',
+    () async {
+      for (var i = 0; i < 20; i++) {
+        await dio.get(
+          '/v1/entity',
+          queryParameters: {'type': 'team', 'id': 'fb_team_$i'},
+        );
+      }
+      expect(sends, 20);
+      expect(transport.counters['blocked'], 0);
+    },
+  );
   test('the 401 retry cannot exceed the minute budget', () async {
-    for (var i = 0; i < 7; i++) {
+    for (var i = 0; i < transport.minuteLimit - 1; i++) {
       await dio.get(
         '/v1/calendar',
         queryParameters: {'date': '2026-11-${i + 1}'},
@@ -285,9 +298,9 @@ void main() {
     }
     reply = (_) => _body(401);
     await expectLater(dio.get('/v1/calendar'), throwsA(isA<DioException>()));
-    expect(sends, 8);
+    expect(sends, transport.minuteLimit);
     expect(refreshes, 1);
-    expect(transport.counters['requests'], 8);
+    expect(transport.counters['requests'], transport.minuteLimit);
   });
   test('user reader cannot be constructed with the shared Preview key or admin key', () {
     expect(

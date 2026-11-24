@@ -12,7 +12,9 @@ const premiumPlayQaEnabled =
     kDebugMode && bool.fromEnvironment('FUTBEAT_PREMIUM_PLAY_QA');
 
 final premiumPurchasesAllowedProvider = FutureProvider<bool>((ref) async {
-  if (!premiumPlayQaEnabled) return true;
+  // A configured Play product alone is not permission to sell. Production
+  // intake and its server verifier still require their own approved contract.
+  if (!premiumPlayQaEnabled) return false;
   final owner = ref.watch(currentAccountProvider).asData?.value;
   if (owner == null) return false;
   final transport = ref.watch(premiumQaTransportFactoryProvider)(owner);
@@ -56,12 +58,40 @@ class PremiumQaEntitlementSource implements EntitlementSource {
   final BillingGateway gateway;
   final PremiumQaTransport? Function(String accountId) transportForAccount;
   final Set<String> products;
+  final _recoveredAccounts = <String>{};
+  final _recovering = <String, Future<EntitlementCheck>>{};
 
   @override
-  Future<EntitlementCheck> check(String? accountId) async => accountId == null
-      ? const EntitlementCheck.unavailable()
-      : await transportForAccount(accountId)?.read() ??
+  Future<EntitlementCheck> check(String? accountId) async {
+    if (accountId == null) return const EntitlementCheck.unavailable();
+    if (_recoveredAccounts.contains(accountId)) {
+      return await transportForAccount(accountId)?.read() ??
+          const EntitlementCheck.unavailable();
+    }
+    // Recover a completed Play purchase whose callback was lost at process
+    // death. Share startup checks; later resumes only read the server right.
+    return _recovering.putIfAbsent(
+      accountId,
+      () => _recoverAtStartup(accountId).whenComplete(() {
+        _recovering.remove(accountId);
+      }),
+    );
+  }
+
+  Future<EntitlementCheck> _recoverAtStartup(String accountId) async {
+    try {
+      if (!await gateway.available()) {
+        return await transportForAccount(accountId)?.read() ??
             const EntitlementCheck.unavailable();
+      }
+      final answer = await restore(accountId);
+      if (answer.available) _recoveredAccounts.add(accountId);
+      return answer;
+    } catch (_) {
+      return const EntitlementCheck.unavailable();
+    }
+  }
+
   Future<EntitlementCheck> verify(String accountId, String token) async =>
       await transportForAccount(accountId)?.verify(token) ??
       const EntitlementCheck.unavailable();
@@ -75,17 +105,18 @@ class PremiumQaEntitlementSource implements EntitlementSource {
     if (transport == null) return const EntitlementCheck.unavailable();
     try {
       if (!await gateway.available()) return await transport.read();
-      final tag = billingAccountTag(entitlementAccountKey(accountId));
       final tokens = {
         for (final purchase in await gateway.owned())
           if (purchase.purchased &&
-              purchase.accountTag == tag &&
               products.contains(purchase.productId) &&
               purchase.token != null &&
               purchase.token!.isNotEmpty)
             purchase.token!,
       };
       if (tokens.length > 10) return const EntitlementCheck.unavailable();
+      // G1 owns account attribution. A different Play tag must reach its
+      // rejection gate; an empty inventory only needs an entitlement read.
+      if (tokens.isEmpty) return await transport.read();
       return await transport.restore(tokens.toList());
     } catch (_) {
       return const EntitlementCheck.unavailable();
@@ -143,6 +174,7 @@ class PremiumQaTransport {
       _request(purchaseToken: purchaseToken);
 
   bool purchasesEnabled = false;
+  String? activeBasePlanId;
   Future<EntitlementCheck> restore(List<String> tokens) =>
       _request(tokens: tokens);
   Future<EntitlementCheck> _request({
@@ -152,6 +184,7 @@ class PremiumQaTransport {
     final client = _clientFactory();
     try {
       purchasesEnabled = false;
+      activeBasePlanId = null;
       final bearer = await sessionBearer();
       if (bearer == null || bearer.isEmpty) {
         if (premiumPlayQaEnabled) {
@@ -206,6 +239,21 @@ class PremiumQaTransport {
     if (premiumPlayQaEnabled) {
       debugPrint('BillingQA verifier HTTP ${response.statusCode}');
     }
+    if (response.statusCode == HttpStatus.forbidden) {
+      // Display only a fixed message. Never propagate account information
+      // or untrusted server text to the purchase UI.
+      final body = jsonDecode(await utf8.decoder.bind(response).join());
+      return EntitlementCheck.unavailable(
+        failure: body is Map && body['status'] == 'rejected'
+            ? EntitlementFailure.purchaseRejected
+            : null,
+      );
+    }
+    if (response.statusCode == HttpStatus.serviceUnavailable) {
+      return const EntitlementCheck.unavailable(
+        failure: EntitlementFailure.temporarilyUnavailable,
+      );
+    }
     if (response.statusCode != HttpStatus.ok) {
       return const EntitlementCheck.unavailable();
     }
@@ -215,7 +263,15 @@ class PremiumQaTransport {
     }
     purchasesEnabled = payload['purchasesEnabled'] == true;
     if (payload['status'] == 'inactive') {
-      return const EntitlementCheck.answered(null);
+      return EntitlementCheck.answered(
+        null,
+        failure:
+            tokens != null &&
+                payload['rejected'] is int &&
+                (payload['rejected'] as int) > 0
+            ? EntitlementFailure.purchaseRejected
+            : null,
+      );
     }
     final expiresAt = DateTime.tryParse('${payload['expiresAt']}');
     final now = DateTime.now().toUtc();
@@ -224,6 +280,9 @@ class PremiumQaTransport {
         !expiresAt.isAfter(now)) {
       return const EntitlementCheck.unavailable();
     }
+    activeBasePlanId = PremiumProducts.basePlans.containsKey(payload['plan'])
+        ? payload['plan'] as String
+        : null;
     return EntitlementCheck.answered(
       EntitlementGrant(
         plan: Plan.premium,

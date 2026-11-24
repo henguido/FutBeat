@@ -44,6 +44,7 @@ class _Gateway implements BillingGateway {
   final completed = <Object>[];
   bool acknowledgeFails = false;
   final bought = <({String productId, String accountTag})>[];
+  OwnedPurchase? replacement;
 
   /// What Play does after the purchase sheet opens.
   void Function(PremiumOffer offer, String accountTag)? onBuy;
@@ -71,7 +72,12 @@ class _Gateway implements BillingGateway {
   }
 
   @override
-  Future<bool> buy(PremiumOffer offer, {required String accountTag}) async {
+  Future<bool> buy(
+    PremiumOffer offer, {
+    required String accountTag,
+    OwnedPurchase? replacing,
+  }) async {
+    replacement = replacing;
     bought.add((productId: offer.productId, accountTag: accountTag));
     final reaction = onBuy;
     if (reaction != null) scheduleMicrotask(() => reaction(offer, accountTag));
@@ -110,9 +116,33 @@ class _ServerFixture extends PremiumQaEntitlementSource {
   @override
   Future<EntitlementCheck> check(String? accountId) async => answer;
   @override
+  Future<EntitlementCheck> restore(String? accountId) async => answer;
+  @override
   Future<EntitlementCheck> verify(String accountId, String token) async {
     tokens.add(token);
     return answer;
+  }
+}
+
+class _PurchasePreflight extends PremiumQaTransport {
+  _PurchasePreflight({this.basePlan})
+    : super(Uri.parse('http://127.0.0.1:1'), () async => null);
+  final String? basePlan;
+  @override
+  Future<EntitlementCheck> read() async {
+    purchasesEnabled = true;
+    activeBasePlanId = basePlan;
+    return const EntitlementCheck.answered(null);
+  }
+}
+
+class _HeldVerification extends _ServerFixture {
+  _HeldVerification(super.gateway);
+  final result = Completer<EntitlementCheck>();
+  @override
+  Future<EntitlementCheck> verify(String accountId, String token) async {
+    tokens.add(token);
+    return result.future;
   }
 }
 
@@ -120,6 +150,7 @@ class _Harness {
   _Harness({
     Map<String, String> stored = const {},
     EntitlementSource Function(BillingGateway)? sourceFor,
+    PremiumQaTransport? Function(String)? transportFor,
   }) {
     store.values.addAll(stored);
     container = ProviderContainer(
@@ -129,8 +160,19 @@ class _Harness {
         premiumProductsProvider.overrideWithValue(const {_monthly, _yearly}),
         entitlementStoreProvider.overrideWithValue(store),
         entitlementClockProvider.overrideWithValue(() => now),
-        if (sourceFor != null)
-          entitlementSourceProvider.overrideWithValue(sourceFor(gateway)),
+        // Exercise the legacy client adapter explicitly as a fixture; it is
+        // no longer selected by the commercial application's provider.
+        entitlementSourceProvider.overrideWithValue(
+          sourceFor?.call(gateway) ??
+              PlayBillingEntitlementSource(
+                gateway,
+                products: const {_monthly, _yearly},
+                clock: () => now,
+              ),
+        ),
+        premiumPurchasesAllowedProvider.overrideWith((ref) async => true),
+        if (transportFor != null)
+          premiumQaTransportFactoryProvider.overrideWithValue(transportFor),
       ],
     );
     final plan = container.listen(entitlementsProvider, (_, _) {});
@@ -179,6 +221,376 @@ PremiumOffer _offer(String id) => PremiumOffer(
 );
 
 void main() {
+  test('production without approved server verifier cannot purchase or grant from Play', () async {
+    final gateway = _Gateway();
+    final c = ProviderContainer(
+      overrides: [
+        billingGatewayProvider.overrideWithValue(gateway),
+        premiumProductsProvider.overrideWithValue({_monthly}),
+        currentAccountProvider.overrideWith((ref) => Stream.value('account')),
+        entitlementStoreProvider.overrideWithValue(_MemoryStore()),
+      ],
+    );
+    addTearDown(c.dispose);
+    expect(await c.read(premiumPurchasesAllowedProvider.future), isFalse);
+    expect(
+      c.read(entitlementSourceProvider),
+      isA<UnavailableEntitlementSource>(),
+    );
+    final check = await c.read(entitlementSourceProvider).check('account');
+    expect(check.available, isFalse);
+    c.listen(premiumBillingProvider, (_, _) {});
+    await pumpEventQueue();
+    expect(
+      await c.read(premiumBillingProvider.notifier).buy(_offer(_monthly)),
+      PremiumActionResult.unavailable,
+    );
+    gateway.emit([
+      const PurchaseEvent(
+        productId: _monthly,
+        outcome: PurchaseOutcome.purchased,
+        needsCompletion: true,
+        token: 'fixture-token',
+        handle: 'fixture-handle',
+      ),
+    ]);
+    await pumpEventQueue();
+    expect(gateway.completed, isEmpty);
+    expect(gateway.bought, isEmpty);
+  });
+  test('A7 QA verifies an existing purchase: temporary failure preserves cache until a server answer', () async {
+    late _ServerFixture source;
+    final h = _Harness(sourceFor: (g) => source = _ServerFixture(g));
+    await h.signIn('user-a');
+    final cached = EntitlementGrant(
+      plan: Plan.premium,
+      verifiedAt: _now,
+      expiresAt: _now.add(const Duration(hours: 2)),
+    );
+    await h.container.read(entitlementsProvider.notifier).apply(cached);
+    h.gateway.ownedList.add(
+      OwnedPurchase(
+        productId: _monthly,
+        purchased: true,
+        accountTag: billingAccountTag(entitlementAccountKey('user-a')),
+        token: 'known',
+      ),
+    );
+    source.answer = const EntitlementCheck.unavailable(
+      failure: EntitlementFailure.temporarilyUnavailable,
+    );
+    if (!premiumPlayQaEnabled) {
+      expect(
+        await h.billing.verifyQaPurchase(),
+        PremiumActionResult.unavailable,
+      );
+      expect(source.tokens, isEmpty);
+      return;
+    }
+    expect(
+      await h.billing.verifyQaPurchase(),
+      PremiumActionResult.temporarilyUnavailable,
+    );
+    expect(h.plan.isPremium, true);
+    expect(h.plan.expiresAt, cached.expiresAt);
+    source.answer = EntitlementCheck.answered(cached);
+    expect(await h.billing.verifyQaPurchase(), PremiumActionResult.premium);
+    expect(source.tokens, ['known', 'known']);
+    expect(h.gateway.bought, isEmpty);
+    expect(h.gateway.completed, isEmpty);
+  });
+  test('A7 QA never verifies another account purchase', () async {
+    late _ServerFixture source;
+    final h = _Harness(sourceFor: (g) => source = _ServerFixture(g));
+    await h.signIn('user-a');
+    await h.container
+        .read(entitlementsProvider.notifier)
+        .apply(
+          EntitlementGrant(
+            plan: Plan.premium,
+            verifiedAt: _now,
+            expiresAt: _now.add(const Duration(hours: 2)),
+          ),
+        );
+    h.gateway.ownedList.add(
+      const OwnedPurchase(
+        productId: _monthly,
+        purchased: true,
+        accountTag: 'foreign',
+        token: 'foreign-token',
+      ),
+    );
+    expect(await h.billing.verifyQaPurchase(), PremiumActionResult.unavailable);
+    expect(source.tokens, isEmpty);
+    expect(h.plan.isPremium, true);
+  });
+  test('A7 QA rejects a late verification after the account changes', () async {
+    if (!premiumPlayQaEnabled) return;
+    late _HeldVerification source;
+    final h = _Harness(sourceFor: (g) => source = _HeldVerification(g));
+    await h.signIn('user-a');
+    final grant = EntitlementGrant(
+      plan: Plan.premium,
+      verifiedAt: _now,
+      expiresAt: _now.add(const Duration(hours: 2)),
+    );
+    await h.container.read(entitlementsProvider.notifier).apply(grant);
+    h.gateway.ownedList.add(
+      OwnedPurchase(
+        productId: _monthly,
+        purchased: true,
+        accountTag: billingAccountTag(entitlementAccountKey('user-a')),
+        token: 'known',
+      ),
+    );
+    final verification = h.billing.verifyQaPurchase();
+    await pump();
+    await h.signIn('user-b');
+    source.result.complete(EntitlementCheck.answered(grant));
+    expect(await verification, PremiumActionResult.unavailable);
+    expect(h.plan.accountKey, entitlementAccountKey('user-b'));
+    expect(h.plan.isPremium, false);
+  });
+  testWidgets(
+    'G1 active plan UI exposes only the other period and stays gated outside QA',
+    (tester) async {
+      final h = _Harness(
+        sourceFor: (g) => _ServerFixture(g),
+        transportFor: (_) => _PurchasePreflight(basePlan: 'monthly'),
+      );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: h.container,
+          child: const MaterialApp(home: Scaffold(body: PremiumCard())),
+        ),
+      );
+      h.accounts.add('user-a');
+      await tester.pumpAndSettle();
+      unawaited(
+        h.container
+            .read(entitlementsProvider.notifier)
+            .apply(
+              EntitlementGrant(
+                plan: Plan.premium,
+                verifiedAt: _now,
+                expiresAt: _now.add(const Duration(hours: 2)),
+              ),
+            ),
+      );
+      await tester.pumpAndSettle();
+      if (!premiumPlayQaEnabled) {
+        expect(find.text('Cambiar plan'), findsNothing);
+        expect(find.text('Verificar compra QA'), findsNothing);
+      } else {
+        expect(find.text('Cambiar plan'), findsOneWidget);
+        expect(find.text('Verificar compra QA'), findsOneWidget);
+        await tester.tap(find.text('Cambiar plan'));
+        await tester.pumpAndSettle();
+        expect(find.text('Anual'), findsOneWidget);
+        expect(find.text('Mensual'), findsNothing);
+        expect(h.gateway.bought, isEmpty);
+      }
+      unawaited(h.container.read(entitlementsProvider.notifier).apply(null));
+      await tester.pumpAndSettle();
+    },
+  );
+  test('G1 plan change carries the owned purchase and only offers the other billing period', () async {
+    late _ServerFixture source;
+    final h = _Harness(
+      sourceFor: (g) => source = _ServerFixture(g),
+      transportFor: (_) => _PurchasePreflight(basePlan: 'monthly'),
+    );
+    await h.signIn('user-a');
+    final grant = EntitlementGrant(
+      plan: Plan.premium,
+      verifiedAt: _now,
+      expiresAt: _now.add(const Duration(hours: 2)),
+    );
+    await h.container.read(entitlementsProvider.notifier).apply(grant);
+    expect((await h.billing.offers()).map((o) => o.period), [
+      PremiumPeriod.yearly,
+    ]);
+    final previous = OwnedPurchase(
+      productId: _yearly,
+      purchased: true,
+      accountTag: billingAccountTag(entitlementAccountKey('user-a')),
+      token: 'old-synthetic',
+      handle: 'play-old-handle',
+    );
+    h.gateway.ownedList.add(previous);
+    source.answer = EntitlementCheck.answered(grant);
+    h.gateway.onBuy = (_, _) => h.gateway.emit([
+      const PurchaseEvent(
+        productId: _yearly,
+        outcome: PurchaseOutcome.purchased,
+        token: 'new-synthetic',
+        needsCompletion: true,
+      ),
+    ]);
+    expect(await h.billing.buy(_offer(_yearly)), PremiumActionResult.premium);
+    expect(h.gateway.replacement, same(previous));
+    expect(source.tokens, contains('new-synthetic'));
+    expect(h.gateway.completed, isEmpty);
+  });
+  for (final unsafe in [
+    'foreign',
+    'unacknowledged',
+    'missing',
+    'ambiguous',
+    'same-plan',
+  ]) {
+    test('G1 refuses $unsafe plan replacement before opening Play', () async {
+      final h = _Harness(
+        sourceFor: (g) => _ServerFixture(g),
+        transportFor: (_) => _PurchasePreflight(basePlan: 'monthly'),
+      );
+      await h.signIn('user-a');
+      await h.container
+          .read(entitlementsProvider.notifier)
+          .apply(
+            EntitlementGrant(
+              plan: Plan.premium,
+              verifiedAt: _now,
+              expiresAt: _now.add(const Duration(hours: 2)),
+            ),
+          );
+      final previous = OwnedPurchase(
+        productId: _yearly,
+        purchased: true,
+        accountTag: unsafe == 'foreign'
+            ? 'other'
+            : billingAccountTag(entitlementAccountKey('user-a')),
+        token: 'old',
+        handle: 'handle',
+        needsCompletion: unsafe == 'unacknowledged',
+      );
+      if (unsafe != 'missing') h.gateway.ownedList.add(previous);
+      if (unsafe == 'ambiguous') h.gateway.ownedList.add(previous);
+      expect(
+        await h.billing.buy(_offer(unsafe == 'same-plan' ? _monthly : _yearly)),
+        PremiumActionResult.unavailable,
+      );
+      expect(h.gateway.bought, isEmpty);
+      expect(h.plan.isPremium, true);
+      expect(h.container.read(premiumBillingProvider).busy, false);
+    });
+  }
+  test('G1 account switch during replacement lookup never opens Play for the old owner', () async {
+    final h = _Harness(
+      sourceFor: (g) => _ServerFixture(g),
+      transportFor: (_) => _PurchasePreflight(basePlan: 'monthly'),
+    );
+    await h.signIn('user-a');
+    await h.container
+        .read(entitlementsProvider.notifier)
+        .apply(
+          EntitlementGrant(
+            plan: Plan.premium,
+            verifiedAt: _now,
+            expiresAt: _now.add(const Duration(hours: 2)),
+          ),
+        );
+    final lookup = Completer<List<OwnedPurchase>>();
+    h.gateway.ownedGates.add(lookup);
+    final changing = h.billing.buy(_offer(_yearly));
+    await pump();
+    await h.signIn('user-b');
+    lookup.complete([
+      OwnedPurchase(
+        productId: _yearly,
+        purchased: true,
+        accountTag: billingAccountTag(entitlementAccountKey('user-a')),
+        token: 'old',
+        handle: 'handle',
+      ),
+    ]);
+    expect(await changing, PremiumActionResult.unavailable);
+    expect(h.gateway.bought, isEmpty);
+    expect(h.plan.accountKey, entitlementAccountKey('user-b'));
+    expect(h.plan.isPremium, false);
+  });
+  for (final failure in EntitlementFailure.values) {
+    test(
+      'G1 purchased callback returns $failure without granting or acknowledging',
+      () async {
+        late _ServerFixture source;
+        final h = _Harness(
+          sourceFor: (g) => source = _ServerFixture(g),
+          transportFor: (_) => _PurchasePreflight(),
+        );
+        await h.signIn('user-a');
+        source.answer = EntitlementCheck.unavailable(failure: failure);
+        h.gateway.onBuy = (_, _) => h.gateway.emit([
+          const PurchaseEvent(
+            productId: _monthly,
+            outcome: PurchaseOutcome.purchased,
+            token: 'synthetic',
+            needsCompletion: true,
+            handle: 'unused',
+          ),
+        ]);
+        final result = await h.billing.buy(_offer(_monthly));
+        expect(
+          result,
+          failure == EntitlementFailure.purchaseRejected
+              ? PremiumActionResult.purchaseRejected
+              : PremiumActionResult.temporarilyUnavailable,
+        );
+        expect(h.plan.isPremium, false);
+        expect(h.gateway.completed, isEmpty);
+      },
+    );
+    test(
+      'G1 restore surfaces $failure safely without revoking a valid cached right',
+      () async {
+        late _ServerFixture source;
+        final h = _Harness(sourceFor: (g) => source = _ServerFixture(g));
+        await h.signIn('user-a');
+        await h.container
+            .read(entitlementsProvider.notifier)
+            .apply(
+              EntitlementGrant(
+                plan: Plan.premium,
+                verifiedAt: _now,
+                expiresAt: _now.add(const Duration(hours: 2)),
+              ),
+            );
+        source.answer = EntitlementCheck.unavailable(failure: failure);
+        final result = await h.billing.restore();
+        expect(
+          result,
+          failure == EntitlementFailure.purchaseRejected
+              ? PremiumActionResult.purchaseRejected
+              : PremiumActionResult.temporarilyUnavailable,
+        );
+        expect(h.plan.isPremium, true);
+        expect(h.gateway.completed, isEmpty);
+        expect(premiumMessages[result], isNot(contains('user-a')));
+      },
+    );
+  }
+  test('G1 inactive restore with rejected token clears cache by server authority and reports safe rejection', () async {
+    late _ServerFixture source;
+    final h = _Harness(sourceFor: (g) => source = _ServerFixture(g));
+    await h.signIn('user-a');
+    await h.container
+        .read(entitlementsProvider.notifier)
+        .apply(
+          EntitlementGrant(
+            plan: Plan.premium,
+            verifiedAt: _now,
+            expiresAt: _now.add(const Duration(hours: 2)),
+          ),
+        );
+    source.answer = const EntitlementCheck.answered(
+      null,
+      failure: EntitlementFailure.purchaseRejected,
+    );
+    expect(await h.billing.restore(), PremiumActionResult.purchaseRejected);
+    expect(h.plan.isPremium, false);
+    expect(h.plan.showsAds, true);
+    expect(h.gateway.completed, isEmpty);
+  });
   test('G1 purchase callback cannot grant locally or acknowledge; only server active removes ads', () async {
     late _ServerFixture source;
     final h = _Harness(sourceFor: (g) => source = _ServerFixture(g));
@@ -409,6 +821,7 @@ void main() {
   ) async {
     final gateway = _Gateway();
     final accounts = StreamController<String?>();
+    var manageCalls = 0;
     addTearDown(accounts.close);
     await tester.pumpWidget(
       ProviderScope(
@@ -417,6 +830,17 @@ void main() {
           billingGatewayProvider.overrideWithValue(gateway),
           premiumProductsProvider.overrideWithValue(const {_monthly, _yearly}),
           entitlementStoreProvider.overrideWithValue(_MemoryStore()),
+          managePremiumSubscriptionProvider.overrideWithValue(() async {
+            manageCalls++;
+            return false;
+          }),
+          premiumPurchasesAllowedProvider.overrideWith((ref) async => true),
+          entitlementSourceProvider.overrideWithValue(
+            PlayBillingEntitlementSource(
+              gateway,
+              products: const {_monthly, _yearly},
+            ),
+          ),
         ],
         child: const MaterialApp(home: Scaffold(body: PremiumCard())),
       ),
@@ -425,6 +849,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Gratis'), findsOneWidget);
     expect(find.text('Hazte Premium'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('premium-manage')));
+    await tester.pumpAndSettle();
+    expect(manageCalls, 1);
+    expect(
+      find.text('Abre Google Play → Pagos y suscripciones → Suscripciones.'),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Restaurar compras'));
     await tester.pumpAndSettle();
@@ -566,6 +999,12 @@ void main() {
           billingGatewayProvider.overrideWithValue(gateway),
           premiumProductsProvider.overrideWithValue(const {_monthly, _yearly}),
           entitlementStoreProvider.overrideWithValue(_MemoryStore()),
+          entitlementSourceProvider.overrideWithValue(
+            PlayBillingEntitlementSource(
+              gateway,
+              products: const {_monthly, _yearly},
+            ),
+          ),
         ],
       );
       final plan = container.listen(entitlementsProvider, (_, _) {});
@@ -610,14 +1049,22 @@ void main() {
     tester,
   ) async {
     final accounts = StreamController<String?>();
+    final gateway = _Gateway();
     addTearDown(accounts.close);
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           currentAccountProvider.overrideWith((ref) => accounts.stream),
-          billingGatewayProvider.overrideWithValue(_Gateway()),
+          billingGatewayProvider.overrideWithValue(gateway),
           premiumProductsProvider.overrideWithValue(const {_monthly, _yearly}),
           entitlementStoreProvider.overrideWithValue(_MemoryStore()),
+          premiumPurchasesAllowedProvider.overrideWith((ref) async => true),
+          entitlementSourceProvider.overrideWithValue(
+            PlayBillingEntitlementSource(
+              gateway,
+              products: const {_monthly, _yearly},
+            ),
+          ),
         ],
         child: const MaterialApp(home: Scaffold(body: PremiumCard())),
       ),

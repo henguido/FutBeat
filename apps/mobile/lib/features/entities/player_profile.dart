@@ -397,6 +397,8 @@ class PlayerProfileView extends StatelessWidget {
     required this.matches,
     this.enriching = false,
     this.matchContext,
+    this.loading = false,
+    this.retry,
     super.key,
   });
 
@@ -405,6 +407,8 @@ class PlayerProfileView extends StatelessWidget {
   final Entity? team;
   final List<FootballMatch> matches;
   final PlayerProfileMatchContext? matchContext;
+  final bool loading;
+  final VoidCallback? retry;
 
   /// The server is fetching more of this player's data right now.
   final bool enriching;
@@ -485,6 +489,28 @@ class PlayerProfileView extends StatelessWidget {
         ),
         body: NestedScrollView(
           headerSliverBuilder: (context, _) => [
+            if (loading)
+              const SliverToBoxAdapter(
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
+            if (retry != null)
+              SliverToBoxAdapter(
+                child: Row(
+                  children: [
+                    const SizedBox(width: 16),
+                    const Expanded(
+                      child: Text(
+                        'Datos guardados',
+                        style: TextStyle(color: muted, fontSize: 12),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: retry,
+                      child: const Text('Actualizar'),
+                    ),
+                  ],
+                ),
+              ),
             SliverToBoxAdapter(
               child: PlayerHeader(player: player, team: team),
             ),
@@ -881,7 +907,7 @@ class PlayerHeader extends StatelessWidget {
                     else
                       const ProfileHeaderChip(
                         icon: Icons.shield_outlined,
-                        label: 'Sin equipo',
+                        label: 'Equipo por confirmar',
                       ),
                     if (position.isNotEmpty)
                       ProfileHeaderChip(

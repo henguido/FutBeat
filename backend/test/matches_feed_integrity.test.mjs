@@ -314,17 +314,17 @@ test('a final result already stored is replaced by a later provider correction (
   await record(db, observation(s));
   await record(db, observation(s, { home: 2, away: 1, minute: 90, status: 'FINISHED_PENDING_VERIFICATION', events: [g1, g2, g3] }));
   await reconcile();
-  assert.deepEqual(await stored(), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 2, away: 1 } }, 'canonical final stored');
+  assert.deepEqual(await stored(), { status: 'VERIFIED', score: { home: 2, away: 1 } }, 'canonical final stored');
 
   // The provider later corrects the final result.
   await record(db, observation(s, { home: 1, away: 1, minute: 90, status: 'FINISHED_PENDING_VERIFICATION', events: [g1, g2], source: 'results' }));
   await reconcile();
   assert.deepEqual((await stored()).score, { home: 1, away: 1 }, 'canonical final corrected');
   const model = await shown(db, s);
-  assert.deepEqual([model.status, model.score], ['FINISHED_PENDING_VERIFICATION', { home: 1, away: 1 }]);
+  assert.deepEqual([model.status, model.score], ['VERIFIED', { home: 1, away: 1 }]);
   assert.deepEqual((await feedRow(db, s)).score, { home: 1, away: 1 });
   // Status never regresses while the score is corrected.
-  assert.equal((await stored()).status, 'FINISHED_PENDING_VERIFICATION');
+  assert.equal((await stored()).status, 'VERIFIED');
 }));
 
 test('a corrected final arriving outside the results reconciliation still replaces the stored final', () => withDb(async (db) => {
@@ -341,16 +341,16 @@ test('a corrected final arriving outside the results reconciliation still replac
 
   // Correction on the LIVE path; NO results reconciliation runs afterwards.
   await record(db, observation(s, { home: 1, away: 1, minute: 90, status: 'FINISHED_PENDING_VERIFICATION', events: [g1, g2] }));
-  assert.deepEqual(await stored(), { status: 'FINISHED_PENDING_VERIFICATION', score: { home: 1, away: 1 }, corrected: 'true' });
+  assert.deepEqual(await stored(), { status: 'VERIFIED', score: { home: 1, away: 1 }, corrected: 'true' });
   const model = await shown(db, s);
-  assert.deepEqual([model.status, model.score, goalsOf(model).length], ['FINISHED_PENDING_VERIFICATION', { home: 1, away: 1 }, 2]);
+  assert.deepEqual([model.status, model.score, goalsOf(model).length], ['VERIFIED', { home: 1, away: 1 }, 2]);
   assert.deepEqual((await feedRow(db, s)).score, { home: 1, away: 1 });
   const live = await realtime(db, s);
   assert.deepEqual([live.status, live.home_score, live.away_score], ['FINISHED_PENDING_VERIFICATION', 1, 1]);
 
   // A lagging non-terminal answer never reopens or rewrites the final (#120).
   await record(db, observation(s, { home: 2, away: 1, minute: 88, status: 'LIVE', events: [g1, g2, g3] }));
-  assert.deepEqual([(await stored()).status, (await stored()).score], ['FINISHED_PENDING_VERIFICATION', { home: 1, away: 1 }]);
+  assert.deepEqual([(await stored()).status, (await stored()).score], ['VERIFIED', { home: 1, away: 1 }]);
   assert.deepEqual((await shown(db, s)).score, { home: 1, away: 1 });
 }));
 

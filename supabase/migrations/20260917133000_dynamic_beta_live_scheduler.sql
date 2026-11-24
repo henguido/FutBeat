@@ -77,6 +77,8 @@ grant execute on function futbeat_private.futbeat_resolve_live_competition(text)
 
 do $$ declare command text; live_command text; old_id bigint; begin
  if to_regnamespace('cron') is null or to_regnamespace('net') is null or to_regnamespace('vault') is null then return; end if;
+ -- Fresh databases have no scheduler job until operator configuration is provided.
+ if not exists(select 1 from cron.job where jobname='futbeat-live-sync-free-tier') then return; end if;
  select jobid into old_id from cron.job where jobname='futbeat-fixtures-three-day-window';
  if old_id is not null then perform cron.unschedule(old_id); end if;
  command:=$job$

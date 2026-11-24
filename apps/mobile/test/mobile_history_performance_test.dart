@@ -22,7 +22,10 @@ String requestDate(DateTime date, int offset) {
       '${day.day.toString().padLeft(2, '0')}';
 }
 
-Map<String, dynamic> payload({bool table = false}) => {
+Map<String, dynamic> payload({
+  bool table = false,
+  String status = 'SCHEDULED',
+}) => {
   'schemaVersion': 1,
   'demo': false,
   'updatedAt': '2026-08-20T20:00:00Z',
@@ -60,7 +63,7 @@ Map<String, dynamic> payload({bool table = false}) => {
       'homeTeamId': 'fb_team_home',
       'awayTeamId': 'fb_team_away',
       'startTime': '2026-08-20T18:00:00Z',
-      'status': 'SCHEDULED',
+      'status': status,
       'score': {'home': 2, 'away': 1},
       'hasPlayedEvidence': true,
     },
@@ -128,7 +131,7 @@ void main() {
           databaseProvider.overrideWithValue(db),
           repositoryProvider.overrideWithValue(repo),
           matchContextSnapshotProvider.overrideWith(
-            (ref, id) => Stream.value(Snapshot(payload())),
+            (ref, id) => Stream.value(Snapshot(payload(status: 'VERIFIED'))),
           ),
           followsProvider.overrideWith((ref) => Stream.value({})),
           liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
@@ -140,7 +143,7 @@ void main() {
           child: MaterialApp(
             home: MatchScreen(
               id: 'fb_match_test',
-              initialData: Snapshot(payload()),
+              initialData: Snapshot(payload(status: 'VERIFIED')),
             ),
           ),
         ),
@@ -162,23 +165,24 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pump();
       expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
-        findsNothing,
+        find.text('Alineaciones no disponibles para este partido'),
+        findsOneWidget,
       );
       expect(
         find.byKey(
           const ValueKey('match-section-loading-Cargando alineaciones…'),
         ),
-        findsOneWidget,
+        findsNothing,
       );
       // Bounded schedule: one read-only refresh per step (2, 4, 8, 15, 40 s),
-      // then the pending state ends in simple empty states.
+      // Stats retain their bounded pending schedule; settled missing lineups
+      // already show an honest empty state without a foreground spinner.
       for (var second = 0; second < 90; second++) {
         await tester.pump(const Duration(seconds: 1));
       }
       await tester.pumpAndSettle();
       expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
+        find.text('Alineaciones no disponibles para este partido'),
         findsOneWidget,
       );
       await _showTab(tester, 'Estadísticas');
@@ -266,83 +270,86 @@ void main() {
   );
 
   for (final slow in [false, true]) {
-    test('initial detail failure resolves within its failure policy (slow=$slow)', () async {
-      final dio = Dio();
-      var reads = 0;
-      var central = 0;
-      final tokens = <CancelToken>[];
-      final elapsed = Stopwatch()..start();
-      dio.interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (o, h) {
-            reads++;
-            // One request-aware open, then read-only rechecks only.
-            if (o.queryParameters['request'] != '0') central++;
-            if (slow) {
-              tokens.add(o.cancelToken!);
-              return; // Simulate a read that never completes, until cancelled.
-            }
-            h.reject(
-              DioException(
-                requestOptions: o,
-                type: DioExceptionType.connectionError,
-              ),
-            );
-          },
-        ),
-      );
-      final container = ProviderContainer(
-        overrides: [
-          repositoryProvider.overrideWithValue(ApiRepository(dio)),
-          detailPollIntervalProvider.overrideWithValue(
-            Duration(milliseconds: slow ? 100 : 50),
+    test(
+      'initial detail failure resolves within its failure policy (slow=$slow)',
+      () async {
+        final dio = Dio();
+        var reads = 0;
+        var central = 0;
+        final tokens = <CancelToken>[];
+        final elapsed = Stopwatch()..start();
+        dio.interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (o, h) {
+              reads++;
+              // One request-aware open, then read-only rechecks only.
+              if (o.queryParameters['request'] != '0') central++;
+              if (slow) {
+                tokens.add(o.cancelToken!);
+                return; // Simulate a read that never completes, until cancelled.
+              }
+              h.reject(
+                DioException(
+                  requestOptions: o,
+                  type: DioExceptionType.connectionError,
+                ),
+              );
+            },
           ),
-          if (slow)
-            detailReadTimeoutProvider.overrideWithValue(
-              const Duration(milliseconds: 300),
-            ),
-        ],
-      );
-      final values = <MatchDetail>[];
-      final done = Completer<void>();
-      final watch = container.listen(matchDetailProvider('fb_match_test'), (
-        a,
-        b,
-      ) {
-        final value = b.asData?.value;
-        if (value != null) {
-          values.add(value);
-          if (!value.pending && !done.isCompleted) done.complete();
-        }
-      });
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(values, isNotEmpty);
-      expect(values.first.pending, true);
-      if (slow) expect(values.every((value) => value.pending), true);
-      await done.future.timeout(const Duration(seconds: 17));
-      // A proven connection failure ends immediately; a timed-out read still
-      // gets the bounded read-only schedule because connectivity is unknown.
-      expect(reads, slow ? 6 : 1);
-      expect(central, 1, reason: 'rechecks never request the provider');
-      expect(values.last.pending, false);
-      expect(values.last.offlineUnavailable, !slow);
-      expect(values.last.statistics, isEmpty);
-      expect(values.last.homeStarters, isEmpty);
-      if (slow) {
-        expect(tokens.every((token) => token.isCancelled), true);
-        // Every slow read is cut at the read timeout; the schedule ends.
-        // 300 ms initial + (100+300) + (200+300) + (400+300) + (750+300)
-        // + (2000+300).
-        expect(
-          elapsed.elapsed,
-          greaterThanOrEqualTo(const Duration(milliseconds: 5000)),
         );
-        expect(elapsed.elapsed, lessThan(const Duration(seconds: 8)));
-      }
-      watch.close();
-      container.dispose();
-      dio.close();
-    });
+        final container = ProviderContainer(
+          overrides: [
+            repositoryProvider.overrideWithValue(ApiRepository(dio)),
+            detailPollIntervalProvider.overrideWithValue(
+              Duration(milliseconds: slow ? 100 : 50),
+            ),
+            if (slow)
+              detailReadTimeoutProvider.overrideWithValue(
+                const Duration(milliseconds: 300),
+              ),
+          ],
+        );
+        final values = <MatchDetail>[];
+        final done = Completer<void>();
+        final watch = container.listen(matchDetailProvider('fb_match_test'), (
+          a,
+          b,
+        ) {
+          final value = b.asData?.value;
+          if (value != null) {
+            values.add(value);
+            if (!value.pending && !done.isCompleted) done.complete();
+          }
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(values, isNotEmpty);
+        expect(values.first.pending, true);
+        if (slow) expect(values.every((value) => value.pending), true);
+        await done.future.timeout(const Duration(seconds: 17));
+        // A proven connection failure ends immediately; a timed-out read still
+        // gets the bounded read-only schedule because connectivity is unknown.
+        expect(reads, slow ? 6 : 1);
+        expect(central, 1, reason: 'rechecks never request the provider');
+        expect(values.last.pending, false);
+        expect(values.last.offlineUnavailable, !slow);
+        expect(values.last.statistics, isEmpty);
+        expect(values.last.homeStarters, isEmpty);
+        if (slow) {
+          expect(tokens.every((token) => token.isCancelled), true);
+          // Every slow read is cut at the read timeout; the schedule ends.
+          // 300 ms initial + (100+300) + (200+300) + (400+300) + (750+300)
+          // + (2000+300).
+          expect(
+            elapsed.elapsed,
+            greaterThanOrEqualTo(const Duration(milliseconds: 5000)),
+          );
+          expect(elapsed.elapsed, lessThan(const Duration(seconds: 8)));
+        }
+        watch.close();
+        container.dispose();
+        dio.close();
+      },
+    );
   }
 
   test('disposing detail stops further phone polling', () async {
@@ -624,7 +631,9 @@ void main() {
             databaseProvider.overrideWithValue(db),
             repositoryProvider.overrideWithValue(ApiRepository(Dio())),
             matchContextSnapshotProvider.overrideWith(
-              (ref, id) => Stream.value(Snapshot(payload(table: hasTable))),
+              (ref, id) => Stream.value(
+                Snapshot(payload(table: hasTable, status: 'VERIFIED')),
+              ),
             ),
             matchDetailProvider.overrideWith((ref, id) {
               detailStarts++;
@@ -668,7 +677,10 @@ void main() {
         expect(identical(_controller(tester), controller), isTrue);
         expect(controller.index, _tabIndex(tester, 'Tabla'));
         expect(controller.length, 6);
-        expect(find.text('Tabla aún no descargada'), findsOneWidget);
+        expect(
+          find.text('Clasificación pendiente de actualización'),
+          findsOneWidget,
+        );
         expect(detailStarts, 1);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
@@ -717,18 +729,10 @@ void main() {
       expect(find.text('MARCADOR PARCIAL'), findsOneWidget);
       expect(find.text('PROGRAMADO'), findsNothing);
       expect(find.text('Tabla'), findsOneWidget);
-      await tester.tap(find.text('Estadísticas'));
-      await tester.pumpAndSettle();
-      expect(
-        find.text('Todavía no hay estadísticas disponibles.'),
-        findsOneWidget,
-      );
+      expect(find.text('Estadísticas'), findsNothing);
       await tester.tap(find.text('Alineación'));
       await tester.pumpAndSettle();
-      expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
-        findsOneWidget,
-      );
+      expect(find.text('Alineaciones aún no publicadas'), findsOneWidget);
       context.add(Snapshot(payload(table: true)));
       await tester.pumpAndSettle();
       expect(find.text('Tabla'), findsOneWidget);

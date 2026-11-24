@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../storage/database.mjs';
@@ -37,6 +38,7 @@ const detailCalls = (db) => db.query("select count(*)::int n from futbeat_privat
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
   try { await fn(db); } finally { await db.close(); }
 }
 

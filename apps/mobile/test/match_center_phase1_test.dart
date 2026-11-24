@@ -251,6 +251,12 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 Future<void> _tab(WidgetTester tester, String label) async {
+  // The historical timeline now has its own name, never a LIVE label.
+  if (label == 'En vivo' &&
+      find.text('En vivo').evaluate().isEmpty &&
+      find.text('Eventos').evaluate().isNotEmpty) {
+    label = 'Eventos';
+  }
   final tab = find.descendant(
     of: find.byType(TabBar),
     matching: find.text(label),
@@ -320,7 +326,7 @@ void main() {
     final container = await _open(tester, _Server((_) => _context()));
     expect(_tabLabels(tester), [
       'Hechos',
-      'En vivo',
+      'Eventos',
       'Alineación',
       'Tabla',
       'Estadísticas',
@@ -330,7 +336,7 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('2. the TabController is the same instance across refreshes', (
+  testWidgets('2. logical selection survives canonical state changes', (
     tester,
   ) async {
     final server = _Server(
@@ -349,7 +355,7 @@ void main() {
     expect(server.contextReads, 2);
     expect(find.text('Clasificación'), findsOneWidget);
     final bar = tester.widget<TabBar>(find.byType(TabBar));
-    expect(bar.controller, same(controller));
+    expect(bar.controller, isNot(same(controller)));
     expect(bar.controller!.length, 6);
     expect((bar.tabs.first as Tab).text, 'Hechos');
     expect(_selectedTab(tester), 'Tabla');
@@ -469,18 +475,22 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('16. unavailable keeps "Sin tabla disponible" (no switch)', (
-    tester,
-  ) async {
-    final container = await _open(
-      tester,
-      _Server((_) => _context(table: false, standingsState: 'unavailable')),
-    );
-    await _tab(tester, 'Tabla');
-    expect(find.text('Sin tabla disponible'), findsOneWidget);
-    expect(find.byKey(const ValueKey('standings-view-compact')), findsNothing);
-    await _close(tester, container);
-  });
+  testWidgets(
+    '16. unavailable keeps "Clasificación no disponible" (no switch)',
+    (tester) async {
+      final container = await _open(
+        tester,
+        _Server((_) => _context(table: false, standingsState: 'unavailable')),
+      );
+      await _tab(tester, 'Tabla');
+      expect(find.text('Clasificación no disponible'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('standings-view-compact')),
+        findsNothing,
+      );
+      await _close(tester, container);
+    },
+  );
 
   for (final width in [360.0, 390.0, 430.0]) {
     testWidgets('17/18. ${width.toInt()} px: Resumida fits without horizontal '
@@ -532,7 +542,7 @@ void main() {
     await _close(tester, container);
   });
 
-  testWidgets('past fixture without a confirmed result skips Previa', (
+  testWidgets('scheduled canonical fixture keeps Previa even after kickoff', (
     tester,
   ) async {
     final container = await _open(
@@ -545,8 +555,8 @@ void main() {
       ),
       width: 360,
     );
-    expect(_selectedTab(tester), 'Hechos');
-    expect(find.text('Previa'), findsNothing);
+    expect(_selectedTab(tester), 'Previa');
+    expect(find.text('Previa'), findsOneWidget);
     expect(find.text('2 - 1'), findsNothing);
     await _close(tester, container);
   });

@@ -15,7 +15,7 @@ function jwt(subject) {
   return `${encode({ alg: 'HS256' })}.${encode({ sub: subject })}.test-signature`;
 }
 
-async function edgeHarness({ activeUser = userA, existingUsers = new Set([userA]) } = {}) {
+async function edgeHarness({ activeUser = userA, existingUsers = new Set([userA]), authError = 'user_not_found' } = {}) {
   let handler;
   const calls = [];
   const secret = 'server-only-test-secret';
@@ -24,7 +24,7 @@ async function edgeHarness({ activeUser = userA, existingUsers = new Set([userA]
     calls.push({ url: url.href, method: init.method ?? 'GET', headers: init.headers });
     if (url.pathname === '/auth/v1/user') {
       return activeUser == null
-        ? Response.json({ message: 'not found' }, { status: 401 })
+        ? Response.json({ error_code: authError }, { status: 401 })
         : Response.json({ id: activeUser });
     }
     const id = url.pathname.split('/').at(-1);
@@ -136,4 +136,13 @@ test('account deletion stays server-only and JWT verification remains enabled', 
   assert.match(config, /\[functions\.futbeat-delete-account\]\s*\r?\nverify_jwt = true/);
   assert.match(edge, /auth\/v1\/admin\/users\/\$\{subject\}/);
   assert.doesNotMatch(edge, /console\.(?:log|error|warn)/);
+});
+
+test('rejected JWT never takes the already-deleted retry path', async () => {
+  const harness = await edgeHarness({ activeUser: null, existingUsers: new Set(), authError: 'bad_jwt' });
+  const response = await harness.handler(new Request('https://edge.test', {
+    method: 'POST', headers: { authorization: `Bearer ${jwt(userA)}` },
+  }));
+  assert.equal(response.status, 401);
+  assert.equal(harness.calls.some(call => call.url.includes('/admin/')), false);
 });

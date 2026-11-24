@@ -520,6 +520,15 @@ class PreviewHeadToHeadSection extends StatelessWidget {
           _Card(
             child: Column(
               children: [
+                if (value.h2hAvailability == 'STALE')
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'Historial guardado · Actualización pendiente',
+                      key: ValueKey('preview-h2h-stale-notice'),
+                      style: TextStyle(color: muted, fontSize: 12),
+                    ),
+                  ),
                 for (var i = 0; i < meetings.length; i++) ...[
                   _MeetingRow(
                     item: meetings[i],
@@ -819,7 +828,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
       children: [
         const EmptyState(
           'Cara a cara no disponible',
-          'No pudimos cargar esta sección.',
+          'Datos no disponibles por ahora.',
           icon: Icons.compare_arrows_rounded,
         ),
         if (widget.onRetry != null)
@@ -831,6 +840,20 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
       ],
     ),
     data: _content,
+  );
+
+  Widget _pendingHistory() => Column(
+    key: const ValueKey('h2h-pending'),
+    children: [
+      const _H2hMessage('Historial pendiente de actualización'),
+      if (widget.onRetry != null)
+        OutlinedButton.icon(
+          key: const ValueKey('h2h-retry-pending'),
+          onPressed: widget.onRetry,
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Actualizar'),
+        ),
+    ],
   );
 
   Widget _content(MatchPreview value) {
@@ -866,14 +889,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
           key: ValueKey('h2h-no-source'),
         ),
         // PENDING / STALE without rows: coverage still arriving.
-        _ => const Column(
-          key: ValueKey('h2h-pending'),
-          children: [
-            _Skeleton(lines: 2),
-            SizedBox(height: 10),
-            Text('Cargando historial', style: TextStyle(color: muted)),
-          ],
-        ),
+        _ => _pendingHistory(),
       };
     }
     final base = _thisCompetition
@@ -945,6 +961,15 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
             ),
           ),
         const SizedBox(height: 12),
+        if (availability == 'STALE' && pages.isEmpty && visible.isNotEmpty)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Historial guardado · Actualización pendiente',
+              key: ValueKey('h2h-stale-notice'),
+              style: TextStyle(color: muted, fontSize: 12),
+            ),
+          ),
         if (showCurrent) ...[
           _MeetingRow(
             key: const ValueKey('h2h-current'),
@@ -960,10 +985,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
           // history is still being fetched (or has no source) never reads
           // as confirmed empty just because a current match exists.
           switch (availability) {
-            'PENDING' || 'STALE' => const _H2hMessage(
-              'Cargando historial',
-              key: ValueKey('h2h-pending'),
-            ),
+            'PENDING' || 'STALE' => _pendingHistory(),
             'UNAVAILABLE' => const _H2hMessage(
               'Historial no disponible',
               key: ValueKey('h2h-no-source'),

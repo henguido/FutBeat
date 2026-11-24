@@ -139,7 +139,7 @@ void main() {
       await _tab(tester, 'Alineación');
 
       expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
+        find.text('Alineaciones no disponibles para este partido'),
         findsNothing,
       );
       // Starters sit on the pitch (silhouette/photo + surname); bench shows
@@ -199,7 +199,7 @@ void main() {
     await _open(tester, container);
     await _tab(tester, 'Alineación');
     expect(
-      find.text('Todavía no hay alineaciones disponibles.'),
+      find.text('Alineaciones no disponibles para este partido'),
       findsOneWidget,
     );
     await _tab(tester, 'Estadísticas');

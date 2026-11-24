@@ -191,7 +191,7 @@ test('results reconciliation: a reset answer never replaces a final, and closes 
   const b = await seedMatch(db, { status: 'SCHEDULED', score: null, received: hoursAgo(40) });
   await observe(db, b, realB);
   await reconcile(b);
-  assert.deepEqual(await stored(db, b), { status: 'FINISHED_PENDING_VERIFICATION', score: S(1, 2), corrected: null });
+  assert.deepEqual(await stored(db, b), { status: 'VERIFIED', score: S(1, 2), corrected: null });
   // A legitimate correction through the reconciliation still applies.
   await observe(db, a, fin(['6', '2'], ['6', '2']), { received: new Date().toISOString() });
   await reconcile(a);

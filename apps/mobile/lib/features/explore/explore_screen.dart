@@ -213,12 +213,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         : hasQuery
         ? _matching(data?.players, data, visibleQuery, local: localResults)
         : suggestAvailablePlayers(
-            remote:
-                ref
-                    .watch(playerSuggestionsProvider(followedTeamsKey(follows)))
-                    .asData
-                    ?.value ??
-                const <Entity>[],
+            remote: const <Entity>[],
             loaded: data?.players ?? const <Entity>[],
             follows: follows,
             country: country,
@@ -322,8 +317,8 @@ List<Entity> suggestAvailablePlayers({
   String? country,
 }) {
   final byId = <String, Entity>{};
-  for (final player in [...remote, ...loaded]) {
-    byId.putIfAbsent(player.id, () => player);
+  for (final player in uniquePlayerEntities([...remote, ...loaded])) {
+    byId[player.id] = player;
   }
   int rank(Entity player) {
     if (follows.contains('player:${player.id}')) return 0;
@@ -511,7 +506,7 @@ class _ModeHeader extends StatelessWidget {
                 'player' => 'Jugadores que coinciden.',
                 _ => 'Equipos, jugadores y competiciones que coinciden.',
               }
-            : 'Sugerencias reales según tu país y tus intereses.',
+            : 'Equipos, jugadores y competiciones para descubrir.',
         style: const TextStyle(color: muted, height: 1.35),
       ),
     ],
@@ -671,7 +666,7 @@ class _LoadError extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const EmptyState(
-            'No pudimos cargar los resultados.',
+            'Búsqueda no disponible por ahora',
             'Intenta nuevamente.',
             icon: Icons.cloud_off_outlined,
           ),
@@ -696,9 +691,7 @@ class _InlineError extends StatelessWidget {
           const Icon(Icons.cloud_off_outlined, color: muted),
           const SizedBox(width: 10),
           const Expanded(
-            child: Text(
-              'No pudimos actualizar. Conservamos los resultados disponibles.',
-            ),
+            child: Text('Resultados guardados · Actualización pendiente'),
           ),
           TextButton(onPressed: onRetry, child: const Text('Reintentar')),
         ],

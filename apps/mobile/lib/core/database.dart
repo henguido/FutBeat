@@ -6,6 +6,11 @@ part 'database.g.dart';
 
 const _selectedCountryUnchanged = Object();
 
+String localDatabaseName(String authOrigin) =>
+    Uri.tryParse(authOrigin)?.host == 'wctxcnqcblgewaznxrqh.supabase.co'
+    ? 'futbeat_g1_qa'
+    : 'futbeat';
+
 class Follows extends Table {
   TextColumn get entityId => text()();
   TextColumn get entityType => text()();
@@ -67,7 +72,14 @@ class CatalogSnapshots extends Table {
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor])
-    : super(executor ?? driftDatabase(name: 'futbeat'));
+    : super(
+        executor ??
+            driftDatabase(
+              name: localDatabaseName(
+                const String.fromEnvironment('FUTBEAT_SUPABASE_URL'),
+              ),
+            ),
+      );
   DateTime? _lastPublicPruneAt;
   @override
   int get schemaVersion => 5;
@@ -492,6 +504,23 @@ class AppDatabase extends _$AppDatabase {
           ..limit(maxPublicSnapshots))
         .get();
   }
+
+  /// Public display metadata already read by Explore/search/profiles. Never
+  /// restores follows, account settings or private catalogs.
+  Future<List<CatalogSnapshot>> readKnownEntityCatalogs() =>
+      (select(catalogSnapshots)
+            ..where(
+              (row) =>
+                  row.cacheKey.like('public:entity:%') |
+                  row.cacheKey.like('public:match-detail:%') |
+                  row.cacheKey.equals('public:favorite-metadata') |
+                  row.cacheKey.equals('explore') |
+                  row.cacheKey.like('explore:%') |
+                  row.cacheKey.like('search:%'),
+            )
+            ..orderBy([(row) => OrderingTerm.desc(row.savedAt)])
+            ..limit(maxPublicSnapshots))
+          .get();
 
   Future<void> _pruneExpiredPublicSnapshots() async {
     final now = DateTime.now().toUtc();

@@ -1,4 +1,7 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
+import { readUndeployedSource, importUndeployedModule } from './helpers/undeployed_sources.mjs';
+// Explicitly tests preserved, NOT deployed main follow-up behavior.
+const test = (name, ...args) => nodeTest('undeployed follow-up: ' + name, ...args);
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
@@ -10,7 +13,7 @@ import * as calendarCache from '../../supabase/functions/_shared/calendar_cache.
 // follows; the server only reads the central store.
 
 async function api(answer) {
-  const source = await readFile(new URL('../../supabase/functions/futbeat-api/index.ts', import.meta.url), 'utf8');
+  const source = await readUndeployedSource('supabase/functions/futbeat-api/index.ts');
   const calls = [];
   const ctx = { supabaseAdmin: { rpc: async (name, args) => {
     if (name === 'futbeat_read_national_teams') return { data: null, error: null };

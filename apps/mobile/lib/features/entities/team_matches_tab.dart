@@ -41,6 +41,9 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
   final _pages = {
     for (final bucket in TeamMatchesBucket.values) bucket: <TeamMatchesPage>[],
   };
+  final _retained = {
+    for (final bucket in TeamMatchesBucket.values) bucket: <ProfileMatch>[],
+  };
   final _loading = <TeamMatchesBucket>{};
   final _failed = <TeamMatchesBucket>{};
   ApiRepository? _api;
@@ -73,6 +76,9 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
       for (final pages in _pages.values) {
         pages.clear();
       }
+      for (final matches in _retained.values) {
+        matches.clear();
+      }
       _loading.clear();
       _failed.clear();
     });
@@ -93,11 +99,11 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
     }
   }
 
-  Future<void> _load(TeamMatchesBucket bucket) async {
+  Future<void> _load(TeamMatchesBucket bucket, {bool refresh = false}) async {
     final api = _api;
     final pages = _pages[bucket]!;
     if (api == null || _loading.contains(bucket)) return;
-    if (pages.isNotEmpty && !pages.last.hasMore) return;
+    if (!refresh && pages.isNotEmpty && !pages.last.hasMore) return;
     final generation = _generation;
     final filter = _filter;
     setState(() {
@@ -108,12 +114,28 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
       final page = await api.loadTeamMatches(
         widget.team.id,
         bucket.wire,
-        cursor: pages.lastOrNull?.nextCursor,
+        cursor: refresh ? null : pages.lastOrNull?.nextCursor,
         competitionId: filter?.competitionId,
         season: filter?.seasonParam,
       );
       if (mounted && generation == _generation) {
-        setState(() => pages.add(page));
+        setState(() {
+          if (refresh) {
+            // A partial refresh can temporarily omit previously paged rows.
+            // Retain their rendering data separately from the new cursor.
+            _retained[bucket] = _incomplete(page)
+                ? orderedProfileMatches(bucket, [
+                    for (final old in pages)
+                      for (final m in old.data.matches)
+                        (match: m, data: old.data),
+                    ..._retained[bucket]!,
+                  ])
+                : [];
+            pages.clear();
+          }
+          if (!_incomplete(page)) _retained[bucket]!.clear();
+          pages.add(page);
+        });
       }
     } catch (_) {
       if (mounted && generation == _generation) {
@@ -135,19 +157,30 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
 
   List<ProfileMatch> _items(TeamMatchesBucket bucket) {
     final pages = _pages[bucket]!;
-    return orderedProfileMatches(
-      bucket,
-      pages.isEmpty
-          ? [
-              for (final m in widget.matches)
-                if (_inFilter(m)) (match: m, data: widget.data),
-            ]
-          : [
-              for (final page in pages)
-                for (final m in page.data.matches) (match: m, data: page.data),
-            ],
-    );
+    final incomplete = _pendingCoverage(bucket);
+    return orderedProfileMatches(bucket, [
+      for (final page in pages)
+        for (final m in page.data.matches) (match: m, data: page.data),
+      // A settled PENDING/STALE answer is not an authoritative deletion.
+      // Keep known profile fixtures until central coverage is complete;
+      // page rows win by ID, including later score corrections.
+      if (pages.isEmpty || incomplete) ...[
+        ..._retained[bucket]!,
+        for (final m in widget.matches)
+          if (_inFilter(m)) (match: m, data: widget.data),
+      ],
+    ]);
   }
+
+  bool _pendingCoverage(TeamMatchesBucket bucket) {
+    final last = _pages[bucket]!.lastOrNull;
+    return last != null && _incomplete(last);
+  }
+
+  bool _incomplete(TeamMatchesPage page) =>
+      page.historyRequested ||
+      page.coverageState == 'PENDING' ||
+      page.coverageState == 'STALE';
 
   @override
   Widget build(BuildContext context) {
@@ -195,9 +228,11 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
   String _emptyCopy(TeamMatchesBucket bucket, String fallback) {
     final last = _pages[bucket]!.lastOrNull;
     // Recent window confirmed empty, older history being asked: not final.
-    if (last != null && last.historyRequested) return 'Cargando historial';
+    if (last != null && last.historyRequested) {
+      return 'Historial pendiente de actualización';
+    }
     return switch (last?.coverageState) {
-      'PENDING' => 'Cargando partidos',
+      'PENDING' || 'STALE' => 'Partidos pendientes de actualización',
       'UNAVAILABLE' => 'Partidos no disponibles',
       _ => fallback,
     };
@@ -210,6 +245,7 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
     final loading = _loading.contains(bucket);
     final failed = _failed.contains(bucket);
     final more = pages.isNotEmpty && pages.last.hasMore;
+    final pending = _pendingCoverage(bucket);
     if (empty == null && items.isEmpty) return const [];
     return [
       ProfileSectionTitle(title),
@@ -221,6 +257,14 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
         )
       else
         for (final item in items) _DatedMatch(item, teamId: widget.team.id),
+      if (pending && items.isNotEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 6),
+          child: Text(
+            'Actualización de partidos pendiente',
+            style: TextStyle(color: muted),
+          ),
+        ),
       if (loading && (items.isEmpty || more))
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 10),
@@ -230,8 +274,22 @@ class _TeamMatchesTabState extends ConsumerState<TeamMatchesTab> {
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
           ),
-        )
-      else if (more || failed)
+        ),
+      if (pending)
+        Center(
+          child: TextButton(
+            key: ValueKey('team-matches-refresh-${bucket.wire}'),
+            onPressed: loading ? null : () => _load(bucket, refresh: true),
+            child: Text(
+              loading
+                  ? 'Actualizando…'
+                  : failed
+                  ? 'Reintentar'
+                  : 'Actualizar',
+            ),
+          ),
+        ),
+      if (!loading && (more || (failed && !pending)))
         Center(
           child: TextButton(
             key: ValueKey('team-matches-more-${bucket.wire}'),

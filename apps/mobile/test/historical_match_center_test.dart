@@ -228,6 +228,12 @@ Future<void> _close(WidgetTester tester, ProviderContainer container) async {
 }
 
 Future<void> _tab(WidgetTester tester, String label) async {
+  // The historical timeline now has its own name, never a LIVE label.
+  if (label == 'En vivo' &&
+      find.text('En vivo').evaluate().isEmpty &&
+      find.text('Eventos').evaluate().isNotEmpty) {
+    label = 'Eventos';
+  }
   final tab = find.descendant(
     of: find.byType(TabBar),
     matching: find.text(label),
@@ -290,7 +296,7 @@ void main() {
     await _tab(tester, 'Alineación');
     expect(find.text('Cargando alineaciones…'), findsNothing);
     expect(
-      find.text('No se pudo conectar. Alineaciones no disponibles.'),
+      find.text('Sin conexión. No hay alineaciones guardadas.'),
       findsOneWidget,
     );
     await _tab(tester, 'Estadísticas');
@@ -314,7 +320,10 @@ void main() {
     await _tab(tester, 'En vivo');
     expect(find.text('Anotador Parcial'), findsWidgets);
     await _tab(tester, 'Alineación');
-    expect(find.text('Cargando alineaciones…'), findsOneWidget);
+    expect(
+      find.text('Alineaciones no disponibles para este partido'),
+      findsOneWidget,
+    );
     await _elapse(tester, const Duration(minutes: 2));
     await _close(tester, container);
   });
@@ -369,7 +378,10 @@ void main() {
     final container = await _open(tester, server);
     expect(server.detailCalls, [true], reason: 'no read-then-request');
     await _tab(tester, 'Alineación');
-    expect(find.text('Cargando alineaciones…'), findsOneWidget);
+    expect(
+      find.text('Alineaciones no disponibles para este partido'),
+      findsOneWidget,
+    );
     await _elapse(tester, const Duration(milliseconds: 2500));
     expect(server.detailCalls, [true, false]);
     expect(
@@ -419,14 +431,17 @@ void main() {
         reason: 'long cron-fallback rechecks continue silently',
       );
       expect(
-        find.text('Cargando alineaciones…'),
+        find.text('Alineaciones no disponibles para este partido'),
         findsOneWidget,
         reason:
             'the section may still wait while the global busy signal is gone',
       );
       await _elapse(tester, const Duration(seconds: 51));
       expect(server.detailCalls, [true, false, false, false, false]);
-      expect(find.text('Cargando alineaciones…'), findsOneWidget);
+      expect(
+        find.text('Alineaciones no disponibles para este partido'),
+        findsOneWidget,
+      );
       await _elapse(tester, const Duration(seconds: 10));
       expect(server.detailCalls.length, 6);
       expect(
@@ -509,7 +524,7 @@ void main() {
     expect(server.readOnly, _scheduleLength);
     await _tab(tester, 'Alineación');
     expect(
-      find.text('Todavía no hay alineaciones disponibles.'),
+      find.text('Alineaciones no disponibles para este partido'),
       findsOneWidget,
     );
     expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -552,7 +567,7 @@ void main() {
     expect(find.text('Tiros a puerta'), findsWidgets);
     await _tab(tester, 'Alineación');
     expect(
-      find.text('Todavía no hay alineaciones disponibles.'),
+      find.text('Alineaciones no disponibles para este partido'),
       findsOneWidget,
     );
     await _close(tester, container);
@@ -1228,7 +1243,10 @@ void main() {
     expect(find.text('4-3-3'), findsOneWidget);
     expect(find.text('Titulares no disponibles'), findsOneWidget);
     expect(find.text('Cargando alineaciones…'), findsNothing);
-    expect(find.text('Todavía no hay alineaciones disponibles.'), findsNothing);
+    expect(
+      find.text('Alineaciones no disponibles para este partido'),
+      findsNothing,
+    );
     await _close(tester, container);
   });
 
@@ -1296,7 +1314,7 @@ void main() {
       expect(find.text('Anotador Parcial'), findsWidgets);
       await _tab(tester, 'Alineación');
       expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
+        find.text('Alineaciones no disponibles para este partido'),
         findsOneWidget,
       );
       expect(find.byType(CircularProgressIndicator), findsNothing);

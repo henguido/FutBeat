@@ -529,7 +529,7 @@ void main() {
     await _pumpPlayer(tester, payload);
     expect(find.byType(Image), findsNothing);
     expect(find.text('DE'), findsOneWidget);
-    expect(find.text('Sin equipo'), findsOneWidget);
+    expect(find.text('Equipo por confirmar'), findsOneWidget);
     expect(find.text('Datos no disponibles'), findsOneWidget);
     expect(find.text('Equipo no disponible'), findsOneWidget);
     expect(find.text('Temporada actual'), findsNothing);

@@ -10,19 +10,24 @@ typedef UserApiSessionReader = Future<UserApiSession?> Function({
 
 /// Shared bounded stored-read transport: API277 Preview or user-session API.
 /// Construct on a dedicated Dio before it can send any request.
+/// Preview keeps its supervised 8/min, 30/15min ceiling. Normal authenticated
+/// app navigation has a separate bounded stored-read budget (30/min,120/15min).
+/// Both keep concurrency=2, server Retry-After, scope isolation and auth guards.
 class PassivePreviewTransport extends Interceptor {
   PassivePreviewTransport({
     required this.baseUri,
     String? clientKey,
     DateTime Function()? clock,
-    this.sessionLimit = 30,
-    this.minuteLimit = 8,
+    int? sessionLimit,
+    int? minuteLimit,
     this.concurrentLimit = 2,
     this.userSession,
     this.currentScope,
     this.retryClient,
     this.publishableKey,
-  }) : _clock = clock ?? DateTime.now,
+  }) : sessionLimit = sessionLimit ?? (userSession == null ? 30 : 120),
+       minuteLimit = minuteLimit ?? (userSession == null ? 8 : 30),
+       _clock = clock ?? DateTime.now,
        _clientKey = clientKey {
     if (baseUri.scheme != 'https' ||
         baseUri.host.isEmpty ||
@@ -40,10 +45,10 @@ class PassivePreviewTransport extends Interceptor {
                       .hasMatch(publishableKey ?? '')) ||
         (clientKey != null &&
             RegExp(r'^[!-~]{16,200}$').stringMatch(clientKey) != clientKey) ||
-        sessionLimit < 1 ||
-        sessionLimit > 30 ||
-        minuteLimit < 1 ||
-        minuteLimit > 8 ||
+        this.sessionLimit < 1 ||
+        this.sessionLimit > (userSession == null ? 30 : 120) ||
+        this.minuteLimit < 1 ||
+        this.minuteLimit > (userSession == null ? 8 : 30) ||
         concurrentLimit < 1 ||
         concurrentLimit > 2) {
       throw ArgumentError('Invalid passive Preview transport policy');

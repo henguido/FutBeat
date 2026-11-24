@@ -397,5 +397,5 @@ test('results-only worker completes the kickoff-correction case end to end (func
     "select payload->>'status' s from futbeat_private.entities where id in (select canonical_id from futbeat_private.provider_entities where provider='goal_api' and external_id=$1)",
     [external],
   )).rows[0].s;
-  assert.equal(status, 'FINISHED_PENDING_VERIFICATION');
+  assert.equal(status, 'VERIFIED');
 }));

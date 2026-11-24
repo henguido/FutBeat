@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { openDatabase } from '../storage/database.mjs';
 
 // Differential check for 20260930125000: reconcile_goal_results_local before
-// (20260922230000, the body running in production) and after must write
+// (20260922230000) and the historical score-normalization body must write
 // exactly the same thing whenever a GOAL answer is coherent (running total =
 // result). Only the score source changed; selection, lifecycle, evidence
 // time, provenance, called-off handling, events and the unresolved /
@@ -15,6 +15,10 @@ const original = (await readFile(new URL('../../supabase/migrations/202609222300
   .replace(/\r\n/g, '\n');
 const start = original.indexOf('create or replace function futbeat_private.reconcile_goal_results_local(p_provider_date date)');
 const originalReconcile = original.slice(start, original.indexOf('\nend $$;', start) + '\nend $$;'.length);
+const historicalTarget = (await readFile(new URL('../../supabase/migrations/20260930125000_goal_terminal_score_semantics.sql',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
+const targetStart = historicalTarget.toLowerCase().indexOf('create or replace function futbeat_private.reconcile_goal_results_local');
+assert.ok(targetStart >= 0);
+const scoreReconcile = historicalTarget.slice(targetStart,historicalTarget.indexOf('\nend $$;',targetStart)+'\nend $$;'.length);
 
 // Deterministic PRNG (mulberry32).
 function rng(seed) {
@@ -101,12 +105,13 @@ async function snapshot(db, day) {
   return { matches, states, coverage };
 }
 
-test('reconcile_goal_results_local: identical to the production body for every coherent answer (differential, 3 x 120 scenarios)', async () => {
+test('reconcile_goal_results_local: historical score-normalization preserves every coherent answer (differential, 3 x 120 scenarios)', async () => {
   for (const seedValue of [1, 7, 42]) {
     const before = await openDatabase();
     const after = await openDatabase();
     try {
       await before.exec(originalReconcile);
+      await after.exec(scoreReconcile);
       const day = (await after.query("select (current_date-3)::text d")).rows[0].d;
       const list = scenarios(seedValue, 120, day);
       for (const db of [before, after]) {

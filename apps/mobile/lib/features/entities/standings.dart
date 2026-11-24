@@ -66,7 +66,10 @@ Set<String> standingsLabelTokens(String? text) {
 /// Only a provider-backed, positive integral position is a position. Missing or
 /// malformed ranks stay unknown; array order is not classification evidence.
 int? _standingsPosition(Object? value) =>
-    value is num && value.isFinite && value > 0 && value == value.roundToDouble()
+    value is num &&
+        value.isFinite &&
+        value > 0 &&
+        value == value.roundToDouble()
     ? value.toInt()
     : null;
 
@@ -122,8 +125,7 @@ List<StandingsGroup>? standingsGroups(
   }
   for (final group in groups.values) {
     final positions = [
-      for (final row in group)
-        ?_standingsPosition(row['position']),
+      for (final row in group) ?_standingsPosition(row['position']),
     ];
     final teams = [
       for (final row in group)
@@ -204,7 +206,9 @@ List<StandingsGroup>? standingsGroups(
 
   bool namedByMatchStage(StandingsGroup group) {
     if (regularStageHasExactPhase(group)) return true;
-    final tokens = standingsLabelTokens(group.stage ?? group.group ?? group.label);
+    final tokens = standingsLabelTokens(
+      group.stage ?? group.group ?? group.label,
+    );
     return tokens.isNotEmpty && matchStageTokens.containsAll(tokens);
   }
 
@@ -278,6 +282,15 @@ List<StandingsGroup>? standingsGroups(
   return own.any((group) => group.label == null || !matchesMatchStage(group))
       ? null
       : own;
+}
+
+/// Presentation only: internal provider tokens never alter phase selection.
+String standingsDisplayLabel(String label) {
+  final parts = label
+      .split(' · ')
+      .where((part) => part.trim().toLowerCase() != 'current')
+      .toList();
+  return parts.isEmpty ? 'Clasificación general' : parts.join(' · ');
 }
 
 String? _standingsGroupLabel({
@@ -646,7 +659,7 @@ class _StandingsState extends State<Standings> {
               Padding(
                 padding: EdgeInsets.only(top: g == 0 ? 0 : 14, bottom: 6),
                 child: Text(
-                  groups[g].label!,
+                  standingsDisplayLabel(groups[g].label!),
                   key: ValueKey('standings-group-${groups[g].label}'),
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),

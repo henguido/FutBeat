@@ -115,7 +115,7 @@ test('grouped historical results close a scheduled match and preserve canonical 
     const payload = (await db.query(
       'select payload from futbeat_private.entities where id=$1', [match],
     )).rows[0].payload;
-    assert.equal(payload.status, 'FINISHED_PENDING_VERIFICATION');
+    assert.equal(payload.status, 'VERIFIED');
     assert.deepEqual(payload.score, { home: 2, away: 1 });
     assert.ok(payload.events.some((event) => event.type === 'GOAL'));
     assert.equal(new Set(payload.events.map((event) => event.id)).size, payload.events.length);
@@ -167,7 +167,7 @@ test('date without coverage is discovered and repaired from stored observations'
     const payload = (await db.query(
       'select payload from futbeat_private.entities where id=$1', [match],
     )).rows[0].payload;
-    assert.equal(payload.status, 'FINISHED_PENDING_VERIFICATION');
+    assert.equal(payload.status, 'VERIFIED');
     assert.deepEqual(payload.score, { home: 2, away: 1 });
     assert.ok(payload.events.some((event) => event.type === 'GOAL'));
     assert.equal((await db.query(
@@ -313,14 +313,14 @@ test('newer finished evidence closes suspended, while finished never degrades', 
     await db.query('select public.futbeat_reconcile_goal_results_local($1)', [date]);
     assert.equal((await db.query(
       'select payload->>\'status\' status from futbeat_private.entities where id=$1', [match],
-    )).rows[0].status, 'FINISHED_PENDING_VERIFICATION');
+    )).rows[0].status, 'VERIFIED');
     await insertStoredObservation(db, {
       match, external: 'newer-postponed', status: 'POSTPONED', receivedAt: new Date(Date.now() + 1000).toISOString(), hashChar: 'b',
     });
     await db.query('select public.futbeat_reconcile_goal_results_local($1)', [date]);
     assert.equal((await db.query(
       'select payload->>\'status\' status from futbeat_private.entities where id=$1', [match],
-    )).rows[0].status, 'FINISHED_PENDING_VERIFICATION');
+    )).rows[0].status, 'VERIFIED');
   } finally {
     await db.close();
   }
@@ -484,7 +484,7 @@ test('local repair is quota-independent, idempotent, and old dates stay outside 
     assert.equal(again.updated, 0);
     assert.equal((await db.query(
       'select payload->>\'status\' status from futbeat_private.entities where id=$1', [match],
-    )).rows[0].status, 'FINISHED_PENDING_VERIFICATION');
+    )).rows[0].status, 'VERIFIED');
 
     const oldDate = historicalDate(20);
     await seedMatch(db, { date: oldDate, coverage: false, suffix: '_old' });
@@ -600,7 +600,7 @@ test('closed date reopens for a new fixture, relocated fixture, and late missing
   await insertStoredObservation(db,{match:'fb_match_results_test_late',status:'FINISHED_PENDING_VERIFICATION',receivedAt:new Date().toISOString(),home:3,away:1,hashChar:'b'});
   assert.equal((await plan()).reason,'reconciled_locally');
   const repaired=(await db.query("select payload from futbeat_private.entities where id='fb_match_results_test_late'")).rows[0].payload;
-  assert.equal(repaired.status,'FINISHED_PENDING_VERIFICATION');
+  assert.equal(repaired.status,'VERIFIED');
   assert.deepEqual(repaired.score,{home:3,away:1});
   const moved=await seedMatch(db,{date:historicalDate(1),coverage:false,suffix:'_moved'});
   await db.query("update futbeat_private.entities set payload=jsonb_set(payload,'{startTime}',to_jsonb($2::text)) where id=$1",[moved.match,date+'T20:00:00Z']);
@@ -774,7 +774,10 @@ test('planner uses UTC index ranges and attempts older than 90 days are pruned',
     const source = (await db.query("select prosrc from pg_proc where oid='futbeat_private.next_goal_results_candidate()'::regprocedure")).rows[0].prosrc;
     assert.doesNotMatch(source, /start_time\s*::\s*date/i);
     await db.exec('set enable_seqscan=off');
-    const plan = await db.query('explain (format json) '+source);
+    // RD57 made the planner PL/pgSQL; EXPLAIN its actual bounded existence query.
+    const rangeQuery = source.match(/if exists \(\s*(select 1[\s\S]+?)\) then/i)?.[1];
+    assert.ok(rangeQuery, 'the planner retains an indexed per-date existence query');
+    const plan = await db.query('explain (format json) '+rangeQuery.replace(/\bv_date\b/g,'$1::date'),[date]);
     assert.match(JSON.stringify(plan.rows), /calendar_matches_start_time_idx/);
     await db.query("insert into futbeat_private.results_date_attempts(provider,provider_date) values('goal_api',$1),('goal_api',$2)", [historicalDate(91),historicalDate(90)]);
     await db.query("select public.futbeat_reserve_goal_results_date('test')");

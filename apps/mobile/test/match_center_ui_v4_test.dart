@@ -331,7 +331,7 @@ void main() {
       expect(find.text('Suplente Local'), findsOneWidget);
       expect(find.text('Entrenador Local'), findsOneWidget);
       expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
+        find.text('Alineaciones aún no publicadas'),
         findsNothing,
       );
       expect(find.text('Equipo Visitante'), findsNothing);
@@ -373,7 +373,7 @@ void main() {
       expect(find.text('Entrenador Visitante'), findsOneWidget);
       expect(find.text('Titulares'), findsNothing);
       expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
+        find.text('Alineaciones aún no publicadas'),
         findsNothing,
       );
       expect(tester.takeException(), isNull);
@@ -491,7 +491,7 @@ void main() {
       );
       expect(find.text('Cargando alineaciones.'), findsNothing);
       expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
+        find.text('Alineaciones aún no publicadas'),
         findsOneWidget,
       );
     },
@@ -562,7 +562,14 @@ void main() {
             {'id': 'home-12', 'name': 'Suplente local', 'number': 12},
             {'id': 'home-13', 'name': 'Segunda local', 'number': 13},
           ],
-          'coach': {'name': 'Entrenadora Local'},
+          'coach': {
+            'id': 'coach-home',
+            'name': 'Entrenadora Local',
+            'media': {
+              'verificationStatus': 'VERIFIED',
+              'url': 'https://media.example.test/coach-home.png',
+            },
+          },
         },
         'away': {
           'formation': '4-2-3-1',
@@ -608,6 +615,13 @@ void main() {
       expect(find.text('4-2-3-1'), findsWidgets);
       expect(find.byKey(const ValueKey('lineup-Local-coach')), findsOneWidget);
       expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('lineup-Local-coach')),
+          matching: find.byKey(const ValueKey('lineup-photo-coach-home')),
+        ),
+        findsOneWidget,
+      );
+      expect(
         find.byKey(const ValueKey('lineup-Visitante-coach')),
         findsOneWidget,
       );
@@ -630,8 +644,9 @@ void main() {
       final awayGoalkeeper = tester.getRect(
         find.byKey(const ValueKey('lineup-pitch-away-away-1')),
       );
-      expect(homeHalf.height, lineupPitchHalfHeight);
-      expect(awayHalf.height, lineupPitchHalfHeight);
+      expect(homeHalf.height, greaterThanOrEqualTo(lineupPitchHalfHeight));
+      expect(homeHalf.height, lessThan(524));
+      expect(awayHalf.height, homeHalf.height);
       expect(homeGoalkeeper.top, greaterThanOrEqualTo(homeHalf.top));
       expect(homeGoalkeeper.top, lessThan(homeForward.top));
       expect(
@@ -659,7 +674,7 @@ void main() {
         ),
         findsNothing,
       );
-      expect(find.byType(Image), findsNWidgets(2));
+      expect(find.byType(Image), findsNWidgets(4));
       for (final image in tester.widgetList<Image>(find.byType(Image))) {
         expect(image.errorBuilder, isNotNull);
         expect(

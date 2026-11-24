@@ -1,0 +1,39 @@
+{
+  "policy": "Historical main follow-up only. Not deployed; not mixed into production runtime. Tests reconstruct these exact sources from preserved patches.",
+  "head": "8a37e913abce5a0a1b1df291214e98f8ffaf91df",
+  "files": [
+    {
+      "path": "supabase/functions/futbeat-global-ingest/index.ts",
+      "baseSha256": "ba02a1bdbd655da91c3dedebfd80fe12a9d73f0afb2e625daa81d0ef1a63e326",
+      "targetSha256": "1bee6f98a0747b13801604f8c4ae10cf39128d033915c473aa33d0c5a72086b1",
+      "patch": "supabase/undeployed/global-ingest-main-followup.patch",
+      "baseReplacements": []
+    },
+    {
+      "path": "backend/providers/goal_api.mjs",
+      "baseSha256": "7c9b2df67ffd58eb9b08aeba37b8eb9286fe65ffc3055c8613a19c5a201aa427",
+      "targetSha256": "aa830e13f01af403b31c9150a348a3f091392b736d0a7e8813fedeadac6d7e3d",
+      "patch": "supabase/undeployed/global-ingest-main-followup.patch",
+      "baseReplacements": []
+    },
+    {
+      "path": "backend/providers/goal_api_players.mjs",
+      "baseSha256": "3a3303883968a109dbe88da250de8187e48c47b2e7e55d069f7781ced33aea84",
+      "targetSha256": "a7a650439bdb1d8e792cbc13c8ccc6ab65cc3788bd961bfdbe71c84006b14049",
+      "patch": "supabase/undeployed/global-ingest-main-followup.patch",
+      "baseReplacements": []
+    },
+    {
+      "path": "supabase/functions/futbeat-api/index.ts",
+      "baseSha256": "66bb988c6b947a8d887feab1f52aca9d149923ad1c9db35e407c1623976dd586",
+      "targetSha256": "638aafa3694171ee7620695960ba306c8c5ecc1d33d6d1e0f3b4d92eb6bf25f5",
+      "patch": "supabase/undeployed/futbeat-api-main-news.patch",
+      "baseReplacements": [
+        [
+          "../_shared/deployed/match_detail.api-v50.ts",
+          "../_shared/match_detail.ts"
+        ]
+      ]
+    }
+  ]
+}

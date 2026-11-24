@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 
 import '../../core/theme.dart';
 
@@ -10,7 +11,8 @@ const profileHeaderBottom = Color(0xFF0F181C);
 const profileCardBorder = Color(0xFF2B373D);
 
 /// Compact pinned tab bar shared by profile screens.
-TabBar profileTabBar(List<String> tabs) => TabBar(
+TabBar profileTabBar(List<String> tabs, {TabController? controller}) => TabBar(
+  controller: controller,
   isScrollable: true,
   tabAlignment: TabAlignment.start,
   labelPadding: const EdgeInsets.symmetric(horizontal: 14),
@@ -34,6 +36,52 @@ TabBar profileTabBar(List<String> tabs) => TabBar(
   dividerColor: Colors.transparent,
   tabs: [for (final tab in tabs) Tab(text: tab, height: 42)],
 );
+
+/// Coverage may add/remove a section while the profile is open. Preserve the
+/// selected section by name, rather than moving the user to the old index.
+class ProfileTabs extends StatefulWidget {
+  const ProfileTabs({required this.tabs, required this.builder, super.key});
+
+  final List<String> tabs;
+  final Widget Function(BuildContext, TabController) builder;
+
+  @override
+  State<ProfileTabs> createState() => _ProfileTabsState();
+}
+
+class _ProfileTabsState extends State<ProfileTabs>
+    with TickerProviderStateMixin {
+  late TabController controller;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = TabController(length: widget.tabs.length, vsync: this);
+  }
+
+  @override
+  void didUpdateWidget(ProfileTabs oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (listEquals(oldWidget.tabs, widget.tabs)) return;
+    final selected = oldWidget.tabs[controller.index];
+    final nextIndex = widget.tabs.indexOf(selected);
+    controller.dispose();
+    controller = TabController(
+      length: widget.tabs.length,
+      initialIndex: nextIndex < 0 ? 0 : nextIndex,
+      vsync: this,
+    );
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, controller);
+}
 
 class ProfileHeaderChip extends StatelessWidget {
   const ProfileHeaderChip({

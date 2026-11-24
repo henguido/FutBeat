@@ -398,7 +398,7 @@ void main() {
   });
 
   for (final (availability, key, copy) in [
-    ('PENDING', 'h2h-pending', 'Cargando historial'),
+    ('PENDING', 'h2h-pending', 'Historial pendiente de actualización'),
     ('UNAVAILABLE', 'h2h-no-source', 'Historial no disponible'),
     (
       'CONFIRMED_EMPTY',

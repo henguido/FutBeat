@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -18,6 +19,7 @@ async function seed(db, { status = 'SCHEDULED', minutes = 0 } = {}) {
       startTime: new Date(Date.now() + minutes * 60000).toISOString(), events: [], statistics: [] }],
   ]) await db.query('insert into futbeat_private.entities values($1,$2,$3)', [id, kind, JSON.stringify(payload)]);
   await db.query("insert into futbeat_private.provider_entities values('goal_api','match',$1,$2)", [ids.ext, ids.match]);
+  if (status === 'LIVE') await db.query(`insert into futbeat_private.coverage_interests(subject_type,subject_id,explicit_followers,priority_score,depth) values('team',$1,1,100,'DEEP')`,[ids.home]);
   return ids;
 }
 const lineups = { home: { startingLineups: [{ playerId: 'x', lineupPlayer: 'Synthetic' }] } };
@@ -35,6 +37,7 @@ const abundant = (db) => db.exec(`insert into futbeat_private.provider_call_ledg
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
   try { await fn(db); } finally { await db.close(); }
 }
 
@@ -202,7 +205,7 @@ test('a re-planned expired request keeps its source and quota class', () => with
 test('background planning stops at its share of the daily cap; LIVE and user opens keep the rest', () => withDb(async (db) => {
   // Known, abundant provider budget: only the background share applies.
   await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining)
-    select 'goal_api','match-detail','test','SUCCEEDED',50000 from generate_series(1,540)`);
+    select 'goal_api','match-detail','test','SUCCEEDED',50000 from generate_series(1,(select floor((kind_daily_caps->>'match-detail')::int*0.6)::int from futbeat_private.provider_quota_policy where provider='goal_api'))`);
   const recent = await seed(db, { status: 'VERIFIED', minutes: -300 });
   const live = await seed(db, { status: 'LIVE', minutes: -30 });
   assert.deepEqual(await plan(db, 5), [live.match], 'only LIVE is planned');
@@ -224,7 +227,7 @@ test('background planning stops at its share of the daily cap; LIVE and user ope
 
 test('planner LIVE work leaves a reserve of the daily cap for user opens and results', () => withDb(async (db) => {
   await db.exec(`insert into futbeat_private.provider_call_ledger(provider,call_kind,trigger_source,status,provider_remaining)
-    select 'goal_api','match-detail','test','SUCCEEDED',50000 from generate_series(1,770)`);
+    select 'goal_api','match-detail','test','SUCCEEDED',50000 from generate_series(1,(select floor((kind_daily_caps->>'match-detail')::int*0.85)::int from futbeat_private.provider_quota_policy where provider='goal_api'))`);
   const live = await seed(db, { status: 'LIVE', minutes: -30 });
   const opened = await seed(db, { status: 'LIVE', minutes: -50 });
   assert.deepEqual(await plan(db, 5), [], 'planner LIVE stops at the user reserve');

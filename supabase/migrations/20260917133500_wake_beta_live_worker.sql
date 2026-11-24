@@ -1,5 +1,7 @@
 do $$ declare live_command text; begin
  if to_regnamespace('cron') is null or to_regnamespace('net') is null or to_regnamespace('vault') is null then return; end if;
+ -- Fresh databases have no scheduler job until operator configuration is provided.
+ if not exists(select 1 from cron.job where jobname='futbeat-live-sync-free-tier') then return; end if;
  live_command:=$live$
  select net.http_post(url:='https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-live-sync',
   headers:=jsonb_build_object('Content-Type','application/json','Authorization','Bearer '||(select decrypted_secret from vault.decrypted_secrets where name='futbeat_push_public_jwt'),

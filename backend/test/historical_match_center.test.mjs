@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../storage/database.mjs';
@@ -11,6 +12,7 @@ import { normalizeMatchDetail } from '../../supabase/functions/_shared/match_det
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
   try { await fn(db); } finally { await db.close(); }
 }
 

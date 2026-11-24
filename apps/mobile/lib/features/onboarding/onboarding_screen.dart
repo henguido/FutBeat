@@ -1299,16 +1299,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         .where((item) => item.startsWith('team:'))
         .map((item) => item.substring(5))
         .toSet();
-    // Real squad players (followed teams, country, global clubs) first;
-    // the catalog's own players after them (deduplicated below).
-    final suggested = searchState == null
-        ? ref
-                  .watch(playerSuggestionsProvider(followedTeamsKey(follows)))
-                  .asData
-                  ?.value ??
-              const <Entity>[]
-        : const <Entity>[];
-    final source = [...suggested, ...?data?.players];
+    // Only players already supplied by the catalog/search are available.
+    // The backend has no dedicated player-recommendations route.
+    final source = data?.players ?? const <Entity>[];
     final country = ref.read(preferenceProvider).asData?.value.effectiveCountry;
     final sections = query.length >= 2
         ? [

@@ -30,7 +30,7 @@ String _newDeletionId() {
 
 extension _AccountDeletionReceipts on PushService {
   Future<String?> _receiptFor(String uid) async {
-    final raw = await storage.read(key: _deletionReceiptKey);
+    final raw = await storage.read(key: storageKey(_deletionReceiptKey));
     if (raw == null) return null;
     final receipt = jsonDecode(raw);
     if (receipt is! Map ||
@@ -122,7 +122,7 @@ extension _AccountDeletionReceipts on PushService {
         'startedAt': clock().toUtc().toIso8601String(),
         'phase': 'requested',
       });
-      await storage.write(key: _deletionReceiptKey, value: receipt);
+      await storage.write(key: storageKey(_deletionReceiptKey), value: receipt);
       if (await _receiptFor(uid) != id) {
         throw const AccountDeletionUnconfirmed(AccountDeletionStatus.unknown);
       }
@@ -185,7 +185,7 @@ extension _AccountDeletionReceipts on PushService {
       // This receipt may belong to a different user. Its status cannot prove
       // deletion of the current account.
       await storage.write(
-        key: _deletionReceiptKey,
+        key: storageKey(_deletionReceiptKey),
         value: jsonEncode({'uid': uid, 'deletionId': id, 'phase': 'conflict'}),
       );
       throw const AccountDeletionUnconfirmed(AccountDeletionStatus.unknown);
@@ -202,7 +202,7 @@ extension _AccountDeletionReceipts on PushService {
 
   Future<void> _forgetDeletionReceipt(String uid) async {
     if (await _receiptFor(uid) != null) {
-      await storage.delete(key: _deletionReceiptKey);
+      await storage.delete(key: storageKey(_deletionReceiptKey));
     }
   }
 }

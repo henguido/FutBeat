@@ -563,47 +563,53 @@ void main() {
     });
   }
 
-  testWidgets('25/26/29. PRE -> LIVE -> FINAL by refresh: same TabController '
-      'and selected tab, label follows', (tester) async {
-    final server = await _open(
-      tester,
-      snapshots: (read) => switch (read) {
-        0 => _snapshot(
-          status: 'SCHEDULED',
-          score: null,
-          kickoffOffset: const Duration(minutes: 5),
-        ),
-        1 => _snapshot(
-          status: 'LIVE',
-          minute: 3,
-          score: const {'home': 0, 'away': 0},
-        ),
-        _ => _snapshot(),
-      },
-    );
-    final bar = find.byType(TabBar);
-    final controller = tester.widget<TabBar>(bar).controller!;
-    expect(_inHero(find.text('PROGRAMADO')), findsOneWidget);
-    // Select Tabla without scrolling the hero away (ensureVisible would also
-    // scroll the outer NestedScrollView).
-    final tabla = tester
-        .widget<TabBar>(bar)
-        .tabs
-        .indexWhere((tab) => tab is Tab && tab.text == 'Tabla');
-    controller.animateTo(tabla);
-    await _settle(tester);
-    final index = controller.index;
-    expect(index, tabla);
-    for (final expected in ['3′ · EN VIVO', 'FINALIZADO']) {
-      _container!.invalidate(matchContextSnapshotProvider(_match));
+  testWidgets(
+    '25/26/29. PRE -> LIVE -> FINAL by refresh: canonical tabs preserve '
+    'and selected tab, label follows',
+    (tester) async {
+      final server = await _open(
+        tester,
+        snapshots: (read) => switch (read) {
+          0 => _snapshot(
+            status: 'SCHEDULED',
+            score: null,
+            kickoffOffset: const Duration(minutes: 5),
+          ),
+          1 => _snapshot(
+            status: 'LIVE',
+            minute: 3,
+            score: const {'home': 0, 'away': 0},
+          ),
+          _ => _snapshot(),
+        },
+      );
+      final bar = find.byType(TabBar);
+      final controller = tester.widget<TabBar>(bar).controller!;
+      expect(_inHero(find.text('PROGRAMADO')), findsOneWidget);
+      // Select Tabla without scrolling the hero away (ensureVisible would also
+      // scroll the outer NestedScrollView).
+      final tabla = tester
+          .widget<TabBar>(bar)
+          .tabs
+          .indexWhere((tab) => tab is Tab && tab.text == 'Tabla');
+      controller.animateTo(tabla);
       await _settle(tester);
-      expect(_inHero(find.text(expected)), findsOneWidget, reason: expected);
-      expect(tester.widget<TabBar>(bar).controller, same(controller));
-      expect(controller.index, index);
-    }
-    expect(server.contextReads, 3);
-    await _close(tester);
-  });
+      final index = controller.index;
+      expect(index, tabla);
+      for (final expected in ['3′ · EN VIVO', 'FINALIZADO']) {
+        _container!.invalidate(matchContextSnapshotProvider(_match));
+        await _settle(tester);
+        expect(_inHero(find.text(expected)), findsOneWidget, reason: expected);
+        final updatedBar = tester.widget<TabBar>(bar);
+        expect(
+          (updatedBar.tabs[updatedBar.controller!.index] as Tab).text,
+          'Tabla',
+        );
+      }
+      expect(server.contextReads, 3);
+      await _close(tester);
+    },
+  );
 
   testWidgets('27/28. rendering the hero reads no extra match detail', (
     tester,

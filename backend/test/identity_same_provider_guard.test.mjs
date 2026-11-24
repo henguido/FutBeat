@@ -37,9 +37,12 @@ test('a redirected alias holding the other id also blocks the name merge', () =>
   assert.notEqual(await resolve(db, 'goal_api', 'team', 'new-ext', 'River Plate'), 'fb_team_target');
 }));
 
-test('a corroborating country still lets a re-issued id of the same provider merge', () => withDb(async (db) => {
+test('id-guard: same provider IDs stay separate even with the same name and country', () => withDb(async (db) => {
   const first = await resolve(db, 'goal_api', 'team', 'ext-a', 'Herediano', 'Costa Rica');
-  assert.equal(await resolve(db, 'goal_api', 'team', 'ext-b', 'Herediano', 'Costa Rica'), first);
+  const second = await resolve(db, 'goal_api', 'team', 'ext-b', 'Herediano', 'Costa Rica');
+  assert.notEqual(second, first, 'name and country do not authorize a canonical merge');
+  assert.equal(await resolve(db, 'goal_api', 'team', 'ext-a', 'Herediano', 'Costa Rica'), first);
+  assert.equal(await resolve(db, 'goal_api', 'team', 'ext-b', 'Herediano', 'Costa Rica'), second);
 }));
 
 test('cross-provider name matching is unchanged', () => withDb(async (db) => {

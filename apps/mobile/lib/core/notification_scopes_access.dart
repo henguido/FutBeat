@@ -31,7 +31,12 @@ extension NotificationScopesAccess on PushService {
   }
 
   Future<NotificationScopes> _readNotificationScopes() async {
+    final owner = userId;
+    final generation = _generation;
     await flushNotificationScopes();
+    if (_stale(generation) || userId != owner) {
+      throw StateError('Account changed');
+    }
     return _scopeRpc('futbeat_read_notification_scopes', const {});
   }
 
@@ -57,7 +62,7 @@ extension NotificationScopesAccess on PushService {
           throw StateError('Account changed');
         }
         final key = _scopePendingKey(owner);
-        final raw = await storage.read(key: key);
+        final raw = await storage.read(key: storageKey(key));
         final pending = raw == null
             ? <String, dynamic>{}
             : Map<String, dynamic>.from(jsonDecode(raw) as Map);
@@ -67,14 +72,14 @@ extension NotificationScopesAccess on PushService {
         if (_stale(generation) || userId != owner) {
           throw StateError('Account changed');
         }
-        await storage.write(key: key, value: jsonEncode(pending));
+        await storage.write(key: storageKey(key), value: jsonEncode(pending));
         if (_stale(generation) || userId != owner) {
           throw StateError('Account changed');
         }
         final value = await _scopeRpc('futbeat_set_notification_scopes', {
           'p_scopes': pending,
         });
-        await storage.delete(key: key);
+        await storage.delete(key: storageKey(key));
         result.complete(value);
       } catch (error, stack) {
         result.completeError(error, stack);
@@ -94,12 +99,12 @@ extension NotificationScopesAccess on PushService {
         return;
       }
       final key = _scopePendingKey(owner);
-      final raw = await storage.read(key: key);
+      final raw = await storage.read(key: storageKey(key));
       if (raw == null || _stale(generation) || userId != owner) return;
       await _scopeRpc('futbeat_set_notification_scopes', {
         'p_scopes': Map<String, dynamic>.from(jsonDecode(raw) as Map),
       });
-      await storage.delete(key: key);
+      await storage.delete(key: storageKey(key));
     });
     _scopeWrites = operation.catchError((_) {});
     return operation;
@@ -108,7 +113,7 @@ extension NotificationScopesAccess on PushService {
   Future<void> _clearNotificationScopes(String uid) {
     final operation = _scopeWrites
         .catchError((_) {})
-        .then((_) => storage.delete(key: _scopePendingKey(uid)));
+        .then((_) => storage.delete(key: storageKey(_scopePendingKey(uid))));
     _scopeWrites = operation.catchError((_) {});
     return operation;
   }

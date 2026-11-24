@@ -244,7 +244,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 350));
       }
 
-      await tab('match-tab-live');
+      await tab('match-tab-events');
       await _pumpUntil(
         tester,
         () => find

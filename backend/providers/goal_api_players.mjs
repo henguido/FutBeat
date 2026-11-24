@@ -26,6 +26,7 @@ function playerIdentity(row) {
     player?.id ?? player?.apiId ?? player?.playerId ??
       row?.playerId ?? row?.apiId ?? row?.id,
   );
+  const lineupExternalId = clean(player?.apiId ?? row?.apiId);
   const firstName = clean(player?.firstName ?? row?.firstName);
   const lastName = clean(player?.lastName ?? row?.lastName);
   const composed = [firstName, lastName].filter(Boolean).join(' ');
@@ -37,6 +38,9 @@ function playerIdentity(row) {
   return {
     kind: 'player',
     external,
+    lineupExternalId: lineupExternalId && lineupExternalId !== external
+      ? lineupExternalId
+      : '',
     name,
     country: clean(
       player?.nationality ?? player?.countryName ?? player?.country ??
@@ -223,6 +227,7 @@ export async function normalizeGoalApiSquad(
       provenance: {
         source: 'GOAL API',
         externalId: identity.external,
+        lineupExternalId: identity.lineupExternalId || undefined,
         receivedAt,
         verificationStatus: 'PROVISIONAL',
         mediaSource: 'squad',

@@ -1,7 +1,47 @@
-/// A reversible *presentation* decision. The two provider/canonical records
-/// remain independent; this registry does not write redirects or merge data.
-/// Add an entry only after individual evidence review. Removing it restores
-/// both visible records in the next app version.
+/// Completeness of supported visible profile fields, never name similarity.
+int canonicalPlayerCompleteness(Map<String, dynamic> row) {
+  bool text(Object? v) => v is String && v.trim().isNotEmpty;
+  final media = row['media'];
+  final url = media is Map && media['url'] is String
+      ? Uri.tryParse((media['url'] as String).trim())
+      : null;
+  return [
+    text(row['name']),
+    text(row['teamId']) || text(row['clubId']),
+    text(row['teamName']) || text(row['clubName']),
+    text(row['position']) || text(row['displayPosition']),
+    text(row['country']),
+    text(row['dateOfBirth']),
+    _shirt(row['shirtNumber'] ?? row['number']) != null,
+    media is Map &&
+        media['verificationStatus'] == 'VERIFIED' &&
+        url != null &&
+        url.scheme == 'https' &&
+        url.host.isNotEmpty &&
+        url.userInfo.isEmpty,
+  ].where((v) => v).length;
+}
+
+List<Map<String, dynamic>> uniqueCanonicalPlayerRows(
+  Iterable<Map<String, dynamic>> rows,
+) {
+  final byId = <Object, Map<String, dynamic>>{};
+  for (final row in rows) {
+    // Partial lineup rows without a canonical ID must not be collapsed by
+    // a fabricated identity. Their existing caller still controls display.
+    final rawId = row['id'];
+    final Object id = rawId is String && rawId.isNotEmpty ? rawId : Object();
+    final known = byId[id];
+    if (known == null ||
+        canonicalPlayerCompleteness(row) > canonicalPlayerCompleteness(known)) {
+      byId[id] = row;
+    }
+  }
+  return byId.values.toList(growable: false);
+}
+
+/// A reversible presentation decision backed by individual evidence. This
+/// registry does not write redirects or merge independent canonical records.
 class PlayerDisplayAlias {
   const PlayerDisplayAlias({
     required this.teamId,
@@ -139,7 +179,7 @@ List<Map<String, dynamic>> presentPlayers(
   bool includeStandalone = true,
   Set<String> blockedAliasIds = const {},
 }) {
-  final rows = players.toList();
+  final rows = uniqueCanonicalPlayerRows(players);
   final aliases = visiblePlayerAliases(
     rows,
     includeStandalone: includeStandalone,

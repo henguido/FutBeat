@@ -709,6 +709,45 @@ void main() {
   });
 
   group('playerMatchStatSections (provider stats contract)', () {
+    test('requested detailed stats keep only supplied provider values', () {
+      final sections = playerMatchStatSections({
+        'stats': {
+          'touches': 42,
+          'finalThirdPasses': 12,
+          'accurateCrosses': '2/5',
+          'accurateLongPasses': 4,
+          'turnovers': 8,
+          'groundDuelsWon': 6,
+          'aerialDuelsWon': 2,
+          'foulsWon': 3,
+          'foulsCommitted': 0,
+        },
+      });
+      final rows = sections.expand((section) => section.$2).toList();
+      expect(rows, contains(('Pases en último tercio', '12')));
+      expect(rows, contains(('Centros precisos', '2/5')));
+      expect(rows, contains(('Pases largos precisos', '4')));
+      expect(rows, contains(('Pérdidas de balón', '8')));
+      expect(rows, contains(('Duelos terrestres ganados', '6')));
+      expect(rows, contains(('Duelos aéreos ganados', '2')));
+      expect(rows, contains(('Faltas recibidas', '3')));
+      expect(rows, contains(('Faltas cometidas', '0')));
+      expect(rows.where((row) => row.$1 == 'Bloqueos'), isEmpty);
+    });
+
+    test('invalid provider text and negative stats are not measurements', () {
+      expect(
+        playerMatchStatSections({
+          'stats': {
+            'touches': 'error 503',
+            'tackles': '-3',
+            'groundDuelsWon': double.nan,
+            'accurateCrosses': 'unknown2',
+          },
+        }),
+        isEmpty,
+      );
+    });
     test('no stats map: no sections', () {
       expect(playerMatchStatSections({'name': 'X'}), isEmpty);
       expect(playerMatchStatSections({'stats': 'nope'}), isEmpty);

@@ -147,16 +147,22 @@ bool grantActive(EntitlementGrant grant, DateTime now) {
 }
 
 /// Answer of an [EntitlementSource].
+enum EntitlementFailure { purchaseRejected, temporarilyUnavailable }
+
 class EntitlementCheck {
-  const EntitlementCheck.unavailable() : available = false, grant = null;
+  const EntitlementCheck.unavailable({this.failure})
+    : available = false,
+      grant = null;
 
   /// [grant] null = the source confirmed there is no active purchase.
-  const EntitlementCheck.answered(this.grant) : available = true;
+  const EntitlementCheck.answered(this.grant, {this.failure})
+    : available = true;
 
   /// False when the source could not answer (offline, not wired yet): the
   /// cached grant is kept.
   final bool available;
   final EntitlementGrant? grant;
+  final EntitlementFailure? failure;
 }
 
 /// Verifies purchases (Google Play Billing + server verification later).
@@ -205,8 +211,8 @@ class SecureEntitlementStore implements EntitlementStore {
 String entitlementStorageKey(String accountKey) =>
     'futbeat.entitlement.$accountKey';
 
-/// Google Play Billing when it is configured; otherwise nothing verifies
-/// and everyone stays FREE.
+/// QA uses the approved server verifier. Commercial verification remains
+/// unavailable until the production server contract is integrated and approved.
 final entitlementSourceProvider = Provider<EntitlementSource>((ref) {
   final gateway = ref.watch(billingGatewayProvider);
   if (gateway == null) return const UnavailableEntitlementSource();
@@ -217,12 +223,7 @@ final entitlementSourceProvider = Provider<EntitlementSource>((ref) {
       ref.watch(premiumProductsProvider),
     );
   }
-  return PlayBillingEntitlementSource(
-    gateway,
-    acknowledger: ref.watch(purchaseAcknowledgerProvider),
-    products: ref.watch(premiumProductsProvider),
-    clock: ref.watch(entitlementClockProvider),
-  );
+  return const UnavailableEntitlementSource();
 });
 
 final entitlementStoreProvider = Provider<EntitlementStore>(
@@ -269,6 +270,8 @@ final entitlementsProvider =
 
 class EntitlementsController extends Notifier<Entitlements> {
   String? _accountId;
+  EntitlementCheck? _lastCheck;
+  EntitlementCheck? get lastCheck => _lastCheck;
 
   /// Bumped by every verification request and every applied answer: an
   /// answer is only applied while its ticket is still the latest.
@@ -278,6 +281,7 @@ class EntitlementsController extends Notifier<Entitlements> {
 
   @override
   Entitlements build() {
+    _lastCheck = null;
     final account = ref.watch(currentAccountProvider);
     ref.onDispose(() {
       _expiry?.cancel();
@@ -381,6 +385,7 @@ class EntitlementsController extends Notifier<Entitlements> {
       check = null; // Offline or store error: keep what is still valid.
     }
     if (ticket != _ticket || !_current(key)) return;
+    _lastCheck = check;
     if (check == null || !check.available) {
       _expireIfDue();
       return;

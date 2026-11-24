@@ -1,0 +1,1252 @@
+{
+  "recordedUtc": "2026-11-24T17:06:42.625431+00:00",
+  "head": "8a37e913abce5a0a1b1df291214e98f8ffaf91df",
+  "approvedApkSha256": "775CDD8853B5C9A8FB085D7F68C76A6192104D18C310257F97DBE84046FBBF93",
+  "androidOriginalSelection": 97,
+  "androidInventory": "scripts/release/acceptance17.sources.json",
+  "migrationPolicy": "Fresh reconstruction only. Existing production must reconcile/adopt migration history after schema/function/ACL parity. Never replay this consolidated migration blindly on production.",
+  "externalHandoffSha256": "CA6019311164C14D1992C2077E7F451A677F03CDD156A301ECD246165DCE76A5",
+  "sourceManifestSha256": "8BFF089F666B9E34E6E31AE6909787C760C103B9BD9FE426FA7C88A5239D9F69",
+  "kitSources": [
+    {
+      "order": 0,
+      "source": "be11/q1/fix_b11_q1.sql",
+      "sourceSha256": "7b148971ef5de4e0e7be33840823bac53cbb2e26195ce750d60603de8a5cc658",
+      "section": "00-fix_b11_q1.sql",
+      "excludedStatements": [],
+      "selectedCount": 5
+    },
+    {
+      "order": 1,
+      "source": "be11/q2/fix_b11_q2.sql",
+      "sourceSha256": "616fe237bb1f8e5a28c7e8b0f097f737ef7c66c94369e4f055485d3d26fcbf08",
+      "section": "01-fix_b11_q2.sql",
+      "excludedStatements": [],
+      "selectedCount": 9
+    },
+    {
+      "order": 2,
+      "source": "be11/a1/settle/fix_settle_terminal_recovery.sql",
+      "sourceSha256": "c76831f9c987e9b62bce3251bb43e3958171d8df673d79a778d0dfeed86f37ea",
+      "section": "02-fix_settle_terminal_recovery.sql",
+      "excludedStatements": [],
+      "selectedCount": 3
+    },
+    {
+      "order": 3,
+      "source": "be11/cal/fix_cal_idle.sql",
+      "sourceSha256": "6913568ea4da6a402465e10f9a0feea42b3142679383c4b6ec80dd6910e7fa27",
+      "section": "03-fix_cal_idle.sql",
+      "excludedStatements": [],
+      "selectedCount": 4
+    },
+    {
+      "order": 4,
+      "source": "be12/r05/.apply.sql",
+      "sourceSha256": "f02d5e37beabde984593d0616d2c3fe2e0b41c1f8899d7e376905cb5132a4e7f",
+      "section": "04-apply.sql",
+      "excludedStatements": [
+        0,
+        1,
+        2,
+        18,
+        20,
+        34,
+        35
+      ],
+      "selectedCount": 29
+    },
+    {
+      "order": 5,
+      "source": "be12/rd57/fix_rd57.sql",
+      "sourceSha256": "9666e8efce93a797b69f0761b38abfa0d561f84bf84cdcafac6d5656e94c6bb7",
+      "section": "05-fix_rd57.sql",
+      "excludedStatements": [
+        4
+      ],
+      "selectedCount": 4
+    },
+    {
+      "order": 6,
+      "source": "be16/fix_be16.sql",
+      "sourceSha256": "b960bee41a9cb0e7d4f499ca6b37d1b868d637d038680cc8c032d8356bb4d9dc",
+      "section": "06-fix_be16.sql",
+      "excludedStatements": [
+        5
+      ],
+      "selectedCount": 5
+    },
+    {
+      "order": 7,
+      "source": "be14/contract/fix_contract.sql",
+      "sourceSha256": "1b3170635774e94a01da89e5865a238f35a2ab140f4ca1339c9ca5fa1776ad22",
+      "section": "07-fix_contract.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 5
+    },
+    {
+      "order": 8,
+      "source": "be18-results/fix_be18.sql",
+      "sourceSha256": "be84e7cbb08565f6294464572d9592ecc559d0afc7682bf0b633a3fe97d93f2d",
+      "section": "08-fix_be18.sql",
+      "excludedStatements": [],
+      "selectedCount": 1
+    },
+    {
+      "order": 9,
+      "source": "live-pro/n1_apply.sql",
+      "sourceSha256": "f62d4e6f93d8fbd51beb4d32a52c7159ed310b611dfa5067728afcb2c9465cbd",
+      "section": "09-n1_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 15
+    },
+    {
+      "order": 10,
+      "source": "live-pro/pl1_apply.sql",
+      "sourceSha256": "7da17c7dc934742f4caf5b9c0361883ff9527b0b0b2eb0ff9f4b9dbece437b8a",
+      "section": "10-pl1_apply.sql",
+      "excludedStatements": [
+        0,
+        14
+      ],
+      "selectedCount": 13
+    },
+    {
+      "order": 11,
+      "source": "live-pro/w2_apply.sql",
+      "sourceSha256": "acdbd84bdf488fdbef1a7d327c29090b8be28d996a9a0aaa0a0786c2fce02b8a",
+      "section": "11-w2_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 3
+    },
+    {
+      "order": 12,
+      "source": "be18-results/fix_be18b.sql",
+      "sourceSha256": "19b41ca911128d44c55c0ae8b7ff7b68d8ae316a2f2cee5a037ca7957cd00153",
+      "section": "12-fix_be18b.sql",
+      "excludedStatements": [],
+      "selectedCount": 1
+    },
+    {
+      "order": 13,
+      "source": "premium/prod/pb1_apply.sql",
+      "sourceSha256": "d6da6df6eeb6936d768eaceaf26091fb92c200a153ff4690d4b0fb160c2cb315",
+      "section": "13-pb1_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 44
+    },
+    {
+      "order": 14,
+      "source": "live-pro/k2_apply.sql",
+      "sourceSha256": "be912438e196b3f41e4fdf927f2c08cdbab64efe6db57a114ac72b05e2849518",
+      "section": "14-k2_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 4
+    },
+    {
+      "order": 15,
+      "source": "id-split/guard/guard_apply.sql",
+      "sourceSha256": "597916e43353c6884318bffc2d9e47b7453b1b610b5fe785c53f04abc49d125e",
+      "section": "15-guard_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 1
+    },
+    {
+      "order": 16,
+      "source": "cov-planner/cov_apply.sql",
+      "sourceSha256": "600e48700f5de52b6aa64e85a2090374d19db5f32faf439f5457ddbee64650ba",
+      "section": "16-cov_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 8
+    },
+    {
+      "order": 17,
+      "source": "cov-planner/cov1b_apply.sql",
+      "sourceSha256": "13fb973feff72726198e518fcde0eea701918dc68b67dba7fc25581c9f870707",
+      "section": "17-cov1b_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 1
+    },
+    {
+      "order": 18,
+      "source": "id-split/attrs/attrs_apply.sql",
+      "sourceSha256": "ceb2297e4e9882cb34ea08fd1e74bba5e694cef8d103b3e1e3125c159f9cec19",
+      "section": "18-attrs_apply.sql",
+      "excludedStatements": [
+        0,
+        4,
+        5
+      ],
+      "selectedCount": 3
+    },
+    {
+      "order": 19,
+      "source": "cov-planner/st-reject/stgroups_apply.sql",
+      "sourceSha256": "7118776c5dc1747e09018a25657b0a660661eb40c96412d87c9b4a4224baed46",
+      "section": "19-stgroups_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 1
+    },
+    {
+      "order": 20,
+      "source": "id-players/pid_index.sql",
+      "sourceSha256": "8dcaebd8c88f6367f1e50584ab1e842d919018269869961d7fe7fbc97c88321b",
+      "section": "20-pid_index.sql",
+      "excludedStatements": [],
+      "selectedCount": 2
+    },
+    {
+      "order": 21,
+      "source": "id-players/pid_apply.sql",
+      "sourceSha256": "def7f0326174cc75adfc1ba77087233bba3d4878254a354d783d01dc2abe011e",
+      "section": "21-pid_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 11
+    },
+    {
+      "order": 22,
+      "source": "id-players/pid_upsert_apply.sql",
+      "sourceSha256": "0dc7d25ce6cbdc7ee7759d3543ede3738d6cfd785c1af317291c0d2ba77c060c",
+      "section": "22-pid_upsert_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 1
+    },
+    {
+      "order": 23,
+      "source": "live-pro/q429/q429_apply.sql",
+      "sourceSha256": "640253373697ddba7fa27394245bdd3b325583dcb194d26eac6ce45ecffa7f4a",
+      "section": "23-q429_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 1
+    },
+    {
+      "order": 24,
+      "source": "live-pro/d1v2_apply.sql",
+      "sourceSha256": "c429b059797f77a9020c881998876ab23e4816e2878e84d02f9df5bc0b7d2493",
+      "section": "24-d1v2_apply.sql",
+      "excludedStatements": [
+        0
+      ],
+      "selectedCount": 6
+    }
+  ],
+  "additionalPrerequisites": [
+    {
+      "source": "pub1/sql/20261105100000_public_api_access.sql",
+      "sha256": "ab7a9a84e99c912a51b20b9544ec489b53f0b0afc08d6fecf9d49268fc75468c",
+      "confirmation": "CONFIRMED_BY_CLAUDE_HANDOFF_SECTION5; verified local reconstruction and catalog signatures"
+    },
+    {
+      "source": "pub1/sql/20261105110000_guest_account_merge.sql",
+      "sha256": "86b80dba22c688c0acc55eb6fbd20e65daaa0da14913245aaff7072ea5962144",
+      "confirmation": "CONFIRMED_BY_CLAUDE_HANDOFF_SECTION5; verified local reconstruction and catalog signatures"
+    },
+    {
+      "source": "be11/cal/prod_istz.sql",
+      "sha256": "b22804db6a8de514124037645e4e540eab41c588297388400a3a0cc539f726c2",
+      "confirmation": "CONFIRMED_BY_CLAUDE_HANDOFF_SECTION5; verified local reconstruction and catalog signatures"
+    },
+    {
+      "source": "live-pro/prod/match_detail_bucket_at.sql",
+      "sha256": "6b70f3ceef9a0e765372e287955cc9ec27cd1bd78ab4c6f4eae88e55245e26a6",
+      "confirmation": "CONFIRMED_BY_CLAUDE_HANDOFF_SECTION5; verified local reconstruction and catalog signatures"
+    }
+  ],
+  "files": [
+    {
+      "path": ".gitattributes",
+      "sha256": "38F08F4181E7158D4C33E322129332354A4DABFFF9E7830F5286B97AA0750B87"
+    },
+    {
+      "path": "apps/mobile/android/app/build.gradle.kts",
+      "sha256": "47E15937E87CE0B13A8ED9D0273AECE699BB46FAA9499B7B14C0FA8E2C40D0D9"
+    },
+    {
+      "path": "apps/mobile/lib/core/account_deletion_receipts.dart",
+      "sha256": "4613705887766F4BD5374B5732C9675B244456940E2191B80F1BA40FF0B2E8EA"
+    },
+    {
+      "path": "apps/mobile/lib/core/ads.dart",
+      "sha256": "F53B0CEF56C114F20E444AD15C7F7704FDFAE805FB3273362D1441184827A192"
+    },
+    {
+      "path": "apps/mobile/lib/core/billing.dart",
+      "sha256": "D7B2D0BB3D91582C69A654182CD06115D49E9333BE0AD4B0514BAE4BBFF82F1F"
+    },
+    {
+      "path": "apps/mobile/lib/core/database.dart",
+      "sha256": "C51CCED80BD12C09FA27A8F8A3BCE0E6B34D945EAD15326C8C2A752F90265183"
+    },
+    {
+      "path": "apps/mobile/lib/core/entitlements.dart",
+      "sha256": "C998F53A04A506FDAF230E6AD5E8EF6749564AFEBA57E04BE7F489D510012AB1"
+    },
+    {
+      "path": "apps/mobile/lib/core/load_errors.dart",
+      "sha256": "790EFABD44D8D0F321A955EEDFCB7671D2B4A702078C1EAC99ACFF78D7E25F98"
+    },
+    {
+      "path": "apps/mobile/lib/core/models.dart",
+      "sha256": "CE44F080D6D2DC164D1D47720BDB8AB35DBF35B2947D9C63F5CA7AB3D0A6037D"
+    },
+    {
+      "path": "apps/mobile/lib/core/notification_scopes_access.dart",
+      "sha256": "B79BE9C04744012144E62DD4C69E15680F1C3BDB6EC7DE6E2E27D902A9AAD4ED"
+    },
+    {
+      "path": "apps/mobile/lib/core/passive_preview_transport.dart",
+      "sha256": "86B5B42AC22A07975A571B1D79D05610221650A79621AA6BE45DDA250CA9F10D"
+    },
+    {
+      "path": "apps/mobile/lib/core/player_display_identity.dart",
+      "sha256": "4E3A5EA3A4A36F4617FA5771A1079296608C5C9E04FFAECBDFF4BEA6D6A1422B"
+    },
+    {
+      "path": "apps/mobile/lib/core/premium_qa_transport.dart",
+      "sha256": "79EA4CEE77232D345300E1E2F8F8962A56DAECFCA17216BA148BE668A56F1F27"
+    },
+    {
+      "path": "apps/mobile/lib/core/providers.dart",
+      "sha256": "C73AE71CB1627F5DAC07D7A23A256E99890FEBFD8ACFECAC7603B3DEC0B578FA"
+    },
+    {
+      "path": "apps/mobile/lib/core/push.dart",
+      "sha256": "320B4D73B9BB43ECCC35A8A6076A95A4070D0095CC8B4880AEFCDDB334B403EF"
+    },
+    {
+      "path": "apps/mobile/lib/core/push_messages.dart",
+      "sha256": "DDACAB68F9B2166F89E562469301138A588BA52D4C5696DA281C9E2D37A32EAF"
+    },
+    {
+      "path": "apps/mobile/lib/core/user_session_access.dart",
+      "sha256": "0BE8D7BD54C87CD1E9CEB79EFCF31DB024EEAA5955F6D7ED428E54058A693C46"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/competition_profile.dart",
+      "sha256": "816135F3E54BAFACD50753A8815B08B4DE51B9FFF78D40AC19ABE9894776756D"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/entity_screen.dart",
+      "sha256": "54B0778CD2EA30E3C1CF0614EE94C5C31EA7F589662F98DE9038C0446AED1E90"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/player_profile.dart",
+      "sha256": "27534793ECB6D958FD1148723FD4FF2B79E5CDE2FB47FF619AEC4E1777AEECFF"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/profile_widgets.dart",
+      "sha256": "95F2BFA138EC79B7FD2C7C82D8A79AB39FF8EF866573968250FF757ADA4260AF"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/standings.dart",
+      "sha256": "485A706E70B0B6ED7B2EF71E99D504CF41C5758A3D677F0327A2F3F8C630C29E"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/team_matches_tab.dart",
+      "sha256": "5D58CD3C98FA86C03B5688298AA4CEA612A7943CE2533F8D643CB25BB2459421"
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/team_profile.dart",
+      "sha256": "4CE82364CCDC6CEF081DE4CD9EE23C7F0332CD68FDF65D2EAEB2B73F8D027390"
+    },
+    {
+      "path": "apps/mobile/lib/features/explore/explore_screen.dart",
+      "sha256": "F78A6F9DB953BB6FE05AA3A6E5546CC95151A96E1FDE816CD986EEA5A03E920E"
+    },
+    {
+      "path": "apps/mobile/lib/features/favorites/favorites_screen.dart",
+      "sha256": "6450EABB5B6268381D80C2D3E0366CF34D1AB367ECF6F80D5FA773AF66540CC7"
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_preview_sections.dart",
+      "sha256": "66D00C4D0A1136A23EF0A5E05ED5F9D3400D3ABD8F73C1878D4C3EDC62F01F5C"
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_screen.dart",
+      "sha256": "85A0E0F8742316DD156A50A3CEF656CC0FF9CDF48728FE5D4B31EBFFFF7D9519"
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/matches_screen.dart",
+      "sha256": "694E40884841A86417EEB8EA30E80308F0DBA154FEC8EA42ECC02B482EACD168"
+    },
+    {
+      "path": "apps/mobile/lib/features/onboarding/onboarding_screen.dart",
+      "sha256": "E0140D38FD25AF2FFF36AB6A0395B6F51A7C1E3FE4C29E2A8F154380315772D1"
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/account_security_screen.dart",
+      "sha256": "A8473453D21BCBAD14D63B6E83B64BFE3F2857CA45BC4F4DAB4E938AB3DB8163"
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/notification_scopes_screen.dart",
+      "sha256": "AC4EA418731EADB341650DFEA8A2D53628BF78F993D211B3283BC7F0BA6C7EAF"
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/premium_card.dart",
+      "sha256": "788D5DE1351FB9CFF99DB241A706BA7912AF7FF141F201CA269A48F6995D398C"
+    },
+    {
+      "path": "apps/mobile/lib/shared/widgets.dart",
+      "sha256": "A44CB5048529AA5B4A450B375920E706C2ED75778FA3D0A8122A8FACE109A636"
+    },
+    {
+      "path": "apps/mobile/test/account_lifecycle_test.dart",
+      "sha256": "9DEE62F7D806A80D4DE3657D9A72B7478156BF253298B449D4DF8676B34CF4EE"
+    },
+    {
+      "path": "apps/mobile/test/billing_android_plan_change_test.dart",
+      "sha256": "F2CA99D1A2E19C3297E743235D698431938B93C2A0A4A73E9157766C0DDDA4D1"
+    },
+    {
+      "path": "apps/mobile/test/billing_g1_contract_test.dart",
+      "sha256": "DDBCA97A348B6B9CF1FD5611E3FC68D745CC5A4FA42FE13B6CAF40CFF4CA4E82"
+    },
+    {
+      "path": "apps/mobile/test/billing_test.dart",
+      "sha256": "CDC6433AE5161030F83806654796E369DA1F85E931F856439857815C5D9F75A6"
+    },
+    {
+      "path": "apps/mobile/test/calendar_live_observation_test.dart",
+      "sha256": "0BCE1B9C67201AC8B74BBED8DC21B84949F04D3E26C3B875DF372E7CF6F2BFE6"
+    },
+    {
+      "path": "apps/mobile/test/calendar_terminal_state_test.dart",
+      "sha256": "A99D6D1D7471E02B177DBF4DBBFDE5734ECE1C8517FD1862E91F4D8FAF70AB08"
+    },
+    {
+      "path": "apps/mobile/test/competition_offline_restart_test.dart",
+      "sha256": "CA4DF7B371F6CF89127C237E0BE6DFCF5E6BA690A7B60B92B21237410EACE374"
+    },
+    {
+      "path": "apps/mobile/test/d1v2_match_calendar_sync_test.dart",
+      "sha256": "5A263F4BBEB1F2C0AE84F4D540E67AD4D491F75969168FFF6AF21399A3756E0B"
+    },
+    {
+      "path": "apps/mobile/test/explore_first_paint_test.dart",
+      "sha256": "A56B354EA7028A7A00248860948DD41BB7F8A4972924DE012ABA5C20FEC2C63C"
+    },
+    {
+      "path": "apps/mobile/test/favorites_hub_v2_test.dart",
+      "sha256": "95BE72472342BFD5CC320375429A41DACEB3B3DB737F01A02F10B960C8D089CC"
+    },
+    {
+      "path": "apps/mobile/test/favorites_offline_restart_test.dart",
+      "sha256": "F441BA9F0EA36D7359C7CCFF511B75D6BC759A634413033430F04B0744879705"
+    },
+    {
+      "path": "apps/mobile/test/flow_test.dart",
+      "sha256": "558FEB476BA282E3BC4092037146738970EB751D8B25517139AD26E36EA033FC"
+    },
+    {
+      "path": "apps/mobile/test/goldens/explore.png",
+      "sha256": "76B4FC9A854BC872B3B95E9CA7B8D063FD420EC97D42A02D960F35696443B3C4"
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_match_center_away.png",
+      "sha256": "BC1C04FE8480F234D0B251DAEF5C4204F59B1C347224BBB6AEE0C68A6F0B19BF"
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_match_center_home.png",
+      "sha256": "E5E93F41D069F4D4F63AD559A95D073593AC855DF47CBB3AC1A45C4E213A4CAE"
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_match_center_top.png",
+      "sha256": "53B1DC0212E3B4628A1A41C807FDB0F351BC55D57F59EF9715CB1899741D39FC"
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_polish_away_viewport.png",
+      "sha256": "F04C1AF65310397183262EDFE302F9BEA292389CD7C4447BAF0F432838FAC976"
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_polish_home_viewport.png",
+      "sha256": "E6C138A3F7ED0DD1BF0DEBE520EB0F6599DB02FBB4E081A310DF61F49CEF02AA"
+    },
+    {
+      "path": "apps/mobile/test/goldens/lineups_polish_synthetic.png",
+      "sha256": "4B6D7C3087CF6A04E29EBC589C628F695ED499F8EA300E47DF7BC6DF014AB58E"
+    },
+    {
+      "path": "apps/mobile/test/h2h_full_history_test.dart",
+      "sha256": "59ED00A43AB55DB8A86472CA883F26B4E06DEF3D5E2B294EF14BC155FFD96A83"
+    },
+    {
+      "path": "apps/mobile/test/historical_match_center_test.dart",
+      "sha256": "BE8CB16D4025EDE1C75D1B04E2AE2FCBC17D08D5878A11FE34DF3465000CD611"
+    },
+    {
+      "path": "apps/mobile/test/live_events_test.dart",
+      "sha256": "8716A79AC222DBF9E200DCF9E8BEFFEBEA645BD4CC6B96CF5DD803144E5CC61A"
+    },
+    {
+      "path": "apps/mobile/test/load_errors_test.dart",
+      "sha256": "E75B1D6FB95A6DABEAD602AFCB83698A390831E84CCF8814DC3405F8D2410C43"
+    },
+    {
+      "path": "apps/mobile/test/match_center_completeness_test.dart",
+      "sha256": "FDC1C4E99B4E1A1EE8CDFE57C5A82D9394AC002FB00A61C3A2DAAC21FD1B8C6B"
+    },
+    {
+      "path": "apps/mobile/test/match_center_hero_test.dart",
+      "sha256": "C848B0FE327D12592381198228A2F1FB7CB56CCF0885C3395C7E61DFD4BA6BA4"
+    },
+    {
+      "path": "apps/mobile/test/match_center_phase1_test.dart",
+      "sha256": "DAF012B1C7CB189CC85E2D77A37E90390A87D70A6ABBAC8A96A689EEC62D0C52"
+    },
+    {
+      "path": "apps/mobile/test/match_center_phase2_test.dart",
+      "sha256": "AB83EE7034F56F39184AE7E8D9C947EB39182A25DD8382D8C064E8E98FE6C461"
+    },
+    {
+      "path": "apps/mobile/test/match_center_player_sheet_test.dart",
+      "sha256": "91AF016D617667563461D4692102B502DD94FF05F12C1D77405B52D8430475B8"
+    },
+    {
+      "path": "apps/mobile/test/match_center_redesign_test.dart",
+      "sha256": "D5B8F6E129EF367DBBA29B3A09A58F44022380973C4B24B49B706A9EE99D3EB6"
+    },
+    {
+      "path": "apps/mobile/test/match_center_ui_v4_test.dart",
+      "sha256": "189370BF92E6AB1BF93A79107F325A4A38002AF3D41A263BB4C1B1D4C5F05BA1"
+    },
+    {
+      "path": "apps/mobile/test/match_context_first_frame_test.dart",
+      "sha256": "A2C8B3CC2AD9DEF1F543F26284D1936D21D733CDC85FE9E0F4EC0B9FD5C57AA0"
+    },
+    {
+      "path": "apps/mobile/test/match_detail_e2e_test.dart",
+      "sha256": "081983AB5CF2BC7C12948890FF56427C9F3EF1C5005AFD42D7AF8F7EA00BBA40"
+    },
+    {
+      "path": "apps/mobile/test/match_h2h_v2_test.dart",
+      "sha256": "A56FB9FBA070ABA33DD42FC133429A46DBF5B5100B012C93D806AEB60EA6FBCC"
+    },
+    {
+      "path": "apps/mobile/test/mobile239_resilience_test.dart",
+      "sha256": "1D5EAA38D157771F31832269C773822D40F743126A85B6A94441D4DBB85CA236"
+    },
+    {
+      "path": "apps/mobile/test/mobile239_standings_test.dart",
+      "sha256": "A0948AB31BC12A3A05BC1F214AFA1648861A2269DA8BAB5C00F1745550249A96"
+    },
+    {
+      "path": "apps/mobile/test/mobile261_match_restart02_test.dart",
+      "sha256": "603ACB9C6E3FC9B1FFA26F679B57F5A87696AC6F59F7E1AF0C3253BCC3BE8611"
+    },
+    {
+      "path": "apps/mobile/test/mobile_history_performance_test.dart",
+      "sha256": "49E47D53171368E91DD03C9C71FD48DAC4D9930A8E9EE36186A2DBC104563C8E"
+    },
+    {
+      "path": "apps/mobile/test/n1_push_payload_test.dart",
+      "sha256": "0D4D8A78197E26018B0D291192FEE29F62009BFA4B3645C96B666F59D5E39476"
+    },
+    {
+      "path": "apps/mobile/test/night230_pitch_density_test.dart",
+      "sha256": "FFBBC7ADB13BC3F1EC1067F579DFED31F9E3FF4963888D4BA34EBEEA83FE795D"
+    },
+    {
+      "path": "apps/mobile/test/notification_scopes_test.dart",
+      "sha256": "F0DF2E472B30719E6F5048A7111CCEDE9926C5C75CEF513B6DE0807B016372B2"
+    },
+    {
+      "path": "apps/mobile/test/onboarding_test.dart",
+      "sha256": "6A06F4F190B8B9451AE42D94871C77721A4ECC6F61AFF1A17C29C4D6DB11533C"
+    },
+    {
+      "path": "apps/mobile/test/player_profile_test.dart",
+      "sha256": "DD7962FFFB6D0699332330D6E3C4AFB15F01072D485DA5C1AB3DFA96695917CB"
+    },
+    {
+      "path": "apps/mobile/test/player_suggestions_test.dart",
+      "sha256": "3565357440C85056A88D49C9BB11B8C02FD1BB77421C2B0C3749E4E82EF3EC13"
+    },
+    {
+      "path": "apps/mobile/test/premium_qa_transport_test.dart",
+      "sha256": "8E970BF4056B70F305CADE6A3BE242478773758807EF97BC4C88626A8B6E6A97"
+    },
+    {
+      "path": "apps/mobile/test/profile_context_test.dart",
+      "sha256": "37DC4E7176642B3BB67A71FFB6509441A7C192CEFD752210B2F0533DAF58CB4F"
+    },
+    {
+      "path": "apps/mobile/test/public_access_transport_test.dart",
+      "sha256": "9803389A30765C257435455C39232F8BB8A3133C039A1AC2EE99A67247379F46"
+    },
+    {
+      "path": "apps/mobile/test/qa_auth_isolation_test.dart",
+      "sha256": "DF982ED78489054172F8444319F60471EB36DBDF12FC653D63FB67D61E2413DB"
+    },
+    {
+      "path": "apps/mobile/test/r3_match_center_regressions_test.dart",
+      "sha256": "817C488B57F85C06B2A61967BEF710171C8542B6745ABBEC13E855DE325AA259"
+    },
+    {
+      "path": "apps/mobile/test/r4_canonical_match_tabs_test.dart",
+      "sha256": "6B55A055EF37E84E0EE8D65AD3A857DD16821040FCC400747D7A8D5C16E3F9DE"
+    },
+    {
+      "path": "apps/mobile/test/r4_coverage_contract_test.dart",
+      "sha256": "D6EBEDA647108B58538A96D7A8C57A42EB19AE3E6038C03F15FFD459C0E8F54B"
+    },
+    {
+      "path": "apps/mobile/test/r4_notification_scope_lifecycle_test.dart",
+      "sha256": "3461F63AFFC59D7A4CFB82C65664AF1238E67BA8DC53FF88C17F91563E3DF7B5"
+    },
+    {
+      "path": "apps/mobile/test/r4_player_search_identity_test.dart",
+      "sha256": "E022D3F628502347817204552F4BFBB2A3E6AA67EA6E7E52866B2EF00C829123"
+    },
+    {
+      "path": "apps/mobile/test/r4_profile_navigation_test.dart",
+      "sha256": "8D323A6E3B18495EA5C774BD3BB1FB625B1A612471722733482EB11521B93FFA"
+    },
+    {
+      "path": "apps/mobile/test/r4_team_matches_pending_test.dart",
+      "sha256": "B2F2F1B6F70781E6A8D227B0F011C21459B163F72CE379A54803662973C675E8"
+    },
+    {
+      "path": "apps/mobile/test/team_profile_first_paint_test.dart",
+      "sha256": "EF251BA65F9C7F54E6809E3D35FADE80EF981A6D9EF5433EE64CF65C61687DF5"
+    },
+    {
+      "path": "apps/mobile/test/team_profile_test.dart",
+      "sha256": "828BED548AC04AC8E325EF668A9B43DDC572A79347EFABC71EC11AA3759D8B28"
+    },
+    {
+      "path": "apps/mobile/test/terminal_realtime_regression_test.dart",
+      "sha256": "CA901FD1341ADAD32A3C4983EE20BCFBD8DAEDC67B0AAE216C689EF02F2C718F"
+    },
+    {
+      "path": "backend/notifications/transports.mjs",
+      "sha256": "EAB8A07E4E195DCD00B0BDDD01A55E553B500079759EE241A5ECB1666F870B79"
+    },
+    {
+      "path": "backend/providers/core/snapshot.mjs",
+      "sha256": "CDBE29E04E653BD8AC038D32C8737E86F538C161C34DC350063C78033CFC6833"
+    },
+    {
+      "path": "backend/providers/espn.mjs",
+      "sha256": "3B4EC097423CB5E19DAB8AB34E1C53A37328ECB7A8DB0067432570D56B3DF63A"
+    },
+    {
+      "path": "backend/providers/goal_api.mjs",
+      "sha256": "7C9B2DF67FFD58EB9B08AEBA37B8EB9286FE65FFC3055C8613A19C5A201AA427"
+    },
+    {
+      "path": "backend/providers/goal_api_players.mjs",
+      "sha256": "3A3303883968A109DBE88DA250DE8187E48C47B2E7E55D069F7781CED33AEA84"
+    },
+    {
+      "path": "backend/providers/sofascore.mjs",
+      "sha256": "B997CB09CA09BB47FB56B45E970E4C2D3D20C29E74379FACAD94CBA8DA74BBBA"
+    },
+    {
+      "path": "backend/test/account_deletion.test.mjs",
+      "sha256": "061035A98CC5432A8995AE28A9A557BD12896ABF4564BA20F0155172E430A000"
+    },
+    {
+      "path": "backend/test/calendar_demand.test.mjs",
+      "sha256": "D343BB997034C7BA3252263CE14A528E9A00C36C4C2EA0952C35CB897C42F8B1"
+    },
+    {
+      "path": "backend/test/calendar_provider_observation.test.mjs",
+      "sha256": "7C862C0D9B1D33E00F20957FC4CA99F5DDA9AA7C72894590EBE1088535BA81F6"
+    },
+    {
+      "path": "backend/test/canonical_identity.test.mjs",
+      "sha256": "FB80840CE32DD151729095AE7D29F0EDCE2F9627195B30AAD08BFBA1E5DBB0D6"
+    },
+    {
+      "path": "backend/test/consolidated_deployed_ingest.test.mjs",
+      "sha256": "2734089EB446765E91A0431D173D27DB54050339628323699C151FB817E0B2A9"
+    },
+    {
+      "path": "backend/test/consolidated_passive_defaults.test.mjs",
+      "sha256": "0E240BD136BBAF9FC9F04E90FD8CFB7B8820DB44D022AE516177D818E5455734"
+    },
+    {
+      "path": "backend/test/fcm_n1_v9_contract.test.mjs",
+      "sha256": "BF2165C456DB5A14EF584C640A72F702762BD018881B7CEA0E64AC6684E56474"
+    },
+    {
+      "path": "backend/test/fixtures/backend1_d1_offline.sql",
+      "sha256": "EA69C8A1A77B03F9559D72EC0E60A2C923357CC233FE0B71829452553E969421"
+    },
+    {
+      "path": "backend/test/fixtures/backend1_section5_safeupdate.sql",
+      "sha256": "6BE2CE3CB59F088F6E5534B038FFDC721888CDEE29FE93D47F6327E67C29AF70"
+    },
+    {
+      "path": "backend/test/fixtures/backend1_source_acl.sql",
+      "sha256": "190DF0F394D32DE256E663BE7BB360CE4398B1413339C6AA73A890B7E3B38DD7"
+    },
+    {
+      "path": "backend/test/fixtures/calendar_provider_observation_apply.sql",
+      "sha256": "198C978CAC4EE8557967C0165357BC8119C910C0E478D5D93DD820FBAF0D79C6"
+    },
+    {
+      "path": "backend/test/fixtures/calendar_provider_observation_rollback.sql",
+      "sha256": "71391133389A855676E95E1E4AE6EE17684FC04BF0E96CEEFFBDA40B1614B261"
+    },
+    {
+      "path": "backend/test/fixtures/fcm_n1_v9_payloads.json",
+      "sha256": "451AF48673F0877EF1245E6FC3AF7757BFCCD383EBBEA55438E3A7C1D5B706B9"
+    },
+    {
+      "path": "backend/test/fixtures/g3-premium-production-additions.sql",
+      "sha256": "42415B2D165133E18C39DFCEDDF3B182E6605ED1F2BAC134CA134BF428C31602"
+    },
+    {
+      "path": "backend/test/fixtures/g3-premium-production-ledger.sql",
+      "sha256": "E813B29E96EF330751A981CB8A7C4F45720D3ECE29584E28F92EB32E5F351745"
+    },
+    {
+      "path": "backend/test/g3_billing_prod.test.mjs",
+      "sha256": "6ABDE0A2916A60E02DD271C7D375D8DA020DBDE2298217B5B0C759EA7E5FBF1D"
+    },
+    {
+      "path": "backend/test/g3_play_federation.test.mjs",
+      "sha256": "2F1DF40170DDC09109932B5B6CC422117ED587CA3613BEB4BD1CE0979A09C900"
+    },
+    {
+      "path": "backend/test/g3_rtdn_p9.test.mjs",
+      "sha256": "AD05447A3B5AE15D852DD5AEDBD8D552E43C8D173B5F0B0C5460B79593074E1B"
+    },
+    {
+      "path": "backend/test/global_ingest_calendar_subbatches.test.mjs",
+      "sha256": "ED67045456E9881E2A150D3DE5D72E19A5F366414E7FF4C580C595195B587AD6"
+    },
+    {
+      "path": "backend/test/global_ingest_context_single_pass.test.mjs",
+      "sha256": "E28F13F4FD3C281295E4247AC58CEC30DA59FB71692D6157C5D155F755A1A9D3"
+    },
+    {
+      "path": "backend/test/global_ingest_targeted_context.test.mjs",
+      "sha256": "071772F47728ADF252F3472F6782585B1415A70F22DD1CBFE7213E0EC62CEA6E"
+    },
+    {
+      "path": "backend/test/global_results_lifecycle.test.mjs",
+      "sha256": "C0774913921ACC4C70FE661AD03627D19629591A1F1111B6E9A9BD79EF46BB4B"
+    },
+    {
+      "path": "backend/test/goal_api_provider.test.mjs",
+      "sha256": "2B04356A43508F4DB38C3D64FD892BACFE6067D6D7142BE6373903DC08912FA1"
+    },
+    {
+      "path": "backend/test/goal_terminal_score.test.mjs",
+      "sha256": "C0DF2FC099DE36085807DC6ED7B8407CF03C888633A081362F8BE455D66EBD46"
+    },
+    {
+      "path": "backend/test/h2h_full_history.test.mjs",
+      "sha256": "C9201B8F4795A654D95FA742EA9BC69249F8AE46224A7E7E36BAA3CF53747DA4"
+    },
+    {
+      "path": "backend/test/h2h_no_data_history.test.mjs",
+      "sha256": "34ADC12060D7E0CE063A10758BA91D72EE2C42803A79E5745B49C2817A170FA0"
+    },
+    {
+      "path": "backend/test/helpers/acquisition_navigation.mjs",
+      "sha256": "C41F63FA4A86242FF00AF08E533D6CE96112E2AF45C432F872F62B5882E85760"
+    },
+    {
+      "path": "backend/test/helpers/undeployed_sources.mjs",
+      "sha256": "29B6AB3B85FB47834121FE2C6A3D5DC5691F22530AA9DFB8EF1327F19C338434"
+    },
+    {
+      "path": "backend/test/historical_match_center.test.mjs",
+      "sha256": "383B75B5FC28A008EC2EB12AF456CAA5AF283C953B12A684B4966176BCBD2B8F"
+    },
+    {
+      "path": "backend/test/identity_same_provider_guard.test.mjs",
+      "sha256": "05A6E613889B53891DF2C304E355C4036EC2E88BF73E234DC787C30179143713"
+    },
+    {
+      "path": "backend/test/lineup_photo_squad_twin.test.mjs",
+      "sha256": "E182B29AA3C0BEF94169FFE4D9D5F6F35E5945A71DFF2C92DF476934E9DBD7F5"
+    },
+    {
+      "path": "backend/test/lineup_player_hydration.test.mjs",
+      "sha256": "88FB77951D9DAA9970A2FEB6A64E953DFB023B32DCBBB31682FE3859CC723692"
+    },
+    {
+      "path": "backend/test/lineup_player_identity_bridge.test.mjs",
+      "sha256": "F97E91FF3EFAA4B4C728797DB4CB88E4E493AEADAFFF54308AD22A2A925512A3"
+    },
+    {
+      "path": "backend/test/live_scheduler.test.mjs",
+      "sha256": "34CC1474A2C64417515DD5C1D6854D48639DC525A4879E80E68B80A11C4A1384"
+    },
+    {
+      "path": "backend/test/live_terminal_recovery.test.mjs",
+      "sha256": "E90187F6B68C5576B6C6581566ACC41D6A64E3700C35CFF8894E8EBCE13A0091"
+    },
+    {
+      "path": "backend/test/load_relief.test.mjs",
+      "sha256": "5F28A42CF4F2F0D9273E27BEDA7BB10486F18FAAC66A2DADE956D008C808E7C9"
+    },
+    {
+      "path": "backend/test/match_detail_backlog_control.test.mjs",
+      "sha256": "02CA8DB803FB7C6656BA432FDE5570DC1771D0E5FEF8344FF85F0FF1460BFA1A"
+    },
+    {
+      "path": "backend/test/match_detail_coverage_planner.test.mjs",
+      "sha256": "10CDE5CC0E8A4FDB6F1F9E8C6441AF9F2A764A8033397A3956C4523F5A2D64EE"
+    },
+    {
+      "path": "backend/test/match_detail_priority.test.mjs",
+      "sha256": "9B69E30CFE06F313458FBD054B37E2B881E84FAFA2EFEF8E1C1FEFA20150AF21"
+    },
+    {
+      "path": "backend/test/match_detail_user_demand.test.mjs",
+      "sha256": "9A18DC1DF6F2804B214A55865F4C407B467B79AE56DB6FD3EEC0D8070AD9789B"
+    },
+    {
+      "path": "backend/test/match_h2h_v2.test.mjs",
+      "sha256": "5D6E2373A2A0E315C6566091A280B4992559AE478E29721DAFB184A681FA1ECD"
+    },
+    {
+      "path": "backend/test/matches_feed_integrity.test.mjs",
+      "sha256": "3CDA98A5B7C1855B70F67C4619627654035F90B266D23A49457D9CDE250B01EA"
+    },
+    {
+      "path": "backend/test/news_api_v2.test.mjs",
+      "sha256": "B02E47C2B5C2FBBDC986F8344C0F1DA916D64EA8E8DC64D773EC0FF6AE0E7214"
+    },
+    {
+      "path": "backend/test/on_demand_hardening.test.mjs",
+      "sha256": "208AB08AC31ECFD22443759AC66E20C7AF93B1703B832128DD85BA9CCD3D5B71"
+    },
+    {
+      "path": "backend/test/player_on_demand.test.mjs",
+      "sha256": "705F4D6086575AC56CA2BFBD91ED2CE41B11F850A1C017AF952E4C619DABE76F"
+    },
+    {
+      "path": "backend/test/provider_hub_phase1a.test.mjs",
+      "sha256": "8C04D38E279B4E9A31AF506F861FE63E42515FAACC3A7F40C23CB1B73B5F5E25"
+    },
+    {
+      "path": "backend/test/reconcile_score_equivalence.test.mjs",
+      "sha256": "61DD561FFEA09FEA53B4470E11F4AC653F02BF0C2A3235E9D74190381264BA55"
+    },
+    {
+      "path": "backend/test/reopen1_stale_missing_state.test.mjs",
+      "sha256": "AC4732C123D97FB320AD78BFD4E6DEA05E6FB386314F7A428274214258BF263E"
+    },
+    {
+      "path": "backend/test/results_only_worker.test.mjs",
+      "sha256": "226A0665154FC17215E992EBCA872BD54CBA1A85212B8CB8E19E3AA4B680DA96"
+    },
+    {
+      "path": "backend/test/results_reservation_safeupdate_fix.test.mjs",
+      "sha256": "1E482304D73F01BEABD8668CC462083D9D1377F5AC4BFAABB8C0B95782EF6795"
+    },
+    {
+      "path": "backend/test/standings_coverage_no_data.test.mjs",
+      "sha256": "4617AABA1DB2704CA8DC62CDB0DC039F6C4A18C5C54D9928AD779CF53FB7E592"
+    },
+    {
+      "path": "backend/test/standings_demand_lifecycle.test.mjs",
+      "sha256": "04BD208712C09E49DB7EEBA3B12A8AA236A130825172476BA7BE12046C261C9C"
+    },
+    {
+      "path": "backend/test/standings_season_identity.test.mjs",
+      "sha256": "728560BEBD2813807C735C425B61959722CF746DC53761C19EDB19867FECF886"
+    },
+    {
+      "path": "backend/test/team_match_coverage.test.mjs",
+      "sha256": "AD4EB6EBA6A6D36307A4DDDF0AE674995950F2772292F770F2FC613F537658D4"
+    },
+    {
+      "path": "backend/test/team_matches_history.test.mjs",
+      "sha256": "2857C6222BF6106F9C9506D6A6B077A320D683ADB4661BB7CB25BAEA6A09A7A2"
+    },
+    {
+      "path": "backend/test/team_profile_completeness.test.mjs",
+      "sha256": "C6838CD24DB27202CFAE9B18D80A4887583C5DAB3BED44DAEE84574652D17598"
+    },
+    {
+      "path": "backend/test/terminal_result_user_demand.test.mjs",
+      "sha256": "BDF0B9D82167AA06782A30DFD39A8AFC2E4D32B1A965144D17C8478FE882DF23"
+    },
+    {
+      "path": "docs/release/FUTBEAT-1.0-INTEGRATION-MASTER.md",
+      "sha256": "E55EA300F33BD3F322A44825DA9180CD59C0F2AC13714224D4154603536EE6F7"
+    },
+    {
+      "path": "scripts/release/Build-Acceptance17.ps1",
+      "sha256": "ABFAE6F37ADCB117D030964DBFA858016BA6BF0091193EEBE8584A9A42B3B158"
+    },
+    {
+      "path": "scripts/release/acceptance17.public.json",
+      "sha256": "7C65E9F150E7511C263B49CA792FEEC19645CD112EC85BCDEBD596242880C9A6"
+    },
+    {
+      "path": "scripts/release/acceptance17.sources.json",
+      "sha256": "3FD095A5213D95375BE73D4FEC73AE45B5581378FEA402D2C6699D23C8F549E5"
+    },
+    {
+      "path": "scripts/release/backend1.edge-sources.json",
+      "sha256": "A7D9AB8381FC5904458A8EFD4F2B2AA7D5478652DC4927F55EC8BD1A545DE58E"
+    },
+    {
+      "path": "scripts/release/backend1.expected.json",
+      "sha256": "12713AF495A618B33A138D076ED9F185FB229FC54984EBCDE0BB19AB57D6AB07"
+    },
+    {
+      "path": "scripts/release/backend1.undeployed-sources.json",
+      "sha256": "2A16E66C50851FAD881B20B6DD1ACB9599558E01F6AD59DFB75B8A741D28F2D0"
+    },
+    {
+      "path": "scripts/release/verify-acceptance-inputs.mjs",
+      "sha256": "F21D6DB51887A3F450EE54F9BB9DD76BF45C4EDEE2BBA2EEE2C3661A92DF946A"
+    },
+    {
+      "path": "scripts/release/verify-backend1-edge.mjs",
+      "sha256": "D4E755FC12E71ED5A59CC22F7B4B323C0D45FD8E20E5E263DFBEBD45935BBB26"
+    },
+    {
+      "path": "scripts/release/verify-backend1-pg17.py",
+      "sha256": "BB860D76CBA252CBA4236A5EB996E8BC5DFE708D781538DAEABDA8B8E45B1E73"
+    },
+    {
+      "path": "scripts/release/verify-consolidation1.mjs",
+      "sha256": "45C586DE1BAFED22A482325531572744FA1B0C7DEC3D9B7FF9C718AA4677CEF5"
+    },
+    {
+      "path": "scripts/release/verify-supabase-extensions.py",
+      "sha256": "0214E52FFBBBAADE123315BD213BD1C229EF1F1768A5A5332A8E7910D54AA3EE"
+    },
+    {
+      "path": "supabase/config.toml",
+      "sha256": "3144050E005EFFCEBA8EB5B5711AC4EBDAD3D1937E73D9457BBA5955739687A9"
+    },
+    {
+      "path": "supabase/functions/_shared/api_access.ts",
+      "sha256": "521F8133FDDFD0F20F073A189C30CD6E0E56856272DDED8A73FA319B5C30E8C8"
+    },
+    {
+      "path": "supabase/functions/_shared/calendar_cache.ts",
+      "sha256": "2AA8E02237F325BC07F9417D4B3CAC21F513AFF245EEA69BAF7D3ED45729EFD9"
+    },
+    {
+      "path": "supabase/functions/_shared/chunked_rpc.ts",
+      "sha256": "DD33B096020D00602E8381D45A28AF5088E16F63C339C56B91F91F1BAC384135"
+    },
+    {
+      "path": "supabase/functions/_shared/deployed/match_detail.api-v50.ts",
+      "sha256": "95BCC299406EA95BDB9AFA4769CACD50629ACAAD286275D461F17115DDAF3719"
+    },
+    {
+      "path": "supabase/functions/_shared/deployed/match_detail.passive-v7.ts",
+      "sha256": "C1858DD3C3490EBB2CCC57F837CD806ADA3015725143C63BD0B3D0ED07B9598C"
+    },
+    {
+      "path": "supabase/functions/_shared/goal_players.ts",
+      "sha256": "3F8D98A52E60CA85269663F7C9691BA84BC1788BA4DD521979118311F14FD4C6"
+    },
+    {
+      "path": "supabase/functions/_shared/goal_standings.ts",
+      "sha256": "C26242BC13FA998690479E878E12418C61FAB26D9A8436D1B203868778737CD0"
+    },
+    {
+      "path": "supabase/functions/_shared/live_events.ts",
+      "sha256": "8F328AB7CEE871CD1286CFB4E7698056D000478C485A68AB41CE4F4728CF55AA"
+    },
+    {
+      "path": "supabase/functions/_shared/results_pagination.ts",
+      "sha256": "ED99310F8EB4EB2302EDCC73E9E2BA634C6D65685DDC66F260E8E3D08941136F"
+    },
+    {
+      "path": "supabase/functions/futbeat-api/index.ts",
+      "sha256": "2871C816228CAF36D0F04A8068AD254F4C3CC3135649B080E16E3F7D7AAAC94F"
+    },
+    {
+      "path": "supabase/functions/futbeat-billing/index.ts",
+      "sha256": "9AB82A749D04CC248FFDB5A59A2E40600B689A3DBE8E7058EE3A49B907DEF1DE"
+    },
+    {
+      "path": "supabase/functions/futbeat-billing/lib/billing-adapters.mjs",
+      "sha256": "B8EB8501CD4A28BC37E20D09CD49477A5F0DF728F674518D36BB3F4C33AF95AD"
+    },
+    {
+      "path": "supabase/functions/futbeat-billing/lib/billing-app.mjs",
+      "sha256": "8116B4B2E663F51A29B8B8504C4C68A0945FF35D4BDADAFA834FD17DDBC76784"
+    },
+    {
+      "path": "supabase/functions/futbeat-billing/lib/premium-play-api.mjs",
+      "sha256": "53762AD3AE96F99A32E88BE0E875BB3134FCA2DD63A20321F5047048E2249CFD"
+    },
+    {
+      "path": "supabase/functions/futbeat-billing/lib/premium-play-policy.mjs",
+      "sha256": "5890EE16D2684A466DA76C19B122D8E8B748D011132FFCF13900E9EFD2E3B2AD"
+    },
+    {
+      "path": "supabase/functions/futbeat-billing/lib/premium-release-service.mjs",
+      "sha256": "3906C58B084BC3363DD14B8BC3A7B36F98EDCBD35CF6509C861CCA4B4FABB1B7"
+    },
+    {
+      "path": "supabase/functions/futbeat-billing/lib/premium-token-vault.mjs",
+      "sha256": "027FE663538D1AA6AF3A633E55895407E2BD80326A3DE7EE142293B42DB45601"
+    },
+    {
+      "path": "supabase/functions/futbeat-delete-account/index.ts",
+      "sha256": "0ED09D3363EDBA2E738ADAE3C29A2A4ECC6C28738837A312406353C76A4CF18A"
+    },
+    {
+      "path": "supabase/functions/futbeat-global-ingest/index.ts",
+      "sha256": "BA02A1BDBD655DA91C3DEDEBFD80FE12A9D73F0AFB2E625DAA81D0EF1A63E326"
+    },
+    {
+      "path": "supabase/functions/futbeat-goal-live-sync/index.ts",
+      "sha256": "0CD51CA9C31581AF2BCE53D9AFB27746F147CEAF2088B8480E1746DA1ECB91DE"
+    },
+    {
+      "path": "supabase/functions/futbeat-passive-api/handler.ts",
+      "sha256": "3FAF30E00B29C3A6D443BE483ED6B679684FB8A4169026784267A2DBFD2ACD34"
+    },
+    {
+      "path": "supabase/functions/futbeat-passive-api/index.ts",
+      "sha256": "E7D2571FE05D1730538C6463FDB43932DCBEBE98A7BAF2E597D735F60A0C1983"
+    },
+    {
+      "path": "supabase/migrations/20260917133000_dynamic_beta_live_scheduler.sql",
+      "sha256": "008C26C51BBA749C2EC941E4C10D65F1DA8E27C4E7DB1F1E8918370FAA7369D9"
+    },
+    {
+      "path": "supabase/migrations/20260917133500_wake_beta_live_worker.sql",
+      "sha256": "298E02FCEDF881335A74BA4F76A10500B6B2AE673744FAAE0F32E32B3926CDEF"
+    },
+    {
+      "path": "supabase/migrations/20261004230000_interest_aggregates_safeupdate.sql",
+      "sha256": "CE90D5F9EF76E3CB6769A072F925A57855C25ABB15E26B2FDCAD82FC8EC9061F"
+    },
+    {
+      "path": "supabase/migrations/20261005090000_load_relief.sql",
+      "sha256": "2619DD01EF363BB232C545BB8E07950DD99945BBCE08F966B19AA49E1C410180"
+    },
+    {
+      "path": "supabase/migrations/20261124140313_consolidated_backend_1_0.sql",
+      "sha256": "1BD9EF0436D6EDFDFB2D6CB4ED3AE34D0D609F59F9905BD711850BD2D3B7ADD3"
+    },
+    {
+      "path": "supabase/migrations/20261124150000_reopen1_stale_missing_from_provider.sql",
+      "sha256": "73EDE6B4A2A8C641DF30910CAF1ACE0BF1887E3AF8F6875F0F824C8EE7C5CC2B"
+    },
+    {
+      "path": "supabase/undeployed/futbeat-api-main-news.patch",
+      "sha256": "A7C4613E05CF3B5A5877EDA82047A610119657105DF7587EB2BF239CD01B0B30"
+    },
+    {
+      "path": "supabase/undeployed/global-ingest-main-followup.patch",
+      "sha256": "1CBB69A5CC397E0B491C4134C077FB4D2794E62B097EBFEE393B581DD5624306"
+    }
+  ],
+  "pendingEdgeParity": [],
+  "confirmedEdgeParity": [
+    "futbeat-api v50",
+    "futbeat-delete-account v10",
+    "futbeat-goal-live-sync v52",
+    "futbeat-passive-api v7",
+    "futbeat-global-ingest v50 (partial byte readback; see certificationLimits)",
+    "futbeat-push-dispatch v9",
+    "futbeat-billing v2"
+  ],
+  "productionChanges": false,
+  "commitAuthorized": false,
+  "rollbackArchive": {
+    "archive": "atomic-consolidation-before.zip",
+    "sha256": "5945DC7ABD8C29180CEB87C747FBE5337A6F407299CC2A86337357C5D339A4FD",
+    "files": 123,
+    "applyPolicy": "NOT EXECUTED. Restore only under authorization, only when current hash equals this plan raw or planned canonical hash; otherwise STOP to preserve newer work. Never reset or clean. After an authorized commit, prefer a separately authorized revert."
+  },
+  "prerequisiteParityPending": [],
+  "validation": {
+    "nativePostgres": "artifacts/consolidation-section5-native/result.json",
+    "supabasePostgres": "artifacts/consolidation-section5-platform/result.json",
+    "realExtensions": "artifacts/consolidation-section5-extensions/result.json",
+    "realSafeupdateAndAcl": "artifacts/consolidation-section5-real-safeupdate.json",
+    "contracts": "artifacts/consolidation-section5-contracts-summary.json",
+    "contractsMode": "FULL_SUITE_PLUS_ENTIRE_AFFECTED_FILE_RECHECK; raw full run one obsolete O1 assertion corrected afterward",
+    "unresolvedContractFailures": 0,
+    "contractTodos": 2,
+    "android": "artifacts/consolidation-section5-android-inputs.json",
+    "edge": "artifacts/consolidation-section5-edge.json",
+    "flutterRuntimeContentChanged": false,
+    "allContractsResolved": true,
+    "lastFullRunAllGreen": false
+  },
+  "supplementaryRollback": {
+    "archive": "artifacts/backend1-additions-before.zip",
+    "sha256": "123803C7D37CD1B99FF17CDC8DBB86B1C4275379F606B10937BE1F461F4784A7",
+    "extraPreserved": [
+      {
+        "path": "artifacts/identity_same_provider_guard-before.test.mjs",
+        "sha256": "5B16E649F861098D783543EB6B683BCF5D978EFAF2852D9771766155D05B42C5"
+      },
+      {
+        "path": "artifacts/live_terminal_recovery-before-consolidation.test.mjs",
+        "sha256": "8A66B03D03F7FF8F922236085AC2C47E50A6D3CC744177F135B41E28619D804B"
+      },
+      {
+        "path": "artifacts/acceptance17.sources-before-eol.json",
+        "sha256": "22A0DAE632AD507DFB671FC814F9B8068AA8759B43B54AD8FB4450D60F60B337"
+      }
+    ]
+  },
+  "integrationSequence": [
+    "Owner authorizes the exact final manifest SHA for one local atomic commit only",
+    "Require unchanged HEAD, empty index, frozen bytes, no concurrent source edits and verified backups; stage only the literal NUL-delimited allowlist",
+    "Verify each staged Git blob and exact pathset; inspect staged diff/check, then create only the authorized commit",
+    "Verify resulting commit tree/parent and preservation of unrelated WIP; no push, merge, deployment or new build is implied"
+  ],
+  "closureGates": {
+    "freshEdgeSourceParity": true,
+    "freshPrerequisiteParity": true,
+    "supabasePlatformValidation": true,
+    "fullContractsOnFinalSourceGraph": true
+  },
+  "edgeSourceManifestSha256": "972022E0D08EC7DBB6FA8AE318932895B485964A4C45B2AC6D82AD6F4CC7D662",
+  "certificationLimits": [
+    "global-ingest eight imported files: clean deployed commit/ezbr evidence, not byte readback",
+    "passive-api bundled npm resolution unknowable; reproducible local pin1.8.0",
+    "eight prod-only RPC ACLs not read back; isolated reconstruction ACL PASS",
+    "two PL1 bodies whitespace-normalized only; no raw byte equality claim",
+    "timezone rows depend on server tzdata, checked against own catalog only",
+    "Supabase public default-privilege grants differ from native PG; Claude certified source equivalence",
+    "Auth is a local fixture; no new physical Android or N1 acceptance is claimed"
+  ],
+  "finalPrerequisiteSources": [
+    {
+      "source": "recovery-03/m2-17/deploy/apply_m2_sql.sql",
+      "rawSha256": "32c595bc7e991322adb0034b67b1287d38dcbda02aefec75391fff873c105fbd",
+      "lfSha256": "32c595bc7e991322adb0034b67b1287d38dcbda02aefec75391fff873c105fbd"
+    },
+    {
+      "source": "2962db5e:supabase/migrations/20261109080000_prod_function_baseline.sql",
+      "rawSha256": "323e6901838dc7caf6dd01bd887a61f8d36f576400105b4376a5619893d2a5f2",
+      "lfSha256": "323e6901838dc7caf6dd01bd887a61f8d36f576400105b4376a5619893d2a5f2"
+    },
+    {
+      "source": "s275-passive/supabase/manual/20261104_passive_api_policy_candidate.sql",
+      "rawSha256": "fcb1ba9dd445416e610ca3e81a9e0f920d614c5591031f724dc4154bbe03b22d",
+      "lfSha256": "fcb1ba9dd445416e610ca3e81a9e0f920d614c5591031f724dc4154bbe03b22d"
+    }
+  ],
+  "additionalRollbackArchives": [
+    {
+      "path": "artifacts/consolidation-edge-before.zip",
+      "sha256": "CF987ED1B79CBAB827861FE08519084EE63103C8F95372D0BB2D54EAA8562831"
+    },
+    {
+      "path": "artifacts/consolidation-migration-portability-before.zip",
+      "sha256": "5255EFC24A7EFC87AB870BD65E79879BE5FD47F9AD1E8A83B774F03823E950F7"
+    },
+    {
+      "path": "artifacts/consolidation-contract-fixtures-before.zip",
+      "sha256": "66F8B5B32EAE7474AFC3185C6DD4E777EC1BD0548A244C9BE93F8CCE3C914EBA"
+    },
+    {
+      "path": "artifacts/consolidation-section5-before.zip",
+      "sha256": "6171E50C46F1AA9766B833B909CFC1370459816C4C5481400D265628153FD5CE"
+    }
+  ],
+  "additionalPreservedOriginals": [
+    {
+      "path": "artifacts/acceptance17.sources-before-final-eol-policy.json",
+      "sha256": "FED775A6C49F016B59DC5DBB10D98F69008BF0FB5AE62C931B820D190E94A08C"
+    },
+    {
+      "path": "artifacts/gitattributes-before-final-lf.txt",
+      "sha256": "1715D7498B0C7B50D28D2F8A96DD7C46BF50995BF588A9B33B95EEF965B5940C"
+    }
+  ],
+  "section5Sources": [
+    {
+      "source": "52498e0a:supabase/migrations/20261005090000_load_relief.sql",
+      "path": "supabase/migrations/20261005090000_load_relief.sql",
+      "sha256": "2619dd01ef363bb232c545bb8e07950dd99945bbce08f966b19aa49e1c410180",
+      "adaptations": []
+    },
+    {
+      "source": "1b73c2b9:supabase/migrations/20261004230000_interest_aggregates_safeupdate.sql",
+      "path": "supabase/migrations/20261004230000_interest_aggregates_safeupdate.sql",
+      "sha256": "ce90d5f9ef76e3cb6769a072f925a57855c25abb15e26b2fdcad82fc8ec9061f",
+      "adaptations": []
+    },
+    {
+      "source": "be-reopen/20261124150000_reopen1_stale_missing_from_provider.sql",
+      "path": "supabase/migrations/20261124150000_reopen1_stale_missing_from_provider.sql",
+      "sha256": "73ede6b4a2a8c641df30910caf1ace0bf1887e3af8f6875f0f824c8ee7c5cc2b",
+      "adaptations": []
+    },
+    {
+      "source": "52498e0a:backend/test/load_relief.test.mjs",
+      "path": "backend/test/load_relief.test.mjs",
+      "sha256": "5f28a42cf4f2f0d9273e27beda7bb10486f18faac66a2dade956d008c808e7c9",
+      "adaptations": []
+    },
+    {
+      "source": "o1-14/deploy/apply_o1.sql",
+      "sourceSha256": "1229dd841009d7ee5e9ea4e96f25d2a8e3bbafa90fa121e211e78ef4d306a753",
+      "path": "supabase/migrations/20261124140313_consolidated_backend_1_0.sql",
+      "selectedStatements": 6,
+      "excluded": "all operational guards, transaction/session directives and other function definitions"
+    },
+    {
+      "source": "be-reopen/reopen1_stale_missing_state.test.mjs",
+      "path": "backend/test/reopen1_stale_missing_state.test.mjs",
+      "sha256": "AC4732C123D97FB320AD78BFD4E6DEA05E6FB386314F7A428274214258BF263E"
+    }
+  ],
+  "intentionalProductionDifference": {
+    "function": "futbeat_private.reconcile_goal_results_local(date)",
+    "productionMd5Prefix": "9a667517",
+    "localMd5": "83cbc022447cdbdc79f60cdd8258858e",
+    "status": "APPROVED_LOCAL_FIX_NOT_DEPLOYED; separate production authorization required"
+  },
+  "priorFreeze": {
+    "manifestSha256": "465BB7ACA1FC1B0E9972DCC13126FFBA89D28FB0F2E1C8EF018A37F11A74EE8D",
+    "paths": 192,
+    "manifestCopy": "artifacts/consolidation-section5-before-freeze.json",
+    "backup": "artifacts/atomic-consolidation-frozen-192.zip",
+    "backupSha256": "9351AB8677AC381B401B8479CF2E722F1EB23BC71CF68A0207DAD6727F453E19"
+  },
+  "finalLfNormalization": {
+    "previousManifestSha256": "65466C74177ABEB658C2C8491280F8F96E5BAC010621FCED577B32D68C83B329",
+    "paths": [
+      "backend/test/consolidated_deployed_ingest.test.mjs",
+      "backend/test/consolidated_passive_defaults.test.mjs",
+      "backend/test/fixtures/backend1_source_acl.sql",
+      "backend/test/helpers/undeployed_sources.mjs",
+      "scripts/release/backend1.expected.json",
+      "scripts/release/backend1.undeployed-sources.json",
+      "scripts/release/verify-supabase-extensions.py"
+    ],
+    "policy": "CRLF to LF only; canonical Git blobs match the previously verified plannedGitBlob values. No Android code or SQL migration changes. Proposal not applied."
+  }
+}

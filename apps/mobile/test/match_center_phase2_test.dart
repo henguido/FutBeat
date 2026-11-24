@@ -322,6 +322,12 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 Future<void> _tab(WidgetTester tester, String label) async {
+  // The historical timeline now has its own name, never a LIVE label.
+  if (label == 'En vivo' &&
+      find.text('En vivo').evaluate().isEmpty &&
+      find.text('Eventos').evaluate().isNotEmpty) {
+    label = 'Eventos';
+  }
   final tab = find.descendant(
     of: find.byType(TabBar),
     matching: find.text(label),
@@ -389,21 +395,14 @@ void main() {
     expect(teamMatchResult(m('a', 'b', 1, 0), 'c'), isNull);
   });
 
-  testWidgets('1. six stable tabs before kickoff', (tester) async {
+  testWidgets('1. four appropriate tabs before kickoff', (tester) async {
     final container = await _open(tester, _Server((_) => _context()));
     final bar = tester.widget<TabBar>(find.byType(TabBar));
     expect(
       [for (final t in bar.tabs) (t as Tab).text],
-      [
-        'Previa',
-        'En vivo',
-        'Alineación',
-        'Tabla',
-        'Estadísticas',
-        'Cara a cara',
-      ],
+      ['Previa', 'Alineación', 'Tabla', 'Cara a cara'],
     );
-    expect(bar.controller!.length, 6);
+    expect(bar.controller!.length, 4);
     expect(bar.isScrollable, true);
     await _close(tester, container);
   });
@@ -507,8 +506,8 @@ void main() {
     final container = await _open(tester, _Server((_) => _context()));
     expect(find.text('Eventos del partido'), findsNothing);
     expect(find.text('Sin eventos'), findsNothing);
-    await _tab(tester, 'En vivo');
-    expect(find.text('El partido aún no inicia'), findsOneWidget);
+    expect(find.text('En vivo'), findsNothing);
+    expect(find.text('Estadísticas'), findsNothing);
     expect(find.text('Eventos del partido'), findsNothing);
     await _close(tester, container);
   });
@@ -706,7 +705,7 @@ void main() {
     );
     await _tab(tester, 'Cara a cara');
     // #99 v2: a cache miss is not "no previous meetings".
-    expect(find.text('Cargando historial'), findsOneWidget);
+    expect(find.text('Historial pendiente de actualización'), findsOneWidget);
     expect(find.text('Sin enfrentamientos previos registrados'), findsNothing);
     expect(find.text('Sin enfrentamientos anteriores'), findsNothing);
     expect(find.textContaining('nunca', findRichText: true), findsNothing);
@@ -822,7 +821,7 @@ void main() {
       'Cara a cara',
       'Tabla',
       'Previa',
-      'Estadísticas',
+      'Alineación',
       'Cara a cara',
     ]) {
       await _tab(tester, tab);
@@ -979,8 +978,8 @@ void main() {
     expect(liveStatus, findsNothing);
     expect(
       find.descendant(of: find.byType(TabBar), matching: find.text('En vivo')),
-      findsOneWidget,
-      reason: 'the tab itself stays',
+      findsNothing,
+      reason: 'a finished match must not keep the LIVE section',
     );
     await _elapse(tester, const Duration(minutes: 10));
     expect(server.contextReads, 2, reason: 'final settles: no more reads');

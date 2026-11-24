@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/billing.dart';
 import '../../core/premium_qa_transport.dart';
@@ -12,7 +13,20 @@ const premiumMessages = {
   PremiumActionResult.failed: 'No se pudo completar la compra.',
   PremiumActionResult.unavailable: 'Google Play no está disponible.',
   PremiumActionResult.nothingToRestore: 'No hay compras para restaurar.',
+  PremiumActionResult.purchaseRejected: 'Esta compra está vinculada a otra cuenta FutBeat. Inicia sesión con la cuenta que la compró.',
+  PremiumActionResult.temporarilyUnavailable: 'No pudimos verificar la compra temporalmente. Inténtalo más tarde; tu derecho vigente se conserva.',
 };
+
+final managePremiumSubscriptionProvider = Provider<Future<bool> Function()>(
+  (ref) =>
+      () => launchUrl(
+        Uri.https('play.google.com', '/store/account/subscriptions', {
+          'sku': PremiumProducts.productId,
+          'package': 'com.futbeat.futbeat',
+        }),
+        mode: LaunchMode.externalApplication,
+      ),
+);
 
 /// Current plan plus "Hazte Premium" / "Restaurar compras". The plan comes
 /// only from [entitlementsProvider].
@@ -109,13 +123,13 @@ class PremiumCard extends ConsumerWidget {
               Wrap(
                 spacing: 8,
                 children: [
-                  if (!plan.isPremium && purchasesAllowed)
+                  if ((!plan.isPremium || premiumPlayQaEnabled) && purchasesAllowed)
                     FilledButton(
                       key: const ValueKey('premium-upgrade'),
                       onPressed: billing.busy || !plan.accountResolved
                           ? null
                           : upgrade,
-                      child: const Text('Hazte Premium'),
+                      child: Text(plan.isPremium ? 'Cambiar plan' : 'Hazte Premium'),
                     ),
                   TextButton(
                     key: const ValueKey('premium-restore'),
@@ -124,6 +138,35 @@ class PremiumCard extends ConsumerWidget {
                         : () async => show(await controller.restore()),
                     child: const Text('Restaurar compras'),
                   ),
+                  TextButton(
+                    key: const ValueKey('premium-manage'),
+                    onPressed: () async {
+                      var opened = false;
+                      try {
+                        opened = await ref.read(
+                          managePremiumSubscriptionProvider,
+                        )();
+                      } catch (_) {}
+                      if (!opened && context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Abre Google Play → Pagos y suscripciones → Suscripciones.',
+                            ),
+                          ),
+                        );
+                      }
+                    },
+                    child: const Text('Gestionar suscripción'),
+                  ),
+                  if (premiumPlayQaEnabled && plan.isPremium)
+                    TextButton(
+                      key: const ValueKey('premium-qa-verify'),
+                      onPressed: billing.busy || !plan.accountResolved
+                          ? null
+                          : () async => show(await controller.verifyQaPurchase()),
+                      child: const Text('Verificar compra QA'),
+                    ),
                 ],
               ),
             ],

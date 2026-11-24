@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import { runChunksWithTimeoutRetry } from '../../supabase/functions/_shared/chunked_rpc.ts';
 import assert from 'node:assert/strict';
@@ -229,6 +230,7 @@ function ingest(db, { rejectShapeCapture = false } = {}) {
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   try { await fn(db); } finally { await db.close(); }
 }
 let seq = 0;

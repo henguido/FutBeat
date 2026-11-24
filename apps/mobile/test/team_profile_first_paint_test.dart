@@ -43,7 +43,13 @@ Map<String, dynamic> _search({Map<String, String> redirects = const {}}) => {
     _team('fb_team_seed', 'Club Semilla'),
     _team('fb_team_other', 'Club Vecino'),
   ],
-  'players': <dynamic>[],
+  'players': [
+    {
+      'id': 'fb_player_seed',
+      'name': 'Jugador Semilla',
+      'teamId': 'fb_team_seed',
+    },
+  ],
   'matches': <dynamic>[],
   'standings': <dynamic>[],
 };
@@ -157,7 +163,7 @@ Future<void> _openTab(WidgetTester tester, String label) async {
 }
 
 void main() {
-  for (final type in ['team', 'competition']) {
+  for (final type in ['team', 'competition', 'player']) {
     testWidgets(
       'keeps the known $type visible when its profile service fails',
       (tester) async {
@@ -168,7 +174,11 @@ void main() {
           tester,
           repository,
           type: type,
-          id: isTeam ? 'fb_team_seed' : _competition['id'] as String,
+          id: isTeam
+              ? 'fb_team_seed'
+              : type == 'player'
+              ? 'fb_player_seed'
+              : _competition['id'] as String,
         );
         harness.entity.completeError(
           DioException(
@@ -179,9 +189,20 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
         expect(find.text('No pudimos cargar este perfil'), findsNothing);
-        expect(find.text('Reintentar carga del perfil'), findsOneWidget);
         expect(
-          find.text(isTeam ? 'Club Semilla' : _competition['name'] as String),
+          find.text(
+            type == 'player' ? 'Actualizar' : 'Reintentar carga del perfil',
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.text(
+            isTeam
+                ? 'Club Semilla'
+                : type == 'player'
+                ? 'Jugador Semilla'
+                : _competition['name'] as String,
+          ),
           findsWidgets,
         );
       },

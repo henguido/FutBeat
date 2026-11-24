@@ -161,8 +161,8 @@ extension UserSessionAccess on PushService {
     if (_stale(generation)) return;
     await _writeLocalProfile(const UserProfileSettings(), dirty: false);
     if (_stale(generation)) return;
-    await storage.delete(key: PushService.leftoverKey);
-    await storage.delete(key: _publicPreferenceOwnerKey);
+    await storage.delete(key: storageKey(PushService.leftoverKey));
+    await storage.delete(key: storageKey(_publicPreferenceOwnerKey));
     _anonymousRetryAfter = null;
     _publicSessionNeedsPersistence = false;
   }
@@ -257,7 +257,7 @@ extension UserSessionAccess on PushService {
     await _persistSession();
     if (_authenticationStale(attempt)) return;
     await storage.write(
-      key: 'futbeat.auth.pendingConfirmationEmail',
+      key: storageKey(pendingConfirmationStorageKey),
       value: emailAddress,
     );
   }

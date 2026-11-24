@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import './helpers/midday_utc_clock.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,6 +27,7 @@ async function seedBetaMatch(db,{offsetMinutes,status='SCHEDULED'}={}) {
 
 test('dynamic LIVE guard spends nothing outside window and allows upcoming kickoff once',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   await seedBetaMatch(db,{offsetMinutes:60});
   assert.equal((await call(db)).reason,'outside_beta_window');
@@ -38,6 +40,7 @@ test('dynamic LIVE guard spends nothing outside window and allows upcoming kicko
 
 test('LIVE guard accepts active state, stops finished match and preserves seven-call reserve',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const ids=await seedBetaMatch(db,{offsetMinutes:-30,status:'LIVE'});
   assert.equal((await call(db)).allowed,true);
@@ -56,6 +59,7 @@ test('LIVE guard accepts active state, stops finished match and preserves seven-
 
 test('existing canonical fixture transitions SCHEDULED to LIVE to FT without duplication',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const ids=await seedBetaMatch(db,{offsetMinutes:-10});
   const record=async(status,homeScore,minute)=>{
@@ -91,6 +95,7 @@ test('Supabase GOAL LIVE worker paginates beyond the first 100 fixtures and keep
 
 test('GOAL LIVE links an existing scheduled match by teams and kickoff without a preexisting external id',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const competition='fb_comp_goal_live',home='fb_team_brentford',away='fb_team_chelsea',match='fb_match_goal_live';
   const start=new Date().toISOString();
@@ -170,6 +175,7 @@ test('GOAL LIVE links an existing scheduled match by teams and kickoff without a
 
 test('GOAL score increase creates a provisional canonical goal event without detail quota',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const competition='fb_comp_goal_event',home='fb_team_goal_home',away='fb_team_goal_away',match='fb_match_goal_event';
   const start=new Date().toISOString();
@@ -231,6 +237,7 @@ test('GOAL score increase creates a provisional canonical goal event without det
 
 test('Match Center detail is queued once, cached, and not refetched while fresh',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const ids=await seedBetaMatch(db,{offsetMinutes:-15,status:'LIVE'});
   await db.query(
@@ -287,6 +294,7 @@ test('Match Center detail is queued once, cached, and not refetched while fresh'
 
 test('historical Match Center detail queues recent finished matches once and keeps verified cache',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const ids=await seedBetaMatch(db,{offsetMinutes:-(30*24*60),status:'VERIFIED'});
   await db.query(
@@ -330,6 +338,7 @@ test('historical Match Center detail queues recent finished matches once and kee
 
 test('GOAL quota priority preserves LIVE while allowing bounded Match Center detail',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const ids=await seedBetaMatch(db,{offsetMinutes:-15,status:'LIVE'});
   await db.query(
@@ -423,6 +432,7 @@ test('LIVE transport uses Supabase five-minute cron and GitHub only provisions t
 
 test('Standings v2 stores canonical GOAL rows and exposes them in competition detail',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const competition='fb_comp_standings_v2';
   await db.query(
@@ -477,6 +487,7 @@ test('Standings v2 stores canonical GOAL rows and exposes them in competition de
 
 test('Standings v2 plan is generic, prioritizes real interest (never a hardcoded country) and uses the quota manager',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const now=new Date();
   for(const [competition,external,name,country,teamA,teamB,match] of [
@@ -542,6 +553,7 @@ test('Standings workflow is quota-safe and uses generic planned league identity'
 
 test('Standings v2 collapses duplicate GOAL team ids into one canonical club',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const competition='fb_comp_standings_dupe';
   const canonical='fb_team_standings_same';
@@ -620,6 +632,7 @@ test('Standings v2 collapses duplicate GOAL team ids into one canonical club',as
 
 test('Standings LIVE overlay applies only matches newer than the official baseline',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const competition='fb_comp_live_table';
   const home='fb_team_live_table_home';
@@ -735,6 +748,7 @@ test('Standings LIVE overlay applies only matches newer than the official baseli
 
 test('stale public LIVE overlays are pruned without deleting canonical matches',async()=>{
  const db=await openDatabase();
+  await enableAcquisitionTestNavigation(db, { legacyMatchDetail: true });
  try {
   const ids=await seedBetaMatch(db,{offsetMinutes:-90,status:'SCHEDULED'});
   await db.query(

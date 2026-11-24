@@ -122,6 +122,7 @@ Future<void> _pump(
   Map<String, dynamic> preview, {
   String status = 'SCHEDULED',
   double width = 390,
+  VoidCallback? onRetry,
 }) async {
   tester.view.physicalSize = Size(width, 1400);
   tester.view.devicePixelRatio = 1;
@@ -139,6 +140,7 @@ Future<void> _pump(
               preview: AsyncValue.data(MatchPreview(preview)),
               data: data,
               match: match,
+              onRetry: onRetry,
             ),
           ),
         ),
@@ -305,18 +307,40 @@ void main() {
     expect(_value(tester, 'h2h-draws'), '1');
   });
 
-  testWidgets('9/13. pending shows a quiet skeleton, never a spinner', (
+  testWidgets('pending history retries only on explicit user action', (
     tester,
   ) async {
-    await _pump(tester, _preview(availability: 'PENDING', meetings: []));
-    expect(find.byKey(const ValueKey('h2h-pending')), findsOneWidget);
-    expect(find.text('Cargando historial'), findsOneWidget);
+    var retries = 0;
+    await _pump(
+      tester,
+      _preview(availability: 'PENDING', meetings: []),
+      onRetry: () => retries++,
+    );
+    await tester.pump(const Duration(minutes: 5));
+    expect(retries, 0);
+    expect(find.text('Cargando historial'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('h2h-retry-pending')));
+    await tester.pump();
+    expect(retries, 1);
     expect(
       find.text('Todavía no hay enfrentamientos recientes disponibles.'),
       findsNothing,
     );
-    expect(find.byType(CircularProgressIndicator), findsNothing);
   });
+
+  testWidgets(
+    '9/13. pending is a settled state, never an endless loading skeleton',
+    (tester) async {
+      await _pump(tester, _preview(availability: 'PENDING', meetings: []));
+      expect(find.byKey(const ValueKey('h2h-pending')), findsOneWidget);
+      expect(find.text('Historial pendiente de actualización'), findsOneWidget);
+      expect(
+        find.text('Todavía no hay enfrentamientos recientes disponibles.'),
+        findsNothing,
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    },
+  );
 
   testWidgets('10. confirmed empty says so, briefly', (tester) async {
     await _pump(

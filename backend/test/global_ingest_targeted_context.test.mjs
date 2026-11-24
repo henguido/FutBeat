@@ -1,10 +1,13 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
+import { readUndeployedSource, importUndeployedModule } from './helpers/undeployed_sources.mjs';
+// Explicitly tests preserved, NOT deployed main follow-up behavior.
+const test = (name, ...args) => nodeTest('undeployed follow-up: ' + name, ...args);
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import vm from 'node:vm';
 import { openDatabase } from '../storage/database.mjs';
-import { collectGoalApiBaseIdentities, normalizeGoalApiFixtures } from '../providers/goal_api.mjs';
+const { collectGoalApiBaseIdentities, normalizeGoalApiFixtures } = await importUndeployedModule('backend/providers/goal_api.mjs');
 import { goalFixtureScore } from '../../supabase/functions/_shared/live_events.ts';
 import { runChunksWithTimeoutRetry } from '../../supabase/functions/_shared/chunked_rpc.ts';
 
@@ -12,7 +15,7 @@ import { runChunksWithTimeoutRetry } from '../../supabase/functions/_shared/chun
 // its batch (futbeat_read_ingest_context, after resolve-base) instead of the
 // full snapshot (3.8 MB, 5.6-7.8 s, 57014 in production run 37411216092).
 
-const ingestSource = await readFile(new URL('../../supabase/functions/futbeat-global-ingest/index.ts', import.meta.url), 'utf8');
+const ingestSource = await readUndeployedSource('supabase/functions/futbeat-global-ingest/index.ts');
 const stripImports = (source) => source.replace(/^import\s[\s\S]*?;\r?\n/gm, '');
 
 const SQL_RPCS = new Set(['futbeat_reserve_provider_call', 'futbeat_read_ingest_context', 'futbeat_resolve_global_entities',

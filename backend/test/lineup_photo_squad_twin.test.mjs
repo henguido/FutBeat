@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../storage/database.mjs';
@@ -50,6 +51,7 @@ const read = async (db, ids) => (await db.query("select public.futbeat_read_line
 
 async function scene(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   try {
     const home = await team(db, 'fb_team_219_home', 'Home FC');
     const away = await team(db, 'fb_team_219_away', 'Away FC');

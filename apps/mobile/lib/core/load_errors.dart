@@ -29,5 +29,5 @@ LoadFailure classifyLoadError(Object? error) {
 String loadErrorMessage(Object? error) => switch (classifyLoadError(error)) {
   LoadFailure.offline => 'Sin conexión',
   LoadFailure.server => 'Servicio no disponible por ahora',
-  LoadFailure.other => 'No pudimos cargar los datos',
+  LoadFailure.other => 'Información no disponible por ahora',
 };

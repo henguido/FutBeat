@@ -277,8 +277,8 @@ void main() {
       ),
     );
     expect(find.text('Eventos del partido'), findsNothing);
-    await tester.ensureVisible(find.text('En vivo'));
-    await tester.tap(find.text('En vivo'));
+    await tester.ensureVisible(find.text('Eventos'));
+    await tester.tap(find.text('Eventos'));
     await tester.pumpAndSettle();
     expect(find.text('Inicio'), findsOneWidget);
     expect(find.text('Medio tiempo'), findsOneWidget);
@@ -420,7 +420,7 @@ void main() {
     await _pumpMatch(tester, _payload());
     expect(_tabLabels(tester), [
       'Hechos',
-      'En vivo',
+      'Eventos',
       'Alineación',
       'Tabla',
       'Estadísticas',
@@ -430,7 +430,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Tabla'));
     await tester.pumpAndSettle();
-    expect(find.text('Tabla aún no descargada'), findsOneWidget);
+    expect(
+      find.text('Clasificación pendiente de actualización'),
+      findsOneWidget,
+    );
     expect(find.text('Clasificación'), findsNothing);
   });
 
@@ -440,7 +443,7 @@ void main() {
     await _pumpMatch(tester, _payload(table: true));
     expect(_tabLabels(tester), [
       'Hechos',
-      'En vivo',
+      'Eventos',
       'Alineación',
       'Tabla',
       'Estadísticas',

@@ -83,26 +83,7 @@ function trustedMedia(value, kind, receivedAt) {
   };
 }
 
-// A stored media object only wins over a fresh badge when it can be shown:
-// `{}` or a url-less object (seen on ~50 teams/competitions in prod) used to
-// block every later GOAL badge forever, leaving initials in the app.
-const usableMedia = (media) =>
-  media && typeof media === 'object' && typeof media.url === 'string' &&
-  media.url.startsWith('https://') ? media : null;
-
-// BE11-A3: in calendar mode `existing` comes from the compact calendar read
-// (futbeat_read_calendar_range), which keeps only {url, verificationStatus}.
-// Writing that back stripped source/rightsStatus/usageScope (709 teams + 66
-// competitions in prod). A stored media keeps priority only when it is
-// complete; otherwise a fresh GOAL badge wins and the lossy one is the last
-// resort. The SQL trigger futbeat_preserve_entity_media keeps the stored
-// complete media of the same url, so this never rewrites receivedAt alone.
-const completeMedia = (media) =>
-  usableMedia(media) && media.source && media.rightsStatus ? media : null;
-const chooseMedia = (previous, fresh) =>
-  completeMedia(previous) ?? fresh ?? usableMedia(previous);
-
-function statusOf(fixture, receivedAt) {
+function statusOf(fixture) {
   const status = clean(fixture?.matchStatus).toUpperCase();
   const period = clean(fixture?.matchPeriod).toUpperCase();
 
@@ -119,15 +100,6 @@ function statusOf(fixture, receivedAt) {
   }
 
   if (['FINISHED', 'AFTER_ET', 'AFTER_PEN', 'AWARDED'].includes(status)) {
-    const kickoff = Date.parse(clean(fixture?.kickoffUtc));
-    const observed = Date.parse(clean(receivedAt));
-    // A calendar answer can contain contradictory historical/provider data.
-    // Terminal evidence is only admissible at or after this fixture's UTC
-    // kickoff. Keep the fixture visible as scheduled and scoreless otherwise;
-    // later, coherent provider evidence can still advance it normally.
-    if (!Number.isFinite(observed) || observed < kickoff) {
-      return 'SCHEDULED';
-    }
     return 'VERIFIED';
   }
 
@@ -145,9 +117,6 @@ export async function normalizeGoalApiFixtures(
 ) {
   if (!Array.isArray(rawFixtures)) throw new Error('Invalid GOAL API fixtures');
   if (typeof resolve !== 'function') throw new Error('GOAL API resolver is required');
-  // receivedAt is the trusted ingest observation time and becomes snapshot
-  // provenance. Without a valid instant there is no safe chronology decision:
-  // reject the whole snapshot instead of silently downgrading terminal rows.
   if (!Number.isFinite(Date.parse(receivedAt))) throw new Error('Invalid receivedAt');
 
   const competitions = new Map();
@@ -188,7 +157,7 @@ export async function normalizeGoalApiFixtures(
       name: competitionIdentity.name,
       country: previousCompetition.country || competitionIdentity.country,
       season: clean(fixture?.leagueYear) || previousCompetition.season || '',
-      media: chooseMedia(previousCompetition.media, competitionMedia),
+      media: previousCompetition.media ?? competitionMedia,
     } : {
       id: competitionId,
       name: competitionIdentity.name,
@@ -215,7 +184,7 @@ export async function normalizeGoalApiFixtures(
         ...previous,
         name: previous.name || identity.name,
         competitionId,
-        media: chooseMedia(previous.media, badge),
+        media: previous.media ?? badge,
       } : {
         id,
         name: identity.name,
@@ -243,7 +212,7 @@ export async function normalizeGoalApiFixtures(
         shortName: '',
       });
 
-    const status = statusOf(fixture, receivedAt);
+    const status = statusOf(fixture);
     // Same rule as every other GOAL writer (reset running totals after the
     // match keep their full-time result).
     const { home: homeScore, away: awayScore } = goalFixtureScore(fixture ?? {});

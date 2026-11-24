@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/models.dart';
 import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/providers.dart';
 import 'package:futbeat/features/explore/explore_screen.dart';
 
-// Player suggestions without a query come from /v1/player-suggestions (real
-// squad players; followed teams first). Synthetic ids and names only.
+// Optional recommendations have no server route. Existing catalog players
+// and explicit search remain usable. Synthetic ids and names only.
 
 Map<String, dynamic> _snapshot({
   List<Map<String, dynamic>> players = const [],
@@ -27,26 +28,23 @@ Map<String, dynamic> _snapshot({
 
 void main() {
   test(
-    'request: followed team ids sorted, deduplicated, at most 20, plus country',
+    'unavailable recommendations never read repository or preferences',
     () async {
-      final dio = Dio();
-      RequestOptions? seen;
-      dio.interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (o, h) {
-            seen = o;
-            h.resolve(Response(requestOptions: o, data: _snapshot()));
-          },
-        ),
+      final container = ProviderContainer(
+        overrides: [
+          repositoryProvider.overrideWith(
+            (ref) => throw StateError('No repository read allowed'),
+          ),
+          preferenceProvider.overrideWith(
+            (ref) => throw StateError('No preferences read allowed'),
+          ),
+        ],
       );
-      final ids = [for (var i = 25; i > 0; i--) 'fb_team_$i', 'fb_team_3'];
-      await ApiRepository(dio).loadPlayerSuggestions(ids, 'cr');
-      expect(seen!.path, '/v1/player-suggestions');
-      final teams = (seen!.queryParameters['teams'] as String).split(',');
-      expect(teams, hasLength(20));
-      expect(teams, [...teams]..sort());
-      expect(teams.toSet(), hasLength(20));
-      expect(seen!.queryParameters['country'], 'CR');
+      addTearDown(container.dispose);
+      expect(
+        await container.read(playerSuggestionsProvider('fb_team_a').future),
+        isEmpty,
+      );
     },
   );
 
@@ -62,67 +60,72 @@ void main() {
     );
   });
 
-  testWidgets('Explorar shows suggested players without a query', (
-    tester,
-  ) async {
-    final dio = Dio();
-    dio.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (o, h) {
-          final players = o.path == '/v1/player-suggestions'
-              ? [
-                  {
-                    'id': 'fb_player_s1',
-                    'name': 'Jugador Sugerido',
-                    'teamId': 'fb_team_a',
-                  },
-                ]
-              : const <Map<String, dynamic>>[];
-          h.resolve(
-            Response(
-              requestOptions: o,
-              data: _snapshot(players: players),
+  testWidgets(
+    'R4 Explorar uses existing catalog players without watching recommendations',
+    (tester) async {
+      var recommendationsWatched = 0;
+      final dio = Dio();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (o, h) {
+            expect(o.path, isNot('/v1/player-suggestions'));
+            final players = o.path == '/v1/explore'
+                ? [
+                    {
+                      'id': 'fb_player_s1',
+                      'name': 'Jugador Sugerido',
+                      'teamId': 'fb_team_a',
+                    },
+                  ]
+                : const <Map<String, dynamic>>[];
+            h.resolve(
+              Response(
+                requestOptions: o,
+                data: _snapshot(players: players),
+              ),
+            );
+          },
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            playerSuggestionsProvider.overrideWith((ref, key) async {
+              recommendationsWatched++;
+              return const <Entity>[];
+            }),
+            repositoryProvider.overrideWithValue(ApiRepository(dio)),
+            followsProvider.overrideWith(
+              (ref) => Stream.value({'team:fb_team_a'}),
             ),
-          );
-        },
-      ),
-    );
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          repositoryProvider.overrideWithValue(ApiRepository(dio)),
-          followsProvider.overrideWith(
-            (ref) => Stream.value({'team:fb_team_a'}),
-          ),
-          preferenceProvider.overrideWith(
-            (ref) => Stream.value(
-              const CountryPreference(
-                detectedCountry: 'CR',
-                selectedCountry: null,
-                bootstrapDismissed: true,
+            preferenceProvider.overrideWith(
+              (ref) => Stream.value(
+                const CountryPreference(
+                  detectedCountry: 'CR',
+                  selectedCountry: null,
+                  bootstrapDismissed: true,
+                ),
               ),
             ),
-          ),
-        ],
-        child: const MaterialApp(home: ExploreScreen()),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Jugadores sugeridos'), findsOneWidget);
-    expect(find.text('Jugador Sugerido'), findsOneWidget);
-  });
+          ],
+          child: const MaterialApp(home: ExploreScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(recommendationsWatched, 0);
+      expect(find.text('Jugadores sugeridos'), findsOneWidget);
+      expect(find.text('Jugador Sugerido'), findsOneWidget);
+    },
+  );
 
-  testWidgets('a failing suggestions request never breaks Explorar', (
+  testWidgets('Explorar never requests the absent recommendations route', (
     tester,
   ) async {
     final dio = Dio();
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (o, h) {
-          if (o.path == '/v1/player-suggestions') {
-            h.reject(DioException(requestOptions: o, message: 'down'));
-            return;
-          }
+          expect(o.path, isNot('/v1/player-suggestions'));
           h.resolve(Response(requestOptions: o, data: _snapshot()));
         },
       ),

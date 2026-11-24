@@ -147,16 +147,20 @@ void main() {
       'status': 'LIVE',
       'score': {'home': 1, 'away': 0},
       'minute': 55,
-      'liveChangedAt': DateTime.now()
-          .toUtc()
-          .subtract(const Duration(minutes: 20))
-          .toIso8601String(),
+      'provenance': {
+        'providerObservedAt': DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 20))
+            .toIso8601String(),
+      },
       'events': <dynamic>[],
       'statistics': <dynamic>[],
     });
     final fresh = FootballMatch({
       ...stale.json,
-      'liveChangedAt': DateTime.now().toUtc().toIso8601String(),
+      'provenance': {
+        'providerObservedAt': DateTime.now().toUtc().toIso8601String(),
+      },
     });
 
     expect(stale.liveDataStale, isTrue);

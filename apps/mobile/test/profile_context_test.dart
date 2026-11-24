@@ -384,9 +384,7 @@ void main() {
     expect(find.byKey(const ValueKey('profile-context-selector')), findsOne);
     await tester.pumpAndSettle();
     expect(
-      DefaultTabController.of(
-        tester.element(find.byKey(const ValueKey('profile-context-label'))),
-      ).index,
+      tester.widget<TabBar>(find.byType(TabBar)).controller!.index,
       2,
     );
     expect(find.text('Rival'), findsWidgets);
@@ -490,7 +488,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('team-matches-empty-results')),
-        matching: find.text('Cargando partidos'),
+        matching: find.text('Partidos pendientes de actualización'),
       ),
       findsOneWidget,
     );
@@ -528,7 +526,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('team-matches-empty-results')),
-        matching: find.text('Cargando historial'),
+        matching: find.text('Historial pendiente de actualización'),
       ),
       findsOneWidget,
     );
@@ -542,7 +540,7 @@ void main() {
   });
 
   for (final (state, copy) in [
-    ('PENDING', 'Cargando partidos'),
+    ('PENDING', 'Partidos pendientes de actualización'),
     ('UNAVAILABLE', 'Partidos no disponibles'),
     ('NO_DATA', 'Sin resultados'),
   ]) {

@@ -124,7 +124,11 @@ abstract interface class BillingGateway {
   Future<List<OwnedPurchase>> owned();
 
   /// Opens the Play purchase sheet; the result arrives on [events].
-  Future<bool> buy(PremiumOffer offer, {required String accountTag});
+  Future<bool> buy(
+    PremiumOffer offer, {
+    required String accountTag,
+    OwnedPurchase? replacing,
+  });
   Stream<List<PurchaseEvent>> get events;
 
   /// Acknowledges a purchase ([OwnedPurchase.handle] /
@@ -225,14 +229,41 @@ class PlayBillingGateway implements BillingGateway {
   }
 
   @override
-  Future<bool> buy(PremiumOffer offer, {required String accountTag}) {
+  Future<bool> buy(
+    PremiumOffer offer, {
+    required String accountTag,
+    OwnedPurchase? replacing,
+  }) {
     final details = offer.handle! as ProductDetails;
+    final previous = replacing?.handle;
+    if (replacing != null &&
+        (!premiumPlayQaEnabled ||
+            replacing.productId != offer.productId ||
+            replacing.accountTag != accountTag ||
+            !replacing.purchased ||
+            replacing.needsCompletion ||
+            previous is! GooglePlayPurchaseDetails ||
+            replacing.token != previous.billingClientPurchase.purchaseToken ||
+            previous.billingClientPurchase.obfuscatedAccountId != accountTag ||
+            previous.billingClientPurchase.packageName !=
+                'com.futbeat.futbeat' ||
+            details is! GooglePlayProductDetails ||
+            details.id != offer.productId ||
+            details.offerToken == null)) {
+      throw const BillingUnavailable();
+    }
     return _store.buyNonConsumable(
       purchaseParam: GooglePlayPurchaseParam(
         productDetails: details,
         applicationUserName: accountTag,
         offerToken: details is GooglePlayProductDetails
             ? details.offerToken
+            : null,
+        changeSubscriptionParam: previous is GooglePlayPurchaseDetails
+            ? ChangeSubscriptionParam(
+                oldPurchaseDetails: previous,
+                replacementMode: ReplacementMode.chargeFullPrice,
+              )
             : null,
       ),
     );
@@ -399,7 +430,18 @@ enum PremiumActionResult {
   failed,
   unavailable,
   nothingToRestore,
+  purchaseRejected,
+  temporarilyUnavailable,
 }
+
+PremiumActionResult? premiumVerificationFailure(EntitlementCheck? check) =>
+    switch (check?.failure) {
+      EntitlementFailure.purchaseRejected =>
+        PremiumActionResult.purchaseRejected,
+      EntitlementFailure.temporarilyUnavailable =>
+        PremiumActionResult.temporarilyUnavailable,
+      null => null,
+    };
 
 final premiumBillingProvider =
     NotifierProvider<PremiumBillingController, PremiumBillingState>(
@@ -410,6 +452,7 @@ final premiumBillingProvider =
 /// back through [EntitlementsController.refresh], the only source of truth.
 class PremiumBillingController extends Notifier<PremiumBillingState> {
   final _waiting = <String, Completer<PurchaseOutcome>>{};
+  PremiumActionResult? _purchaseFailure;
 
   BillingGateway? get _gateway => ref.read(billingGatewayProvider);
   bool get enabled =>
@@ -451,11 +494,24 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
     for (final event in events) {
       if (!premium.contains(event.productId)) continue;
       final source = ref.read(entitlementSourceProvider);
+      // Disabled commercial verification must not acknowledge a purchase
+      // received from the store before server persistence is available.
+      if (source is UnavailableEntitlementSource) continue;
+      var serverVerified = false;
       if (source is PremiumQaEntitlementSource &&
           event.outcome == PurchaseOutcome.purchased) {
         final owner = ref.read(currentAccountProvider).asData?.value;
         if (owner != null && event.token?.isNotEmpty == true) {
           final result = await source.verify(owner, event.token!);
+          if (ref.mounted &&
+              ref.read(currentAccountProvider).asData?.value == owner) {
+            serverVerified = result.available;
+            if (_waiting.containsKey(event.productId)) {
+              _purchaseFailure =
+                  premiumVerificationFailure(result) ??
+                  (result.available ? null : PremiumActionResult.unavailable);
+            }
+          }
           if (ref.mounted &&
               ref.read(currentAccountProvider).asData?.value == owner &&
               result.available) {
@@ -475,7 +531,10 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
             );
       }
       if (!ref.mounted) return;
-      if (event.outcome == PurchaseOutcome.purchased) changed = true;
+      if (event.outcome == PurchaseOutcome.purchased &&
+          (source is! PremiumQaEntitlementSource || serverVerified)) {
+        changed = true;
+      }
       state = PremiumBillingState(
         busy: state.busy,
         pending: event.outcome == PurchaseOutcome.pending,
@@ -494,6 +553,25 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
       throw const BillingUnavailable();
     }
     final offers = await gateway.offers(ref.read(premiumProductsProvider));
+    if (ref.read(entitlementsProvider).isPremium &&
+        ref.read(entitlementSourceProvider) is PremiumQaEntitlementSource) {
+      final owner = ref.read(currentAccountProvider).asData?.value;
+      final transport = owner == null
+          ? null
+          : ref.read(premiumQaTransportFactoryProvider)(owner);
+      if (transport == null ||
+          !(await transport.read()).available ||
+          !transport.purchasesEnabled ||
+          transport.activeBasePlanId == null ||
+          ref.read(currentAccountProvider).asData?.value != owner) {
+        throw const BillingUnavailable();
+      }
+      offers.removeWhere(
+        (offer) =>
+            PremiumProducts.basePlans[transport.activeBasePlanId] ==
+            offer.period,
+      );
+    }
     return offers..sort((a, b) => a.period.index.compareTo(b.period.index));
   }
 
@@ -503,13 +581,18 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
   Future<PremiumActionResult> buy(PremiumOffer offer) async {
     final gateway = _gateway;
     final plan = ref.read(entitlementsProvider);
-    if (gateway == null || state.busy || !plan.accountResolved) {
+    if (gateway == null ||
+        ref.read(entitlementSourceProvider) is UnavailableEntitlementSource ||
+        state.busy ||
+        !plan.accountResolved) {
       return PremiumActionResult.unavailable;
     }
     state = PremiumBillingState(busy: true, pending: state.pending);
+    _purchaseFailure = null;
     final waiting = Completer<PurchaseOutcome>();
     _waiting[offer.productId] = waiting;
     try {
+      OwnedPurchase? replacing;
       if (ref.read(entitlementSourceProvider) is PremiumQaEntitlementSource) {
         final owner = ref.read(currentAccountProvider).asData?.value;
         final transport = owner == null
@@ -523,9 +606,30 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
           _waiting.remove(offer.productId);
           return PremiumActionResult.unavailable;
         }
+        if (plan.isPremium) {
+          if (PremiumProducts.basePlans[transport.activeBasePlanId] == null ||
+              PremiumProducts.basePlans[transport.activeBasePlanId] ==
+                  offer.period) {
+            return PremiumActionResult.unavailable;
+          }
+          final tag = billingAccountTag(plan.accountKey);
+          final candidates = (await gateway.owned())
+              .where((p) => p.productId == offer.productId && p.purchased)
+              .toList();
+          if (candidates.length != 1 ||
+              candidates.single.accountTag != tag ||
+              candidates.single.needsCompletion ||
+              candidates.single.token?.isNotEmpty != true ||
+              candidates.single.handle == null ||
+              !ref.mounted ||
+              ref.read(entitlementsProvider).accountKey != plan.accountKey) {
+            return PremiumActionResult.unavailable;
+          }
+          replacing = candidates.single;
+        }
       }
       final tag = billingAccountTag(plan.accountKey);
-      if (!await gateway.buy(offer, accountTag: tag)) {
+      if (!await gateway.buy(offer, accountTag: tag, replacing: replacing)) {
         _waiting.remove(offer.productId);
         return PremiumActionResult.failed;
       }
@@ -534,6 +638,10 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
         const Duration(minutes: 15),
         onTimeout: () => PurchaseOutcome.failed,
       );
+      if (!ref.mounted ||
+          ref.read(entitlementsProvider).accountKey != plan.accountKey) {
+        return PremiumActionResult.unavailable;
+      }
       return switch (outcome) {
         PurchaseOutcome.purchased => await _afterVerification(),
         PurchaseOutcome.pending => PremiumActionResult.pending,
@@ -545,12 +653,71 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
       _waiting.remove(offer.productId);
       return PremiumActionResult.failed;
     } finally {
+      if (identical(_waiting[offer.productId], waiting)) {
+        _waiting.remove(offer.productId);
+      }
       if (ref.mounted) {
         if (premiumPlayQaEnabled) {
           ref.invalidate(premiumPurchasesAllowedProvider);
         }
         state = PremiumBillingState(pending: state.pending);
       }
+    }
+  }
+
+  /// A7 probes the existing G1 verify route. Restore deliberately keeps its
+  /// aggregate 200 semantics when Publisher is temporarily unavailable.
+  Future<PremiumActionResult> verifyQaPurchase() async {
+    final gateway = _gateway;
+    final source = ref.read(entitlementSourceProvider);
+    final plan = ref.read(entitlementsProvider);
+    if (!premiumPlayQaEnabled ||
+        gateway == null ||
+        source is! PremiumQaEntitlementSource ||
+        state.busy ||
+        !plan.accountResolved ||
+        !plan.isPremium) {
+      return PremiumActionResult.unavailable;
+    }
+    final owner = ref.read(currentAccountProvider).asData?.value;
+    if (owner == null) return PremiumActionResult.unavailable;
+    state = PremiumBillingState(busy: true, pending: state.pending);
+    bool current() =>
+        ref.mounted &&
+        ref.read(currentAccountProvider).asData?.value == owner &&
+        ref.read(entitlementsProvider).accountKey == plan.accountKey;
+    try {
+      if (!await gateway.available() || !current()) {
+        return PremiumActionResult.unavailable;
+      }
+      final products = ref.read(premiumProductsProvider);
+      final purchases = (await gateway.owned())
+          .where(
+            (p) =>
+                p.purchased &&
+                products.contains(p.productId) &&
+                p.accountTag == billingAccountTag(plan.accountKey) &&
+                !p.needsCompletion &&
+                p.token?.isNotEmpty == true,
+          )
+          .toList();
+      if (!current() || purchases.length != 1) {
+        return PremiumActionResult.unavailable;
+      }
+      final answer = await source.verify(owner, purchases.single.token!);
+      if (!current()) return PremiumActionResult.unavailable;
+      final failure = premiumVerificationFailure(answer);
+      if (failure != null) return failure;
+      if (!answer.available) return PremiumActionResult.unavailable;
+      await ref.read(entitlementsProvider.notifier).apply(answer.grant);
+      if (!current()) return PremiumActionResult.unavailable;
+      return ref.read(entitlementsProvider).isPremium
+          ? PremiumActionResult.premium
+          : PremiumActionResult.nothingToRestore;
+    } catch (_) {
+      return PremiumActionResult.unavailable;
+    } finally {
+      if (ref.mounted) state = PremiumBillingState(pending: state.pending);
     }
   }
 
@@ -567,6 +734,10 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
       if (!await gateway.available()) return PremiumActionResult.unavailable;
       await ref.read(entitlementsProvider.notifier).restore();
       if (!ref.mounted) return PremiumActionResult.failed;
+      final failure = premiumVerificationFailure(
+        ref.read(entitlementsProvider.notifier).lastCheck,
+      );
+      if (failure != null) return failure;
       final current = ref.read(entitlementsProvider);
       if (current.isPremium) return PremiumActionResult.premium;
       return current.origin == EntitlementOrigin.verified
@@ -580,8 +751,13 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
   }
 
   Future<PremiumActionResult> _afterVerification() async {
+    if (_purchaseFailure != null) return _purchaseFailure!;
     await _refresh();
     if (!ref.mounted) return PremiumActionResult.failed;
+    final failure = premiumVerificationFailure(
+      ref.read(entitlementsProvider.notifier).lastCheck,
+    );
+    if (failure != null) return failure;
     return ref.read(entitlementsProvider).isPremium
         ? PremiumActionResult.premium
         : PremiumActionResult.failed;

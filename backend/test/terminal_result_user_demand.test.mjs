@@ -1,3 +1,4 @@
+import { enableAcquisitionTestNavigation } from './helpers/acquisition_navigation.mjs';
 import './helpers/midday_utc_clock.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,6 +34,7 @@ const metric = (db, name) =>
 
 async function withDb(fn) {
   const db = await openDatabase();
+  await enableAcquisitionTestNavigation(db);
   try { await fn(db); } finally { await db.close(); }
 }
 

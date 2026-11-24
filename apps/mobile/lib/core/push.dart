@@ -599,6 +599,21 @@ class PushService {
   _GuestTransfer? _guestTransfer;
   bool _publicSessionNeedsPersistence = false;
 
+  // G1 QA owns a separate namespace, including profile and deletion state.
+  // Leave every Play16 production key intact. Idempotent for computed keys.
+  String storageKey(String key) {
+    const prefix = 'futbeat.qa.wctxcnqcblgewaznxrqh.';
+    return Uri.tryParse(config.supabaseUrl)?.host ==
+                'wctxcnqcblgewaznxrqh.supabase.co' &&
+            !key.startsWith(prefix)
+        ? '$prefix$key'
+        : key;
+  }
+
+  String get pendingConfirmationStorageKey =>
+      storageKey('futbeat.auth.pendingConfirmationEmail');
+  String get sessionStorageKey => storageKey('futbeat.push.session');
+
   final LiveRealtimeConfig config;
   final AppDatabase database;
   final PushTokenSource tokens;
@@ -1099,11 +1114,14 @@ class PushService {
         (value['user'] as Map)['is_anonymous'] != true &&
         (transfer != null ||
             previousUser != null && previousUser != targetUser)) {
-      await storage.write(key: _publicPreferenceOwnerKey, value: targetUser);
+      await storage.write(
+        key: storageKey(_publicPreferenceOwnerKey),
+        value: targetUser,
+      );
       if (stale()) return false;
     }
     if (transfer != null && targetUser != null) {
-      await storage.delete(key: leftoverKey);
+      await storage.delete(key: storageKey(leftoverKey));
       if (stale()) return false;
       await database.addFollows(transfer.localFollows);
       if (stale()) return false;
@@ -1130,7 +1148,7 @@ class PushService {
       await oldRotation?.cancel();
     }
     if (_stale(generation)) return false;
-    await storage.delete(key: 'futbeat.auth.pendingConfirmationEmail');
+    await storage.delete(key: storageKey(pendingConfirmationStorageKey));
     if (_stale(generation)) return false;
     await _persistSession();
     if (_stale(generation)) return false;
@@ -1220,7 +1238,7 @@ class PushService {
       }
       pendingConfirmationEmail = normalized;
       await storage.write(
-        key: 'futbeat.auth.pendingConfirmationEmail',
+        key: storageKey(pendingConfirmationStorageKey),
         value: normalized,
       );
     } finally {
@@ -1404,13 +1422,13 @@ class PushService {
     String? saved;
     try {
       final confirmation = await storage.read(
-        key: 'futbeat.auth.pendingConfirmationEmail',
+        key: storageKey(pendingConfirmationStorageKey),
       );
       if (_stale(generation) || _authenticationStale(attempt)) return;
       pendingConfirmationEmail = confirmation;
       await _resumeConfirmedDeletionPreparation();
       await _clearConfirmedDeletedCredential();
-      saved = await storage.read(key: 'futbeat.push.session');
+      saved = await storage.read(key: storageKey(sessionStorageKey));
     } catch (_) {
       if (!_stale(generation) &&
           !_authenticationStale(attempt) &&
@@ -1483,7 +1501,8 @@ class PushService {
     await _startAccountSync();
     try {
       if (pushConfigured &&
-          await storage.read(key: 'futbeat.push.enabled') == 'true' &&
+          await storage.read(key: storageKey('futbeat.push.enabled')) ==
+              'true' &&
           !_stale(generation)) {
         // Re-register silently; a permission revoked in Android settings is
         // not asked for again on startup.
@@ -1606,7 +1625,7 @@ class PushService {
           final deletedOwner =
               previous?.deletionConfirmedFor == uid && previous?.userId == uid;
           await storage.write(
-            key: leftoverKey,
+            key: storageKey(leftoverKey),
             value: jsonEncode({
               'userId': uid,
               'follows': local.toList()..sort(),
@@ -1635,9 +1654,9 @@ class PushService {
     // it never mistakes A's remaining follows for anonymous guest choices.
     if (uid != null) {
       // The next sign-in of this user must union, never replace.
-      await storage.delete(key: pushedKey(uid));
+      await storage.delete(key: storageKey(pushedKey(uid)));
       if (_stale(generation)) return;
-      await storage.delete(key: linkedFlagKey(uid));
+      await storage.delete(key: storageKey(linkedFlagKey(uid)));
     }
     if (_stale(generation)) return;
     try {
@@ -1677,14 +1696,14 @@ class PushService {
     final operation = _sessionStoragePending.catchError((_) {}).then((_) async {
       if (value == null) {
         try {
-          await storage.delete(key: 'futbeat.push.session');
+          await storage.delete(key: storageKey(sessionStorageKey));
         } catch (_) {
           // One bounded retry remains inside this FIFO operation: it cannot
           // run later, after a newly accepted account wrote its own session.
-          await storage.delete(key: 'futbeat.push.session');
+          await storage.delete(key: storageKey(sessionStorageKey));
         }
       } else {
-        await storage.write(key: 'futbeat.push.session', value: value);
+        await storage.write(key: storageKey(sessionStorageKey), value: value);
       }
     });
     _sessionStoragePending = operation.catchError((_) {});
@@ -1709,7 +1728,7 @@ class PushService {
   Future<void> _persistPushEnabled(bool active) {
     final operation = _pushStoragePending.catchError((_) {}).then((_) {
       return storage.write(
-        key: 'futbeat.push.enabled',
+        key: storageKey('futbeat.push.enabled'),
         value: active ? 'true' : 'false',
       );
     });
@@ -1755,7 +1774,9 @@ class PushService {
   }
 
   Future<String> installation() async {
-    final old = await storage.read(key: 'futbeat.push.installation');
+    final old = await storage.read(
+      key: storageKey('futbeat.push.installation'),
+    );
     if (old != null) return old;
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
@@ -1764,7 +1785,10 @@ class PushService {
     final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     final id =
         '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
-    await storage.write(key: 'futbeat.push.installation', value: id);
+    await storage.write(
+      key: storageKey('futbeat.push.installation'),
+      value: id,
+    );
     return id;
   }
 
@@ -1831,7 +1855,7 @@ class PushService {
     _lastPushed = Set.of(values);
     if (uid != null) {
       await storage.write(
-        key: pushedKey(uid),
+        key: storageKey(pushedKey(uid)),
         value: jsonEncode(values.toList()..sort()),
       );
     }
@@ -1852,7 +1876,7 @@ class PushService {
 
   Future<Set<String>?> _readPushed(String? uid) async {
     if (uid == null) return null;
-    final raw = await storage.read(key: pushedKey(uid));
+    final raw = await storage.read(key: storageKey(pushedKey(uid)));
     if (raw == null) return null;
     try {
       final decoded = jsonDecode(raw);
@@ -1886,7 +1910,7 @@ class PushService {
     })?
   >
   _readLeftover() async {
-    final raw = await storage.read(key: leftoverKey);
+    final raw = await storage.read(key: storageKey(leftoverKey));
     if (raw == null) return null;
     try {
       final decoded = jsonDecode(raw);
@@ -1964,7 +1988,7 @@ class PushService {
         // A retry must not subtract a new B follow just because its first RPC
         // failed. Keep A's original set and profile provenance unchanged.
         await storage.write(
-          key: leftoverKey,
+          key: storageKey(leftoverKey),
           value: jsonEncode({
             'userId': current.userId,
             'follows': current.follows.toList()..sort(),
@@ -1982,7 +2006,7 @@ class PushService {
     }
     // Account provenance is also needed by profile reconciliation. Keep it
     // until both follows and profile succeed, including after a retry.
-    await storage.delete(key: lastUserKey);
+    await storage.delete(key: storageKey(lastUserKey));
     _mergedGeneration = generation;
     await _pushFollows(next, generation);
   }
@@ -2036,24 +2060,31 @@ class PushService {
             current.selectedCountry == selected) {
           if (updateDetected) {
             await storage.write(
-              key: 'futbeat.country.detected.dirty',
+              key: storageKey('futbeat.country.detected.dirty'),
               value: 'false',
             );
           }
           if (updateSelected) {
             await storage.write(
-              key: 'futbeat.country.selected.dirty',
+              key: storageKey('futbeat.country.selected.dirty'),
               value: 'false',
             );
           }
           final detectedDirty =
-              await storage.read(key: 'futbeat.country.detected.dirty') ==
+              await storage.read(
+                key: storageKey('futbeat.country.detected.dirty'),
+              ) ==
               'true';
           final selectedDirty =
-              await storage.read(key: 'futbeat.country.selected.dirty') ==
+              await storage.read(
+                key: storageKey('futbeat.country.selected.dirty'),
+              ) ==
               'true';
           if (!detectedDirty && !selectedDirty) {
-            await storage.write(key: 'futbeat.country.dirty', value: 'false');
+            await storage.write(
+              key: storageKey('futbeat.country.dirty'),
+              value: 'false',
+            );
           }
         }
       });
@@ -2073,16 +2104,28 @@ class PushService {
   Future<void> markDetectedCountryDirty() {
     _countryWriteVersion++;
     return _queueCountryStorage(() async {
-      await storage.write(key: 'futbeat.country.detected.dirty', value: 'true');
-      await storage.write(key: 'futbeat.country.dirty', value: 'true');
+      await storage.write(
+        key: storageKey('futbeat.country.detected.dirty'),
+        value: 'true',
+      );
+      await storage.write(
+        key: storageKey('futbeat.country.dirty'),
+        value: 'true',
+      );
     });
   }
 
   Future<void> markSelectedCountryDirty() {
     _countryWriteVersion++;
     return _queueCountryStorage(() async {
-      await storage.write(key: 'futbeat.country.selected.dirty', value: 'true');
-      await storage.write(key: 'futbeat.country.dirty', value: 'true');
+      await storage.write(
+        key: storageKey('futbeat.country.selected.dirty'),
+        value: 'true',
+      );
+      await storage.write(
+        key: storageKey('futbeat.country.dirty'),
+        value: 'true',
+      );
     });
   }
 
@@ -2103,7 +2146,7 @@ class PushService {
     // Missing/invalid legacy data has defaults. An I/O failure does not prove
     // that no saved preferences exist: callers must retry, not edit defaults
     // over an unreadable profile.
-    final raw = await storage.read(key: 'futbeat.profile.settings');
+    final raw = await storage.read(key: storageKey('futbeat.profile.settings'));
     if (raw == null) return const UserProfileSettings();
     try {
       final decoded = jsonDecode(raw);
@@ -2195,14 +2238,20 @@ class PushService {
     // A failed value write may leave the previous value dirty; that is a
     // conservative retry, not permission to discard a persisted edit.
     if (dirty) {
-      await storage.write(key: 'futbeat.profile.dirty', value: 'true');
+      await storage.write(
+        key: storageKey('futbeat.profile.dirty'),
+        value: 'true',
+      );
     }
     await storage.write(
-      key: 'futbeat.profile.settings',
+      key: storageKey('futbeat.profile.settings'),
       value: jsonEncode(settings.toJson()),
     );
     if (!dirty) {
-      await storage.write(key: 'futbeat.profile.dirty', value: 'false');
+      await storage.write(
+        key: storageKey('futbeat.profile.dirty'),
+        value: 'false',
+      );
     }
     if (!_profileChanges.isClosed) _profileChanges.add(null);
   }
@@ -2221,7 +2270,7 @@ class PushService {
   /// A missing flag is unset. An unreadable flag is unknown, so reconciliation
   /// must retry rather than importing cloud values over a possible local edit.
   Future<bool> _flag(String key) async =>
-      await storage.read(key: key) == 'true';
+      await storage.read(key: storageKey(key)) == 'true';
 
   /// Saves the profile and every notification preference. Uses the JSON
   /// RPC `futbeat_sync_user_profile_v3` when the server has it and
@@ -2272,7 +2321,7 @@ class PushService {
       // the latest device value and retry it on the existing reconciliation
       // cycle; never regard this stale acknowledgement as convergence.
       await storage.write(
-        key: 'futbeat.profile.dirty',
+        key: storageKey('futbeat.profile.dirty'),
         value: acknowledgedLatest ? 'false' : 'true',
       );
     });
@@ -2321,7 +2370,8 @@ class PushService {
     final firstLink = await _readPushedSafe(userId) == null;
     final preferAccount =
         userSessionAccess &&
-        await storage.read(key: _publicPreferenceOwnerKey) == userId;
+        await storage.read(key: storageKey(_publicPreferenceOwnerKey)) ==
+            userId;
     if (_stale(generation)) return;
     final cloudPreferences = cloud['preferences'];
     final cloudFollows = cloud['follows'];
@@ -2385,7 +2435,9 @@ class PushService {
         followsSucceeded &&
         profileSucceeded) {
       await _queueProfileStorage(() async {
-        if (!_stale(generation)) await storage.delete(key: leftoverKey);
+        if (!_stale(generation)) {
+          await storage.delete(key: storageKey(leftoverKey));
+        }
       });
     }
     if (cloudPreferences is Map) {
@@ -2403,7 +2455,7 @@ class PushService {
     if (error != null) Error.throwWithStackTrace(error, failureStack!);
     if (!profileSucceeded) return;
     if (preferAccount && cloudPreferences is Map) {
-      await storage.delete(key: _publicPreferenceOwnerKey);
+      await storage.delete(key: storageKey(_publicPreferenceOwnerKey));
       if (_stale(generation)) return;
     }
     _lastReconcile = clock();
@@ -2509,9 +2561,9 @@ class PushService {
       selected = cloudSelected ?? current.selectedCountry;
       detectedDirty = detected != cloudDetected;
       selectedDirty = selected != cloudSelected;
-      await storage.delete(key: 'futbeat.country.detected.dirty');
-      await storage.delete(key: 'futbeat.country.selected.dirty');
-      await storage.delete(key: 'futbeat.country.dirty');
+      await storage.delete(key: storageKey('futbeat.country.detected.dirty'));
+      await storage.delete(key: storageKey('futbeat.country.selected.dirty'));
+      await storage.delete(key: storageKey('futbeat.country.dirty'));
       if (_stale(generation)) return;
     } else if (firstLink) {
       // The device region is this device's fact; the choice follows the
@@ -2625,10 +2677,11 @@ class PushService {
   Future<bool> shouldPromptForNotifications() async {
     if (!pushConfigured || !authenticated || enabled || disposed) return false;
     try {
-      if (await storage.read(key: 'futbeat.push.enabled') == 'true') {
+      if (await storage.read(key: storageKey('futbeat.push.enabled')) ==
+          'true') {
         return false;
       }
-      final raw = await storage.read(key: promptShownKey);
+      final raw = await storage.read(key: storageKey(promptShownKey));
       final last = raw == null ? null : DateTime.tryParse(raw);
       return last == null || clock().difference(last) >= promptInterval;
     } catch (_) {
@@ -2639,7 +2692,7 @@ class PushService {
   Future<void> markNotificationPromptShown() async {
     try {
       await storage.write(
-        key: promptShownKey,
+        key: storageKey(promptShownKey),
         value: clock().toUtc().toIso8601String(),
       );
     } catch (_) {}
@@ -2791,7 +2844,7 @@ class PushService {
     checkDeletion();
     await _queueProfileStorage(() async {
       checkDeletion();
-      final raw = await storage.read(key: leftoverKey);
+      final raw = await storage.read(key: storageKey(leftoverKey));
       checkDeletion();
       if (raw == null) return;
       Map<String, dynamic> owner;
@@ -2813,7 +2866,10 @@ class PushService {
               .where((key) => !keys.contains(key))
               .toList()
             ..sort();
-      await storage.write(key: leftoverKey, value: jsonEncode(owner));
+      await storage.write(
+        key: storageKey(leftoverKey),
+        value: jsonEncode(owner),
+      );
     });
   }
 
@@ -2855,7 +2911,7 @@ class PushService {
       await _queueProfileStorage(() async {
         if (_stale(generation)) return;
         await storage.write(
-          key: leftoverKey,
+          key: storageKey(leftoverKey),
           value: jsonEncode({
             'userId': uid,
             'follows': owned.toList()..sort(),
@@ -2886,13 +2942,13 @@ class PushService {
               owner.deletionConfirmedFor != owner.userId) {
             return;
           }
-          final saved = await storage.read(key: 'futbeat.push.session');
+          final saved = await storage.read(key: storageKey(sessionStorageKey));
           final savedUser = _savedSessionUser(saved);
           if (_stale(generation) ||
               (savedUser != null && savedUser != owner.userId)) {
             return;
           }
-          final raw = await storage.read(key: leftoverKey);
+          final raw = await storage.read(key: storageKey(leftoverKey));
           if (_stale(generation) || raw == null) return;
           final record = Map<String, dynamic>.from(jsonDecode(raw) as Map);
           if (record['userId'] != owner.userId ||
@@ -2905,7 +2961,10 @@ class PushService {
           record['profileCleared'] = true;
           record['profileUserId'] = owner.userId;
           record['profileDisplayName'] = null;
-          await storage.write(key: leftoverKey, value: jsonEncode(record));
+          await storage.write(
+            key: storageKey(leftoverKey),
+            value: jsonEncode(record),
+          );
         }).whenComplete(() {
           if (identical(_deletionPreparation, operation)) {
             _deletionPreparation = null;
@@ -2924,7 +2983,7 @@ class PushService {
         owner.deletionConfirmedFor != owner.userId) {
       return;
     }
-    final saved = await storage.read(key: 'futbeat.push.session');
+    final saved = await storage.read(key: storageKey(sessionStorageKey));
     if (_stale(generation) || _savedSessionUser(saved) != owner.userId) return;
     await Future.wait([_deletePersistedSession(), _persistPushEnabled(false)]);
   }
@@ -3025,7 +3084,7 @@ class PushService {
         await _queueProfileStorage(() async {
           if (_stale(generation)) return;
           await storage.write(
-            key: leftoverKey,
+            key: storageKey(leftoverKey),
             value: jsonEncode({
               'userId': deletedUser,
               'follows': retainedFollows.toList()..sort(),
@@ -3077,14 +3136,14 @@ class PushService {
     if (_stale(cleanupGeneration)) return;
     // Keep the provenance record: guest additions remain local, but another
     // account merges only its own cloud follows plus additions made later.
-    await storage.delete(key: lastUserKey);
+    await storage.delete(key: storageKey(lastUserKey));
     if (_stale(cleanupGeneration)) return;
     if (deletedUser != null) {
       await _clearNotificationScopes(deletedUser);
       if (_stale(cleanupGeneration)) return;
-      await storage.delete(key: pushedKey(deletedUser));
+      await storage.delete(key: storageKey(pushedKey(deletedUser)));
       if (_stale(cleanupGeneration)) return;
-      await storage.delete(key: linkedFlagKey(deletedUser));
+      await storage.delete(key: storageKey(linkedFlagKey(deletedUser)));
       if (_stale(cleanupGeneration)) return;
     }
   }

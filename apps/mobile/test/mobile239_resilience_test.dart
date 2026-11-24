@@ -119,14 +119,14 @@ void main() {
     expect(restored.isFinished, isFalse);
   });
 
-  test('missing observation and future timestamps are unverified; receipt is not evidence', () {
+  test('missing observation is unknown; invalid replay dates still expire', () {
     expect(
       FootballMatch({
         ...fixture(),
         'status': 'LIVE',
         'provenance': {'receivedAt': at.toIso8601String()},
       }).liveDataStaleAt(at),
-      isTrue,
+      isFalse,
     );
     final raw = {
       ...row(),

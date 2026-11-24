@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/database.dart';
+import 'package:futbeat/core/billing.dart';
 import 'package:futbeat/core/interests.dart';
 import 'package:futbeat/core/live_realtime.dart';
 import 'package:futbeat/core/models.dart';
@@ -24,6 +25,11 @@ class _Tokens implements PushTokenSource {
 
   @override
   Stream<String> get rotations => const Stream.empty();
+}
+
+class _ConfiguredBilling implements BillingGateway {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _Http {
@@ -363,6 +369,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            billingGatewayProvider.overrideWithValue(_ConfiguredBilling()),
             pushServiceProvider.overrideWithValue(value.service),
             databaseProvider.overrideWithValue(value.db),
             followsProvider.overrideWith((ref) => Stream.value(<String>{})),
@@ -389,6 +396,12 @@ void main() {
       await tester.tap(find.text('Eliminar cuenta'));
       await tester.pumpAndSettle();
       expect(find.text('Eliminar definitivamente'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Eliminar tu cuenta FutBeat no cancela tu suscripción.',
+        ),
+        findsOneWidget,
+      );
       expect(
         value.http.calls.where(
           (call) => call.path.endsWith('futbeat-delete-account'),

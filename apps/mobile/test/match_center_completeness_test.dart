@@ -136,6 +136,7 @@ class _Server {
   Map<String, dynamic>? Function(int read) detail;
   Map<String, dynamic> Function(int read) context;
   int detailReads = 0;
+  int detailDemands = 0;
   int contextReads = 0;
 
   Dio dio() => Dio()
@@ -162,6 +163,7 @@ class _Server {
             );
             return;
           }
+          if (options.queryParameters['request'] != '0') detailDemands++;
           final data = detail(detailReads++);
           if (data == null) {
             handler.reject(
@@ -210,6 +212,8 @@ Future<ProviderContainer> _open(
   _Server server, {
   double width = 360,
   bool storedOnly = false,
+  bool plannerOwned = false,
+  bool diagnosticStored = false,
   Snapshot? initialData,
 }) async {
   tester.view.physicalSize = Size(width, 780);
@@ -236,6 +240,8 @@ Future<ProviderContainer> _open(
     overrides: [
       databaseProvider.overrideWithValue(db),
       repositoryProvider.overrideWithValue(ApiRepository(dio)),
+      detailPlannerOwnedProvider.overrideWithValue(plannerOwned),
+      diagnosticStoredDetailProvider.overrideWithValue(diagnosticStored),
       followsProvider.overrideWith((ref) => Stream.value({})),
       liveMatchUpdatesProvider.overrideWith((ref) => Stream.value({})),
     ],
@@ -259,6 +265,12 @@ Future<void> _close(WidgetTester tester, ProviderContainer container) async {
 }
 
 Future<void> _tab(WidgetTester tester, String label) async {
+  // The historical timeline now has its own name, never a LIVE label.
+  if (label == 'En vivo' &&
+      find.text('En vivo').evaluate().isEmpty &&
+      find.text('Eventos').evaluate().isNotEmpty) {
+    label = 'Eventos';
+  }
   final tab = find.descendant(
     of: find.byType(TabBar),
     matching: find.text(label),
@@ -353,7 +365,11 @@ void main() {
         expect(initiallyLoading, isFalse);
         expect(initiallyRefreshing, isFalse);
         expect(
-          find.text(hasRows ? 'Clasificación' : 'Tabla aún no disponible'),
+          find.text(
+            hasRows
+                ? 'Clasificación'
+                : 'Clasificación pendiente de actualización',
+          ),
           findsOneWidget,
         );
         tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -440,7 +456,10 @@ void main() {
       ),
     );
     expect(find.byKey(const ValueKey('standings-show-full')), findsNothing);
-    expect(find.text('Tabla aún no descargada'), findsOneWidget);
+    expect(
+      find.text('Clasificación pendiente de actualización'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('partial context without a team hides only that match safely', (
@@ -504,46 +523,47 @@ void main() {
     }
   });
 
-  testWidgets('deep link keeps its last complete context after partial refresh', (
-    tester,
-  ) async {
-    final server = _Server(
-      detail: (_) => _detail(),
-      context: (read) => {
-        ..._context(),
-        'teams': [
-          {'id': 'fb_team_mc_h', 'name': 'Local Sintético'},
-          if (read != 1) {'id': 'fb_team_mc_a', 'name': 'Visita $read'},
-        ],
-      },
-    );
-    final container = await _open(tester, server);
-    try {
-      expect(server.contextReads, 1);
-      expect(find.text('Visita 0'), findsWidgets);
-
-      container.invalidate(matchContextSnapshotProvider(_match));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(server.contextReads, 2);
-      expect(find.text('Partido no encontrado'), findsNothing);
-      expect(find.text('Visita 0'), findsWidgets);
-      expect(
-        find.byWidgetPredicate(
-          (w) => w is Banner && w.message == 'Datos guardados',
-        ),
-        findsNothing,
+  testWidgets(
+    'deep link keeps its last complete context after partial refresh',
+    (tester) async {
+      final server = _Server(
+        detail: (_) => _detail(),
+        context: (read) => {
+          ..._context(),
+          'teams': [
+            {'id': 'fb_team_mc_h', 'name': 'Local Sintético'},
+            if (read != 1) {'id': 'fb_team_mc_a', 'name': 'Visita $read'},
+          ],
+        },
       );
+      final container = await _open(tester, server);
+      try {
+        expect(server.contextReads, 1);
+        expect(find.text('Visita 0'), findsWidgets);
 
-      container.invalidate(matchContextSnapshotProvider(_match));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-      expect(server.contextReads, 3);
-      expect(find.text('Visita 2'), findsWidgets);
-    } finally {
-      await _close(tester, container);
-    }
-  });
+        container.invalidate(matchContextSnapshotProvider(_match));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(server.contextReads, 2);
+        expect(find.text('Partido no encontrado'), findsNothing);
+        expect(find.text('Visita 0'), findsWidgets);
+        expect(
+          find.byWidgetPredicate(
+            (w) => w is Banner && w.message == 'Datos guardados',
+          ),
+          findsNothing,
+        );
+
+        container.invalidate(matchContextSnapshotProvider(_match));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(server.contextReads, 3);
+        expect(find.text('Visita 2'), findsWidgets);
+      } finally {
+        await _close(tester, container);
+      }
+    },
+  );
 
   testWidgets('21. lineup that arrives later appears in place; tab kept', (
     tester,
@@ -556,25 +576,25 @@ void main() {
     );
     final container = await _open(tester, server);
     await _tab(tester, 'Alineación');
-    expect(find.text('Cargando alineaciones…'), findsOneWidget);
     expect(
-      find.byKey(
-        const ValueKey('match-section-loading-Cargando alineaciones…'),
-      ),
+      find.text('Alineaciones no disponibles para este partido'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Alineaciones no disponibles para este partido'),
       findsOneWidget,
     );
     expect(
       tester
           .getSemantics(
-            find.byKey(
-              const ValueKey('match-section-loading-Cargando alineaciones…'),
-            ),
+            find.text('Alineaciones no disponibles para este partido'),
           )
           .label,
-      'Cargando alineaciones…',
+      'Alineaciones no disponibles para este partido',
     );
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byKey(const ValueKey('match-refreshing')), findsOneWidget);
+    expect(find.text('Actualizando'), findsOneWidget);
     await _elapse(tester, const Duration(seconds: 20));
     expect(find.text('Cargando alineaciones…'), findsNothing);
     expect(
@@ -583,9 +603,49 @@ void main() {
     ); // starter fallback on the pitch
     expect(_selectedTab(tester), 'Alineación');
     expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
+    expect(find.byKey(const ValueKey('match-updating-label')), findsNothing);
     semantics.dispose();
     await _close(tester, container);
   });
+
+  testWidgets(
+    'D1 pending detail keeps existing match visible with a bounded update signal',
+    (tester) async {
+      final server = _Server(
+        detail: (_) => _detail(pending: true),
+        context: (_) => _context(),
+      );
+      final container = await _open(
+        tester,
+        server,
+        initialData: Snapshot(_context()),
+        plannerOwned: true,
+        diagnosticStored: true,
+      );
+      expect(find.text('Local Sintético'), findsWidgets);
+      expect(find.text('Visita Sintética'), findsWidgets);
+      expect(find.text('Actualizando'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await _elapse(tester, const Duration(seconds: 30));
+      expect(find.byKey(const ValueKey('match-updating-label')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('match-awaiting-detail')),
+        findsOneWidget,
+      );
+      expect(
+        server.detailReads,
+        1,
+        reason: 'one request per open; no detail polling under D1',
+      );
+      expect(
+        server.detailDemands,
+        0,
+        reason: 'diagnostic must not wake request-aware acquisition before D1',
+      );
+      expect(find.byType(TabBar), findsOneWidget);
+      await _close(tester, container);
+    },
+  );
 
   testWidgets('22. statistics that arrive later appear in place', (
     tester,
@@ -653,7 +713,7 @@ void main() {
       expect(find.text('Clasificación'), findsOneWidget);
       expect(find.text('Local Sintético'), findsWidgets);
       expect(find.text('Visita Sintética'), findsWidgets);
-      expect(find.text('Sin tabla disponible'), findsNothing);
+      expect(find.text('Clasificación no disponible'), findsNothing);
       expect(server.contextReads, 1, reason: 'nothing pending: no refresh');
       await _close(tester, container);
     });
@@ -673,7 +733,7 @@ void main() {
       await _close(tester, container);
     });
 
-    testWidgets('3. UNAVAILABLE: tab visible + "Sin tabla disponible"', (
+    testWidgets('3. UNAVAILABLE: tab visible + "Clasificación no disponible"', (
       tester,
     ) async {
       final server = _Server(
@@ -682,7 +742,7 @@ void main() {
       );
       final container = await _open(tester, server);
       await _tab(tester, 'Tabla');
-      expect(find.text('Sin tabla disponible'), findsOneWidget);
+      expect(find.text('Clasificación no disponible'), findsOneWidget);
       expect(find.text('Cargando tabla…'), findsNothing);
       await _elapse(tester, const Duration(minutes: 1));
       expect(server.contextReads, 1, reason: 'no refresh for NO_DATA');
@@ -698,7 +758,10 @@ void main() {
       );
       final container = await _open(tester, server);
       await _tab(tester, 'Tabla');
-      expect(find.text('Tabla aún no descargada'), findsOneWidget);
+      expect(
+        find.text('Clasificación pendiente de actualización'),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
       await _elapse(tester, const Duration(minutes: 1));
       expect(server.contextReads, 1);
@@ -780,7 +843,10 @@ void main() {
             1 + standingsRetryDelays.length + standingsSilentRetryDelays.length;
         expect(server.contextReads, total);
         expect(find.text('Cargando tabla…'), findsNothing);
-        expect(find.text('Tabla aún no disponible'), findsOneWidget);
+        expect(
+          find.text('Clasificación pendiente de actualización'),
+          findsOneWidget,
+        );
         expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);
         await _elapse(tester, const Duration(minutes: 10));
         expect(server.contextReads, total, reason: 'no endless polling');
@@ -806,8 +872,11 @@ void main() {
         expect(server.contextReads, 1 + standingsRetryDelays.length);
         expect(find.text('Cargando tabla…'), findsNothing);
         expect(find.byType(CircularProgressIndicator), findsNothing);
-        expect(find.text('Tabla aún no disponible'), findsOneWidget);
-        expect(find.text('Reintentar'), findsOneWidget);
+        expect(
+          find.text('Clasificación pendiente de actualización'),
+          findsOneWidget,
+        );
+        expect(find.text('Actualizar'), findsOneWidget);
         await _close(tester, container);
       },
     );
@@ -839,7 +908,7 @@ void main() {
         }
         expect(server.contextReads, reads + 1, reason: 'one read per tap');
         expect(find.text('Clasificación'), findsOneWidget);
-        expect(find.text('Reintentar'), findsNothing);
+        expect(find.text('Actualizar'), findsNothing);
         expect(_selectedTab(tester), 'Tabla');
         await _elapse(tester, const Duration(minutes: 5));
         expect(
@@ -872,13 +941,19 @@ void main() {
           standingsRetryDelays.fold(Duration.zero, (a, b) => a + b) +
               const Duration(seconds: 2),
         );
-        expect(find.text('Tabla aún no disponible'), findsOneWidget);
+        expect(
+          find.text('Clasificación pendiente de actualización'),
+          findsOneWidget,
+        );
         await _elapse(
           tester,
           standingsSilentRetryDelays.first + const Duration(seconds: 2),
         );
         expect(find.text('Clasificación'), findsOneWidget);
-        expect(find.text('Tabla aún no disponible'), findsNothing);
+        expect(
+          find.text('Clasificación pendiente de actualización'),
+          findsNothing,
+        );
         final bar = tester.widget<TabBar>(find.byType(TabBar));
         expect(bar.controller, same(controller));
         expect(_selectedTab(tester), 'Tabla');
@@ -898,11 +973,11 @@ void main() {
         );
         final container = await _open(tester, server);
         await _tab(tester, 'Tabla');
-        expect(find.text('Sin tabla disponible'), findsOneWidget);
-        expect(find.text('Reintentar'), findsNothing);
+        expect(find.text('Clasificación no disponible'), findsOneWidget);
+        expect(find.text('Actualizar'), findsNothing);
         await _elapse(tester, const Duration(minutes: 10));
         expect(server.contextReads, 1);
-        expect(find.text('Reintentar'), findsNothing);
+        expect(find.text('Actualizar'), findsNothing);
         await _close(tester, container);
       },
     );
@@ -933,7 +1008,7 @@ void main() {
           expect(tester.takeException(), isNull);
         }
         expect(server.contextReads, 3);
-        expect(find.text('Sin tabla disponible'), findsOneWidget);
+        expect(find.text('Clasificación no disponible'), findsOneWidget);
         await _close(tester, container);
       },
     );
@@ -960,7 +1035,7 @@ void main() {
         reason: 'no flash/loss at step $step',
       );
       expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
+        find.text('Alineaciones no disponibles para este partido'),
         findsNothing,
       );
     }
@@ -985,7 +1060,7 @@ void main() {
       );
       await _tab(tester, 'Alineación');
       expect(
-        find.text('Todavía no hay alineaciones disponibles.'),
+        find.text('Alineaciones no disponibles para este partido'),
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('match-refreshing')), findsNothing);

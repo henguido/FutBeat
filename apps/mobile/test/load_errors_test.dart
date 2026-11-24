@@ -44,6 +44,6 @@ void main() {
     expect(classifyLoadError(status(404)), LoadFailure.other);
     expect(classifyLoadError(const FormatException('x')), LoadFailure.other);
     expect(classifyLoadError(null), LoadFailure.other);
-    expect(loadErrorMessage(status(401)), 'No pudimos cargar los datos');
+    expect(loadErrorMessage(status(401)), 'Información no disponible por ahora');
   });
 }

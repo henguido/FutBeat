@@ -129,6 +129,7 @@ class GoogleUmpPlatform implements UmpPlatform {
           debug: kDebugMode,
           qaBuild:
               const bool.fromEnvironment('FUTBEAT_COMMERCIAL_QA') ||
+              const bool.fromEnvironment('FUTBEAT_INTEGRAL_QA') ||
               const bool.fromEnvironment('FUTBEAT_PREMIUM_PLAY_QA'),
           enabled: const bool.fromEnvironment('FUTBEAT_COMMERCIAL_UMP'),
           testAds: const bool.fromEnvironment('FUTBEAT_ADMOB_TEST_ADS'),
