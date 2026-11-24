@@ -56,6 +56,14 @@ jobs:
         working-directory: apps/mobile
         run: flutter test --no-pub --concurrency=1 --reporter=expanded test/visual_test.dart
 
+      - name: Upload RC golden failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rc-focal-flutter-golden-failures
+          path: apps/mobile/test/failures/*.png
+          if-no-files-found: ignore
+
   contracts:
     needs: rc-focal
     if: always() && (needs.rc-focal.result == 'success' || needs.rc-focal.result == 'skipped')
