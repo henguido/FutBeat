@@ -1,0 +1,73 @@
+{
+  "base": "c2a77e22fff9d61ce9b7752b859c0e628c0ca75c",
+  "aabSha256": "E38FEF37F8F9FDFD32C4204424ABF4B24FDDD8D05844CFFF0442A53AE2BAA5D5",
+  "code": "uncommitted frozen G3 client overlay; AAB built from this content",
+  "configuration": "scripts/release/p10-internal.public.json",
+  "files": [
+    {
+      "path": "apps/mobile/android/app/build.gradle.kts",
+      "sha256": "9b72ccf137f47b1d388cc3e95cbd440bfa084f44e8ec115aad0f71b18a10e9b1"
+    },
+    {
+      "path": "apps/mobile/lib/core/billing.dart",
+      "sha256": "b6f5a4d6b92cd14858938ee0c9d211d9ea26e09b9eb689b51a8c1f994b0f8d93"
+    },
+    {
+      "path": "apps/mobile/lib/core/entitlements.dart",
+      "sha256": "048813aa167a81b941e0b0b358b56dbca18cacedda263d72809b9805503e42dd"
+    },
+    {
+      "path": "apps/mobile/lib/core/premium_qa_transport.dart",
+      "sha256": "d8d3a46f86c1747fe80bff186fca8bccaabd00254b6883f59bb012d2916d0db4"
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/premium_card.dart",
+      "sha256": "6c6cc2daa44713f16af6fe6bc48ca5bcbd1f3ca135c9e70833c2e7d8cd53d18c"
+    },
+    {
+      "path": "apps/mobile/test/billing_android_plan_change_test.dart",
+      "sha256": "820f60e2c10d3b31c18134aade2935a3ec3b414971fe9f625e5cfa6fa0b6944f"
+    },
+    {
+      "path": "apps/mobile/test/premium_server_configuration_test.dart",
+      "sha256": "f90f5a4fb7aedcbdc9e2e7b7dbb53c5da7ddaa90de59e2214e95f7cc65dd6db8"
+    },
+    {
+      "path": "apps/mobile/test/premium_server_wiring_test.dart",
+      "sha256": "9a9e6bd467c4318dab9b3a5d87a4ed71451b2ff829acf35b7cfb4dbbb972c9ed"
+    },
+    {
+      "path": "scripts/release/verify-publication-admob.py",
+      "sha256": "260da2a846f0d366164e2b8229bb64be8748bc0f23327301e8608ef0d7135eca"
+    },
+    {
+      "path": "scripts/release/test_publication_admob.py",
+      "sha256": "40ab6295bb1c051f8f4d9b720b95ba0d2e6840647cdad218a9d8addd3d98f02e"
+    },
+    {
+      "path": "scripts/release/p10-internal.public.json",
+      "sha256": "e30e45ffc235df3d6c918adfbb139690d956a0399e40403930d482748e2fdf4d"
+    }
+  ],
+  "tests": {
+    "flutterPortablePass": 2237,
+    "flutterSkipped": 8,
+    "analyze": "PASS",
+    "productionOptInWiring": 2,
+    "g2Compatibility": 3,
+    "billingRegressions": 47,
+    "configurationTransportAds": 65,
+    "gradleConfigurationCases": 6,
+    "publicationGuard": 12
+  },
+  "backendChanges": false,
+  "productionActivation": false,
+  "reproduction": "Flutter3.47.4; flutter pub get --offline; flutter build appbundle --release --no-pub --build-name 1.0.0 --build-number 17 --dart-define-from-file=<public configuration>; real AdMob App ID and existing authorized signing supplied outside Git",
+  "limitations": [
+    "Build byte identity is not asserted",
+    "P10 purchase and remote CI not executed",
+    "Push remains disabled",
+    "Commercial G4 not authorized"
+  ],
+  "configurationEncoding": "LF in Git; JSON semantically identical to the preserved build configuration"
+}

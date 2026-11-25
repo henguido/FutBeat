@@ -40,7 +40,7 @@ void main() {
     final offer = PremiumOffer(productId: 'futbeat_premium', period: PremiumPeriod.yearly,
       price: 'CRC fixture', handle: details);
     final gateway = PlayBillingGateway(store);
-    if (!premiumPlayQaEnabled) {
+    if (!premiumServerEnabled) {
       expect(() => gateway.buy(offer, accountTag: 'owner-tag', replacing: owned),
         throwsA(isA<BillingUnavailable>()));
       expect(store.launched, null);

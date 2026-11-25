@@ -99,8 +99,16 @@ fun releaseRuntimeProblems(defines: Map<String, String> = dartDefines()): List<S
             problems += "$flag is QA-only and must be false in a release"
         }
     }
-    if (!defines["BILLING_BASE"].isNullOrBlank()) {
-        problems += "BILLING_BASE is staging-only until G1 is accepted."
+    val premiumServer = defines["FUTBEAT_PREMIUM_SERVER_ENABLED"]?.trim()?.lowercase() == "true"
+    if (premiumServer) {
+        val productionAuth = "https://izlmruqawgagwdcsjhte.supabase.co"
+        if (defines["BILLING_BASE"] != "$productionAuth/functions/v1/futbeat-billing" ||
+            defines["FUTBEAT_SUPABASE_URL"]?.trimEnd('/') != productionAuth ||
+            defines["FUTBEAT_USER_SESSION_ACCESS"]?.trim()?.lowercase() != "true") {
+            problems += "Premium server requires the matching production Auth and Billing origins with user-session access."
+        }
+    } else if (!defines["BILLING_BASE"].isNullOrBlank()) {
+        problems += "BILLING_BASE requires explicit production server verification."
     }
     if (!defines["FUTBEAT_PASSIVE_CLIENT_KEY"].isNullOrBlank()) {
         problems += "Preview client keys are not allowed in the official release"

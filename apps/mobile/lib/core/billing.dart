@@ -26,7 +26,7 @@ class PremiumProducts {
   static const yearly = String.fromEnvironment('FUTBEAT_PREMIUM_YEARLY_ID');
 
   static Set<String> get configured => {
-    if (premiumPlayQaEnabled) productId,
+    if (premiumServerEnabled) productId,
     for (final id in [monthly, yearly])
       if (id.isNotEmpty) id,
   };
@@ -186,7 +186,7 @@ class PlayBillingGateway implements BillingGateway {
   Future<List<PremiumOffer>> offers(Set<String> productIds) async {
     final response = await _store.queryProductDetails(productIds);
     if (response.error != null) throw const BillingUnavailable();
-    if (premiumPlayQaEnabled) {
+    if (premiumServerEnabled) {
       return selectPremiumBasePlans(response.productDetails);
     }
     final byProduct = <String, ProductDetails>{};
@@ -237,7 +237,7 @@ class PlayBillingGateway implements BillingGateway {
     final details = offer.handle! as ProductDetails;
     final previous = replacing?.handle;
     if (replacing != null &&
-        (!premiumPlayQaEnabled ||
+        (!premiumServerEnabled ||
             replacing.productId != offer.productId ||
             replacing.accountTag != accountTag ||
             !replacing.purchased ||
@@ -484,7 +484,7 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
 
   /// App resumed: Play may have renewed, cancelled or expired the plan.
   Future<void> onResume() async {
-    if (premiumPlayQaEnabled) ref.invalidate(premiumPurchasesAllowedProvider);
+    if (premiumServerEnabled) ref.invalidate(premiumPurchasesAllowedProvider);
     if (enabled) await _refresh();
   }
 
@@ -657,7 +657,7 @@ class PremiumBillingController extends Notifier<PremiumBillingState> {
         _waiting.remove(offer.productId);
       }
       if (ref.mounted) {
-        if (premiumPlayQaEnabled) {
+        if (premiumServerEnabled) {
           ref.invalidate(premiumPurchasesAllowedProvider);
         }
         state = PremiumBillingState(pending: state.pending);

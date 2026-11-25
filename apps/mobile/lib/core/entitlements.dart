@@ -211,12 +211,12 @@ class SecureEntitlementStore implements EntitlementStore {
 String entitlementStorageKey(String accountKey) =>
     'futbeat.entitlement.$accountKey';
 
-/// QA uses the approved server verifier. Commercial verification remains
-/// unavailable until the production server contract is integrated and approved.
+/// G2 QA and opt-in G3 reuse the same server verifier. With neither mode
+/// configured, purchases and locally derived Premium grants remain disabled.
 final entitlementSourceProvider = Provider<EntitlementSource>((ref) {
   final gateway = ref.watch(billingGatewayProvider);
   if (gateway == null) return const UnavailableEntitlementSource();
-  if (premiumPlayQaEnabled) {
+  if (premiumServerEnabled) {
     return PremiumQaEntitlementSource(
       gateway,
       ref.watch(premiumQaTransportFactoryProvider),

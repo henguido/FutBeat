@@ -123,13 +123,16 @@ class PremiumCard extends ConsumerWidget {
               Wrap(
                 spacing: 8,
                 children: [
-                  if ((!plan.isPremium || premiumPlayQaEnabled) && purchasesAllowed)
+                  if ((!plan.isPremium || premiumServerEnabled) &&
+                      purchasesAllowed)
                     FilledButton(
                       key: const ValueKey('premium-upgrade'),
                       onPressed: billing.busy || !plan.accountResolved
                           ? null
                           : upgrade,
-                      child: Text(plan.isPremium ? 'Cambiar plan' : 'Hazte Premium'),
+                      child: Text(
+                        plan.isPremium ? 'Cambiar plan' : 'Hazte Premium',
+                      ),
                     ),
                   TextButton(
                     key: const ValueKey('premium-restore'),
@@ -164,7 +167,8 @@ class PremiumCard extends ConsumerWidget {
                       key: const ValueKey('premium-qa-verify'),
                       onPressed: billing.busy || !plan.accountResolved
                           ? null
-                          : () async => show(await controller.verifyQaPurchase()),
+                          : () async =>
+                                show(await controller.verifyQaPurchase()),
                       child: const Text('Verificar compra QA'),
                     ),
                 ],

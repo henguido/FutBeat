@@ -11,10 +11,38 @@ import 'push.dart';
 const premiumPlayQaEnabled =
     kDebugMode && bool.fromEnvironment('FUTBEAT_PREMIUM_PLAY_QA');
 
+// The production service remains opt-in. The backend alone decides whether
+// intake is enabled and whether the Play purchase is eligible (P-10/G3).
+const premiumProductionServerEnabled = bool.fromEnvironment(
+  'FUTBEAT_PREMIUM_SERVER_ENABLED',
+);
+const premiumServerEnabled =
+    premiumPlayQaEnabled || premiumProductionServerEnabled;
+
+Uri? resolvePremiumBillingOrigin({
+  required bool debugBuild,
+  required bool qaEnabled,
+  required bool productionEnabled,
+  required String authOrigin,
+  required String billingBase,
+}) {
+  if (qaEnabled && productionEnabled) return null;
+  final host = productionEnabled
+      ? 'izlmruqawgagwdcsjhte.supabase.co'
+      : debugBuild && qaEnabled
+      ? 'wctxcnqcblgewaznxrqh.supabase.co'
+      : null;
+  if (host == null) return null;
+  final expectedAuth = 'https://$host';
+  if (authOrigin != expectedAuth && authOrigin != '$expectedAuth/') return null;
+  if (billingBase != '$expectedAuth/functions/v1/futbeat-billing') return null;
+  return Uri.tryParse(billingBase);
+}
+
 final premiumPurchasesAllowedProvider = FutureProvider<bool>((ref) async {
   // A configured Play product alone is not permission to sell. Production
   // intake and its server verifier still require their own approved contract.
-  if (!premiumPlayQaEnabled) return false;
+  if (!premiumServerEnabled) return false;
   final owner = ref.watch(currentAccountProvider).asData?.value;
   if (owner == null) return false;
   final transport = ref.watch(premiumQaTransportFactoryProvider)(owner);
@@ -27,13 +55,15 @@ final premiumQaTransportFactoryProvider =
       final service = ref.watch(pushServiceProvider);
       const base = String.fromEnvironment('BILLING_BASE');
       return (accountId) {
-        if (!premiumPlayQaEnabled || base.isEmpty) return null;
-        final origin = Uri.tryParse(base);
-        if (origin == null ||
-            origin.host != 'wctxcnqcblgewaznxrqh.supabase.co' ||
-            origin.host != Uri.parse(service.config.supabaseUrl).host) {
-          return null;
-        }
+        if (!premiumServerEnabled) return null;
+        final origin = resolvePremiumBillingOrigin(
+          debugBuild: kDebugMode,
+          qaEnabled: const bool.fromEnvironment('FUTBEAT_PREMIUM_PLAY_QA'),
+          productionEnabled: premiumProductionServerEnabled,
+          authOrigin: service.config.supabaseUrl,
+          billingBase: base,
+        );
+        if (origin == null) return null;
         return PremiumQaTransport.https(origin, () async {
           if (service.accountId != accountId || service.isAnonymous) {
             return null;

@@ -1,0 +1,19 @@
+{
+  "FUTBEAT_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_iSH4S3fKou_EEkdG3W_Azg_9E4HXzWE",
+  "FUTBEAT_OAUTH_GOOGLE_ENABLED": true,
+  "FUTBEAT_OAUTH_FACEBOOK_ENABLED": false,
+  "FUTBEAT_USE_DEMO": false,
+  "FUTBEAT_QA_LOCAL_CACHE_ONLY": false,
+  "FUTBEAT_USER_SESSION_ACCESS": true,
+  "FUTBEAT_SUPABASE_URL": "https://izlmruqawgagwdcsjhte.supabase.co",
+  "FUTBEAT_R05_ENABLED": true,
+  "FUTBEAT_API_URL": "https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-api",
+  "FUTBEAT_PUSH_ENABLED": false,
+  "FUTBEAT_NOTIFICATION_SCOPES_ENABLED": false,
+  "FUTBEAT_ADS_DISABLED": false,
+  "FUTBEAT_ADMOB_TEST_ADS": false,
+  "FUTBEAT_PREMIUM_PLAY_QA": false,
+  "FUTBEAT_ADMOB_MATCHES_FEED_ID": "ca-app-pub-8924896982382230/3935403746",
+  "FUTBEAT_PREMIUM_SERVER_ENABLED": true,
+  "BILLING_BASE": "https://izlmruqawgagwdcsjhte.supabase.co/functions/v1/futbeat-billing"
+}
