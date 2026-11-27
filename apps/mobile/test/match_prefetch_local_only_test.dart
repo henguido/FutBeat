@@ -17,7 +17,7 @@ void main() {
     testWidgets('followed $status match warms saved detail without HTTP', (
       tester,
     ) async {
-      final day = costaRicaNow().add(const Duration(days: 1));
+      final day = DateTime.now().add(const Duration(days: 1));
       final date = DateTime(day.year, day.month, day.day, 8);
       final db = AppDatabase(NativeDatabase.memory());
       final rawDetail = <String, dynamic>{
@@ -130,7 +130,8 @@ void main() {
       expect(
         find.byKey(const ValueKey('match-row-fb_match_local')),
         findsNWidgets(2),
-        reason: '#220 keeps the followed fixture in Favoritos and its league; '
+        reason:
+            '#220 keeps the followed fixture in Favoritos and its league; '
             'both presentations share the same local warm-up',
       );
       await tester.runAsync(() async {

@@ -210,7 +210,7 @@ class TeamSummaryMatchRow extends StatelessWidget {
       label: [
         opponent.displayName,
         homeMatch ? 'local' : 'visitante',
-        matchDayLabel(match.startTime),
+        matchDayLabel(match.startTime, context: context),
         if (result != null)
           match.score
         else
@@ -245,7 +245,7 @@ class TeamSummaryMatchRow extends StatelessWidget {
                     Text(
                       [
                         homeMatch ? 'Local' : 'Visitante',
-                        matchDayLabel(match.startTime),
+                        matchDayLabel(match.startTime, context: context),
                         if (competition != null) competition.name,
                       ].join(' · '),
                       maxLines: 1,
@@ -298,7 +298,7 @@ class TeamSummaryMatchRow extends StatelessWidget {
 /// 4 h is stale, never "now") or else the soonest upcoming one; only matches
 /// whose two teams can be shown.
 FootballMatch? nextTeamMatch(List<FootballMatch> matches, Snapshot data) {
-  final now = costaRicaNow();
+  final now = DateTime.now();
   bool shown(FootballMatch m) =>
       data.team(m.homeId) != null && data.team(m.awayId) != null;
   final live = matches.where(
@@ -397,7 +397,7 @@ class NextMatchCard extends StatelessWidget {
     final away = data.team(match.awayId);
     final competition = data.competition(match.competitionId);
     if (home == null || away == null) return const SizedBox.shrink();
-    final day = _dayLabel(match.startTime);
+    final day = matchDayLabel(match.startTime, context: context);
     return Semantics(
       container: true,
       label: [
@@ -474,19 +474,6 @@ class NextMatchCard extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static String _dayLabel(DateTime start) {
-    final today = costaRicaNow();
-    final date = DateTime.utc(start.year, start.month, start.day);
-    final days = date.difference(
-      DateTime.utc(today.year, today.month, today.day),
-    );
-    return switch (days.inDays) {
-      0 => 'Hoy',
-      1 => 'Mañana',
-      _ => matchDayLabel(start),
-    };
   }
 }
 
@@ -629,7 +616,7 @@ class TeamStandingSummary extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  title!,
+                  standingsDisplayLabel(title!),
                   style: const TextStyle(color: muted, fontSize: 12),
                 ),
               ),

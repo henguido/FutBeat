@@ -18,7 +18,24 @@
     "futbeat_private.resolve_global_entity_before_player_lock(text,text,text,text,text,text)": "a99226a3d26c57c82969a21e8e075721",
     "futbeat_private.futbeat_store_goal_standings(text,text,timestamp with time zone,text,jsonb)": "10a30936fb1efca9f4958934f0d05fd6",
     "futbeat_private.upsert_goal_player(jsonb,text,timestamp with time zone)": "20b691f8ff9872201b4235119dad3dfa",
-    "futbeat_private.provider_remaining(text)": "0fa9b77299d9a7894908c00919f865df"
+    "futbeat_private.provider_remaining(text)": "0fa9b77299d9a7894908c00919f865df",
+    "futbeat_private.futbeat_read_lineup_player_media(text,text[])": "8c67c9e70aa9fe4ee6bf3a97e1d65fdd",
+    "futbeat_private.futbeat_resolve_global_entities(text,jsonb)": "384a3921fd739e7a6190be8b4320591a",
+    "futbeat_private.h2h_follow_try(text)": "89c6fa1cc6113056c181c6a6cfec9bdb",
+    "futbeat_private.h2h_match_followed(text)": "bddfa83ef0b18fc6318429cfb2a97b0d",
+    "futbeat_private.harvest_lineup_players(text,jsonb,timestamp with time zone)": "ceff109181ef47f7e04d86c6e6f633a8",
+    "futbeat_private.lineup_squad_photo_twins(text[])": "8fa6ae1f56026f9ebc60a6a8ea214ff6",
+    "futbeat_private.squad_fold_name(text)": "54b18dbae9b6034b8d50b20ef935a272",
+    "futbeat_private.squad_names_compatible(text,text)": "8481ac2bba93b2a76dc8c0380c49d16a",
+    "futbeat_private.standings_infer_subgroups(jsonb)": "89cbcd7a4c7cdc85fe18d390eff491ab",
+    "futbeat_private.standings_subgroups_trigger()": "5314d98aee412015e78b0b72a201bfcc",
+    "futbeat_private.team_last_confirmed_lineup(text,timestamp with time zone,text)": "7f3f98b6e1cb29cc35aa2f3f0ece1719",
+    "futbeat_private.team_squad_twin_aliases(text)": "2ef0e7d73f9700877ca20193d7f0dfa3",
+    "public.futbeat_read_lineup_player_media(text,text[])": "73b58ed24d67cf0ca0451dd070e50242",
+    "public.futbeat_read_match_last_lineups(text)": "62575ad3b06affa751b0863365859a64",
+    "public.futbeat_request_match_h2h_history(text)": "fd1ff3cdf96765a0450688802317d7ad",
+    "public.futbeat_resolve_global_entities(text,jsonb)": "7c0d91853ec28828bfac5391ea7f568e",
+    "futbeat_private.team_squad_hidden_twins(text)": "bb5abe40047b15b1870cfbb9a1d92be4"
   },
   "calendarRtrimMd5": "201d1f20cdb9eed211ae4ac8a4d15d45",
   "requiredPrerequisites": [
@@ -47,7 +64,14 @@
     "public.futbeat_read_qa_stored_search": "56b4d75d"
   },
   "finalOverrides": [
-    "supabase/migrations/20261124150000_reopen1_stale_missing_from_provider.sql"
+    "supabase/migrations/20261124150000_reopen1_stale_missing_from_provider.sql",
+    "supabase/migrations/20261127013200_fb06_standings_subgroups.sql",
+    "supabase/migrations/20261127040600_fb09_squad_twins_v2.sql",
+    "supabase/migrations/20261127040700_fb09_record_prod_hidden_twins.sql",
+    "supabase/migrations/20261127043800_fb05_match_last_lineups.sql",
+    "supabase/migrations/20261127044600_fb07_h2h_follow_gate.sql",
+    "supabase/migrations/20261127064100_fb05_k0_lineup_key_zero_read.sql",
+    "supabase/migrations/20261127135100_fb05_k0w_lineup_key_zero_write.sql"
   ],
   "signaturePrefixes": {
     "futbeat_private.reconcile_goal_results_local(date)": "83cbc022",
@@ -61,5 +85,16 @@
     "futbeat_private.refresh_interest_aggregates()": "81e555e0",
     "futbeat_private.plan_match_detail_coverage(integer)": "909f384b",
     "futbeat_private.plan_match_detail_coverage(integer,boolean)": "cbb521db"
+  },
+  "crInsensitiveProductionEquality": {
+    "note": "production stores these bodies with CRLF; equal to Git once CR is removed",
+    "futbeat_private.team_squad_hidden_twins(text)": {
+      "productionDefMd5": "bd79e83218108f95bc79f9828a213f8b",
+      "prosrcNoCrMd5": "6ebd8dca53bb117fa83abddca2de8aa4"
+    },
+    "futbeat_private.player_identity_richness(jsonb)": {
+      "productionDefMd5": "110da1bb51827f53f7d1d4d9264cc0c5",
+      "prosrcNoCrMd5": "df79415008fabd4dd68eff48b579ad99"
+    }
   }
 }

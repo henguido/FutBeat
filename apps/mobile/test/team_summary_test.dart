@@ -2,14 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
-import 'package:futbeat/core/models.dart' as core;
 import 'package:futbeat/features/entities/team_profile.dart' show matchDayLabel;
 import 'package:futbeat/features/entities/profile_widgets.dart';
 import 'package:futbeat/features/entities/team_summary.dart';
 
-/// Day label of a UTC instant as the app shows it (Costa Rica time).
-String matchDayLabelFor(DateTime instant) =>
-    matchDayLabel(core.costaRicaTime(instant.toUtc()));
+/// Day label of a UTC instant in the device's calendar.
+String matchDayLabelFor(DateTime instant) => matchDayLabel(instant.toLocal());
 
 // #156: team / national-team "Resumen" v2. Synthetic ids and names only.
 
@@ -116,6 +114,28 @@ double _y(WidgetTester tester, String text) =>
     tester.getTopLeft(find.text(text).first).dy;
 
 void main() {
+  testWidgets('team summary hides the internal Current phase token', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TeamStandingSummary(
+            row: _row('fb_team', 6, group: 'Current'),
+            teamId: 'fb_team',
+            title: 'Current',
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Current'), findsNothing);
+    expect(find.text('Clasificación general'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('team-summary-row-fb_team')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('Próximos partidos shows the nearest fixtures first', (
     tester,
   ) async {

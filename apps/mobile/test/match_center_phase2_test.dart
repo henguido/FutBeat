@@ -705,7 +705,7 @@ void main() {
     );
     await _tab(tester, 'Cara a cara');
     // #99 v2: a cache miss is not "no previous meetings".
-    expect(find.text('Historial pendiente de actualización'), findsOneWidget);
+    expect(find.text('Historial no disponible todavía'), findsOneWidget);
     expect(find.text('Sin enfrentamientos previos registrados'), findsNothing);
     expect(find.text('Sin enfrentamientos anteriores'), findsNothing);
     expect(find.textContaining('nunca', findRichText: true), findsNothing);

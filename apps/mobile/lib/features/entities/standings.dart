@@ -1010,7 +1010,7 @@ class _TeamRow extends StatelessWidget {
         key: ValueKey('standings-row-${entry.teamId}'),
         onTap: entry.teamId.isEmpty
             ? null
-            : () => context.push('/team/${entry.teamId}'),
+            : () => context.push('/team/${entry.formTeamId}'),
         child: Container(
           constraints: const BoxConstraints(minHeight: 46),
           decoration: BoxDecoration(

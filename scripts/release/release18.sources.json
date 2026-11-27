@@ -1,0 +1,924 @@
+{
+  "utc": "2026-11-27T18:10:12.486337+00:00",
+  "baseCommit": "249a42d7e254d50ee5e42515ba78dae07efc9ff9",
+  "priorManifest": "artifacts/first-play-acceptance/integral-close-20261127/final.sources.json",
+  "priorManifestSha256": "27b1b2bd2560d15f4c5330a85c0ed3fabe7930333b6c51033a904a83e43f99d7",
+  "sources": [
+    {
+      "path": "apps/mobile/android/app/build.gradle.kts",
+      "sha256": "9b72ccf137f47b1d388cc3e95cbd440bfa084f44e8ec115aad0f71b18a10e9b1",
+      "bytes": 25957
+    },
+    {
+      "path": "apps/mobile/android/app/src/debug/AndroidManifest.xml",
+      "sha256": "4e4a0e0726baf45d2d878ea5d0e0666e08ea6e9dbdc33ecd2a74a3525cf5ba51",
+      "bytes": 434
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/AndroidManifest.xml",
+      "sha256": "18a72dd631e3ffd3005d46a83dba976750b99e1454540fd914ae749081c9b149",
+      "bytes": 5628
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java",
+      "sha256": "88f1d69d822c2884f8b64cf24d452cf0bb6d35d664bcfe7884e7aa46e1e8295e",
+      "bytes": 3393
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/kotlin/com/futbeat/futbeat/MainActivity.kt",
+      "sha256": "20317e54f1d78ee21fa9b3eeb751b02277240a28cbc9f67b1ff062dfc33ff457",
+      "bytes": 4496
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable-v21/launch_background.xml",
+      "sha256": "7ca6d5cec2169c5a98661a119db23a6f3399c8fef2256ff04f3a642831282478",
+      "bytes": 438
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable/futbeat_icon.xml",
+      "sha256": "b2e891c2f9dab5206fa007424cd1f11a1cd722b77b4b8ddabda023b70389fc7f",
+      "bytes": 508
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable/futbeat_launcher_foreground.xml",
+      "sha256": "c35d56fe724d98b6b255a005397c30fb481aa61e4527eaf6e8bb94cd63483cf1",
+      "bytes": 650
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable/futbeat_launcher_monochrome.xml",
+      "sha256": "5aa03263f6745d58e3f90be60f66ad44fc9b875e19780a613574094457a5e649",
+      "bytes": 650
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/drawable/launch_background.xml",
+      "sha256": "94433756fe10005ddd6fc55cc5c0b1e9f3c10b66a08ceac795ece6713d34e28a",
+      "bytes": 434
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+      "sha256": "18eba00039798d1c24c8ae6f09f38d52b3cb96bfa7e0277153353959100a7438",
+      "bytes": 356
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+      "sha256": "18eba00039798d1c24c8ae6f09f38d52b3cb96bfa7e0277153353959100a7438",
+      "bytes": 356
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-anydpi/ic_launcher.xml",
+      "sha256": "f4c054ae29029cc5d02aed5c05bf2724761f6102802c955a6ad4c2c4d3a70e5c",
+      "bytes": 729
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-anydpi/ic_launcher_round.xml",
+      "sha256": "6ce9257a2c7895f733fa9881d8ca7552ce26809a252b1cc41da12c1241664d9c",
+      "bytes": 752
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+      "sha256": "eb698af4b4ab9415559298a0737cb6a34d42d1c0400a3cf478d2291c08bf41b0",
+      "bytes": 924
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+      "sha256": "8c3a922d70f76a425911c014343721892a70f98b5c25606349602f3b640a5dbb",
+      "bytes": 652
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+      "sha256": "31c2713e8f7bed5615f5253a8bbaca183e39ca4dafe5dce4249e91ee519ce3b4",
+      "bytes": 1148
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+      "sha256": "ce0e3a32a27665d9b395b329cf1dd6e7be3ceed41164261b26e134ee607e5e4e",
+      "bytes": 1745
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+      "sha256": "738e504b1f2a43f32244276183a405fd2407995272b9f1ab8d36030fde411683",
+      "bytes": 2301
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/values-night/styles.xml",
+      "sha256": "8c5bad5152f217e837519f9c15211d19f39bd45f5f67faf6dd81cb4b299e518f",
+      "bytes": 995
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/values/colors.xml",
+      "sha256": "2932b5b7cdb03ee36dce579e355887649cc5abdc0d883289eb0844fc7e2db7be",
+      "bytes": 126
+    },
+    {
+      "path": "apps/mobile/android/app/src/main/res/values/styles.xml",
+      "sha256": "937d7c82f539c72eb94fd3a3773f29b3d3fef1997213c92cb632298cedf4bda9",
+      "bytes": 996
+    },
+    {
+      "path": "apps/mobile/android/app/src/passivePreview/AndroidManifest.xml",
+      "sha256": "003fa4fc0946380ec5fce7e1b0d72e7ec17b5fab0ccf57178cb9351b49708be1",
+      "bytes": 139
+    },
+    {
+      "path": "apps/mobile/android/app/src/preview/AndroidManifest.xml",
+      "sha256": "77e6d763423e5b931063b419b2dd88ae95ddf798cfaa6df8d543bae19d683587",
+      "bytes": 277
+    },
+    {
+      "path": "apps/mobile/android/app/src/profile/AndroidManifest.xml",
+      "sha256": "30b0832ed8b92dfbd6ae2abfa939ccf26333d37600056b1572bd4a397a18a74b",
+      "bytes": 378
+    },
+    {
+      "path": "apps/mobile/android/build.gradle.kts",
+      "sha256": "6a26dba2cb8dfba1e74f540b0d17a89d96c1301d3c3bfda14348bed257fddcba",
+      "bytes": 537
+    },
+    {
+      "path": "apps/mobile/android/gradle.properties",
+      "sha256": "a39a2197d25b63893aefe12a4a88a847845e8c6c34d93dc6d45af9baf94a208b",
+      "bytes": 352
+    },
+    {
+      "path": "apps/mobile/android/settings.gradle.kts",
+      "sha256": "016759283e88ade6eba92910583feeef88b962839b957aa414296afd2952d122",
+      "bytes": 770
+    },
+    {
+      "path": "apps/mobile/assets/demo.snapshot.json",
+      "sha256": "d59b718ba24fdf9638c56a4e6f867978989ecc2d9627063a72e901f97fa732b4",
+      "bytes": 7762
+    },
+    {
+      "path": "apps/mobile/assets/fonts/roboto-bold.ttf",
+      "sha256": "7d0b991ee3e0be7af01ad7ea8cd2beea6c00a25e679a0226b6737f079aafff86",
+      "bytes": 170760
+    },
+    {
+      "path": "apps/mobile/assets/fonts/roboto-regular.ttf",
+      "sha256": "79e851404657dac2106b3d22ad256d47824a9a5765458edb72c9102a45816d95",
+      "bytes": 171676
+    },
+    {
+      "path": "apps/mobile/assets/fonts/roboto_license.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "apps/mobile/lib/core/account_deletion_receipts.dart",
+      "sha256": "4613705887766f4bd5374b5732c9675b244456940e2191b80f1ba40ff0b2e8ea",
+      "bytes": 7850
+    },
+    {
+      "path": "apps/mobile/lib/core/ads.dart",
+      "sha256": "f53b0cef56c114f20e444ad15c7f7704fdfae805fb3273362d1441184827a192",
+      "bytes": 18606
+    },
+    {
+      "path": "apps/mobile/lib/core/auth_errors.dart",
+      "sha256": "9a5b5cf9e3e962b0fe5f083c1d806566e2ed9755359431d09c889beb58f892d9",
+      "bytes": 4342
+    },
+    {
+      "path": "apps/mobile/lib/core/billing.dart",
+      "sha256": "b6f5a4d6b92cd14858938ee0c9d211d9ea26e09b9eb689b51a8c1f994b0f8d93",
+      "bytes": 27486
+    },
+    {
+      "path": "apps/mobile/lib/core/countries.dart",
+      "sha256": "3a3776775a1d45670cb15c17504df6c4e118c05deee71e61f930a8ce89315b45",
+      "bytes": 9685
+    },
+    {
+      "path": "apps/mobile/lib/core/database.dart",
+      "sha256": "99f66534cdaae72e830f6c416ea3bc4ff4ec6e517df81c70a0a6fc67a7d8a52a",
+      "bytes": 21877
+    },
+    {
+      "path": "apps/mobile/lib/core/database.g.dart",
+      "sha256": "15bea94bb23ee5c3196c15a09511a855f0f081b12b1e0e2fd8875a895aacd56b",
+      "bytes": 86062
+    },
+    {
+      "path": "apps/mobile/lib/core/device_time.dart",
+      "sha256": "3f138a7d7793ac96730af82ef19893f096670a62600c0f94dfba4767e231ac06",
+      "bytes": 5416
+    },
+    {
+      "path": "apps/mobile/lib/core/entitlements.dart",
+      "sha256": "048813aa167a81b941e0b0b358b56dbca18cacedda263d72809b9805503e42dd",
+      "bytes": 13629
+    },
+    {
+      "path": "apps/mobile/lib/core/entity_media.dart",
+      "sha256": "b19c8aae921c8ebd8cb92d02c7d06ce12b885936977f61601d937c9630953b17",
+      "bytes": 15796
+    },
+    {
+      "path": "apps/mobile/lib/core/interests.dart",
+      "sha256": "db35faeb7f88eef4334ec81d832d3fb5aa86f02efddf87213a4249bba02396af",
+      "bytes": 3597
+    },
+    {
+      "path": "apps/mobile/lib/core/last_confirmed_lineups.dart",
+      "sha256": "8091da8b5af497f535872b1a9f643366e0585e1f1615e6ab1c5549ad94942fc9",
+      "bytes": 6013
+    },
+    {
+      "path": "apps/mobile/lib/core/live_realtime.dart",
+      "sha256": "3deca085d2dc67385d558386cc476d40dbdf70ce7cbfaefa36924394accf889b",
+      "bytes": 34906
+    },
+    {
+      "path": "apps/mobile/lib/core/load_errors.dart",
+      "sha256": "790efabd44d8d0f321a955eedfcb7671d2b4a702078c1eac99acff78d7e25f98",
+      "bytes": 1317
+    },
+    {
+      "path": "apps/mobile/lib/core/match_prefetch_plan.dart",
+      "sha256": "113d56d3650009ca5b20ebf6c8e085d672030342f1fe887b7dc6eaedc1431814",
+      "bytes": 2968
+    },
+    {
+      "path": "apps/mobile/lib/core/models.dart",
+      "sha256": "3cd7505e58ac3eb33272c11e756fc79608f1bc280f021c2820d248c8d154b1fe",
+      "bytes": 72299
+    },
+    {
+      "path": "apps/mobile/lib/core/news_links.dart",
+      "sha256": "f9ef7d65711c4d8c66d2751ad4d1da0e042c4261cf8e1d71348ef2b24cfb89ef",
+      "bytes": 1624
+    },
+    {
+      "path": "apps/mobile/lib/core/notification_scopes.dart",
+      "sha256": "133cbef8f0b131f31d84c1931dc7371cd2075d88e3980c595b9e82a376993930",
+      "bytes": 2430
+    },
+    {
+      "path": "apps/mobile/lib/core/notification_scopes_access.dart",
+      "sha256": "b79be9c04744012144e62dd4c69e15680f1c3bdb6ec7de6e2e27d902a9aad4ed",
+      "bytes": 4208
+    },
+    {
+      "path": "apps/mobile/lib/core/passive_preview_transport.dart",
+      "sha256": "cfcb57a78fc086ab9a4cea8fb60b6c40d374403bbc510f5344af2cd575566db8",
+      "bytes": 14505
+    },
+    {
+      "path": "apps/mobile/lib/core/password_reset_links.dart",
+      "sha256": "ed18a3aec83a2669b4afd49fda61fe1dc603ea507967201bc6272f9f5b94d76a",
+      "bytes": 3479
+    },
+    {
+      "path": "apps/mobile/lib/core/player_display_identity.dart",
+      "sha256": "4e3a5ea3a4a36f4617fa5771a1079296608c5c9e04ffaecbdff4bea6d6a1422b",
+      "bytes": 14760
+    },
+    {
+      "path": "apps/mobile/lib/core/premium_qa_transport.dart",
+      "sha256": "d8d3a46f86c1747fe80bff186fca8bccaabd00254b6883f59bb012d2916d0db4",
+      "bytes": 11555
+    },
+    {
+      "path": "apps/mobile/lib/core/profile_context.dart",
+      "sha256": "76175305eb4c2923e3e94c55706da0679e13f63389ce235939b7a97422d0d424",
+      "bytes": 7822
+    },
+    {
+      "path": "apps/mobile/lib/core/providers.dart",
+      "sha256": "80f62ab52c5277fde532cc6f9c5033ba397de53f8b01cb802a885776dfd536cf",
+      "bytes": 133590
+    },
+    {
+      "path": "apps/mobile/lib/core/push.dart",
+      "sha256": "320b4d73b9bb43eccc35a8a6076a95a4070d0095cc8b4880aefcddb334b403ef",
+      "bytes": 116819
+    },
+    {
+      "path": "apps/mobile/lib/core/push_messages.dart",
+      "sha256": "ddacab68f9b2166f89e562469301138a588ba52d4c5696da281c9e2d37a32eaf",
+      "bytes": 14251
+    },
+    {
+      "path": "apps/mobile/lib/core/qa_development.dart",
+      "sha256": "f615b65d8a3925ae34fc8ed53101147cfed72e3d47835a875490030e05ee7944",
+      "bytes": 7683
+    },
+    {
+      "path": "apps/mobile/lib/core/qa_diagnostics.dart",
+      "sha256": "5295ae8aceede5c1e9a3a492b2f2d5a42bf57798e42ae8b104fc96754674b3d2",
+      "bytes": 1512
+    },
+    {
+      "path": "apps/mobile/lib/core/relevance.dart",
+      "sha256": "fa8aa351af007ba7fa51b044a99599f5dbdc10dd8503c58379c7af1a57d3b76a",
+      "bytes": 8925
+    },
+    {
+      "path": "apps/mobile/lib/core/sports_image_cache.dart",
+      "sha256": "5cbaf4753db7ddbc33881be121e15ac72f694a50ab17b9832b1c9b97f9093d49",
+      "bytes": 15384
+    },
+    {
+      "path": "apps/mobile/lib/core/team_matches.dart",
+      "sha256": "f9033634e4023b46330a8c004354bf4da5c5d7390c0e8f149759fa2924e40517",
+      "bytes": 2542
+    },
+    {
+      "path": "apps/mobile/lib/core/theme.dart",
+      "sha256": "15be678dc03aa4fe1cefe228c490a069ab7f45c0d7e59e9a21afa5423bae1a92",
+      "bytes": 1636
+    },
+    {
+      "path": "apps/mobile/lib/core/user_session_access.dart",
+      "sha256": "0be8d7bd54c87cd1e9ceb79efcf31db024eeaa5955f6d7ed428e54058a693c46",
+      "bytes": 12171
+    },
+    {
+      "path": "apps/mobile/lib/features/auth/auth_sheet.dart",
+      "sha256": "21d189c0fd994fac1d95468e05d63a786429b04db5a1c61b3e6dc8a54dbd5dfe",
+      "bytes": 16283
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/competition_profile.dart",
+      "sha256": "9788f97e0cf79f7decc51bfb3c4327d6849d0ea5556d00d2bacda3338f4d8af3",
+      "bytes": 16250
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/entity_screen.dart",
+      "sha256": "99542d46ae4659a314e606c57dbc3b4acaa9c1a953ebc1b4ee4c47f1e089a291",
+      "bytes": 19988
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/player_profile.dart",
+      "sha256": "0a217bc56fce87c121ff695a7e407870601147219ee8abaae5e8af5e2f0be16d",
+      "bytes": 46616
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/profile_context_bar.dart",
+      "sha256": "313bdd3a465ba2b96387bbd3006b988a9e551d5223d6ec72e96c4e1fcf33b03d",
+      "bytes": 4910
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/profile_widgets.dart",
+      "sha256": "13339d6cbee822d447dc42e156cae1bec478eed50cce0681f749dcf84da2d475",
+      "bytes": 9842
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/standings.dart",
+      "sha256": "edfeb6ed639b9c7f4d25dbe8d0cea82d3d81c593f45b9a668fa70d555fa241d5",
+      "bytes": 41152
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/team_matches_tab.dart",
+      "sha256": "399a4c46700169385db640c5a969fd12fd62d604be60d47e73d3ff9555f3bcfc",
+      "bytes": 15897
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/team_profile.dart",
+      "sha256": "6db2e4676c97933bc67751a2520ae838c7973394315ba735542c4baa094d5e11",
+      "bytes": 29298
+    },
+    {
+      "path": "apps/mobile/lib/features/entities/team_summary.dart",
+      "sha256": "4f870db61656e2ce3b97b899df360bd03463100cfe223bfeae91a81b50370380",
+      "bytes": 22367
+    },
+    {
+      "path": "apps/mobile/lib/features/explore/explore_screen.dart",
+      "sha256": "f78a6f9db953bb6fe05aa3a6e5546cc95151a96e1fde816cd986eea5a03e920e",
+      "bytes": 22412
+    },
+    {
+      "path": "apps/mobile/lib/features/favorites/favorites_screen.dart",
+      "sha256": "d471be751a548b5488f6b903f28b0a0e555c55d3e742a285a2b993a1ff3c039c",
+      "bytes": 21125
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/last_confirmed_lineups_section.dart",
+      "sha256": "19a52d01f8df92c4155c01a2bb1a199f777b4ba3896f35e6ee0edf77ab5c8e8e",
+      "bytes": 8589
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/lineup_history.dart",
+      "sha256": "19d64115469a9780696fd3bcabb45953487f5cbf1bdd5529d8422654676f4c86",
+      "bytes": 6664
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/lineup_history_section.dart",
+      "sha256": "d7ff5cb73ef6b072500627cca180848f8deefbf2d8a487f9a04f780e5e6456dc",
+      "bytes": 8158
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/live_field_card.dart",
+      "sha256": "09c63a3df6e0c48f6d2d1f1651ee72559cd5ffbb85f77f41044b6315d9e3b4ed",
+      "bytes": 7860
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_info_card.dart",
+      "sha256": "bc9462238a51aa39baa254eaac5f92690faf0ea6b256a8afc93602eded12ea4a",
+      "bytes": 16842
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_period_scores.dart",
+      "sha256": "29322ae3ff6d3bf256be51851945a3e73612ddbcd4c9b5cf2cd78751789de0dd",
+      "bytes": 1956
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_preview_sections.dart",
+      "sha256": "34c5aa38f0acb709fcb9f0d2fac5cd92c6f041ae9b683976d9d6773efe17786b",
+      "bytes": 49248
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_screen.dart",
+      "sha256": "fd8f479e88ebb9a99e7ba45c24564e969178b405a95c91b20e37170cb3dd2f3d",
+      "bytes": 190380
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/matches_screen.dart",
+      "sha256": "d4130a6b784ef857a0b5b1d67b5c7c90e4e0c79ff87cbc75ea2be644b158fccf",
+      "bytes": 64191
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/timeline_presentation.dart",
+      "sha256": "ee9ae44ae282167a78c6889266371eeb6744898cf1d554dbed0e6d390e9eca11",
+      "bytes": 2052
+    },
+    {
+      "path": "apps/mobile/lib/features/news/news_feed_adapter.dart",
+      "sha256": "048351a98519435001be4397205a06b46852538787a60b94dd27810dd1e56a35",
+      "bytes": 5201
+    },
+    {
+      "path": "apps/mobile/lib/features/news/news_screen.dart",
+      "sha256": "477c183b78ae42c1b8c802c76b6ac4db70798a7e9308e92cf555380f785894f5",
+      "bytes": 15498
+    },
+    {
+      "path": "apps/mobile/lib/features/onboarding/onboarding_screen.dart",
+      "sha256": "e0140d38fd25af2fff36ab6a0395b6f51a7c1e3fe4c29e2a8f154380315772d1",
+      "bytes": 59181
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/about_screen.dart",
+      "sha256": "ede8b3696ff33e3235d9603675c29c36f71e6a0ff20b1fae4460bb2c1c36b144",
+      "bytes": 1639
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/account_security_screen.dart",
+      "sha256": "a8473453d21bcbad14d63b6e83b64bfe3f2857ca45bc4f4dab4e938ab3db8163",
+      "bytes": 12333
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/ads_privacy_tile.dart",
+      "sha256": "ae663a0cd79d15b5f3230cbdc249574785dedead296c58ca1b9c9d069a5f0105",
+      "bytes": 929
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/competition_order_preferences.dart",
+      "sha256": "98056496f45c84a94e63eefb446ccd698bca520d160a63d7d67710ba72f119de",
+      "bytes": 4130
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/notification_options.dart",
+      "sha256": "c593c75d7edbc087321677e48102c9d0d02f05d8bdb25ff477b5fa5ce2f3d3ac",
+      "bytes": 3932
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/notification_scopes_screen.dart",
+      "sha256": "ac4ea418731eadb341650dfea8a2d53628bf78f993d211b3283bc7f0ba6c7eaf",
+      "bytes": 6332
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/notifications_screen.dart",
+      "sha256": "95cd6f6c853cda1207625d57512542a67443bdbe852d85000c24c0306561e60c",
+      "bytes": 407
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/notifications_screen_v2.dart",
+      "sha256": "790baeeb17c8ef4ae235c00ec7934495b767a3bfeb2eac93631c88f7cc5fb778",
+      "bytes": 12893
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/password_reset_sheet.dart",
+      "sha256": "13c677f52fbd6e26445e43c851e4d0184066948b238d29e0e1c1658c055b25a3",
+      "bytes": 8834
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/personalization_screen.dart",
+      "sha256": "a3eb3ea48b5c28fc6bb8e792c01cbb7496d87df21a98160879a3de68962c9e15",
+      "bytes": 10731
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/premium_card.dart",
+      "sha256": "6c6cc2daa44713f16af6fe6bc48ca5bcbd1f3ca135c9e70833c2e7d8cd53d18c",
+      "bytes": 6809
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/premium_screen.dart",
+      "sha256": "3c8c0f13d4a2cb00f68519cafe7c46cd8adaf9de7d3427d3594a779e4ee0d49b",
+      "bytes": 1580
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/privacy_ads_screen.dart",
+      "sha256": "b1cb52314d883d330ed0a83bf0e1edd9213a7e34dbff85c0d296411b417ffcc2",
+      "bytes": 1156
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/profile_screen.dart",
+      "sha256": "a1a8095a74eb14d42ce330cb9b9706f4e5a224fbd743d560fca39ad7de358cab",
+      "bytes": 10449
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/profile_section.dart",
+      "sha256": "bcc289d9fa5ab9637d3a3fac0f77a700a30e1a9a7460616fbd57b5bef87cd59d",
+      "bytes": 1651
+    },
+    {
+      "path": "apps/mobile/lib/features/profile/support_legal_screen.dart",
+      "sha256": "3962b9d2cc1196b283cee1774312dafd0c2b73da27cc114d7e81ab87c15318d0",
+      "bytes": 1974
+    },
+    {
+      "path": "apps/mobile/lib/main.dart",
+      "sha256": "7064a51105b5e6c5f209a88bacdfc7e0f92b22feef3ee43e9ba385fc7122fc6f",
+      "bytes": 17433
+    },
+    {
+      "path": "apps/mobile/lib/shared/content_skeleton.dart",
+      "sha256": "bcfaad72507a345367f27f83aeee74b933070900ea506b9477a9dd0a57506abe",
+      "bytes": 3531
+    },
+    {
+      "path": "apps/mobile/lib/shared/live_freshness_notice.dart",
+      "sha256": "c551e44962fcaaf09f23c7f04be47bacb8d7af4d5f0a4283e313650e2c799f23",
+      "bytes": 2000
+    },
+    {
+      "path": "apps/mobile/lib/shared/widgets.dart",
+      "sha256": "74042be62c0dee9156f82bfa2055946a47507cbf1695982762a597164771cbd0",
+      "bytes": 23471
+    },
+    {
+      "path": "apps/mobile/pubspec.lock",
+      "sha256": "ae8d22fc9fa7da528bd0180f44cccc401d874313d46f02a61b8517353450a697",
+      "bytes": 34353
+    },
+    {
+      "path": "apps/mobile/pubspec.yaml",
+      "sha256": "b1afcdc20126a7cf872f8e089c06c641faed1f65fe16861107f57deffc5d7849",
+      "bytes": 1045
+    },
+    {
+      "path": "apps/mobile/test/api_repository_test.dart",
+      "sha256": "607c0b127bfce76cae4e1f48e2cec98176949521c1d0cc025af7e38a20ca7cba",
+      "bytes": 11463
+    },
+    {
+      "path": "apps/mobile/test/calendar_cache_explore_test.dart",
+      "sha256": "c1ea8fc0070a562519a084f301776e10500e49a8be753a534876f6b50a8e4ccd",
+      "bytes": 23389
+    },
+    {
+      "path": "apps/mobile/test/calendar_prefetch_test.dart",
+      "sha256": "b13987c8218fcf2bab83b0593cef897edefa86e1d6fa15e338282597700078f7",
+      "bytes": 11601
+    },
+    {
+      "path": "apps/mobile/test/calendar_terminal_state_test.dart",
+      "sha256": "e240f6e4e6d40012033c0f3e1fb147ed93adbfabef5cf7117a865508f3e4a352",
+      "bytes": 11728
+    },
+    {
+      "path": "apps/mobile/test/device_timezone_test.dart",
+      "sha256": "630fa7c5e1080a1465e31d9cb4938030b8a13c9aebc4e80b1d0027133eb3e513",
+      "bytes": 24164
+    },
+    {
+      "path": "apps/mobile/test/domain_test.dart",
+      "sha256": "a8f6ce4e9d7507c451f009b558f3723301e0387e0704ae493f030f36f6cc6739",
+      "bytes": 5445
+    },
+    {
+      "path": "apps/mobile/test/favorites_hub_v2_test.dart",
+      "sha256": "5155555ebb3d8e1ddaac7a2418abc61c3dbd5e8149b447212198779b89bd56fc",
+      "bytes": 22174
+    },
+    {
+      "path": "apps/mobile/test/fb07_passive_contract_test.dart",
+      "sha256": "c6815763617385387e14b92328a6474da26b5a6b334e3dc5ae21eea30f072c08",
+      "bytes": 4376
+    },
+    {
+      "path": "apps/mobile/test/feed_v2_test.dart",
+      "sha256": "62a2349377c59a7146de4d0e7b5882bdd455689bcd92aecbae215cc6911ea6d0",
+      "bytes": 63287
+    },
+    {
+      "path": "apps/mobile/test/fixtures/last_lineups_coach_only_detail.json",
+      "sha256": "d16ccbe438853f1b7c31e030256fdf91656cd250d5057ffc4506593f66720b18",
+      "bytes": 1332
+    },
+    {
+      "path": "apps/mobile/test/fixtures/last_lineups_stored_coaches.json",
+      "sha256": "5cd71de6e5833c96cfad362ef5e627302dbe36e032bebe8a5bd5f0b02dfe3622",
+      "bytes": 974
+    },
+    {
+      "path": "apps/mobile/test/goldens/favorites_hub_mixed.png",
+      "sha256": "c84f690b6f59ea04be248b6d1dd9ae518548cd1661594a8f2f816ee0b1272636",
+      "bytes": 6620
+    },
+    {
+      "path": "apps/mobile/test/goldens/favorites_hub_teams.png",
+      "sha256": "c84f690b6f59ea04be248b6d1dd9ae518548cd1661594a8f2f816ee0b1272636",
+      "bytes": 6620
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/favorites_hub_mixed.png",
+      "sha256": "f64b80284e57cc59866f4c0e0439ad177ca85cd10aa3a36ea7a687e7d144b62e",
+      "bytes": 6600
+    },
+    {
+      "path": "apps/mobile/test/goldens/linux/favorites_hub_teams.png",
+      "sha256": "f64b80284e57cc59866f4c0e0439ad177ca85cd10aa3a36ea7a687e7d144b62e",
+      "bytes": 6600
+    },
+    {
+      "path": "apps/mobile/test/h2h_full_history_test.dart",
+      "sha256": "7051ddccbbc3f0876066ab44d09e900dbfb347f55eb0f30203d26a6baaee6c34",
+      "bytes": 18098
+    },
+    {
+      "path": "apps/mobile/test/h2h_stale_cache_test.dart",
+      "sha256": "910c93fba730ff58a5612edd7442baeacd6d166c5c1719c4bf3ad3083556e392",
+      "bytes": 3070
+    },
+    {
+      "path": "apps/mobile/test/last_confirmed_lineups_test.dart",
+      "sha256": "eab77d4dc2f0cc6bc70cfdcbd77d70ced0884b980d7ae7c5eb264e86dee5025a",
+      "bytes": 27380
+    },
+    {
+      "path": "apps/mobile/test/last_confirmed_lineups_transport_test.dart",
+      "sha256": "80e0184e03f5a71d13eba36840f614be34d2372817d7cc33a4825e998046b284",
+      "bytes": 2723
+    },
+    {
+      "path": "apps/mobile/test/lineup_unknown_identity_test.dart",
+      "sha256": "774dd188252a3ea0527c315273eefd425382df548c2d9e6f301143a8a5e38ae1",
+      "bytes": 4927
+    },
+    {
+      "path": "apps/mobile/test/live_realtime_test.dart",
+      "sha256": "91240de238599223db31c2fa686c3a268e531180935184509351a3dd55872eac",
+      "bytes": 19284
+    },
+    {
+      "path": "apps/mobile/test/match_center_hero_test.dart",
+      "sha256": "08c3ab868af9e527d30b9348edf7153d3e571bd818f44147528ae66ff48eb7b5",
+      "bytes": 20078
+    },
+    {
+      "path": "apps/mobile/test/match_center_phase2_test.dart",
+      "sha256": "50569cf43fadf87cbd6e77e62e4771ef04008a7859979dd107588ca44f863a1a",
+      "bytes": 33878
+    },
+    {
+      "path": "apps/mobile/test/match_center_redesign_test.dart",
+      "sha256": "b6b7850d6c35fc4d4f5c576f84ab2b5533eef0e49e29b44e66bce461aed7c8a9",
+      "bytes": 15121
+    },
+    {
+      "path": "apps/mobile/test/match_center_team_statistics_test.dart",
+      "sha256": "88e843b6463c3cc1d4c7803ecef56e2a9a37baeee2a0d470a92401249b41498c",
+      "bytes": 18519
+    },
+    {
+      "path": "apps/mobile/test/match_h2h_v2_test.dart",
+      "sha256": "6308137672b322c01f5ad70d4898a418146446216ba9d361c72292552a46298f",
+      "bytes": 14862
+    },
+    {
+      "path": "apps/mobile/test/match_prefetch_local_only_test.dart",
+      "sha256": "3116fc6a27620f00ecd92acbcc364b12db29e674b1574e1f365f45b520162c08",
+      "bytes": 5336
+    },
+    {
+      "path": "apps/mobile/test/matches_feed_test.dart",
+      "sha256": "402953cdbde84e43425a0cd3b9afff3599179e1dc58eedee6cde274b09c6bcec",
+      "bytes": 36171
+    },
+    {
+      "path": "apps/mobile/test/mobile261_terminal_cache_boundary02_test.dart",
+      "sha256": "8ffe291c4ef56cf7eae9f54a117d7966e0cf42d4981644459309e2a41b83fdcc",
+      "bytes": 5825
+    },
+    {
+      "path": "apps/mobile/test/mobile_history_performance_test.dart",
+      "sha256": "1fccd190b342f6e21d4724a1356eea4fe17dae3d0c7f64064431a20fb1d5b9b4",
+      "bytes": 26385
+    },
+    {
+      "path": "apps/mobile/test/national_team_names_test.dart",
+      "sha256": "5a0a7b9c44bb7bee919c072e45e067929288c37a98aa91c7d94c52875f62bead",
+      "bytes": 8143
+    },
+    {
+      "path": "apps/mobile/test/onboarding_country_relevance_test.dart",
+      "sha256": "3718f86b3a697316e165dce00298317e77da398a9f073bea2f30b2a3c31f3386",
+      "bytes": 18078
+    },
+    {
+      "path": "apps/mobile/test/r3_match_center_regressions_test.dart",
+      "sha256": "87507771bad8ccf7c92fda2da59bd987b28223e909d4940a0cb06694cd8101ef",
+      "bytes": 8044
+    },
+    {
+      "path": "apps/mobile/test/r4_coverage_contract_test.dart",
+      "sha256": "fece6ab4b851a69621bbf95aa8161bf6711d88585d32c233d25ba02efa7c1944",
+      "bytes": 14994
+    },
+    {
+      "path": "apps/mobile/test/team_summary_test.dart",
+      "sha256": "fb732f7748615ff6a7df30ae8e869f74870e2d8d76eaa7fa30d4a3cc03115f41",
+      "bytes": 13901
+    },
+    {
+      "path": "backend/test/account_deletion_receipts.test.mjs",
+      "sha256": "f62fce33aa0978b51bd381d4c03cdb996b27fe726bed714881186477144f7f14",
+      "bytes": 11573
+    },
+    {
+      "path": "backend/test/helpers/undeployed_sources.mjs",
+      "sha256": "29b6ab3b85fb47834121fe2c6a3d5dc5691f22530aa9dfb8ef1327f19c338434",
+      "bytes": 2709
+    },
+    {
+      "path": "backend/test/helpers/undeployed_sql.mjs",
+      "sha256": "3a216be79db636aa76f20de793e5807e4457f97ec24f2667ea02cdb70ca6c399",
+      "bytes": 931
+    },
+    {
+      "path": "backend/test/lineup_key_zero.test.mjs",
+      "sha256": "bc416cafd72313513baac83f406223b6fc2614df7e2867dfd9d558c829653760",
+      "bytes": 2353
+    },
+    {
+      "path": "backend/test/match_last_lineups.test.mjs",
+      "sha256": "3d4b4ce75710f216ce435d2b2e7a5ac06c7982eba0c62522b06f266313040f63",
+      "bytes": 5735
+    },
+    {
+      "path": "backend/test/public_api_contract.test.mjs",
+      "sha256": "3d79745cdd660c35fdf97d52c57ac3b7f8f851d7c4dd2c4a803af4bfeafeb764",
+      "bytes": 10046
+    },
+    {
+      "path": "backend/test/public_api_real_jwt.test.mjs",
+      "sha256": "93cb10865ba65ced2f5396d47e0e1fcb5f0341c968dee5c87b1159de46cfdf59",
+      "bytes": 5126
+    },
+    {
+      "path": "backend/test/squad_player_identity_dedup.test.mjs",
+      "sha256": "3e7ef793428ecbf0ddf603d15c8715167064e405d5b4a5f006cf6143db48762a",
+      "bytes": 20180
+    },
+    {
+      "path": "backend/test/squad_twins_same_birth_date.test.mjs",
+      "sha256": "7ac5146676d12b0dd5a01f1fdd50958f10b97d951c1e6e619936f7a31f657c29",
+      "bytes": 6513
+    },
+    {
+      "path": "backend/test/squad_twins_v2_production.test.mjs",
+      "sha256": "60d0e0db78e6c2560acb066f66b1843b513e779946ff25b5656bfb1adc85aa5c",
+      "bytes": 7025
+    },
+    {
+      "path": "packages/contracts/account-deletion-v1.md",
+      "sha256": "5f4734fc2d8b9f9a4b76bb4814e200eae5d2b3f4de3d7489ac43664faa0fd1af",
+      "bytes": 5091
+    },
+    {
+      "path": "scripts/release/backend1.edge-sources.json",
+      "sha256": "8bba425bca38829b53e3de301b9febfbd294a81ccd234f78048bde09adec5d24",
+      "bytes": 20444
+    },
+    {
+      "path": "scripts/release/backend1.expected.json",
+      "sha256": "42cea9f2c7f4d189fef0184e2c87f25494f0712bfb75eb63820c5f7ef8bd6ab6",
+      "bytes": 6799
+    },
+    {
+      "path": "scripts/release/backend1.undeployed-sources.json",
+      "sha256": "063c13b7c89ab242a41d1e248237a71aba90164003a36565a00c5c528d460ec8",
+      "bytes": 2221
+    },
+    {
+      "path": "scripts/release/release18-internal.public.json",
+      "sha256": "b35ee834b5708a26cc30be92811dab4bf27182b0b8b8959c18cadf2a9079979f",
+      "bytes": 918
+    },
+    {
+      "path": "supabase/functions/_shared/api_access.ts",
+      "sha256": "ee63e7cd6043d53dc6f3c04a6162db7160eb84ea926004658fe864cb72c7a17d",
+      "bytes": 7249
+    },
+    {
+      "path": "supabase/functions/_shared/deployed/match_detail.api-v54.ts",
+      "sha256": "7971278892e6d6525b5ed2ee31306d5a3376591934037e7e14db2b94ec1afcee",
+      "bytes": 17707
+    },
+    {
+      "path": "supabase/functions/futbeat-api/index.ts",
+      "sha256": "576bd7fce85bb7ad0b868c680f69cd50c2d968d1e3c23da5bb5a302624256de6",
+      "bytes": 32890
+    },
+    {
+      "path": "supabase/manual/2026-10-01_squad_player_identity_merge.sql",
+      "sha256": "e8a0c2d50448ea557db7b29897b5351dc32de8b62e5efd3fd04745e634542f04",
+      "bytes": 7819
+    },
+    {
+      "path": "supabase/migrations/20260921065000_preserve_match_detail_and_lineup_identity.sql",
+      "sha256": "89e9974599a1bb917ec83a459545f5865d1715591507d29b1029d9ebf6db33df",
+      "bytes": 11226
+    },
+    {
+      "path": "supabase/migrations/20261030160000_lineup_photo_squad_twin.sql",
+      "sha256": "f1720618d21bb8b7cfd9ef84b0f95d5875cb2d51b235a4c2b3b04eb8894704e8",
+      "bytes": 12742
+    },
+    {
+      "path": "supabase/migrations/20261127013200_fb06_standings_subgroups.sql",
+      "sha256": "2026478d2f8a1d7c8aff38e79bd68879bd55f9c0ceda03f38bcc253f7f68a3f8",
+      "bytes": 8681
+    },
+    {
+      "path": "supabase/migrations/20261127040600_fb09_squad_twins_v2.sql",
+      "sha256": "ccc3966867b595dfb4479e13882a848d95a083dbec7f04072ecec3bca482b101",
+      "bytes": 5938
+    },
+    {
+      "path": "supabase/migrations/20261127040700_fb09_record_prod_hidden_twins.sql",
+      "sha256": "e06eca813a456338e4bf14bb8980a693514ce2ba14dc0a1c9965da687e21398f",
+      "bytes": 1706
+    },
+    {
+      "path": "supabase/migrations/20261127043800_fb05_match_last_lineups.sql",
+      "sha256": "efe7490b858ed954c9953e5e239b26ceaa4ec345c6320776aca4df1b0c252bd0",
+      "bytes": 6090
+    },
+    {
+      "path": "supabase/migrations/20261127044600_fb07_h2h_follow_gate.sql",
+      "sha256": "d5c815ae84cd807b7b7b87a9cd9e920294e4fc8dbd9c0182bd90f4769875f956",
+      "bytes": 5150
+    },
+    {
+      "path": "supabase/migrations/20261127064100_fb05_k0_lineup_key_zero_read.sql",
+      "sha256": "006183c9b431c18bef456f660aa8f1ffd45db5937af762c08de093b068b3ef09",
+      "bytes": 4262
+    },
+    {
+      "path": "supabase/migrations/20261127135100_fb05_k0w_lineup_key_zero_write.sql",
+      "sha256": "4c993e093b15e83a10d168b7fd72a6aa7ecd0256950db02ad2a5cbc2aeb330a0",
+      "bytes": 9755
+    },
+    {
+      "path": "supabase/undeployed/futbeat-api-main-news.patch",
+      "sha256": "22544365f5c08b99c462524e675d6174f83dc111ad030e2f6fede0c3ad5a0645",
+      "bytes": 8899
+    }
+  ],
+  "androidApprovedSourceChanges": [
+    {
+      "path": "apps/mobile/assets/fonts/roboto_license.txt",
+      "priorSha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "apps/mobile/lib/features/matches/match_preview_sections.dart",
+      "priorSha256": "7241dab32e902a88ecf53ce08e2b4c699da9fab83b28d8c9cf8b5690b097952b",
+      "sha256": "34c5aa38f0acb709fcb9f0d2fac5cd92c6f041ae9b683976d9d6773efe17786b"
+    }
+  ],
+  "secretsScan": "PASS selected sources",
+  "productionChanges": false,
+  "certificationLimits": [
+    "Native PostgreSQL excludes Supabase hosted extensions and uses inert Auth fixture.",
+    "Global ingest download equivalence and passive npm resolution retain existing documented limits.",
+    "H2H STALE offline acceptance requires authorized v55 deployment; v54 no-store is respected."
+  ],
+  "buildConfigs": [
+    {
+      "variant": "commercialqa",
+      "path": "artifacts/first-play-acceptance/fb05-real-acceptance/candidate.public.json",
+      "sha256": "b9710347e01270fa0f5e4d269b53bde2b0c51f8bacff27e53075e7caea53c5e1"
+    },
+    {
+      "variant": "release",
+      "path": "scripts/release/release18-internal.public.json",
+      "sha256": "b35ee834b5708a26cc30be92811dab4bf27182b0b8b8959c18cadf2a9079979f"
+    }
+  ]
+}

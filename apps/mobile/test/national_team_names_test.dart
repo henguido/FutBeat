@@ -133,7 +133,7 @@ void main() {
   testWidgets('Partidos feed card shows Spanish national-team names', (
     tester,
   ) async {
-    final today = costaRicaNow();
+    final today = DateTime.now();
     final data = _snapshot(
       [
         _national('fb_team_pl19', 'Poland U19', 'PL', 'U19'),

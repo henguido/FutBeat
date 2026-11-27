@@ -1,0 +1,62 @@
+{
+  "matchId": "fb_match_8edf695aa85540a39a56da3859e05f24",
+  "available": true,
+  "pending": false,
+  "hydrationNeeded": false,
+  "coverage": {
+    "detail": "available",
+    "lineup": "missing",
+    "statistics": "missing",
+    "stale": false,
+    "hydrationNeeded": false,
+    "videos": "available"
+  },
+  "detailLevel": "full",
+  "fetchedAt": "2026-11-27T02:42:01.136+00:00",
+  "provider": "goal_api",
+  "referee": null,
+  "stadium": "Estadio Carlos Alvarado",
+  "round": "18",
+  "stage": "Current",
+  "home": {
+    "formation": null,
+    "starters": [],
+    "substitutes": [],
+    "missing": [],
+    "coach": {
+      "id": "2567891620",
+      "canonicalId": null,
+      "name": "Jafet Soto",
+      "number": null,
+      "position": null,
+      "lineupPosition": 0,
+      "country": null,
+      "age": null,
+      "image": null,
+      "rating": null,
+      "captain": false
+    }
+  },
+  "away": {
+    "formation": null,
+    "starters": [],
+    "substitutes": [],
+    "missing": [],
+    "coach": {
+      "id": "1861571344",
+      "canonicalId": null,
+      "name": "Andres Arias",
+      "number": null,
+      "position": null,
+      "lineupPosition": 0,
+      "country": null,
+      "age": null,
+      "image": null,
+      "rating": null,
+      "captain": false
+    }
+  },
+  "statistics": [],
+  "incidents": [],
+  "videos": []
+}

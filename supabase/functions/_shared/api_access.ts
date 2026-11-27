@@ -79,7 +79,7 @@ export function routeCost(path: string): number {
 export const API_ROUTES = [
   '/v1/snapshot', '/v1/entity', '/v1/team-context', '/v1/team-matches', '/v1/explore',
   '/v1/search', '/v1/news', '/v1/match-summary', '/v1/favorites', '/v1/match-context',
-  '/v1/match-preview', '/v1/standings-form', '/v1/match-h2h', '/v1/match-detail', '/v1/calendar',
+  '/v1/match-preview', '/v1/standings-form', '/v1/match-h2h', '/v1/match-detail', '/v1/calendar', '/v1/match-last-lineups',
 ];
 
 export const isKnownRoute = (path: string) => API_ROUTES.some((route) => path.endsWith(`/futbeat-api${route}`));

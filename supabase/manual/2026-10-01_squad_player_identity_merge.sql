@@ -60,8 +60,16 @@ with installed as (
   select distinct on (d.alias_id) t.team_id,d.alias_id,d.canonical_id
   from (select distinct team_id from futbeat_private.team_squad_members) t
   cross join lateral futbeat_private.team_squad_hidden_twins(t.team_id) d
+  -- FB-09 v2.1: merge only v1 evidence (equal >=2-token name key, sparse alias, rich kept id).
+  -- Pairs hidden only by name compatibility (v2) or by birth date (BE10) are display-only: never merged.
+  join futbeat_private.entities a on a.id=d.alias_id and a.kind='player'
+  join futbeat_private.entities k on k.id=d.canonical_id and k.kind='player'
   where not exists(
     select 1 from futbeat_private.entity_redirects r where r.alias_id=d.alias_id)
+    and futbeat_private.squad_name_key(a.payload->>'name') is not null
+    and futbeat_private.squad_name_key(a.payload->>'name')=futbeat_private.squad_name_key(k.payload->>'name')
+    and futbeat_private.squad_player_sparse(a.payload)
+    and futbeat_private.squad_player_rich(k.payload) and not futbeat_private.squad_player_sparse(k.payload)
   order by d.alias_id,t.team_id
 )
 select count(*) over () candidate_count,c.team_id,t.payload->>'name' team,
@@ -92,8 +100,16 @@ begin
     select distinct on (d.alias_id) t.team_id,d.alias_id,d.canonical_id
     from (select distinct team_id from futbeat_private.team_squad_members) t
     cross join lateral futbeat_private.team_squad_hidden_twins(t.team_id) d
+    -- FB-09 v2.1: merge only v1 evidence (equal >=2-token name key, sparse alias, rich kept id).
+    -- Pairs hidden only by name compatibility (v2) or by birth date (BE10) are display-only: never merged.
+    join futbeat_private.entities a on a.id=d.alias_id and a.kind='player'
+    join futbeat_private.entities k on k.id=d.canonical_id and k.kind='player'
     where not exists(
       select 1 from futbeat_private.entity_redirects r where r.alias_id=d.alias_id)
+      and futbeat_private.squad_name_key(a.payload->>'name') is not null
+      and futbeat_private.squad_name_key(a.payload->>'name')=futbeat_private.squad_name_key(k.payload->>'name')
+      and futbeat_private.squad_player_sparse(a.payload)
+      and futbeat_private.squad_player_rich(k.payload) and not futbeat_private.squad_player_sparse(k.payload)
     order by d.alias_id,t.team_id
   )
   select coalesce(jsonb_agg(jsonb_build_object('alias',alias_id,'canonical',canonical_id)

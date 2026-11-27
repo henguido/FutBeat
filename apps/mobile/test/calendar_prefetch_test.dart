@@ -17,7 +17,7 @@ import 'mobile_history_performance_test.dart' show requestDate;
 // Calendar date switching is served from memory/disk first; neighbours are
 // prepared in the background, one request at a time, inside a bounded window.
 
-DateTime today() => DateUtils.dateOnly(costaRicaNow());
+DateTime today() => DateUtils.dateOnly(DateTime.now());
 
 ({Dio dio, List<String> requested}) countingDio({
   bool Function(String date)? fail,

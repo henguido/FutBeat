@@ -10,6 +10,7 @@ import '../../core/interests.dart';
 import '../../core/database.dart';
 import '../../core/load_errors.dart';
 import '../../core/models.dart';
+import '../../core/device_time.dart';
 import '../../core/match_prefetch_plan.dart';
 import '../../core/providers.dart';
 import '../../core/relevance.dart';
@@ -301,7 +302,7 @@ List<Entity> orderMatchCompetitions({
 }
 
 class MatchesScreen extends ConsumerStatefulWidget {
-  const MatchesScreen({super.key, this.now = costaRicaNow});
+  const MatchesScreen({super.key, this.now = DateTime.now});
 
   final DateTime Function() now;
 
@@ -494,7 +495,9 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
       _prefetchGeneration++;
     }
     setState(() {
-      date = value;
+      // A selection is a civil date, not the instant of midnight in the old
+      // zone. Keep its components stable if the device changes zone later.
+      date = DateTime.utc(next.year, next.month, next.day);
       if (next != previous) {
         _collapsed.clear();
         _retryDate = null;
@@ -581,6 +584,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen>
 
   @override
   Widget build(BuildContext context) {
+    DeviceTimeScope.watch(context);
     final requestDate = DateUtils.dateOnly(date ?? widget.now());
     final retrying = _retryDate == requestDate;
 
@@ -1712,7 +1716,7 @@ class MatchCard extends StatelessWidget {
                             unconfirmed
                                 ? 'Ver partido'
                                 : match.showKickoff
-                                ? 'Hora Costa Rica'
+                                ? 'Hora local'
                                 : 'Ver partido',
                             style: const TextStyle(fontSize: 10, color: muted),
                           ),

@@ -369,7 +369,7 @@ class ProfileMatchRow extends StatelessWidget {
     return Semantics(
       container: true,
       label: [
-        '${matchDayLabel(match.startTime)} ${match.startTime.year}',
+        '${matchDayLabel(match.startTime, context: context)} ${match.startTime.toLocal().year}',
         if (match.isAwaitingUpdate) 'Por confirmar',
         if (match.isLive) match.statusLabel,
         '${home.displayName} $center ${away.displayName}',
@@ -392,7 +392,7 @@ class ProfileMatchRow extends StatelessWidget {
             children: [
               Text(
                 [
-                  '${matchDayLabel(match.startTime)} ${match.startTime.year}',
+                  '${matchDayLabel(match.startTime, context: context)} ${match.startTime.toLocal().year}',
                   // Kickoff passed, no final yet: never presented as upcoming
                   // (before the competition, so it is never cut off).
                   if (match.isAwaitingUpdate) 'Por confirmar',

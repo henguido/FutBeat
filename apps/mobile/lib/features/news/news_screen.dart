@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/models.dart';
+import '../../core/device_time.dart';
 import '../../core/news_links.dart';
 import '../../core/providers.dart';
 import '../../core/qa_development.dart';
@@ -209,6 +210,7 @@ class _NewsScreenState extends ConsumerState<NewsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    DeviceTimeScope.watch(context);
     final feed = ref.watch(newsFeedProvider);
     final data = feed.isLoading || feed.hasError ? null : feed.asData?.value;
     if (!identical(data, _lastFeed)) {

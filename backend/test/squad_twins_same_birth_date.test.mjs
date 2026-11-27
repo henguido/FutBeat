@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openDatabase } from '../storage/database.mjs';
+import { applyUndeployedSql } from './helpers/undeployed_sql.mjs';
 import { normalizeGoalApiSquad } from '../providers/goal_api_players.mjs';
 
 // BE10 P0.3 / BE11 A2: GOAL can list one person under two catalog ids in ONE
@@ -16,6 +17,8 @@ const TEAM = 'fb_team_dobtwins';
 
 async function withDb(fn) {
   const db = await openDatabase();
+  // Main line BE10 P0.3: in Git, not deployed (production = FB-09 v2 + 20261001130000).
+  await applyUndeployedSql(db, 'supabase/migrations/20261107180000_squad_twins_same_birth_date.sql');
   try {
     await db.query(`insert into futbeat_private.entities values
       ('${TEAM}','team','{"id":"${TEAM}","name":"Club Uno"}')`);

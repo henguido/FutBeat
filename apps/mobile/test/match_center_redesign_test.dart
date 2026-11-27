@@ -166,7 +166,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('match-hero')),
-        matching: find.text(matchDateLabel(costaRicaTime(start))),
+        matching: find.text(matchDateLabel(start.toLocal())),
       ),
       findsOneWidget,
     );

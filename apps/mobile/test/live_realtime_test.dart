@@ -146,7 +146,7 @@ void main() {
   );
 
   test('overdue scheduled match keeps its kickoff presentation', () {
-    final now = costaRicaNow();
+    final now = DateTime.now();
     final match = FootballMatch({
       'id': 'fb_match_overdue',
       'competitionId': 'fb_comp_test',
@@ -155,7 +155,6 @@ void main() {
       'startTime': now
           .subtract(const Duration(minutes: 30))
           .toUtc()
-          .add(const Duration(hours: 6))
           .toIso8601String(),
       'status': 'SCHEDULED',
       'score': null,

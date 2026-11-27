@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
+import 'package:futbeat/core/providers.dart';
+
 import 'package:futbeat/features/matches/match_preview_sections.dart';
 import 'package:futbeat/shared/widgets.dart';
 import 'package:go_router/go_router.dart';
+
+class _NoNetworkRepository extends Fake implements FootballRepository {}
 
 // #99 v2 Cara a cara. Synthetic ids/names only.
 
@@ -154,7 +158,10 @@ Future<void> _pump(
   );
   addTearDown(router.dispose);
   await tester.pumpWidget(
-    ProviderScope(child: MaterialApp.router(routerConfig: router)),
+    ProviderScope(
+      overrides: [repositoryProvider.overrideWithValue(_NoNetworkRepository())],
+      child: MaterialApp.router(routerConfig: router),
+    ),
   );
   await tester.pumpAndSettle();
 }
@@ -333,7 +340,7 @@ void main() {
     (tester) async {
       await _pump(tester, _preview(availability: 'PENDING', meetings: []));
       expect(find.byKey(const ValueKey('h2h-pending')), findsOneWidget);
-      expect(find.text('Historial pendiente de actualización'), findsOneWidget);
+      expect(find.text('Historial no disponible todavía'), findsOneWidget);
       expect(
         find.text('Todavía no hay enfrentamientos recientes disponibles.'),
         findsNothing,

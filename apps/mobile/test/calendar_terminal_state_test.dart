@@ -16,7 +16,7 @@ import 'mobile_history_performance_test.dart' show requestDate;
 // A visible calendar date always ends in data or in an error with Retry,
 // within a bounded deadline; it never loops in "loading".
 
-DateTime today() => DateUtils.dateOnly(costaRicaNow());
+DateTime today() => DateUtils.dateOnly(DateTime.now());
 
 Map<String, dynamic> pendingPayload() => {
   ...calendarPayload(),

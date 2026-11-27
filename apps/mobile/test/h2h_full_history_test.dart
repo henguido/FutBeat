@@ -87,6 +87,7 @@ class _FakeH2hApi extends ApiRepository {
   _FakeH2hApi(
     this.all, {
     this.fail = false,
+    this.readOnlyHistory = false,
     this.extendingReads = 0,
     this.serverCanExtend = true,
     this.serverVerifiedFrom = '2026-04-02',
@@ -98,6 +99,10 @@ class _FakeH2hApi extends ApiRepository {
 
   final List<Map<String, dynamic>> all;
   final bool fail;
+  final bool readOnlyHistory;
+
+  @override
+  bool get storedReadsOnly => readOnlyHistory;
 
   /// The server's window (canExtend / verifiedFrom) on every read.
   final bool serverCanExtend;
@@ -195,8 +200,9 @@ Snapshot _snapshot() => Snapshot({
 Future<void> _pump(
   WidgetTester tester,
   Map<String, dynamic> preview,
-  FootballRepository repository,
-) async {
+  FootballRepository repository, {
+  VoidCallback? onRetry,
+}) async {
   tester.view.physicalSize = const Size(390, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
@@ -212,6 +218,7 @@ Future<void> _pump(
               preview: AsyncValue.data(MatchPreview(preview)),
               data: data,
               match: data.matches.single,
+              onRetry: onRetry,
             ),
           ),
         ),
@@ -248,6 +255,35 @@ Future<void> _tap(WidgetTester tester, Finder finder) async {
 }
 
 void main() {
+  testWidgets('FB-07 passive pending history has no ineffective retry', (
+    tester,
+  ) async {
+    var retries = 0;
+    final api = _FakeH2hApi(
+      const [],
+      readOnlyHistory: true,
+      serverCanExtend: false,
+    );
+    final preview = _preview(const []);
+    (preview['h2h'] as Map<String, dynamic>)['availability'] = 'PENDING';
+    await _pump(tester, preview, api, onRetry: () => retries++);
+    expect(find.text('Historial no disponible todavía'), findsOneWidget);
+    expect(find.byKey(const ValueKey('h2h-retry-pending')), findsNothing);
+    expect(find.byKey(const ValueKey('h2h-extend')), findsNothing);
+    expect(retries, 0);
+    expect(api.calls, isEmpty);
+  });
+  testWidgets('FB-07 passive history keeps stored meetings without extension', (
+    tester,
+  ) async {
+    final all = _history(2);
+    final api = _FakeH2hApi(all, readOnlyHistory: true);
+    await _pump(tester, _preview(all), api);
+    expect(_rows(tester), 2);
+    expect(find.byKey(const ValueKey('h2h-extend')), findsNothing);
+    expect(api.calls, isEmpty);
+  });
+
   testWidgets('27 stored meetings: five first, then local and server history', (
     tester,
   ) async {
@@ -398,7 +434,7 @@ void main() {
   });
 
   for (final (availability, key, copy) in [
-    ('PENDING', 'h2h-pending', 'Historial pendiente de actualización'),
+    ('PENDING', 'h2h-pending', 'Historial no disponible todavía'),
     ('UNAVAILABLE', 'h2h-no-source', 'Historial no disponible'),
     (
       'CONFIRMED_EMPTY',

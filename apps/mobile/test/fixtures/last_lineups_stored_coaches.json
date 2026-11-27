@@ -1,0 +1,32 @@
+{
+  "provenance": "Claude local read-only sample fb05_sample.json; not a response from the undeployed endpoint",
+  "sourceMatchId": "fb_match_190315b3bb6c4af1a07ffe437ea60463",
+  "rows": [
+    {
+      "createdAt": "2026-11-23T02:01:39.399Z",
+      "fixtureId": "cmu74ir7eou2nqu074ihht3d8",
+      "id": "cmwsmdxzebgj9od084xheqg4o",
+      "lineupNumber": null,
+      "lineupPlayer": "K. Hashikawa",
+      "lineupPosition": "",
+      "playerId": null,
+      "playerKey": "3606438198",
+      "team": "home",
+      "type": "coach",
+      "updatedAt": "2026-11-23T02:01:39.399Z"
+    },
+    {
+      "createdAt": "2026-11-23T02:01:39.399Z",
+      "fixtureId": "cmu74ir7eou2nqu074ihht3d8",
+      "id": "cmwsmdxzebgjaod086cjhdvwg",
+      "lineupNumber": null,
+      "lineupPlayer": "M. Yoshida",
+      "lineupPosition": "",
+      "playerId": null,
+      "playerKey": "2632467370",
+      "team": "away",
+      "type": "coach",
+      "updatedAt": "2026-11-23T02:01:39.399Z"
+    }
+  ]
+}

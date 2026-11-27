@@ -21,7 +21,7 @@ import {
   normalizeMatchDetail,
   safeImage,
   type PlayerMedia,
-} from '../_shared/deployed/match_detail.api-v50.ts';
+} from '../_shared/deployed/match_detail.api-v54.ts';
 
 const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -571,6 +571,36 @@ const handle = withSupabase(accessGated
         return replyNoStore(200, preview);
       }
       return reply(200, preview);
+    }
+
+    // FB-05 "Última alineación confirmada": for an upcoming match, each team's
+    // starting XI + bench as confirmed by the provider in its latest finished
+    // match (stored detail only). Never a prediction (isPrediction:false),
+    // never a demand, never a provider call: one read-only RPC.
+    if (path.endsWith('/futbeat-api/v1/match-last-lineups')) {
+      const id = requestUrl.searchParams.get('id');
+      if (!validEntityId(id) || !id?.startsWith('fb_match_')) {
+        // An error answer is never cached (same as 404/503 here).
+        return replyNoStore(400, { error: 'Partido inválido' });
+      }
+      const { data: lastLineups, error } = await db.rpc(
+        'futbeat_read_match_last_lineups',
+        { p_match_id: id },
+      );
+      if (error) {
+        return replyNoStore(503, { error: 'Alineaciones temporalmente no disponibles' });
+      }
+      if (!lastLineups) {
+        return replyNoStore(404, { error: 'Partido no encontrado' });
+      }
+      if (lastLineups.schemaVersion !== 1 || (lastLineups.eligible === true && lastLineups.isPrediction !== false)) {
+        return replyNoStore(503, { error: 'Alineaciones temporalmente no disponibles' });
+      }
+      // Changes only when one of the teams finishes a match: 5 min, as the app's contract expects.
+      return new Response(await jsonBody(200, lastLineups), {
+        status: 200,
+        headers: { ...jsonHeaders, 'Cache-Control': 'public, max-age=300, stale-while-revalidate=60' },
+      });
     }
 
     // Tabla v2 "Forma" (#158): last results per team of one competition +

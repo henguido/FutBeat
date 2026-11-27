@@ -51,6 +51,14 @@ class _DelayedCalendarReadDatabase extends AppDatabase {
   }
 }
 
+// This file mocks UTC server partitions explicitly. Device-zone integration
+// is exercised separately against the real OS zones in device_timezone_test.
+ApiRepository utcRepository(
+  Dio dio, [
+  AppDatabase? db,
+  CalendarCachePolicy policy = const CalendarCachePolicy(),
+]) => ApiRepository(dio, db, policy, null, null, () => 'UTC');
+
 void main() {
   test(
     'slow SQLite read cannot replace a newer HTTP calendar answer',
@@ -58,7 +66,7 @@ void main() {
       final db = _DelayedCalendarReadDatabase();
       final old = calendarPayload();
       old['updatedAt'] = '2026-08-20T18:00:00Z';
-      await db.saveCalendarSnapshot('2026-08-20', jsonEncode(old));
+      await db.saveCalendarSnapshot('2026-08-20@UTC', jsonEncode(old));
       final dio = Dio();
       dio.interceptors.add(
         InterceptorsWrapper(
@@ -69,7 +77,7 @@ void main() {
           },
         ),
       );
-      final repo = ApiRepository(
+      final repo = utcRepository(
         dio,
         db,
         const CalendarCachePolicy(prefetchRadius: 0),
@@ -102,7 +110,7 @@ void main() {
           },
         ),
       );
-      final repo = ApiRepository(
+      final repo = utcRepository(
         dio,
         null,
         const CalendarCachePolicy(
@@ -114,7 +122,7 @@ void main() {
       final container = ProviderContainer(
         overrides: [repositoryProvider.overrideWithValue(repo)],
       );
-      final now = costaRicaNow();
+      final now = DateTime.now();
       final date = DateTime(now.year, now.month, now.day);
       final listener = container.listen(
         calendarSnapshotProvider(date),
@@ -159,12 +167,12 @@ void main() {
           },
         ),
       );
-      final repo = ApiRepository(
+      final repo = utcRepository(
         dio,
         null,
         const CalendarCachePolicy(recoveringTtl: Duration.zero),
       );
-      final date = costaRicaNow().subtract(const Duration(days: 1));
+      final date = DateTime.now().subtract(const Duration(days: 1));
       await repo.loadDate(date);
       await repo.watchDate(date).toList();
       expect(calls, 1);
@@ -187,8 +195,8 @@ void main() {
           },
         ),
       );
-      final repo = ApiRepository(dio);
-      final today = costaRicaNow();
+      final repo = utcRepository(dio);
+      final today = DateTime.now();
       final date = DateTime(today.year, today.month, today.day);
       repo.setAppActive(false);
       expect(await repo.watchDate(date).toList(), isEmpty);
@@ -219,14 +227,14 @@ void main() {
           },
         ),
       );
-      final repo = ApiRepository(dio, db);
+      final repo = utcRepository(dio, db);
       final date = DateTime(2026, 8, 20);
       expect((await repo.loadDate(date)).matches.single.score, '1 - 1');
       await repo.settleBackground();
       expect((await repo.loadDate(date)).matches.single.score, '1 - 1');
       await repo.settleBackground();
       expect(repo.peekDate(date)?.matches.single.score, '1 - 1');
-      final persisted = await db.readCalendarSnapshot('2026-08-20');
+      final persisted = await db.readCalendarSnapshot('2026-08-20@UTC');
       expect(
         Snapshot(jsonDecode(persisted!) as Map<String, dynamic>)
             .matches
@@ -258,7 +266,7 @@ void main() {
         },
       ),
     );
-    final repo = ApiRepository(dio);
+    final repo = utcRepository(dio);
     final date = DateTime(2026, 8, 20);
     repo.refreshDate(date);
     final first = repo.loadDate(date);
@@ -275,7 +283,7 @@ void main() {
     () async {
       final db = AppDatabase(NativeDatabase.memory());
       await db.saveCalendarSnapshot(
-        '2026-08-20',
+        '2026-08-20@UTC',
         jsonEncode(calendarPayload()),
       );
       await db.customStatement('UPDATE calendar_snapshots SET saved_at = 0');
@@ -292,7 +300,7 @@ void main() {
           },
         ),
       );
-      final repo = ApiRepository(dio, db);
+      final repo = utcRepository(dio, db);
       final values = <Snapshot>[];
       final done = Completer<void>();
       final sub = repo
@@ -318,7 +326,10 @@ void main() {
 
   test('stale null score emits immediately then fresh 1-1 replaces memory and Drift', () async {
     final db = AppDatabase(NativeDatabase.memory());
-    await db.saveCalendarSnapshot('2026-08-20', jsonEncode(calendarPayload()));
+    await db.saveCalendarSnapshot(
+      '2026-08-20@UTC',
+      jsonEncode(calendarPayload()),
+    );
     await db.customStatement('UPDATE calendar_snapshots SET saved_at = 0');
     final gate = Completer<void>();
     final dio = Dio();
@@ -332,7 +343,7 @@ void main() {
         },
       ),
     );
-    final repo = ApiRepository(dio, db);
+    final repo = utcRepository(dio, db);
     final values = <Snapshot>[];
     final done = Completer<void>();
     final sub = repo
@@ -350,7 +361,7 @@ void main() {
     await repo.settleBackground();
     expect(
       Snapshot(
-        jsonDecode((await db.readCalendarSnapshot('2026-08-20'))!)
+        jsonDecode((await db.readCalendarSnapshot('2026-08-20@UTC'))!)
             as Map<String, dynamic>,
       ).matches.single.score,
       '1 - 1',
@@ -361,7 +372,10 @@ void main() {
   });
   test('failed refresh keeps cache then bounded retry clears real stale after success', () async {
     final db = AppDatabase(NativeDatabase.memory());
-    await db.saveCalendarSnapshot('2026-08-20', jsonEncode(calendarPayload()));
+    await db.saveCalendarSnapshot(
+      '2026-08-20@UTC',
+      jsonEncode(calendarPayload()),
+    );
     await db.customStatement('UPDATE calendar_snapshots SET saved_at = 0');
     final dio = Dio();
     var calls = 0;
@@ -384,7 +398,7 @@ void main() {
         },
       ),
     );
-    final values = await ApiRepository(
+    final values = await utcRepository(
       dio,
       db,
     ).watchDate(DateTime(2026, 8, 20), retryDelay: Duration.zero).toList();
@@ -397,7 +411,10 @@ void main() {
   });
   test('pull refresh bypasses recently persisted cache without a dead request header', () async {
     final db = AppDatabase(NativeDatabase.memory());
-    await db.saveCalendarSnapshot('2026-08-20', jsonEncode(calendarPayload()));
+    await db.saveCalendarSnapshot(
+      '2026-08-20@UTC',
+      jsonEncode(calendarPayload()),
+    );
     final dio = Dio();
     var calls = 0;
     dio.interceptors.add(
@@ -411,7 +428,7 @@ void main() {
         },
       ),
     );
-    final repo = ApiRepository(dio, db);
+    final repo = utcRepository(dio, db);
     expect(
       (await repo.watchDate(DateTime(2026, 8, 20)).toList())
           .single
@@ -521,7 +538,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('—'), findsNothing);
-      expect(find.text('Hora Costa Rica'), findsOneWidget);
+      expect(find.text('Hora local'), findsOneWidget);
       final history = Snapshot(calendarPayload(score: true)).matches.single;
       expect(history.statusLabel, 'Marcador parcial');
       expect(
@@ -566,7 +583,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            repositoryProvider.overrideWithValue(ApiRepository(dio)),
+            repositoryProvider.overrideWithValue(utcRepository(dio)),
             followsProvider.overrideWith((ref) => Stream.value({})),
             preferenceProvider.overrideWith((ref) => countries.stream),
           ],
@@ -658,7 +675,7 @@ void main() {
           },
         ),
       );
-      final repo = ApiRepository(dio);
+      final repo = utcRepository(dio);
       await repo.loadExplore();
       await repo.loadExplore();
       expect(calls, 1);

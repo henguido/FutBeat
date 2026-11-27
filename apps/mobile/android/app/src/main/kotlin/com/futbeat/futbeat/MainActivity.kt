@@ -3,21 +3,32 @@ package com.futbeat.futbeat
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.telephony.TelephonyManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.TimeZone
 
 class MainActivity : FlutterActivity() {
+    private var deviceChannel: MethodChannel? = null
+    private var clockReceiver: BroadcastReceiver? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         // Called from Dart only when push is configured for this build
         // (lib/core/push_messages.dart, ensureAndroidNotificationChannel).
         // Country of the SIM (else the network): a region hint that needs
         // no permission and no location (lib/core/interests.dart).
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_CHANNEL)
-            .setMethodCallHandler { call, result ->
+        deviceChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_CHANNEL)
+        deviceChannel!!.setMethodCallHandler { call, result ->
+                if (call.method == "timeZone") {
+                    result.success(TimeZone.getDefault().id)
+                    return@setMethodCallHandler
+                }
                 if (call.method != "simCountry") {
                     result.notImplemented()
                     return@setMethodCallHandler
@@ -28,6 +39,22 @@ class MainActivity : FlutterActivity() {
                     ?: telephony?.networkCountryIso?.takeIf { it.isNotBlank() }
                 result.success(country)
             }
+        clockReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                deviceChannel?.invokeMethod("clockChanged", null)
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            addAction(Intent.ACTION_TIME_CHANGED)
+            addAction(Intent.ACTION_DATE_CHANGED)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(clockReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(clockReceiver, filter)
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 if (call.method != "createNotificationChannel") {
@@ -59,6 +86,14 @@ class MainActivity : FlutterActivity() {
                     result.success(false)
                 }
             }
+    }
+
+    override fun onDestroy() {
+        clockReceiver?.let { unregisterReceiver(it) }
+        clockReceiver = null
+        deviceChannel?.setMethodCallHandler(null)
+        deviceChannel = null
+        super.onDestroy()
     }
 
     companion object {

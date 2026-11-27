@@ -1,5 +1,4 @@
 diff --git a/supabase/functions/futbeat-api/index.ts b/supabase/functions/futbeat-api/index.ts
-index 67e0195d..caceee5b 100644
 --- a/supabase/functions/futbeat-api/index.ts
 +++ b/supabase/functions/futbeat-api/index.ts
 @@ -1,17 +1,4 @@
@@ -195,7 +194,7 @@ index 67e0195d..caceee5b 100644
      if (path.endsWith('/futbeat-api/v1/favorites')) {
        const rawKeys = (requestUrl.searchParams.get('keys') ?? '').trim();
        const keys = rawKeys.length === 0 ? [] : rawKeys.split(',');
-@@ -787,10 +786,5 @@ const handle = withSupabase(accessGated
+@@ -817,10 +816,5 @@ const handle = withSupabase(accessGated
      }
  
      return reply(404, { error: 'Not found' });

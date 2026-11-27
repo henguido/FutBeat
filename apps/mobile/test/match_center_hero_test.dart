@@ -235,12 +235,7 @@ void main() {
         .whereType<String>()
         .toList();
     expect(texts.any((t) => RegExp(r'\d{1,2}:\d{2}').hasMatch(t)), isTrue);
-    expect(
-      texts.any(
-        (t) => RegExp(r'^[A-ZÁÉÍÓÚ][a-záéíóú]{2} \d{1,2} ').hasMatch(t),
-      ),
-      isTrue,
-    );
+    expect(texts.contains('Mañana'), isTrue);
     await _close(tester);
   });
 

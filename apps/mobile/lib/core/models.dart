@@ -3,6 +3,19 @@ import 'player_display_identity.dart';
 
 typedef Json = Map<String, dynamic>;
 
+/// Provider sentinel, never a footballer's identity (including cached responses).
+bool unknownLineupProviderKey(Object? value) {
+  if (value is num && value == 0) return true;
+  final key = value?.toString().trim() ?? '';
+  return key.isNotEmpty && RegExp(r'^0+$').hasMatch(key);
+}
+
+bool hasUnknownLineupIdentity(Json player) =>
+    unknownLineupProviderKey(player['playerKey']) ||
+    unknownLineupProviderKey(player['playerId']) ||
+    unknownLineupProviderKey(player['id']) ||
+    unknownLineupProviderKey(player['canonicalId']);
+
 /// Local cache provenance, never provider evidence. A terminal learned from a
 /// LIVE overlay can accept a later terminal correction; a canonical HTTP final
 /// remains absorbing. Network readers remove this local-only annotation.
@@ -22,6 +35,7 @@ String? safePlayerImage(dynamic value) {
 }
 
 String? playerImage(Json player) {
+  if (hasUnknownLineupIdentity(player)) return null;
   final media = player['media'];
   final canonical = media is Map && media['verificationStatus'] == 'VERIFIED'
       ? safePlayerImage(media['url'])
@@ -37,12 +51,6 @@ int? shirtNumberOf(Object? value) {
       : int.tryParse(value?.toString().trim() ?? '');
   return number != null && number > 0 && number < 100 ? number : null;
 }
-
-// Costa Rica uses UTC-06:00 year-round and does not observe daylight saving.
-DateTime costaRicaTime(DateTime instant) =>
-    instant.toUtc().subtract(const Duration(hours: 6));
-
-DateTime costaRicaNow() => costaRicaTime(DateTime.now());
 
 String eventMinuteLabel(Json event) {
   final minute = event['minute'];
@@ -840,7 +848,8 @@ class MatchDetail {
   }
 
   /// Rated lineup players (rating is num > 0), deduplicated by canonical id
-  /// (falling back to name+side), rating desc, then name asc, then side.
+  /// (then a real provider id+side; unidentified rows stay separate), rating
+  /// desc, then name asc, then side.
   List<({Json player, String side})> _ratedPlayers() {
     final entries = <({Json player, String side})>[
       for (final entry in <({Json player, String side})>[
@@ -853,13 +862,22 @@ class MatchDetail {
           (player: {...entry.player, 'rating': rating}, side: entry.side),
     ];
 
-    final seen = <String>{};
+    final seen = <Object>{};
     final deduped = <({Json player, String side})>[];
     for (final entry in entries) {
-      final canonicalId = entry.player['canonicalId']?.toString();
-      final key = canonicalId != null && canonicalId.isNotEmpty
+      final canonicalId = entry.player['canonicalId']?.toString().trim() ?? '';
+      final providerId =
+          (entry.player['id'] ?? entry.player['playerKey'])
+              ?.toString()
+              .trim() ??
+          '';
+      final Object key = hasUnknownLineupIdentity(entry.player)
+          ? Object()
+          : canonicalId.isNotEmpty
           ? 'id:$canonicalId'
-          : 'name:${entry.player['name']}|${entry.side}';
+          : providerId.isNotEmpty
+          ? 'provider:$providerId|${entry.side}'
+          : Object();
       if (seen.add(key)) deduped.add(entry);
     }
 
@@ -1009,10 +1027,13 @@ class FootballMatch {
   String get awayId => json['awayTeamId'] as String;
   String? _startTimeSource;
   DateTime? _parsedStartTime;
+
+  /// Canonical instant. Device-zone conversion belongs to presentation, never
+  /// to the persisted JSON or the provider's timestamp.
   DateTime get startTime {
     final source = json['startTime'] as String;
     if (_parsedStartTime == null || source != _startTimeSource) {
-      _parsedStartTime = costaRicaTime(DateTime.parse(source));
+      _parsedStartTime = DateTime.parse(source).toUtc();
       _startTimeSource = source;
     }
     return _parsedStartTime!;
@@ -1033,7 +1054,9 @@ class FootballMatch {
         'PRE_MATCH',
         'NOT_STARTED',
       ].contains(status) &&
-      costaRicaNow().isAfter(startTime.add(const Duration(minutes: 15)));
+      DateTime.now().toUtc().isAfter(
+        startTime.add(const Duration(minutes: 15)),
+      );
 
   bool get isScheduled =>
       ['DISCOVERED', 'SCHEDULED', 'PRE_MATCH', 'NOT_STARTED'].contains(status);
@@ -1683,21 +1706,18 @@ class Snapshot {
 
   FootballMatch? match(String id) => _matchesById[id];
   List<FootballMatch> onDate(DateTime date, String filter) =>
-      matches
-          .where(
-            (m) =>
-                m.startTime.year == date.year &&
-                m.startTime.month == date.month &&
-                m.startTime.day == date.day &&
-                switch (filter) {
-                  'En vivo' => m.isLive,
-                  'Próximos' => m.isUpcoming,
-                  'Finalizados' => m.isFinished,
-                  _ => true,
-                },
-          )
-          .toList()
-        ..sort((a, b) => a.startTime.compareTo(b.startTime));
+      matches.where((m) {
+        final local = m.startTime.toLocal();
+        return local.year == date.year &&
+            local.month == date.month &&
+            local.day == date.day &&
+            switch (filter) {
+              'En vivo' => m.isLive,
+              'Próximos' => m.isUpcoming,
+              'Finalizados' => m.isFinished,
+              _ => true,
+            };
+      }).toList()..sort((a, b) => a.startTime.compareTo(b.startTime));
 }
 
 /// Result of a finished match from one team's perspective.

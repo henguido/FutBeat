@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'core/ads.dart';
 import 'core/billing.dart';
 import 'core/database.dart';
+import 'core/device_time.dart';
 import 'core/entity_media.dart';
 import 'core/models.dart';
 import 'core/live_realtime.dart';
@@ -36,11 +37,13 @@ import 'features/news/news_screen.dart';
 import 'features/favorites/favorites_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/profile/password_reset_sheet.dart';
+import 'shared/widgets.dart' show AppBackNavigation;
 
 Future<void> main() async {
   installQaLocalCachePolicy();
   installPassivePreviewPolicy();
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeDeviceTime();
   await loadDeviceRegion();
   runApp(const ProviderScope(child: FutBeatApp()));
 }
@@ -117,8 +120,10 @@ GoRouter createRouter({String initialLocation = '/start'}) => GoRouter(
       ),
     ),
     ShellRoute(
-      builder: (context, state, child) =>
-          AppShell(location: state.uri.path, child: child),
+      builder: (context, state, child) => AppBackNavigation(
+        location: state.uri.path,
+        child: AppShell(location: state.uri.path, child: child),
+      ),
       routes: [
         GoRoute(path: '/matches', builder: (_, state) => const MatchesScreen()),
         if (!passivePreview && !userSessionAccessEnabled)
@@ -230,6 +235,8 @@ class FutBeatApp extends ConsumerStatefulWidget {
 
 class _FutBeatAppState extends ConsumerState<FutBeatApp>
     with WidgetsBindingObserver {
+  late final DeviceClock appClock = ref.read(deviceClockProvider);
+  int _sportsVisibilityGeneration = 0;
   late final GoRouter router = widget.router ?? createRouter();
   final messenger = GlobalKey<ScaffoldMessengerState>();
   PushMessageRouter? pushMessages;
@@ -249,6 +256,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   @override
   void initState() {
     super.initState();
+    appClock.start();
     WidgetsBinding.instance.addObserver(this);
     // Password-reset links (the initial one included), Android only. Queued
     // until the router has left /start (see PasswordResetLinkQueue).
@@ -327,17 +335,10 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final sportsActive = state == AppLifecycleState.resumed;
+    final generation = ++_sportsVisibilityGeneration;
     if (sportsActive) resumeAdsConsent(ref);
-    ref.read(sportsAppActiveProvider).value = sportsActive;
-    if (ref.exists(repositoryProvider)) {
-      final repository = ref.read(repositoryProvider);
-      if (repository is ApiRepository) repository.setAppActive(sportsActive);
-    }
-    // A backgrounded app keeps its last visible data but does not retain a
-    // sporting socket or run its REST safety-net timer.
-    if (ref.exists(liveRealtimeClientProvider)) {
-      ref.read(liveRealtimeClientProvider).setAppActive(sportsActive);
-    }
+    _setSportsActive(false);
+    if (sportsActive) unawaited(_resumeSportsClock(generation));
     // Retry a session refresh/merge that failed offline, without creating
     // the account service just for this.
     if (state == AppLifecycleState.resumed && ref.exists(pushServiceProvider)) {
@@ -350,8 +351,30 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     }
   }
 
+  Future<void> _resumeSportsClock(int generation) async {
+    // A zone may have changed while the app was suspended. Resolve it before
+    // allowing the calendar to resume its existing HTTP safety net.
+    await appClock.refresh();
+    if (mounted && generation == _sportsVisibilityGeneration) {
+      _setSportsActive(true);
+    }
+  }
+
+  void _setSportsActive(bool active) {
+    ref.read(sportsAppActiveProvider).value = active;
+    if (ref.exists(repositoryProvider)) {
+      final repository = ref.read(repositoryProvider);
+      if (repository is ApiRepository) repository.setAppActive(active);
+    }
+    if (ref.exists(liveRealtimeClientProvider)) {
+      ref.read(liveRealtimeClientProvider).setAppActive(active);
+    }
+  }
+
   @override
   void dispose() {
+    _sportsVisibilityGeneration++;
+    appClock.stop();
     WidgetsBinding.instance.removeObserver(this);
     pushMessages?.dispose();
     unawaited(links?.cancel());
@@ -365,6 +388,7 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
     final hourFormat =
         ref.watch(profileSettingsProvider).asData?.value.hourFormat ?? 'system';
     final media = ref.watch(entityMediaProvider);
+    final deviceClock = ref.watch(deviceClockProvider);
     if (PushService.configured) ref.listen(followsProvider, _onFollows);
 
     return MaterialApp.router(
@@ -382,19 +406,22 @@ class _FutBeatAppState extends ConsumerState<FutBeatApp>
           '12h' => false,
           _ => query.alwaysUse24HourFormat,
         };
-        return MediaQuery(
-          data: query.copyWith(alwaysUse24HourFormat: use24HourClock),
-          child: EntityMediaScope(
-            memory: media,
-            child:
-                qaLocalCacheOnly &&
-                    !const bool.fromEnvironment('FUTBEAT_OFFLINE_PREVIEW')
-                ? Banner(
-                    message: 'QA LOCAL · SIN RED',
-                    location: BannerLocation.topEnd,
-                    child: child ?? const SizedBox.shrink(),
-                  )
-                : child ?? const SizedBox.shrink(),
+        return DeviceTimeScope(
+          clock: deviceClock,
+          child: MediaQuery(
+            data: query.copyWith(alwaysUse24HourFormat: use24HourClock),
+            child: EntityMediaScope(
+              memory: media,
+              child:
+                  qaLocalCacheOnly &&
+                      !const bool.fromEnvironment('FUTBEAT_OFFLINE_PREVIEW')
+                  ? Banner(
+                      message: 'QA LOCAL · SIN RED',
+                      location: BannerLocation.topEnd,
+                      child: child ?? const SizedBox.shrink(),
+                    )
+                  : child ?? const SizedBox.shrink(),
+            ),
           ),
         );
       },

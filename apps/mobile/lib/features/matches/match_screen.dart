@@ -13,6 +13,7 @@ import '../../core/entity_media.dart';
 import '../../core/interests.dart';
 import '../../core/live_realtime.dart';
 import '../../core/models.dart';
+import '../../core/device_time.dart';
 import '../../core/profile_context.dart';
 import '../../core/providers.dart';
 import '../../core/sports_image_cache.dart';
@@ -22,6 +23,7 @@ import '../entities/standings.dart';
 import 'match_info_card.dart';
 import 'match_preview_sections.dart';
 import 'lineup_history_section.dart';
+import 'last_confirmed_lineups_section.dart';
 import 'live_field_card.dart';
 import 'match_period_scores.dart';
 import 'timeline_presentation.dart';
@@ -297,29 +299,29 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
     final id = widget.id;
     // Share the existing cache, cadence, single-flight, backoff and foreground
     // cancellation. No second poller and no Realtime/provider subscription.
-    ref.listen(calendarSnapshotProvider(DateUtils.dateOnly(match.startTime)), (
-      _,
-      next,
-    ) {
-      if (!mounted || !_sportsActive || widget.id != id) return;
-      final calendar = next.asData?.value;
-      if (calendar == null || calendar.stale || calendar.calendarPending) {
-        return;
-      }
-      final changed = calendar.match(id);
-      if (changed == null) return;
-      final head = _calendarHead(changed);
-      final context = ref.read(matchContextSnapshotProvider(id));
-      if (context.isLoading) return;
-      final current =
-          context.value?.match(id) ?? _lastMatchContext?.match(id) ?? match;
-      if (_calendarHead(current) == head) return;
-      // Deduplicate against the displayed context, not the last calendar seen:
-      // a previous context read can lag behind that same calendar answer.
-      // Re-read the existing authoritative context; never combine unrelated
-      // rows locally or let a late calendar override a VERIFIED correction.
-      ref.invalidate(matchContextSnapshotProvider(id));
-    });
+    ref.listen(
+      calendarSnapshotProvider(DateUtils.dateOnly(match.startTime.toLocal())),
+      (_, next) {
+        if (!mounted || !_sportsActive || widget.id != id) return;
+        final calendar = next.asData?.value;
+        if (calendar == null || calendar.stale || calendar.calendarPending) {
+          return;
+        }
+        final changed = calendar.match(id);
+        if (changed == null) return;
+        final head = _calendarHead(changed);
+        final context = ref.read(matchContextSnapshotProvider(id));
+        if (context.isLoading) return;
+        final current =
+            context.value?.match(id) ?? _lastMatchContext?.match(id) ?? match;
+        if (_calendarHead(current) == head) return;
+        // Deduplicate against the displayed context, not the last calendar seen:
+        // a previous context read can lag behind that same calendar answer.
+        // Re-read the existing authoritative context; never combine unrelated
+        // rows locally or let a late calendar override a VERIFIED correction.
+        ref.invalidate(matchContextSnapshotProvider(id));
+      },
+    );
   }
 
   @override
@@ -377,6 +379,7 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
 
   @override
   Widget build(BuildContext context) {
+    DeviceTimeScope.watch(context);
     final client = ref.read(liveRealtimeClientProvider);
     if (!identical(_liveClient, client)) {
       _liveClient?.clearScope(_liveScope);
@@ -822,7 +825,13 @@ class _MatchScreenState extends ConsumerState<MatchScreen>
       ]),
       _MatchTabId.lineup: _MatchTabList('alineacion', [
         if (data.demo) const DemoNotice(),
-        Lineups(data, match, detail),
+        MatchLastLineupsSection(
+          data: data,
+          match: match,
+          detail: detail,
+          preview: previewValue,
+          currentLineups: Lineups(data, match, detail),
+        ),
       ]),
       _MatchTabId.standings: _MatchTabList('tabla', [
         if (data.demo) const DemoNotice(),
@@ -1324,26 +1333,9 @@ class _SectionTitle extends StatelessWidget {
   );
 }
 
-const _weekdays = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
-const _months = [
-  'ene',
-  'feb',
-  'mar',
-  'abr',
-  'may',
-  'jun',
-  'jul',
-  'ago',
-  'sep',
-  'oct',
-  'nov',
-  'dic',
-];
-
-String matchDateLabel(DateTime date) {
-  final weekday = _weekdays[date.weekday - 1];
-  return '${weekday[0].toUpperCase()}${weekday.substring(1)} '
-      '${date.day} ${_months[date.month - 1]}';
+String matchDateLabel(DateTime date, {BuildContext? context, DateTime? now}) {
+  final clock = context == null ? null : DeviceTimeScope.watch(context);
+  return deviceDayLabel(date, now: now ?? clock?.now);
 }
 
 class MatchHero extends StatelessWidget {
@@ -1485,7 +1477,7 @@ String matchHeroSemanticLabel(
 ) {
   if (match.showKickoff) {
     return '${home.displayName} contra ${away.displayName}, '
-        '${matchDateLabel(match.startTime)} a las '
+        '${matchDateLabel(match.startTime, context: context)} a las '
         '${localTime(context, match.startTime)}';
   }
   final score = _heroScore(match);
@@ -1655,7 +1647,7 @@ class _HeaderCenter extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             Text(
-              matchDateLabel(match.startTime),
+              matchDateLabel(match.startTime, context: context),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -2634,7 +2626,8 @@ double? statNumericValue(dynamic value) {
 }
 
 String _statValue(dynamic value, dynamic unit) {
-  final text = value?.toString() ?? '—';
+  final text = value?.toString().trim() ?? '—';
+  if (text.replaceAll('%', '').trim().isEmpty || text == '—') return '—';
   final suffix = unit?.toString() ?? '';
   if (suffix.isEmpty || text.endsWith(suffix)) return text;
   return '$text$suffix';
@@ -2816,11 +2809,9 @@ List<Json> displayableStatistics(List<Json> stats) {
   final result = <Json>[];
   for (final stat in stats) {
     if (!kept.remove(stat)) continue;
-    final dataLessZero =
-        statNumericValue(stat['home']) == 0 &&
-        statNumericValue(stat['away']) == 0 &&
-        !_hasStatValue(stat);
-    if (!dataLessZero) result.add(stat);
+    // Missing values are not real 0-0 data. Retain meaningful measured zeros,
+    // but do not render an empty percentage or a bar without observations.
+    if (_hasStatValue(stat)) result.add(stat);
   }
   return result;
 }
@@ -3107,6 +3098,7 @@ class _HeaderScorers extends StatelessWidget {
 /// Timeline taps reuse a known lineup row and the same local panel as pitch
 /// and bench. Only explicit canonical IDs qualify; homonyms never participate.
 String _matchPlayerCanonicalId(Json player, Snapshot? data) {
+  if (hasUnknownLineupIdentity(player)) return '';
   final id = player['canonicalId']?.toString().trim() ?? '';
   if (id.isEmpty || data == null) return id;
   return _timelinePlayerId({'canonicalPlayerId': id}, data) ?? id;
@@ -3999,6 +3991,10 @@ bool _matchesLineupPlayerIdentity(
   String providerKey, [
   String? canonicalKey,
 ]) {
+  if (hasUnknownLineupIdentity(player) ||
+      unknownLineupProviderKey(evidence[providerKey])) {
+    return false;
+  }
   final id = player['id']?.toString().trim() ?? '';
   final canonicalId = player['canonicalId']?.toString().trim() ?? '';
   final canonical = canonicalKey == null
@@ -5023,6 +5019,7 @@ class _PlayerAvatar extends StatelessWidget {
 /// player shows the latest verified photo seen this session for that identity
 /// (the same one the profile shows), else the photo the lineup carries.
 String? lineupPlayerImageOf(BuildContext context, Json player) {
+  if (hasUnknownLineupIdentity(player)) return null;
   final canonicalId = player['canonicalId']?.toString().trim() ?? '';
   final rowId = player['id']?.toString().trim() ?? '';
   // Some locally cached/legacy detail rows carry the canonical FutBeat ID in

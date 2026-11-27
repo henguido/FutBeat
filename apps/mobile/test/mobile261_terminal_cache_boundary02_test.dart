@@ -99,6 +99,7 @@ void main() {
       const CalendarCachePolicy(),
       null,
       metrics,
+      () => 'Europe/Madrid',
     );
     await repo.loadDate(date);
     await repo.settleBackground();
@@ -106,7 +107,8 @@ void main() {
       _id: _terminal(now, private: true),
     });
     expect(
-      (await db.readCalendarSnapshot(key))!.contains('synthetic-private-token'),
+      (await db.readCalendarSnapshot('$key@Europe/Madrid'))!
+          .contains('synthetic-private-token'),
       isFalse,
     );
     expect(
@@ -117,7 +119,7 @@ void main() {
     repo.refreshDate(date);
     await repo.loadDate(date);
     await repo.settleBackground();
-    final payload = (await db.readCalendarSnapshot(key))!;
+    final payload = (await db.readCalendarSnapshot('$key@Europe/Madrid'))!;
     expect(payload.contains('synthetic-private-token'), isFalse);
     expect(payload.contains('fixture@invalid.test'), isFalse);
     expect(records.join().contains('synthetic-private-token'), isFalse);

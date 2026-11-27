@@ -61,6 +61,41 @@ Container _pill(WidgetTester tester, String key) => tester.widget<Container>(
 );
 
 void main() {
+  for (final missing in [null, '', '  ', '%']) {
+    test(
+      'statistics omit both missing values ($missing), retaining real zero shots',
+      () {
+        final rows = displayableStatistics([
+          {
+            'label': 'Ball Possession',
+            'home': missing,
+            'away': missing,
+            'unit': '%',
+          },
+          {'label': 'Shots', 'home': 0, 'away': 0},
+        ]);
+        expect(rows, hasLength(1));
+        expect(rows.single['label'], 'Shots');
+      },
+    );
+  }
+  testWidgets(
+    'missing one-side percentage is a missing value, never an empty percent',
+    (tester) async {
+      await _pump(
+        tester,
+        match: _match(
+          statistics: const [
+            {'label': 'Ball Possession', 'home': '%', 'away': 54, 'unit': '%'},
+          ],
+        ),
+      );
+      expect(find.text('—'), findsOneWidget);
+      expect(find.text('54%'), findsOneWidget);
+      expect(find.text('%'), findsNothing);
+    },
+  );
+
   testWidgets('unusable detail rows do not hide valid snapshot statistics', (
     tester,
   ) async {

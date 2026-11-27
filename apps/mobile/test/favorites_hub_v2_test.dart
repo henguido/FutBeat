@@ -323,6 +323,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('No pudimos cargar tus seguidos'), findsNothing);
     expect(find.text('Equipos'), findsOneWidget);
+    expect(find.text('Equipos favoritos'), findsOneWidget);
     expect(harness.requests, hasLength(2));
     expect(harness.requests.first, harness.requests.last);
   });

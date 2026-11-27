@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'database.dart';
+import 'last_confirmed_lineups.dart';
+import 'device_time.dart';
 import 'entity_media.dart';
 import 'interests.dart';
 import 'live_realtime.dart';
@@ -405,8 +407,10 @@ class ApiRepository implements FootballRepository {
     this.calendarPolicy = const CalendarCachePolicy(),
     this.media,
     this.diagnostics,
+    this.calendarTimeZone = systemCalendarTimeZone,
   ]);
   final QaDiagnostics? diagnostics;
+  final _lastLineupsFlights = <String, Future<LastConfirmedLineups>>{};
   final Dio dio;
 
   /// Only the explicit stored-read adapter disables demand-related refreshes.
@@ -423,11 +427,16 @@ class ApiRepository implements FootballRepository {
   final AppDatabase? database;
   final CalendarCachePolicy calendarPolicy;
 
+  /// The app injects Android's live, configured zone. Neither the user's
+  /// country nor a fixed regional offset determines a calendar request.
+  final String Function() calendarTimeZone;
+
   /// Receives every snapshot read, so lazily hydrated media reaches every
   /// screen showing the same entity.
   final EntityMediaMemory? media;
 
   final Map<String, DateTime> _calendarFetchedAt = {};
+  final Set<String> _borrowedCalendarDates = {};
   final Map<String, int> _calendarFailures = {};
   final Map<String, _SnapshotFlight> _calendarInFlight = {};
   final Map<String, _SnapshotFlight> _catalogInFlight = {};
@@ -471,10 +480,10 @@ class ApiRepository implements FootballRepository {
     }
   }
 
-  static String _dateParam(DateTime date) =>
+  String _dateParam(DateTime date) =>
       '${date.year.toString().padLeft(4, '0')}-'
       '${date.month.toString().padLeft(2, '0')}-'
-      '${date.day.toString().padLeft(2, '0')}';
+      '${date.day.toString().padLeft(2, '0')}@${calendarTimeZone()}';
 
   Snapshot _canonical(Json json, {Snapshot? prepared}) {
     final snapshot =
@@ -593,6 +602,7 @@ class ApiRepository implements FootballRepository {
       _snapshotCache.remove(oldest);
       if (oldest.startsWith('calendar:')) {
         _calendarFetchedAt.remove(oldest.substring('calendar:'.length));
+        _borrowedCalendarDates.remove(oldest.substring('calendar:'.length));
       }
     }
   }
@@ -1001,7 +1011,7 @@ class ApiRepository implements FootballRepository {
     final fetched = _calendarFetchedAt[value];
     if (fetched == null) return false;
     final snapshot = _snapshotCache['calendar:$value'];
-    final today = _dateParam(costaRicaNow());
+    final today = _dateParam(DateTime.now());
     final calendarCoverage = snapshot?.coverage?['calendar'];
     final completeHistorical =
         value.compareTo(today) < 0 &&
@@ -1104,6 +1114,53 @@ class ApiRepository implements FootballRepository {
     try {
       final stopwatch = Stopwatch()..start();
       final stored = await database?.readCalendarEntry(value);
+      if (stored == null && database != null) {
+        // Old versions stored unqualified dates in a fixed regional calendar.
+        // Retain available data, but never certify it complete in a new zone.
+        final rows = await database!.readCalendarTimeZoneFallbacks(
+          value.substring(0, 10),
+        );
+        Json? joined;
+        for (final row in rows) {
+          final raw = jsonDecode(row.payload) as Json;
+          if (_containsPrivateCacheField(raw)) continue;
+          final old = joined;
+          joined = {
+            ...?old,
+            ...raw,
+            for (final field in ['teams', 'players', 'competitions', 'matches'])
+              field: {
+                for (final source in [?old, raw])
+                  for (final item in (source[field] as List? ?? const []))
+                    if (item is Map && item['id'] is String)
+                      item['id'] as String: Map<String, dynamic>.from(item),
+              }.values.toList(),
+            'entityRedirects': {
+              ...?(old?['entityRedirects'] as Map?),
+              ...?(raw['entityRedirects'] as Map?),
+            },
+          };
+          if (old != null) {
+            joined = jsonDecode(
+              _preserveStoredTerminals(jsonEncode(old), jsonEncode(joined)),
+            ) as Json;
+          }
+        }
+        final landed = _snapshotCache[key];
+        if (landed != null) return landed;
+        if (joined != null) {
+          diagnostics?.record(
+            '/v1/calendar',
+            'sqliteHit',
+            elapsed: stopwatch.elapsed,
+          );
+          final fallback = _canonical(joined).asStale();
+          _borrowedCalendarDates.add(value);
+          _remember(key, fallback);
+          _calendarFetchedAt.remove(value);
+          return fallback;
+        }
+      }
       diagnostics?.record(
         '/v1/calendar',
         stored == null ? 'sqliteMiss' : 'sqliteHit',
@@ -1145,9 +1202,15 @@ class ApiRepository implements FootballRepository {
     final flight = _SnapshotFlight();
     flight.future = () async {
       try {
+        if (value.substring(11).isEmpty) {
+          throw StateError('Device time zone is not available');
+        }
         var raw = await _getJson(
           '/v1/calendar',
-          queryParameters: {'date': value, 'timezone': 'America/Costa_Rica'},
+          queryParameters: {
+            'date': value.substring(0, 10),
+            'timezone': value.substring(11),
+          },
           cancelToken: flight.token,
           maxAttempts: 1,
           receiveTimeout: calendarPolicy.receiveTimeout,
@@ -1166,10 +1229,13 @@ class ApiRepository implements FootballRepository {
         // A delayed response must not roll back a newer day already painted
         // by another request (or persisted for the next app launch).
         final current = _snapshotCache['calendar:$value'];
-        if (current != null && fresh.updatedAt.isBefore(current.updatedAt)) {
+        if (current != null &&
+            !_borrowedCalendarDates.contains(value) &&
+            fresh.updatedAt.isBefore(current.updatedAt)) {
           return current;
         }
         _remember('calendar:$value', fresh);
+        _borrowedCalendarDates.remove(value);
         _calendarFetchedAt[value] = DateTime.now().toUtc();
         _forcedDates.remove(value);
         _persist(value, raw);
@@ -1253,7 +1319,12 @@ class ApiRepository implements FootballRepository {
     final deadline = DateTime.now().add(calendarPolicy.visibleDeadline);
     Snapshot? cached = await _readStored(value);
     final freshCache = cached != null && _freshDate(value);
-    if (cached != null) yield cached.withFreshness(revalidating: !freshCache);
+    if (cached != null) {
+      yield cached.withFreshness(
+        stale: cached.stale,
+        revalidating: !freshCache,
+      );
+    }
     if (cached == null) diagnostics?.record('/v1/calendar', 'cacheMiss');
     if (!_appActive) return;
     if (freshCache) {
@@ -1356,7 +1427,7 @@ class ApiRepository implements FootballRepository {
     if (passivePreview) return;
     if (!_appActive) return;
     final generation = ++_prefetchGeneration;
-    final now = costaRicaNow();
+    final now = DateTime.now();
     final today = DateTime.utc(now.year, now.month, now.day);
     final previous = _prefetchTask;
     _prefetchTask = () async {
@@ -1696,6 +1767,68 @@ class ApiRepository implements FootballRepository {
     _diskWrites.add(write);
   }
 
+  /// Optional persisted-data read. Never requests provider acquisition.
+  Future<LastConfirmedLineups> loadMatchLastLineups(String id) =>
+      _lastLineupsFlights.putIfAbsent(id, () async {
+        Json? retained;
+        final key = 'public:match-last-lineups:$id';
+        try {
+          try {
+            final cached = await database?.readPublicSnapshot(key);
+            if (cached != null) {
+              final raw = jsonDecode(cached.payload) as Json;
+              if (!_containsPrivateCacheField(raw)) {
+                LastConfirmedLineups.parse(raw, id);
+                retained = raw;
+                final age = DateTime.now().toUtc().difference(cached.savedAt);
+                if (!age.isNegative && age < const Duration(seconds: 300)) {
+                  return LastConfirmedLineups.parse(raw, id);
+                }
+              }
+            }
+          } catch (_) {
+            /* An unusable public cache does not block HTTP. */
+          }
+          var canStore = false;
+          final raw = await _getJson(
+            '/v1/match-last-lineups',
+            queryParameters: {'id': id},
+            maxAttempts: 1,
+            onResponse: (response) {
+              final policy =
+                  (response.headers['cache-control'] ?? const <String>[])
+                      .join(',')
+                      .toLowerCase()
+                      .split(',')
+                      .map((x) => x.trim())
+                      .toSet();
+              canStore =
+                  response.extra['futbeatTransportCacheHit'] != true &&
+                  (response.headers.value('age') == null ||
+                      int.tryParse(response.headers.value('age')!) == 0) &&
+                  policy.contains('public') &&
+                  policy.contains('max-age=300') &&
+                  !policy.contains('private') &&
+                  !policy.contains('no-store') &&
+                  !policy.contains('no-cache');
+            },
+          );
+          final result = LastConfirmedLineups.parse(raw, id);
+          if (_containsPrivateCacheField(raw)) {
+            throw const FormatException('Non-public last lineup response');
+          }
+          if (canStore) _persistPublicJson('match-last-lineups:$id', raw);
+          return result;
+        } on DioException catch (error) {
+          if (retained != null && _retryable(error)) {
+            return LastConfirmedLineups.parse(retained, id, offline: true);
+          }
+          rethrow;
+        } finally {
+          _lastLineupsFlights.remove(id);
+        }
+      });
+
   /// Recent form and head-to-head share the endpoint's short freshness window.
   Future<MatchPreview> loadMatchPreview(String id) =>
       _previewInFlight.putIfAbsent(id, () async {
@@ -1713,9 +1846,13 @@ class ApiRepository implements FootballRepository {
                   if (const {
                     'AVAILABLE',
                     'CONFIRMED_EMPTY',
+                    'STALE',
                   }.contains(cached.h2hAvailability)) {
                     retained = raw;
-                    if (age < const Duration(seconds: 30)) return cached;
+                    if (cached.h2hAvailability != 'STALE' &&
+                        age < const Duration(seconds: 30)) {
+                      return cached;
+                    }
                   }
                 }
               }
@@ -1756,6 +1893,7 @@ class ApiRepository implements FootballRepository {
               const {
                 'AVAILABLE',
                 'CONFIRMED_EMPTY',
+                'STALE',
               }.contains(preview.h2hAvailability)) {
             _persistPublicJson(key, raw);
           }
@@ -2373,12 +2511,14 @@ final repositoryProvider = Provider<FootballRepository>((ref) {
     ref.onDispose(transport.close);
   }
   ref.onDispose(() => dio.close(force: true));
+  final calendarClock = ref.watch(deviceClockProvider);
   return ApiRepository(
     dio,
     ref.watch(databaseProvider),
     const CalendarCachePolicy(),
     ref.watch(entityMediaProvider),
     ref.watch(qaDiagnosticsProvider),
+    () => calendarClock.calendarZoneId,
   );
 });
 
@@ -2462,6 +2602,13 @@ final calendarSnapshotProvider = StreamProvider.autoDispose
       // Watched synchronously so the view can peek the memory cache in the
       // first frame of a date switch.
       final repository = ref.watch(repositoryProvider);
+      final deviceClock = ref.watch(deviceClockProvider);
+      void clockChanged() {
+        if (ref.mounted) ref.invalidateSelf();
+      }
+
+      deviceClock.addListener(clockChanged);
+      ref.onDispose(() => deviceClock.removeListener(clockChanged));
       final active = ref.watch(sportsAppActiveProvider);
       final token = CancelToken();
       Timer? timer;
@@ -2490,6 +2637,13 @@ final calendarSnapshotProvider = StreamProvider.autoDispose
       return () async* {
         var hasData = false;
         try {
+          // A cold native bridge may still be resolving the device zone.
+          // Wait for that bounded native read before presenting a calendar
+          // failure; never request an unverified or guessed regional date.
+          if (deviceClock.calendarZoneId.isEmpty) {
+            await deviceClock.refresh();
+            if (disposed || !active.value || token.isCancelled) return;
+          }
           await for (final snapshot in repository.watchDate(
             date,
             cancelToken: token,
@@ -2762,6 +2916,18 @@ final matchContextSnapshotProvider = StreamProvider.autoDispose
       // the Match Center remains visible from its initial calendar snapshot.
     }, retry: (_, _) => null);
 
+/// Activation waits for the additive read route; ordinary builds send no request.
+final lastConfirmedLineupsEnabledProvider = Provider<bool>(
+  (ref) => const bool.fromEnvironment('FUTBEAT_LAST_CONFIRMED_LINEUPS_ENABLED'),
+);
+final matchLastConfirmedLineupsProvider = FutureProvider.autoDispose
+    .family<LastConfirmedLineups?, String>((ref, id) async {
+      if (!ref.watch(lastConfirmedLineupsEnabledProvider)) return null;
+      final repository = ref.watch(repositoryProvider);
+      if (repository is! ApiRepository) return null;
+      return repository.loadMatchLastLineups(id);
+    }, retry: (_, _) => null);
+
 /// Recent form + head-to-head of a match, loaded after (and independently
 /// of) the match context: it never blocks the header or the tabs, fails on
 /// its own, and is read once per open (no polling; tab switches and context
@@ -2982,10 +3148,9 @@ Json _mergeDetailSide(
 }
 
 bool _hasVisibleLineup(Json home, Json away) {
-  bool sideHasData(Json side) =>
-      _hasLineupPlayers(side) ||
-      (side['coach'] is Map && (side['coach'] as Map).isNotEmpty);
-  return sideHasData(home) || sideHasData(away);
+  // A confirmed coach is useful detail, but is not a current match lineup.
+  // Preserve the server's missing/pending state until players are available.
+  return _hasLineupPlayers(home) || _hasLineupPlayers(away);
 }
 
 bool _acceptDetailEventClock(Object? current, Object? next) {

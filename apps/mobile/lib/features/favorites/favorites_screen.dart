@@ -397,8 +397,21 @@ class _FollowingList extends StatelessWidget {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
         itemCount:
-            items.length + missingIds.length + (missingIds.isEmpty ? 0 : 1),
-        itemBuilder: (context, index) {
+            items.length +
+            missingIds.length +
+            (missingIds.isEmpty ? 0 : 1) +
+            (type == 'team' ? 1 : 0),
+        itemBuilder: (context, rowIndex) {
+          if (type == 'team' && rowIndex == 0) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
+              child: Text(
+                'Equipos favoritos',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            );
+          }
+          final index = rowIndex - (type == 'team' ? 1 : 0);
           if (index >= items.length) {
             if (index == items.length + missingIds.length) {
               return TextButton.icon(

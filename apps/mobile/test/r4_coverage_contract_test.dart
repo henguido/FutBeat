@@ -476,7 +476,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(
-      find.text('Historial guardado · Actualización pendiente'),
+      find.text('Historial guardado'),
       findsOneWidget,
     );
     expect(

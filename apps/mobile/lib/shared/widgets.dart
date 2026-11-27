@@ -13,10 +13,44 @@ import '../core/push.dart';
 import '../core/qa_development.dart';
 import '../core/sports_image_cache.dart';
 import '../core/relevance.dart';
+import '../core/device_time.dart';
 import '../core/theme.dart';
 import 'content_skeleton.dart';
 
 export 'content_skeleton.dart';
+
+/// Preserve a pushed route's history; a direct secondary destination falls
+/// back inside the app before Android is allowed to close the root screen.
+class AppBackNavigation extends StatelessWidget {
+  const AppBackNavigation({
+    required this.location,
+    required this.child,
+    super.key,
+  });
+
+  final String location;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final router = GoRouter.of(context);
+    return PopScope<Object?>(
+      // The shell builds before its nested Navigator finishes a go() change.
+      // Its old canPop() can therefore be true on a new root tab. Keep root
+      // exit explicit; query the settled history only when Back is invoked.
+      canPop: location == '/matches',
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (router.canPop()) {
+          router.pop();
+        } else if (location != '/matches') {
+          router.go(location.startsWith('/profile/') ? '/profile' : '/matches');
+        }
+      },
+      child: child,
+    );
+  }
+}
 
 /// Existing verified entity-media identity, used only as a disk-cache key.
 /// A canonical entity keeps precedence over a contradictory alias field.
@@ -274,6 +308,8 @@ class CalendarDataView extends ConsumerStatefulWidget {
 }
 
 class _CalendarDataViewState extends ConsumerState<CalendarDataView> {
+  String? _calendarZone;
+  bool _awaitingZonedData = false;
   LiveRealtimeClient? _liveClient;
   late final String _scope = 'calendar:${identityHashCode(this)}';
   Stopwatch? _datePaintWatch;
@@ -296,13 +332,20 @@ class _CalendarDataViewState extends ConsumerState<CalendarDataView> {
 
   @override
   Widget build(BuildContext context) {
+    final clock = DeviceTimeScope.watch(context);
+    final zone = clock?.calendarZoneId;
+    if (_calendarZone != null && zone != _calendarZone) {
+      _awaitingZonedData = true;
+    }
+    _calendarZone = zone;
     final state = ref.watch(effectiveCalendarSnapshotProvider(widget.date));
     // Before the stream's first event, paint the day already held in memory
     // (no loading flash on a date switch). Only when the repository is live.
     final repository = ref.exists(repositoryProvider)
         ? ref.read(repositoryProvider)
         : null;
-    final memory = state.hasValue || repository is! ApiRepository
+    final memory =
+        (state.hasValue && !_awaitingZonedData) || repository is! ApiRepository
         ? null
         : repository
               .peekDate(widget.date)
@@ -310,7 +353,17 @@ class _CalendarDataViewState extends ConsumerState<CalendarDataView> {
                 ref.watch(liveMatchUpdatesProvider).asData?.value ??
                     const <String, LiveMatchUpdate>{},
               );
-    final cached = state.value ?? memory;
+    final previous = state.value;
+    final usablePrevious =
+        _awaitingZonedData &&
+            previous != null &&
+            previous.onDate(widget.date, 'Todos').isNotEmpty
+        ? previous.withFreshness(stale: true, revalidating: state.isLoading)
+        : null;
+    final cached = _awaitingZonedData
+        ? memory ?? usablePrevious
+        : state.value ?? memory;
+    if (_awaitingZonedData && memory != null) _awaitingZonedData = false;
     if (cached != null && _datePaintWatch != null && !_dateDataRecorded) {
       _dateDataRecorded = true;
       final selected = widget.date, watch = _datePaintWatch!;
@@ -338,6 +391,9 @@ class _CalendarDataViewState extends ConsumerState<CalendarDataView> {
           'matches': [],
           'standings': [],
         });
+    final hasLocalMatches = data.matches.any(
+      (match) => DateUtils.isSameDay(match.startTime.toLocal(), widget.date),
+    );
     final client = ref.read(liveRealtimeClientProvider);
     if (!identical(_liveClient, client)) {
       _liveClient?.clearScope(_scope);
@@ -357,7 +413,9 @@ class _CalendarDataViewState extends ConsumerState<CalendarDataView> {
             // Loading only without any snapshot to show, or while an empty
             // cached day is being revalidated (never a false "no matches").
             (cached == null && !state.hasError) ||
-                (data.matches.isEmpty && data.revalidating),
+                (!hasLocalMatches && data.revalidating),
+            // A stale empty snapshot is incomplete coverage, not evidence of
+            // a network failure. The calendar presents its own retry state.
             cached == null && state.hasError,
           ),
         ),
@@ -642,8 +700,10 @@ Widget heading(BuildContext context, String title) => Padding(
         ?.copyWith(fontWeight: FontWeight.bold),
   ),
 );
-String localTime(BuildContext context, DateTime date) =>
-    MaterialLocalizations.of(context).formatTimeOfDay(
-      TimeOfDay.fromDateTime(date),
-      alwaysUse24HourFormat: MediaQuery.of(context).alwaysUse24HourFormat,
-    );
+String localTime(BuildContext context, DateTime date) {
+  DeviceTimeScope.watch(context);
+  return MaterialLocalizations.of(context).formatTimeOfDay(
+    TimeOfDay.fromDateTime(date.toLocal()),
+    alwaysUse24HourFormat: MediaQuery.of(context).alwaysUse24HourFormat,
+  );
+}

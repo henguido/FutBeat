@@ -336,6 +336,32 @@ class AppDatabase extends _$AppDatabase {
     calendarSnapshots,
   )..where((row) => row.calendarDate.equals(date))).getSingleOrNull())?.payload;
 
+  /// Read-only fallback across old cache formats/zones. A local day can move
+  /// two civil dates between the extreme device zones; storage remains UTC.
+  Future<List<CalendarSnapshot>> readCalendarTimeZoneFallbacks(String day) {
+    final date = DateTime.parse(day);
+    final days = [
+      for (var offset = -2; offset <= 2; offset++)
+        DateTime.utc(
+          date.year,
+          date.month,
+          date.day + offset,
+        ).toIso8601String().substring(0, 10),
+    ];
+    return (select(calendarSnapshots)
+          ..where(
+            (row) => days
+                .map((d) => row.calendarDate.like('$d%'))
+                .reduce((a, b) => a | b),
+          )
+          ..orderBy([
+            (row) => OrderingTerm.asc(row.savedAt),
+            (row) => OrderingTerm.asc(row.rowId),
+          ])
+          ..limit(64))
+        .get();
+  }
+
   // Replacement renews rowId as a stable same-second recency tie-breaker.
   // Write and eviction must commit together: a stale victim selection must
   // never delete a response refreshed by a concurrent cache write.

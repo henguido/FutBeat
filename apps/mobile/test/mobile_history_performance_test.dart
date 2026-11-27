@@ -457,7 +457,7 @@ void main() {
       ),
     );
     final repository = ApiRepository(dio, db);
-    final today = DateUtils.dateOnly(costaRicaNow());
+    final today = DateUtils.dateOnly(DateTime.now());
     String day(int offset) => requestDate(today, offset);
     await repository.watchDate(today).toList();
     await repository.settleBackground();

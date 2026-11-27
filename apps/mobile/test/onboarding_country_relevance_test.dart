@@ -533,7 +533,7 @@ class _FeedRepository implements FootballRepository {
 }
 
 Snapshot _feedSnapshot() {
-  final today = costaRicaNow();
+  final today = DateTime.now();
   final start = DateTime.utc(
     today.year,
     today.month,

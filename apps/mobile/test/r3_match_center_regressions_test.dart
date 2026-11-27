@@ -62,11 +62,9 @@ void main() {
       final match = FootballMatch(raw);
       final first = match.startTime;
       expect(identical(first, match.startTime), isTrue);
-      expect(first.hour, 12);
+      expect(first, DateTime.parse(raw['startTime']!));
       raw['startTime'] = '2026-11-21T00:30:00Z';
-      expect(match.startTime.day, 20);
-      expect(match.startTime.hour, 18);
-      expect(match.startTime.minute, 30);
+      expect(match.startTime, DateTime.parse(raw['startTime']!));
       expect(identical(first, match.startTime), isFalse);
     },
   );

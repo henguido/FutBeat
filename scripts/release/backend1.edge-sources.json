@@ -1,10 +1,10 @@
 {
   "functions": {
     "futbeat-api": {
-      "commit": "968ce45fad",
-      "version": 50,
+      "commit": "09f7911f",
+      "version": 54,
       "verifyJwt": false,
-      "evidence": "download 5/5 byte-equal"
+      "evidence": "download 5/5 byte-equal 2026-11-27 (v54, fb05-edge-r3)"
     },
     "futbeat-delete-account": {
       "commit": "10e43a1f8e",
@@ -33,16 +33,16 @@
   },
   "inputs": [
     {
-      "source": "968ce45fad:supabase/functions/_shared/api_access.ts",
-      "pinnedSha256": "521f8133fddfd0f20f073a189c30cd6e0e56856272dded8a73fa319b5c30e8c8",
-      "rawSha256": "521f8133fddfd0f20f073a189c30cd6e0e56856272dded8a73fa319b5c30e8c8",
-      "lfSha256": "521f8133fddfd0f20f073a189c30cd6e0e56856272dded8a73fa319b5c30e8c8",
+      "source": "09f7911f:supabase/functions/_shared/api_access.ts",
+      "pinnedSha256": "ee63e7cd6043d53dc6f3c04a6162db7160eb84ea926004658fe864cb72c7a17d",
+      "rawSha256": "ee63e7cd6043d53dc6f3c04a6162db7160eb84ea926004658fe864cb72c7a17d",
+      "lfSha256": "ee63e7cd6043d53dc6f3c04a6162db7160eb84ea926004658fe864cb72c7a17d",
       "pinMatches": "RAW",
-      "bytes": 7223,
+      "bytes": 7249,
       "localPath": "supabase/functions/_shared/api_access.ts"
     },
     {
-      "source": "968ce45fad:supabase/functions/_shared/calendar_cache.ts",
+      "source": "09f7911f:supabase/functions/_shared/calendar_cache.ts",
       "pinnedSha256": "2aa8e02237f325bc07f9417d4b3cac21f513aff245eea69baf7d3ed45729efd9",
       "rawSha256": "2aa8e02237f325bc07f9417d4b3cac21f513aff245eea69baf7d3ed45729efd9",
       "lfSha256": "2aa8e02237f325bc07f9417d4b3cac21f513aff245eea69baf7d3ed45729efd9",
@@ -51,7 +51,7 @@
       "localPath": "supabase/functions/_shared/calendar_cache.ts"
     },
     {
-      "source": "968ce45fad:supabase/functions/_shared/live_events.ts",
+      "source": "09f7911f:supabase/functions/_shared/live_events.ts",
       "pinnedSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
       "rawSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
       "lfSha256": "8f328ab7cee871cd1286cfb4e7698056d000478c485a68ab41ce4f4728cf55aa",
@@ -60,21 +60,21 @@
       "localPath": "supabase/functions/_shared/live_events.ts"
     },
     {
-      "source": "968ce45fad:supabase/functions/_shared/match_detail.ts",
-      "pinnedSha256": "f308b897eef6921f821df3d45b5652f29feae5ee59ee438883a4735c744213d5",
-      "rawSha256": "f308b897eef6921f821df3d45b5652f29feae5ee59ee438883a4735c744213d5",
-      "lfSha256": "f308b897eef6921f821df3d45b5652f29feae5ee59ee438883a4735c744213d5",
+      "source": "09f7911f:supabase/functions/_shared/match_detail.ts",
+      "pinnedSha256": "33a2cfe1279f7ba12ba43838d9538267265278a60d40a95541eae50150ab579f",
+      "rawSha256": "33a2cfe1279f7ba12ba43838d9538267265278a60d40a95541eae50150ab579f",
+      "lfSha256": "33a2cfe1279f7ba12ba43838d9538267265278a60d40a95541eae50150ab579f",
       "pinMatches": "RAW",
-      "bytes": 15910,
-      "localPath": "supabase/functions/_shared/deployed/match_detail.api-v50.ts"
+      "bytes": 17706,
+      "localPath": "supabase/functions/_shared/deployed/match_detail.api-v54.ts"
     },
     {
-      "source": "968ce45fad:supabase/functions/futbeat-api/index.ts",
-      "pinnedSha256": "66bb988c6b947a8d887feab1f52aca9d149923ad1c9db35e407c1623976dd586",
-      "rawSha256": "66bb988c6b947a8d887feab1f52aca9d149923ad1c9db35e407c1623976dd586",
-      "lfSha256": "66bb988c6b947a8d887feab1f52aca9d149923ad1c9db35e407c1623976dd586",
+      "source": "09f7911f:supabase/functions/futbeat-api/index.ts",
+      "pinnedSha256": "fbbcb1ddf4a0a9db3927ca54eb1aaec824117c94c3bbded068dfa9de13558105",
+      "rawSha256": "fbbcb1ddf4a0a9db3927ca54eb1aaec824117c94c3bbded068dfa9de13558105",
+      "lfSha256": "fbbcb1ddf4a0a9db3927ca54eb1aaec824117c94c3bbded068dfa9de13558105",
       "pinMatches": "RAW",
-      "bytes": 31373,
+      "bytes": 32873,
       "localPath": "supabase/functions/futbeat-api/index.ts"
     },
     {
@@ -318,7 +318,7 @@
       "path": "supabase/functions/futbeat-api/index.ts",
       "kind": "IMPORT_PATH_ONLY",
       "from": "'../_shared/match_detail.ts'",
-      "to": "'../_shared/deployed/match_detail.api-v50.ts'",
+      "to": "'../_shared/deployed/match_detail.api-v54.ts'",
       "byteEqualToDownloadedEntry": false,
       "reason": "Production bundles use two different shared revisions; retain both without replacing the newer main normalizer"
     },
@@ -339,7 +339,7 @@
       "reason": "Matches the verified API SDK and withSupabase contract; production resolved npm version cannot be certified"
     },
     {
-      "path": "supabase/functions/_shared/deployed/match_detail.api-v50.ts",
+      "path": "supabase/functions/_shared/deployed/match_detail.api-v54.ts",
       "kind": "IMPORT_PATH_ONLY",
       "from": "'./live_events.ts'",
       "to": "'../live_events.ts'",
@@ -364,7 +364,7 @@
   "writtenFiles": [
     {
       "path": "supabase/functions/_shared/api_access.ts",
-      "sha256": "521F8133FDDFD0F20F073A189C30CD6E0E56856272DDED8A73FA319B5C30E8C8"
+      "sha256": "EE63E7CD6043D53DC6F3C04A6162DB7160EB84EA926004658FE864CB72C7A17D"
     },
     {
       "path": "supabase/functions/_shared/calendar_cache.ts",
@@ -375,12 +375,12 @@
       "sha256": "8F328AB7CEE871CD1286CFB4E7698056D000478C485A68AB41CE4F4728CF55AA"
     },
     {
-      "path": "supabase/functions/_shared/deployed/match_detail.api-v50.ts",
-      "sha256": "95BCC299406EA95BDB9AFA4769CACD50629ACAAD286275D461F17115DDAF3719"
+      "path": "supabase/functions/_shared/deployed/match_detail.api-v54.ts",
+      "sha256": "7971278892E6D6525B5ED2EE31306D5A3376591934037E7E14DB2B94EC1AFCEE"
     },
     {
       "path": "supabase/functions/futbeat-api/index.ts",
-      "sha256": "2871C816228CAF36D0F04A8068AD254F4C3CC3135649B080E16E3F7D7AAAC94F"
+      "sha256": "576BD7FCE85BB7AD0B868C680F69CD50C2D968D1E3C23DA5BB5A302624256DE6"
     },
     {
       "path": "supabase/functions/futbeat-delete-account/index.ts",

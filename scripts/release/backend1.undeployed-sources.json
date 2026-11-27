@@ -25,14 +25,25 @@
     },
     {
       "path": "supabase/functions/futbeat-api/index.ts",
-      "baseSha256": "66bb988c6b947a8d887feab1f52aca9d149923ad1c9db35e407c1623976dd586",
-      "targetSha256": "638aafa3694171ee7620695960ba306c8c5ecc1d33d6d1e0f3b4d92eb6bf25f5",
+      "baseSha256": "fbbcb1ddf4a0a9db3927ca54eb1aaec824117c94c3bbded068dfa9de13558105",
+      "targetSha256": "70f3068d6bb86ce9463c7f94beba960b83eb49b77b5bb169e0828498fd5634f6",
       "patch": "supabase/undeployed/futbeat-api-main-news.patch",
       "baseReplacements": [
         [
-          "../_shared/deployed/match_detail.api-v50.ts",
+          "../_shared/deployed/match_detail.api-v54.ts",
           "../_shared/match_detail.ts"
         ]
+      ]
+    }
+  ],
+  "sqlFollowUps": [
+    {
+      "path": "supabase/migrations/20261107180000_squad_twins_same_birth_date.sql",
+      "sha256": "94bfbf42c393ea62087707ed368111e55452a0a416a8d6dd01ebdd9b77b4254b",
+      "status": "main follow-up BE10 P0.3, NOT deployed; production runs 20261001130000 (record 20261127040700) + FB-09 v2",
+      "tests": [
+        "backend/test/squad_player_identity_dedup.test.mjs",
+        "backend/test/squad_twins_same_birth_date.test.mjs"
       ]
     }
   ]

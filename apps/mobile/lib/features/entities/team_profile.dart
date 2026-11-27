@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/device_time.dart';
 import '../../core/player_display_identity.dart';
 import '../../core/profile_context.dart';
 import '../../core/entity_media.dart';
@@ -497,7 +498,6 @@ class TeamProfileView extends ConsumerWidget {
   }
 }
 
-const _weekdays = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
 const _months = [
   'ene',
   'feb',
@@ -513,8 +513,10 @@ const _months = [
   'dic',
 ];
 
-String matchDayLabel(DateTime date) =>
-    '${_weekdays[date.weekday - 1]} ${date.day} ${_months[date.month - 1]}';
+String matchDayLabel(DateTime date, {BuildContext? context, DateTime? now}) {
+  final clock = context == null ? null : DeviceTimeScope.watch(context);
+  return deviceDayLabel(date, now: now ?? clock?.now);
+}
 
 class TeamHeader extends StatelessWidget {
   const TeamHeader({
@@ -651,11 +653,11 @@ class TeamSquad extends StatelessWidget {
     // so the squad is one plain list (still number-then-name order).
     final plain = groups.length == 1 && groups.single.$1 == 'Otros';
     final stale = state == 'STALE';
-    // Costa Rica day, like the rest of the profile; a future date (clock
+    // Device-local day; a future date (clock
     // skew) is never shown.
-    final now = costaRicaNow();
+    final now = DateTime.now();
     final raw = updatedAt;
-    final since = raw == null ? null : costaRicaTime(raw.toUtc());
+    final since = raw?.toLocal();
     final sinceShown = since != null && !since.isAfter(now) ? since : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

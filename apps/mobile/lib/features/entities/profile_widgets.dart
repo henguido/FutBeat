@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 
 import '../../core/theme.dart';
+import '../../core/device_time.dart';
 
 // Shared building blocks for entity profiles (team, player): collapsible
 // header + pinned compact tabs, compact sections and empty states.
@@ -80,7 +81,10 @@ class _ProfileTabsState extends State<ProfileTabs>
   }
 
   @override
-  Widget build(BuildContext context) => widget.builder(context, controller);
+  Widget build(BuildContext context) {
+    DeviceTimeScope.watch(context);
+    return widget.builder(context, controller);
+  }
 }
 
 class ProfileHeaderChip extends StatelessWidget {

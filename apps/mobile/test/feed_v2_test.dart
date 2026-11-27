@@ -62,7 +62,7 @@ String? _networkUrl(Image image) {
 }
 
 Snapshot _costaRicaMediaSnapshot({bool verifiedMedia = true}) {
-  final today = costaRicaNow();
+  final today = DateTime.now();
   Map<String, dynamic> media(String url) => {
     'url': url,
     'verificationStatus': verifiedMedia ? 'VERIFIED' : 'PENDING',
@@ -136,7 +136,7 @@ Snapshot _snapshot({
   bool subgroupData = false,
   bool exactlyThreeOneCompetition = false,
 }) {
-  final today = costaRicaNow();
+  final today = DateTime.now();
   String startAt(int hour, int dayOffset) => DateTime.utc(
     today.year,
     today.month,
@@ -309,7 +309,7 @@ Future<List<String>> _pump(
     routes: [
       GoRoute(
         path: '/',
-        builder: (_, _) => MatchesScreen(now: now ?? costaRicaNow),
+        builder: (_, _) => MatchesScreen(now: now ?? DateTime.now),
       ),
       GoRoute(
         path: '/match/:id',
@@ -415,7 +415,7 @@ void main() {
   testWidgets('#168: midnight rollover normalizes an explicit yesterday', (
     tester,
   ) async {
-    final today = DateUtils.dateOnly(costaRicaNow());
+    final today = DateUtils.dateOnly(DateTime.now());
     var clock = today.add(const Duration(hours: 23, minutes: 59));
     await _pump(tester, now: () => clock);
     await tester.tap(find.text('HOY')); // Keep the date explicit in state.
@@ -823,7 +823,7 @@ void main() {
 
   // Kickoffs of the awaiting fixtures are 00:00 CR; the "past kickoff by more
   // than 15 minutes" precondition cannot hold in the first minutes of the day.
-  final nearMidnight = costaRicaNow().hour == 0 && costaRicaNow().minute < 20;
+  final nearMidnight = DateTime.now().hour == 0 && DateTime.now().minute < 20;
 
   testWidgets(
     'awaiting matches show POR CONFIRMAR, never an upcoming kickoff',
@@ -1198,7 +1198,7 @@ void main() {
     await _pump(tester);
     await tester.tap(find.widgetWithText(ChoiceChip, 'En vivo'));
     await tester.pumpAndSettle();
-    final today = costaRicaNow();
+    final today = DateTime.now();
     final otherDay = today.day == 15 ? 16 : 15;
     await tester.tap(find.byTooltip('Elegir otra fecha'));
     await tester.pumpAndSettle();
@@ -1636,7 +1636,7 @@ void main() {
     /// [groups] competitions with two matches each today; with
     /// [favourite], one of them involves the followed team t_fav.
     Snapshot manyGroups(int groups, {bool favourite = false}) {
-      final today = costaRicaNow();
+      final today = DateTime.now();
       String at(int hour) => DateTime.utc(
         today.year,
         today.month,

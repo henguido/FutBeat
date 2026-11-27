@@ -29,7 +29,7 @@ Snapshot _snapshot({
   String costaRicaStatus = 'SCHEDULED',
   String laLigaStatus = 'SCHEDULED',
 }) {
-  final today = costaRicaNow();
+  final today = DateTime.now();
   String startAt(int hour) => DateTime.utc(
     today.year,
     today.month,
@@ -147,7 +147,7 @@ Snapshot _snapshot({
 }
 
 Snapshot _largeSnapshot(int matchCount) {
-  final today = costaRicaNow();
+  final today = DateTime.now();
   final startTime = DateTime.utc(
     today.year,
     today.month,
@@ -851,7 +851,7 @@ void main() {
 
   test('status filters still select live, upcoming, and finished games', () {
     final data = _snapshot(costaRicaStatus: 'LIVE', laLigaStatus: 'VERIFIED');
-    final today = costaRicaNow();
+    final today = DateTime.now();
     expect(data.onDate(today, 'En vivo').map((match) => match.id), [
       'fb_match_cr',
     ]);
@@ -991,7 +991,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final today = DateUtils.dateOnly(costaRicaNow());
+    final today = DateUtils.dateOnly(DateTime.now());
     String compact(DateTime value) {
       const months = [
         'ENE',

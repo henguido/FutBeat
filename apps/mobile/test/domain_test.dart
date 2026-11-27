@@ -5,15 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:futbeat/core/models.dart';
 
 void main() {
-  test('calendar dates are evaluated in America/Costa_Rica', () {
-    expect(
-      costaRicaTime(DateTime.parse('2026-09-17T05:30:00Z')),
-      DateTime.utc(2026, 9, 16, 23, 30),
-    );
-    expect(
-      costaRicaTime(DateTime.parse('2026-09-17T06:30:00Z')),
-      DateTime.utc(2026, 9, 17, 0, 30),
-    );
+  test('match instants stay UTC without applying a regional offset', () {
+    final match = FootballMatch({'startTime': '2026-09-17T05:30:00Z'});
+    expect(match.startTime, DateTime.utc(2026, 9, 17, 5, 30));
+    expect(match.startTime.isUtc, isTrue);
   });
   final json =
       jsonDecode(File('assets/demo.snapshot.json').readAsStringSync()) as Json;
@@ -21,12 +16,14 @@ void main() {
   test('FB-US-001/002: filters use local calendar date and status', () {
     final match = data.matches.first;
     expect(
-      data.onDate(match.startTime, 'En vivo').map((m) => m.id),
+      data.onDate(match.startTime.toLocal(), 'En vivo').map((m) => m.id),
       contains(match.id),
     );
     expect(data.onDate(DateTime(2020), 'Todos'), isEmpty);
     expect(
-      data.onDate(match.startTime, 'Próximos').every((m) => m.isUpcoming),
+      data
+          .onDate(match.startTime.toLocal(), 'Próximos')
+          .every((m) => m.isUpcoming),
       isTrue,
     );
   });

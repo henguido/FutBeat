@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/interests.dart';
 import '../../core/load_errors.dart';
 import '../../core/models.dart';
+import '../../core/device_time.dart';
 import '../../core/profile_context.dart';
 import '../../core/providers.dart';
 import '../../core/relevance.dart';
@@ -312,6 +313,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
 
   @override
   Widget build(BuildContext context) {
+    DeviceTimeScope.watch(context);
     final type = widget.type, id = widget.id;
     ref.listen(entitySnapshotProvider((type: type, id: id)), (_, next) {
       // Ignore the refresh-in-progress state (it still carries old data).
@@ -514,7 +516,7 @@ class _EntityScreenState extends ConsumerState<EntityScreen> {
                           ),
                         for (final match in matches) ...[
                           Text(
-                            '${match.startTime.day}/${match.startTime.month}/${match.startTime.year}',
+                            '${match.startTime.toLocal().day}/${match.startTime.toLocal().month}/${match.startTime.toLocal().year}',
                             style: const TextStyle(color: muted),
                           ),
                           const SizedBox(height: 8),

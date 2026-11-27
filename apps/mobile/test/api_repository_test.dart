@@ -126,10 +126,14 @@ void main() {
         final raw = File('assets/demo.snapshot.json')
             .readAsStringSync()
             .replaceFirst('"demo": true', '"demo": false');
-        await database.saveCalendarSnapshot('2026-08-20', raw);
+        await database.saveCalendarSnapshot('2026-08-20@Europe/Madrid', raw);
         final values = await ApiRepository(
           dio,
           database,
+          const CalendarCachePolicy(),
+          null,
+          null,
+          () => 'Europe/Madrid',
         ).watchDate(DateTime(2026, 8, 20)).toList();
         expect(values, hasLength(1));
         expect(values.single.demo, isFalse);
@@ -158,12 +162,18 @@ void main() {
       });
       final dio = Dio(BaseOptions(baseUrl: 'http://127.0.0.1:${server.port}'));
       try {
-        final snapshot = await ApiRepository(dio)
-            .loadDate(DateTime(2026, 9, 18));
+        final snapshot = await ApiRepository(
+          dio,
+          null,
+          const CalendarCachePolicy(),
+          null,
+          null,
+          () => 'Europe/Madrid',
+        ).loadDate(DateTime(2026, 9, 18));
         expect(snapshot.demo, isFalse);
         expect(requested?.path, '/v1/calendar');
         expect(requested?.queryParameters['date'], '2026-09-18');
-        expect(requested?.queryParameters['timezone'], 'America/Costa_Rica');
+        expect(requested?.queryParameters['timezone'], 'Europe/Madrid');
       } finally {
         dio.close(force: true);
         await server.close(force: true);

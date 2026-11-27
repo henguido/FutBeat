@@ -150,7 +150,8 @@ class PassivePreviewTransport extends Interceptor {
     if (_closed ||
         options.method != 'GET' ||
         options.data != null ||
-        !_routes.contains(path) ||
+        (!_routes.contains(path) &&
+            !(usesUserSession && path == '/v1/match-last-lineups')) ||
         options.baseUrl != baseUri.toString() ||
         (hasDemandFlag && (path != '/v1/match-detail' || request != '0')) ||
         params.keys.any((key) => !_queryKeys.contains(key)) ||

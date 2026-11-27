@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models.dart';
+import '../../core/device_time.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import 'profile_widgets.dart';
 import 'standings.dart';
-import 'team_profile.dart' show matchDayLabel;
 
 const double _competitionHeaderLogoSize = 74;
 const double _competitionMatchTeamLogoSize = 26;
@@ -269,6 +269,10 @@ class CompetitionMatchList extends StatelessWidget {
   );
 }
 
+/// Both values are instants, rather than the legacy Costa Rica wall clock.
+String competitionMatchDayLabel(DateTime instant, {DateTime? now}) =>
+    deviceDayLabel(instant, now: now);
+
 class CompetitionMatchRow extends StatelessWidget {
   const CompetitionMatchRow({
     required this.match,
@@ -294,13 +298,15 @@ class CompetitionMatchRow extends StatelessWidget {
             .where((value) => value.isNotEmpty)
             .toSet()
             .join(' · ');
+    final clock = DeviceTimeScope.watch(context);
+    final dayLabel = competitionMatchDayLabel(match.startTime, now: clock?.now);
     final center = match.showKickoff
         ? localTime(context, match.startTime)
         : match.score;
     return Semantics(
       button: true,
       label: [
-        matchDayLabel(match.startTime),
+        dayLabel,
         home.displayName,
         center,
         away.displayName,
@@ -319,10 +325,7 @@ class CompetitionMatchRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                [
-                  matchDayLabel(match.startTime),
-                  if (phase.isNotEmpty) phase,
-                ].join(' · '),
+                [dayLabel, if (phase.isNotEmpty) phase].join(' · '),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: muted, fontSize: 11),

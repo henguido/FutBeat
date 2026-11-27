@@ -437,7 +437,7 @@ class PlayerProfileView extends StatelessWidget {
       ]),
       'Partidos' => ProfileTabList('partidos', [
         if (data.demo) const DemoNotice(),
-        ..._matchList(),
+        ..._matchList(context),
       ]),
       'Estadísticas' => ProfileTabList('estadisticas', [
         if (data.demo) const DemoNotice(),
@@ -578,7 +578,7 @@ class PlayerProfileView extends StatelessWidget {
     ];
   }
 
-  List<Widget> _matchList() {
+  List<Widget> _matchList(BuildContext context) {
     if (matches.isEmpty) {
       return const [
         InlineEmpty(Icons.event_busy_outlined, 'Sin partidos disponibles'),
@@ -598,7 +598,7 @@ class PlayerProfileView extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(left: 4, top: 4),
             child: Text(
-              '${matchDayLabel(match.startTime)} · ${match.startTime.year}',
+              '${matchDayLabel(match.startTime, context: context)} · ${match.startTime.toLocal().year}',
               style: const TextStyle(color: muted, fontSize: 12),
             ),
           ),
@@ -999,7 +999,7 @@ class PlayerEventRow extends StatelessWidget {
                   Text(
                     [
                       if (opponent.isNotEmpty) opponent,
-                      matchDayLabel(match.startTime),
+                      matchDayLabel(match.startTime, context: context),
                     ].join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -1079,7 +1079,7 @@ class PlayerTransferRow extends StatelessWidget {
                       [
                         'Cambio detectado en plantilla',
                         if (date != null)
-                          '${matchDayLabel(date.toLocal())} ${date.toLocal().year}',
+                          '${matchDayLabel(date, context: context)} ${date.toLocal().year}',
                       ].join(' · '),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,

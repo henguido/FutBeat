@@ -255,7 +255,7 @@ class _ResultChip extends StatelessWidget {
     return Tooltip(
       message: [
         '$home $scoreLabel $away',
-        if (date != null) matchDateLabel(costaRicaTime(date)),
+        if (date != null) matchDateLabel(date, context: context),
       ].join(' · '),
       child: InkWell(
         key: canOpen ? ValueKey('form-match-$id') : null,
@@ -524,7 +524,7 @@ class PreviewHeadToHeadSection extends StatelessWidget {
                   const Padding(
                     padding: EdgeInsets.only(bottom: 8),
                     child: Text(
-                      'Historial guardado · Actualización pendiente',
+                      'Historial guardado',
                       key: ValueKey('preview-h2h-stale-notice'),
                       style: TextStyle(color: muted, fontSize: 12),
                     ),
@@ -624,6 +624,9 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   /// Older-history extension (central coverage, both teams).
   bool _extending = false;
   bool _extendPending = false;
+  String? _pendingRetryMatch;
+  bool _pendingRefreshUnavailable = false;
+  bool get _pendingRetried => _pendingRetryMatch == widget.match.id;
 
   /// Server's word on older history (window.canExtend and not already in
   /// flight); null = not asked yet. The offer only shows on `true`.
@@ -720,6 +723,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   /// Older-history control at the end of the list: in flight, pending, or
   /// the offer (only when the server said it can extend).
   Widget? _extendControl(int shown) {
+    if (_pendingRetried && _pendingRefreshUnavailable) return null;
     if (_extending) {
       return const Padding(
         key: ValueKey('h2h-extending'),
@@ -738,7 +742,8 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
         ),
       );
     }
-    if (_api == null) return null;
+    // Passive clients can read stored pages, but cannot acquire older history.
+    if (_api == null || _api!.storedReadsOnly) return null;
     if (_canExtend == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _askWindow());
       return null;
@@ -783,6 +788,7 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
       setState(() {
         _generation++;
         _extending = false;
+        if (_pendingRetried) _pendingRefreshUnavailable = page.meetings.isEmpty;
         _previewStale = true;
         _pages[false] = [page];
         _pages[true] = [];
@@ -845,11 +851,24 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
   Widget _pendingHistory() => Column(
     key: const ValueKey('h2h-pending'),
     children: [
-      const _H2hMessage('Historial pendiente de actualización'),
-      if (widget.onRetry != null)
+      _H2hMessage(
+        _extending
+            ? 'Consultando historial…'
+            : 'Historial no disponible todavía',
+      ),
+      if (!_pendingRetried &&
+          widget.onRetry != null &&
+          _api?.storedReadsOnly != true)
         OutlinedButton.icon(
           key: const ValueKey('h2h-retry-pending'),
-          onPressed: widget.onRetry,
+          onPressed: () {
+            setState(() => _pendingRetryMatch = widget.match.id);
+            if (_api != null) {
+              _extend();
+            } else {
+              widget.onRetry!();
+            }
+          },
           icon: const Icon(Icons.refresh_rounded, size: 18),
           label: const Text('Actualizar'),
         ),
@@ -961,11 +980,11 @@ class _HeadToHeadTabState extends ConsumerState<HeadToHeadTab> {
             ),
           ),
         const SizedBox(height: 12),
-        if (availability == 'STALE' && pages.isEmpty && visible.isNotEmpty)
+        if (availability == 'STALE' && visible.isNotEmpty)
           const Padding(
             padding: EdgeInsets.only(bottom: 8),
             child: Text(
-              'Historial guardado · Actualización pendiente',
+              'Historial guardado',
               key: ValueKey('h2h-stale-notice'),
               style: TextStyle(color: muted, fontSize: 12),
             ),
@@ -1374,7 +1393,7 @@ String h2hMeetingSemanticLabel(
 }) {
   final parts = <String>[];
   final date = DateTime.tryParse(item['startTime']?.toString() ?? '');
-  if (date != null) parts.add(matchDateLabel(costaRicaTime(date)));
+  if (date != null) parts.add(matchDateLabel(date));
   final context = h2hScoreContext(item);
   final rawScore = item['score'];
   final homeScore = rawScore is Map ? rawScore['home'] : null;
@@ -1491,7 +1510,7 @@ class _MeetingRow extends StatelessWidget {
               Text(
                 [
                   ?label,
-                  if (date != null) matchDateLabel(costaRicaTime(date)),
+                  if (date != null) matchDateLabel(date, context: context),
                   ?competition,
                 ].join(' · '),
                 maxLines: 1,
