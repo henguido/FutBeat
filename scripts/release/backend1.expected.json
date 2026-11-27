@@ -71,7 +71,8 @@
     "supabase/migrations/20261127043800_fb05_match_last_lineups.sql",
     "supabase/migrations/20261127044600_fb07_h2h_follow_gate.sql",
     "supabase/migrations/20261127064100_fb05_k0_lineup_key_zero_read.sql",
-    "supabase/migrations/20261127135100_fb05_k0w_lineup_key_zero_write.sql"
+    "supabase/migrations/20261127135100_fb05_k0w_lineup_key_zero_write.sql",
+    "supabase/migrations/20261127230000_fb05_last_lineups_service_role_grant.sql"
   ],
   "signaturePrefixes": {
     "futbeat_private.reconcile_goal_results_local(date)": "83cbc022",
