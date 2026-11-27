@@ -17,6 +17,8 @@
     "@electric-sql/pglite": "0.5.8"
   },
   "devDependencies": {
+    "@supabase/server": "1.8.0",
+    "jose": "6.2.12",
     "supabase": "2.117.0"
   }
 }
