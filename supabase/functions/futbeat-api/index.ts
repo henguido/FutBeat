@@ -564,10 +564,12 @@ const handle = withSupabase(accessGated
       if (preview.schemaVersion !== 1) {
         return replyNoStore(503, { error: 'Previa temporalmente no disponible' });
       }
-      // Coverage still arriving (nothing yet, or a stale history being
-      // refreshed): never cache, the next open reads fresh.
+      // Nothing stored yet: never cache, the next open reads fresh. STALE
+      // carries stored, identity-checked meetings: the normal 30 s policy
+      // lets the app keep them offline (FB-07); a refresh in flight shows
+      // up at most 30 s later.
       const availability = asRecord(preview.h2h).availability;
-      if (availability === 'PENDING' || availability === 'STALE') {
+      if (availability === 'PENDING') {
         return replyNoStore(200, preview);
       }
       return reply(200, preview);

@@ -314,7 +314,7 @@ const wakeRow = (db) => db.query("select * from futbeat_private.worker_wakeups w
 const finishRun = (db, release = false) => db.query('select public.futbeat_finish_team_fixtures_run($1) v', [release]).then((r) => r.rows[0].v);
 const requestTeam = (db, id) => db.query('select public.futbeat_request_team_matches($1) v', [id]).then((r) => r.rows[0].v);
 
-test('cache: PENDING and STALE are no-store; AVAILABLE and CONFIRMED_EMPTY use the normal policy', () => withDb(async (db) => {
+test('cache: PENDING is no-store; STALE, AVAILABLE and CONFIRMED_EMPTY use the normal policy', () => withDb(async (db) => {
   const { comp, A, B, now } = await pair(db);
   const target = await match(db, { comp, home: A, away: B, at: now + DAY, status: 'SCHEDULED', score: null });
   const { call } = await api(db);
@@ -323,7 +323,9 @@ test('cache: PENDING and STALE are no-store; AVAILABLE and CONFIRMED_EMPTY use t
   await match(db, { comp, home: B, away: A, at: now - 20 * DAY });
   await coverAvailable(db, A);
   r = await call(`?id=${target}`);
-  assert.deepEqual([r.body.h2h.availability, r.cache], ['STALE', 'no-store']);
+  // FB-07: stored meetings are cacheable so the app can keep them offline.
+  assert.equal(r.body.h2h.availability, 'STALE');
+  assert.equal(r.cache, 'public, max-age=30, stale-while-revalidate=60');
   await coverAvailable(db, B);
   r = await call(`?id=${target}`);
   assert.equal(r.body.h2h.availability, 'AVAILABLE');

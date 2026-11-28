@@ -25,8 +25,8 @@
     },
     {
       "path": "supabase/functions/futbeat-api/index.ts",
-      "baseSha256": "fbbcb1ddf4a0a9db3927ca54eb1aaec824117c94c3bbded068dfa9de13558105",
-      "targetSha256": "70f3068d6bb86ce9463c7f94beba960b83eb49b77b5bb169e0828498fd5634f6",
+      "baseSha256": "6695fe1cf3632f5aaefc12af581b980d5b2123f6963376b470365a4939f2e5ea",
+      "targetSha256": "010e6f3a7eeb304084dadd427b923cc60c664d9ab8185e52e9b2e8b46c36a750",
       "patch": "supabase/undeployed/futbeat-api-main-news.patch",
       "baseReplacements": [
         [

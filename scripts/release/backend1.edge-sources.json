@@ -1,10 +1,10 @@
 {
   "functions": {
     "futbeat-api": {
-      "commit": "09f7911f",
-      "version": 54,
+      "commit": "e83b7a42",
+      "version": 55,
       "verifyJwt": false,
-      "evidence": "download 5/5 byte-equal 2026-11-27 (v54, fb05-edge-r3)"
+      "evidence": "download 5/5 byte-equal 2026-11-28 15:39Z (v55 ezbr 59ddaf2801326805, fb07-v55-edge)"
     },
     "futbeat-delete-account": {
       "commit": "10e43a1f8e",
@@ -69,12 +69,12 @@
       "localPath": "supabase/functions/_shared/deployed/match_detail.api-v54.ts"
     },
     {
-      "source": "09f7911f:supabase/functions/futbeat-api/index.ts",
-      "pinnedSha256": "fbbcb1ddf4a0a9db3927ca54eb1aaec824117c94c3bbded068dfa9de13558105",
-      "rawSha256": "fbbcb1ddf4a0a9db3927ca54eb1aaec824117c94c3bbded068dfa9de13558105",
-      "lfSha256": "fbbcb1ddf4a0a9db3927ca54eb1aaec824117c94c3bbded068dfa9de13558105",
+      "source": "e83b7a42:supabase/functions/futbeat-api/index.ts",
+      "pinnedSha256": "6695fe1cf3632f5aaefc12af581b980d5b2123f6963376b470365a4939f2e5ea",
+      "rawSha256": "6695fe1cf3632f5aaefc12af581b980d5b2123f6963376b470365a4939f2e5ea",
+      "lfSha256": "6695fe1cf3632f5aaefc12af581b980d5b2123f6963376b470365a4939f2e5ea",
       "pinMatches": "RAW",
-      "bytes": 32873,
+      "bytes": 32969,
       "localPath": "supabase/functions/futbeat-api/index.ts"
     },
     {
@@ -380,7 +380,7 @@
     },
     {
       "path": "supabase/functions/futbeat-api/index.ts",
-      "sha256": "576BD7FCE85BB7AD0B868C680F69CD50C2D968D1E3C23DA5BB5A302624256DE6"
+      "sha256": "21B3624269744CB1BA051841C09D2803BBE2691B9496F0EB0D9280F1FEC4655C"
     },
     {
       "path": "supabase/functions/futbeat-delete-account/index.ts",
